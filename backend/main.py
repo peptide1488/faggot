@@ -33,9 +33,32 @@ BASE_YDL_OPTS = {
     "socket_timeout": 30,
     "retries": 10,
     "fragment_retries": 10,
+    "extractor_retries": 3,
+    # Sites that block by region; bypass with X-Forwarded-For where possible
+    "geo_bypass": True,
+    # Some sites have broken/self-signed certs; we only download from them
+    "nocheckcertificate": True,
+    # Speeds up HLS/DASH (m3u8) downloads significantly
+    "concurrent_fragment_downloads": 4,
+    # Avoid characters Windows can't handle in filenames
+    "windowsfilenames": True,
 }
 if COOKIES_FROM_BROWSER:
     BASE_YDL_OPTS["cookiesfrombrowser"] = (COOKIES_FROM_BROWSER,)
+
+def extraction_attempts(opts):
+    """Yield progressively more aggressive option sets for stubborn sites."""
+    yield opts
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+
+        # Sites that block on TLS fingerprint (e.g. Cloudflare-fronted)
+        yield {**opts, "impersonate": ImpersonateTarget("chrome")}
+    except ImportError:
+        pass
+    # Dedicated extractor broken: scan raw page HTML for video sources
+    yield {**opts, "force_generic_extractor": True}
+
 
 VALID_MEDIA_EXTENSIONS = {
     "mp4", "mkv", "webm", "avi", "mov", "flv", "m4v", "ts",
@@ -95,15 +118,17 @@ def get_info(url: str):
         "skip_download": True,
         "noplaylist": False,
     }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except Exception:
+    info = None
+    primary_error = None
+    for attempt_opts in extraction_attempts(ydl_opts):
         try:
-            with yt_dlp.YoutubeDL({**ydl_opts, "force_generic_extractor": True}) as ydl:
+            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+            break
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            primary_error = primary_error or exc
+    if info is None:
+        raise HTTPException(status_code=400, detail=str(primary_error))
 
     is_playlist = info.get("_type") == "playlist" or "entries" in info
 
@@ -190,21 +215,29 @@ def run_download(job_id: str, req: DownloadRequest):
             }
         ]
     elif req.format_id:
-        ydl_opts["format"] = f"{req.format_id}+bestaudio/best"
-        ydl_opts["merge_output_format"] = "mp4"
+        # Requested format, with progressively looser fallbacks so an
+        # unavailable format never kills the whole download
+        ydl_opts["format"] = f"{req.format_id}+bestaudio/{req.format_id}/bestvideo*+bestaudio/best"
+        ydl_opts["merge_output_format"] = "mp4/mkv"
     else:
-        ydl_opts["format"] = "bestvideo+bestaudio/best"
-        ydl_opts["merge_output_format"] = "mp4"
+        # Highest quality video+audio; "best" fallback covers sites that
+        # only serve a single pre-muxed stream
+        ydl_opts["format"] = "bestvideo*+bestaudio/best"
+        ydl_opts["merge_output_format"] = "mp4/mkv"
 
     update_job(job_id, status="downloading", percent=0)
 
-    def do_download(opts):
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(req.url, download=True)
-            filename = ydl.prepare_filename(info)
-            if req.audio_only:
-                filename = str(Path(filename).with_suffix(f".{req.audio_format}"))
+    def resolve_filepath(ydl, entry):
+        # requested_downloads carries the final path after merging/postprocessing
+        for rd in entry.get("requested_downloads") or []:
+            if rd.get("filepath"):
+                return rd["filepath"]
+        filename = ydl.prepare_filename(entry)
+        if req.audio_only:
+            filename = str(Path(filename).with_suffix(f".{req.audio_format}"))
+        return filename
 
+    def validate_file(filename):
         path = Path(filename)
         ext = path.suffix.lower().lstrip(".")
         size = path.stat().st_size if path.is_file() else 0
@@ -215,16 +248,33 @@ def run_download(job_id: str, req: DownloadRequest):
                 f"Downloaded file looks invalid ({ext or 'unknown'}, {size} bytes) - "
                 "extraction likely failed to find the real video"
             )
+
+    def do_download(opts):
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(req.url, download=True)
+            entries = info.get("entries")
+            if entries is not None:
+                # Playlist: report it by title; per-file validation is skipped
+                # because a partial playlist is still a useful result
+                downloaded = [e for e in entries if e]
+                if not downloaded:
+                    raise ValueError("No videos in the playlist could be downloaded")
+                return f"{info.get('title') or 'Playlist'} ({len(downloaded)} videos)"
+            filename = resolve_filepath(ydl, info)
+        validate_file(filename)
         return filename
 
     try:
-        try:
-            filename = do_download(ydl_opts)
-        except Exception as primary_exc:
+        filename = None
+        primary_error = None
+        for attempt_opts in extraction_attempts(ydl_opts):
             try:
-                filename = do_download({**ydl_opts, "force_generic_extractor": True})
-            except Exception:
-                raise primary_exc
+                filename = do_download(attempt_opts)
+                break
+            except Exception as exc:
+                primary_error = primary_error or exc
+        if filename is None:
+            raise primary_error
         update_job(
             job_id,
             status="completed",
