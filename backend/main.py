@@ -21,6 +21,10 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 # reuse that browser's cookies for sites that require login/age verification.
 COOKIES_FROM_BROWSER = os.environ.get("COOKIES_FROM_BROWSER")
 
+# Optional proxy for all yt-dlp traffic, e.g. socks5://127.0.0.1:9050 or
+# http://127.0.0.1:8080 - useful where ISPs DNS-block sites
+PROXY = os.environ.get("PROXY")
+
 app = FastAPI(title="Omni Video Downloader")
 
 app.add_middleware(
@@ -47,6 +51,8 @@ BASE_YDL_OPTS = {
 }
 if COOKIES_FROM_BROWSER:
     BASE_YDL_OPTS["cookiesfrombrowser"] = (COOKIES_FROM_BROWSER,)
+if PROXY:
+    BASE_YDL_OPTS["proxy"] = PROXY
 
 def extraction_attempts(opts):
     """Yield progressively more aggressive option sets for stubborn sites."""
