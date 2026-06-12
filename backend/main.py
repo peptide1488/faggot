@@ -37,6 +37,12 @@ BASE_YDL_OPTS = {
 if COOKIES_FROM_BROWSER:
     BASE_YDL_OPTS["cookiesfrombrowser"] = (COOKIES_FROM_BROWSER,)
 
+VALID_MEDIA_EXTENSIONS = {
+    "mp4", "mkv", "webm", "avi", "mov", "flv", "m4v", "ts",
+    "mp3", "m4a", "wav", "flac", "ogg", "opus", "aac",
+}
+MIN_VALID_FILESIZE = 10 * 1024  # 10 KB
+
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
 
@@ -198,7 +204,18 @@ def run_download(job_id: str, req: DownloadRequest):
             filename = ydl.prepare_filename(info)
             if req.audio_only:
                 filename = str(Path(filename).with_suffix(f".{req.audio_format}"))
-            return filename
+
+        path = Path(filename)
+        ext = path.suffix.lower().lstrip(".")
+        size = path.stat().st_size if path.is_file() else 0
+        if ext not in VALID_MEDIA_EXTENSIONS or size < MIN_VALID_FILESIZE:
+            if path.is_file():
+                path.unlink()
+            raise ValueError(
+                f"Downloaded file looks invalid ({ext or 'unknown'}, {size} bytes) - "
+                "extraction likely failed to find the real video"
+            )
+        return filename
 
     try:
         try:
