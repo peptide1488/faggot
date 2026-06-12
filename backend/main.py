@@ -48,6 +48,9 @@ BASE_YDL_OPTS = {
     "concurrent_fragment_downloads": 4,
     # Avoid characters Windows can't handle in filenames
     "windowsfilenames": True,
+    # Explicitly rank formats by resolution first, then fps/bitrate, so
+    # "best" never picks a low-res stream on sites with odd format metadata
+    "format_sort": ["res", "fps", "vbr", "abr", "size"],
 }
 if COOKIES_FROM_BROWSER:
     BASE_YDL_OPTS["cookiesfrombrowser"] = (COOKIES_FROM_BROWSER,)
