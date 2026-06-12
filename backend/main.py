@@ -98,6 +98,7 @@ def normalize_url(url: str) -> str:
 
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
+cancel_requests: set[str] = set()
 
 # Connected websocket clients
 ws_clients: set[WebSocket] = set()
@@ -226,6 +227,8 @@ def run_download(job_id: str, req: DownloadRequest):
     req.url = normalize_url(req.url)
 
     def progress_hook(d):
+        if job_id in cancel_requests:
+            raise yt_dlp.utils.DownloadCancelled("Cancelled by user")
         status = d.get("status")
         if status == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate")
@@ -333,6 +336,8 @@ def run_download(job_id: str, req: DownloadRequest):
                 filename = do_download(attempt_opts)
                 break
             except Exception as exc:
+                if job_id in cancel_requests:
+                    raise yt_dlp.utils.DownloadCancelled("Cancelled by user")
                 msg = f"[job {job_id}] extraction attempt failed: {exc}"
                 print(msg.encode("ascii", "backslashreplace").decode(), flush=True)
                 primary_error = primary_error or exc
@@ -348,9 +353,12 @@ def run_download(job_id: str, req: DownloadRequest):
             percent=100,
             filename=filename,
         )
+    except yt_dlp.utils.DownloadCancelled:
+        update_job(job_id, status="cancelled", error=None)
     except Exception as exc:
         update_job(job_id, status="error", error=str(exc))
     finally:
+        cancel_requests.discard(job_id)
         shutil.rmtree(staging_dir, ignore_errors=True)
 
 
@@ -371,6 +379,19 @@ def start_download(req: DownloadRequest):
     thread = threading.Thread(target=run_download, args=(job_id, req), daemon=True)
     thread.start()
     return {"job_id": job_id}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    with job_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job["status"] in ("completed", "error", "cancelled"):
+            return {"status": job["status"]}
+    cancel_requests.add(job_id)
+    update_job(job_id, status="cancelling")
+    return {"status": "cancelling"}
 
 
 @app.get("/api/jobs")

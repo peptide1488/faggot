@@ -40,24 +40,49 @@ export default function App() {
     fetchJobs()
     fetchFiles()
 
-    const ws = new WebSocket(`${WS_BASE}/ws/progress`)
-    wsRef.current = ws
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      if (data.type === 'job_update') {
-        setJobs((prev) => {
-          const idx = prev.findIndex((j) => j.id === data.job.id)
-          if (idx === -1) return [data.job, ...prev]
-          const copy = [...prev]
-          copy[idx] = { ...copy[idx], ...data.job }
-          return copy
-        })
-        if (data.job.status === 'completed') {
-          fetchFiles()
+    let closed = false
+    let reconnectTimer = null
+
+    function connectWs() {
+      const ws = new WebSocket(`${WS_BASE}/ws/progress`)
+      wsRef.current = ws
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        if (data.type === 'job_update') {
+          setJobs((prev) => {
+            const idx = prev.findIndex((j) => j.id === data.job.id)
+            if (idx === -1) return [data.job, ...prev]
+            const copy = [...prev]
+            copy[idx] = { ...copy[idx], ...data.job }
+            return copy
+          })
+          if (data.job.status === 'completed') {
+            fetchFiles()
+          }
+        }
+      }
+      ws.onclose = () => {
+        // Reconnect after backend restarts or network blips (e.g. VPN toggles)
+        if (!closed) {
+          reconnectTimer = setTimeout(() => {
+            fetchJobs()
+            fetchFiles()
+            connectWs()
+          }, 2000)
         }
       }
     }
-    return () => ws.close()
+    connectWs()
+
+    // Safety net: refresh job state even if websocket updates are missed
+    const pollTimer = setInterval(fetchJobs, 5000)
+
+    return () => {
+      closed = true
+      clearTimeout(reconnectTimer)
+      clearInterval(pollTimer)
+      wsRef.current?.close()
+    }
   }, [])
 
   async function fetchJobs() {
@@ -111,9 +136,16 @@ export default function App() {
         const err = await res.json()
         throw new Error(err.detail || 'Failed to start download')
       }
+      // Show the job immediately even if the websocket is down
+      fetchJobs()
     } catch (e) {
       setError(e.message)
     }
+  }
+
+  async function handleCancel(jobId) {
+    await fetch(`${API_BASE}/api/jobs/${jobId}/cancel`, { method: 'POST' })
+    fetchJobs()
   }
 
   async function handleDelete(name) {
@@ -227,6 +259,11 @@ export default function App() {
                 <div className="job-info">
                   <span className="job-name">{job.filename || job.url}</span>
                   <span className={`status status-${job.status}`}>{job.status}</span>
+                  {['queued', 'downloading', 'processing'].includes(job.status) && (
+                    <button className="danger small" onClick={() => handleCancel(job.id)}>
+                      Cancel
+                    </button>
+                  )}
                 </div>
                 {job.status === 'downloading' && (
                   <div className="progress-bar">

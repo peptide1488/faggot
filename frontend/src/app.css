@@ -241,6 +241,17 @@ select {
   color: #ff9b9b;
 }
 
+.status-cancelling,
+.status-cancelled {
+  background: #4a3a1f;
+  color: #e0c08f;
+}
+
+button.small {
+  padding: 4px 12px;
+  font-size: 0.85rem;
+}
+
 .progress-bar {
   margin-top: 8px;
   height: 8px;
