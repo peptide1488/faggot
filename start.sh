@@ -18,6 +18,10 @@ kill_port() {
 kill_port 8000
 kill_port 5173
 
+# Windows consoles default to legacy codepages that crash on non-ASCII
+# video titles; force Python to use UTF-8 everywhere
+export PYTHONUTF8=1
+
 echo "Starting backend..."
 cd backend
 source venv/Scripts/activate 2>/dev/null || source venv/bin/activate

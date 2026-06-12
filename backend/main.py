@@ -301,7 +301,8 @@ def run_download(job_id: str, req: DownloadRequest):
                 filename = do_download(attempt_opts)
                 break
             except Exception as exc:
-                print(f"[job {job_id}] extraction attempt failed: {exc}", flush=True)
+                msg = f"[job {job_id}] extraction attempt failed: {exc}"
+                print(msg.encode("ascii", "backslashreplace").decode(), flush=True)
                 primary_error = primary_error or exc
                 # Clear leftovers so the next attempt starts clean
                 for leftover in staging_dir.iterdir():
