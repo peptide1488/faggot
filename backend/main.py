@@ -1,4 +1,5 @@
 import asyncio
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -13,6 +14,10 @@ from pydantic import BaseModel
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
+
+# Set to a browser name (e.g. "firefox", "chrome", "edge") to let yt-dlp
+# reuse that browser's cookies for sites that require login/age verification.
+COOKIES_FROM_BROWSER = os.environ.get("COOKIES_FROM_BROWSER")
 
 app = FastAPI(title="Omni Video Downloader")
 
@@ -29,6 +34,8 @@ BASE_YDL_OPTS = {
     "retries": 10,
     "fragment_retries": 10,
 }
+if COOKIES_FROM_BROWSER:
+    BASE_YDL_OPTS["cookiesfrombrowser"] = (COOKIES_FROM_BROWSER,)
 
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
