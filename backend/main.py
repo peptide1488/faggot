@@ -279,12 +279,26 @@ def run_download(job_id: str, req: DownloadRequest):
             info = ydl.extract_info(req.url, download=True)
             entries = info.get("entries")
             if entries is not None:
-                # Playlist: report it by title; per-file validation is skipped
-                # because a partial playlist is still a useful result
-                downloaded = [e for e in entries if e]
-                if not downloaded:
-                    raise ValueError("No videos in the playlist could be downloaded")
-                return f"{info.get('title') or 'Playlist'} ({len(downloaded)} videos)"
+                # The generic extractor reports multiple found media as a
+                # "playlist", so every entry must pass validation too
+                valid, entry_errors = [], []
+                for entry in entries:
+                    if not entry:
+                        continue
+                    filepath = resolve_filepath(ydl, entry)
+                    try:
+                        validate_file(filepath)
+                        valid.append(filepath)
+                    except ValueError as exc:
+                        entry_errors.append(str(exc))
+                if not valid:
+                    raise ValueError(
+                        entry_errors[0] if entry_errors
+                        else "No videos in the playlist could be downloaded"
+                    )
+                if len(valid) == 1:
+                    return valid[0]
+                return f"{info.get('title') or 'Playlist'} ({len(valid)} videos)"
             filename = resolve_filepath(ydl, info)
         validate_file(filename)
         return filename
@@ -297,6 +311,7 @@ def run_download(job_id: str, req: DownloadRequest):
                 filename = do_download(attempt_opts)
                 break
             except Exception as exc:
+                print(f"[job {job_id}] extraction attempt failed: {exc}", flush=True)
                 primary_error = primary_error or exc
         if filename is None:
             raise primary_error
