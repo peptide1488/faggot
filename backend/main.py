@@ -241,11 +241,22 @@ def run_download(job_id: str, req: DownloadRequest):
         path = Path(filename)
         ext = path.suffix.lower().lstrip(".")
         size = path.stat().st_size if path.is_file() else 0
-        if ext not in VALID_MEDIA_EXTENSIONS or size < MIN_VALID_FILESIZE:
+        reason = None
+        if ext not in VALID_MEDIA_EXTENSIONS:
+            reason = f"unexpected file type .{ext or 'unknown'}"
+        elif size < MIN_VALID_FILESIZE:
+            reason = f"file too small ({size} bytes)"
+        else:
+            # Reject text/XML masquerading under a media extension (e.g. an
+            # SVG or HTML error page saved as .mp4)
+            head = path.open("rb").read(512).lstrip()
+            if head[:1] in (b"<", b"{") or b"<svg" in head or b"<html" in head.lower():
+                reason = "file contains text/markup, not media data"
+        if reason:
             if path.is_file():
                 path.unlink()
             raise ValueError(
-                f"Downloaded file looks invalid ({ext or 'unknown'}, {size} bytes) - "
+                f"Downloaded file looks invalid: {reason} - "
                 "extraction likely failed to find the real video"
             )
 
