@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shutil
 import threading
 import uuid
 from pathlib import Path
@@ -209,7 +210,11 @@ def run_download(job_id: str, req: DownloadRequest):
         elif status == "finished":
             update_job(job_id, status="processing", percent=100)
 
-    outtmpl = str(DOWNLOAD_DIR / "%(title)s.%(ext)s")
+    # Download into a per-job staging dir; only validated media is moved
+    # into DOWNLOAD_DIR, so failed extractions can't leave junk behind
+    staging_dir = DOWNLOAD_DIR / f".staging-{job_id}"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    outtmpl = str(staging_dir / "%(title)s.%(ext)s")
 
     ydl_opts = {
         **BASE_YDL_OPTS,
@@ -241,67 +246,52 @@ def run_download(job_id: str, req: DownloadRequest):
 
     update_job(job_id, status="downloading", percent=0)
 
-    def resolve_filepath(ydl, entry):
-        # requested_downloads carries the final path after merging/postprocessing
-        for rd in entry.get("requested_downloads") or []:
-            if rd.get("filepath"):
-                return rd["filepath"]
-        filename = ydl.prepare_filename(entry)
-        if req.audio_only:
-            filename = str(Path(filename).with_suffix(f".{req.audio_format}"))
-        return filename
-
-    def validate_file(filename):
-        path = Path(filename)
+    def invalid_reason(path: Path):
+        """Return why a staged file isn't real media, or None if it's fine."""
         ext = path.suffix.lower().lstrip(".")
-        size = path.stat().st_size if path.is_file() else 0
-        reason = None
+        size = path.stat().st_size
         if ext not in VALID_MEDIA_EXTENSIONS:
-            reason = f"unexpected file type .{ext or 'unknown'}"
-        elif size < MIN_VALID_FILESIZE:
-            reason = f"file too small ({size} bytes)"
-        else:
-            # Reject text/XML masquerading under a media extension (e.g. an
-            # SVG or HTML error page saved as .mp4)
-            head = path.open("rb").read(512).lstrip()
-            if head[:1] in (b"<", b"{") or b"<svg" in head or b"<html" in head.lower():
-                reason = "file contains text/markup, not media data"
-        if reason:
-            if path.is_file():
-                path.unlink()
-            raise ValueError(
-                f"Downloaded file looks invalid: {reason} - "
-                "extraction likely failed to find the real video"
-            )
+            return f"unexpected file type .{ext or 'unknown'}"
+        if size < MIN_VALID_FILESIZE:
+            return f"file too small ({size} bytes)"
+        # Reject text/XML masquerading under a media extension (e.g. an
+        # SVG or HTML error page saved as .mp4)
+        head = path.open("rb").read(512).lstrip()
+        if head[:1] in (b"<", b"{") or b"<svg" in head or b"<html" in head.lower():
+            return "file contains text/markup, not media data"
+        return None
+
+    def collect_staged_media():
+        """Validate everything in staging; move good files to DOWNLOAD_DIR."""
+        moved, reasons = [], []
+        for path in sorted(staging_dir.iterdir()):
+            if not path.is_file():
+                continue
+            reason = invalid_reason(path)
+            if reason:
+                reasons.append(f"{path.name}: {reason}")
+                continue
+            dest = DOWNLOAD_DIR / path.name
+            counter = 1
+            while dest.exists():
+                dest = DOWNLOAD_DIR / f"{path.stem} ({counter}){path.suffix}"
+                counter += 1
+            path.replace(dest)
+            moved.append(dest.name)
+        return moved, reasons
 
     def do_download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(req.url, download=True)
-            entries = info.get("entries")
-            if entries is not None:
-                # The generic extractor reports multiple found media as a
-                # "playlist", so every entry must pass validation too
-                valid, entry_errors = [], []
-                for entry in entries:
-                    if not entry:
-                        continue
-                    filepath = resolve_filepath(ydl, entry)
-                    try:
-                        validate_file(filepath)
-                        valid.append(filepath)
-                    except ValueError as exc:
-                        entry_errors.append(str(exc))
-                if not valid:
-                    raise ValueError(
-                        entry_errors[0] if entry_errors
-                        else "No videos in the playlist could be downloaded"
-                    )
-                if len(valid) == 1:
-                    return valid[0]
-                return f"{info.get('title') or 'Playlist'} ({len(valid)} videos)"
-            filename = resolve_filepath(ydl, info)
-        validate_file(filename)
-        return filename
+            ydl.extract_info(req.url, download=True)
+        moved, reasons = collect_staged_media()
+        if not moved:
+            raise ValueError(
+                "; ".join(reasons)
+                or "Extraction produced no files - the video could not be found"
+            )
+        if len(moved) == 1:
+            return moved[0]
+        return f"{moved[0]} (+{len(moved) - 1} more)"
 
     try:
         filename = None
@@ -313,16 +303,22 @@ def run_download(job_id: str, req: DownloadRequest):
             except Exception as exc:
                 print(f"[job {job_id}] extraction attempt failed: {exc}", flush=True)
                 primary_error = primary_error or exc
+                # Clear leftovers so the next attempt starts clean
+                for leftover in staging_dir.iterdir():
+                    if leftover.is_file():
+                        leftover.unlink()
         if filename is None:
             raise primary_error
         update_job(
             job_id,
             status="completed",
             percent=100,
-            filename=Path(filename).name,
+            filename=filename,
         )
     except Exception as exc:
         update_job(job_id, status="error", error=str(exc))
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 @app.post("/api/download")
