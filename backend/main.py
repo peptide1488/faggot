@@ -85,8 +85,12 @@ def get_info(url: str):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        try:
+            with yt_dlp.YoutubeDL({**ydl_opts, "force_generic_extractor": True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     is_playlist = info.get("_type") == "playlist" or "entries" in info
 
@@ -181,12 +185,19 @@ def run_download(job_id: str, req: DownloadRequest):
 
     update_job(job_id, status="downloading", percent=0)
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    def do_download(opts):
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(req.url, download=True)
             filename = ydl.prepare_filename(info)
             if req.audio_only:
                 filename = str(Path(filename).with_suffix(f".{req.audio_format}"))
+            return filename
+
+    try:
+        try:
+            filename = do_download(ydl_opts)
+        except Exception:
+            filename = do_download({**ydl_opts, "force_generic_extractor": True})
         update_job(
             job_id,
             status="completed",
