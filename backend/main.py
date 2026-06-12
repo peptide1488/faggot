@@ -24,6 +24,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+BASE_YDL_OPTS = {
+    "socket_timeout": 30,
+    "retries": 10,
+    "fragment_retries": 10,
+}
+
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
 
@@ -70,6 +76,7 @@ def update_job(job_id: str, **kwargs):
 @app.get("/api/info")
 def get_info(url: str):
     ydl_opts = {
+        **BASE_YDL_OPTS,
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
@@ -149,6 +156,7 @@ def run_download(job_id: str, req: DownloadRequest):
     outtmpl = str(DOWNLOAD_DIR / "%(title)s.%(ext)s")
 
     ydl_opts = {
+        **BASE_YDL_OPTS,
         "outtmpl": outtmpl,
         "progress_hooks": [progress_hook],
         "noplaylist": not req.playlist,
