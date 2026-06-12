@@ -5,6 +5,7 @@ import threading
 import uuid
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import yt_dlp
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -67,6 +68,28 @@ VALID_MEDIA_EXTENSIONS = {
 }
 MIN_VALID_FILESIZE = 10 * 1024  # 10 KB
 
+
+def _has_dedicated_extractor(url: str) -> bool:
+    for ie in yt_dlp.extractor.gen_extractor_classes():
+        if ie.ie_key() != "Generic" and ie.suitable(url):
+            return True
+    return False
+
+
+def normalize_url(url: str) -> str:
+    """Rewrite language subdomains (fr., de., ...) to www when that makes a
+    dedicated extractor match; otherwise sites silently fall back to the
+    generic extractor, which often grabs poster images instead of video."""
+    if _has_dedicated_extractor(url):
+        return url
+    parts = urlsplit(url)
+    sub, dot, rest = parts.netloc.partition(".")
+    if dot and "." in rest and len(sub) <= 3 and sub.lower() != "www":
+        candidate = urlunsplit(parts._replace(netloc=f"www.{rest}"))
+        if _has_dedicated_extractor(candidate):
+            return candidate
+    return url
+
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
 
@@ -126,6 +149,7 @@ def get_version():
 
 @app.get("/api/info")
 def get_info(url: str):
+    url = normalize_url(url)
     ydl_opts = {
         **BASE_YDL_OPTS,
         "quiet": True,
@@ -193,6 +217,8 @@ def get_info(url: str):
 
 
 def run_download(job_id: str, req: DownloadRequest):
+    req.url = normalize_url(req.url)
+
     def progress_hook(d):
         status = d.get("status")
         if status == "downloading":
