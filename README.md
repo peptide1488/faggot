@@ -1,46 +1,7 @@
-# Omni Video Downloader
+# Projects
 
-A self-hosted video/audio downloader powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp),
-similar to Open Video Downloader. Supports thousands of sites, playlists,
-format selection, and audio extraction, with live progress over WebSockets.
+Monorepo — each app lives in its own folder.
 
-## Stack
-
-- **Backend**: FastAPI + yt-dlp (Python)
-- **Frontend**: React + Vite
-
-## Requirements
-
-- Python 3.10+
-- Node 18+
-- `ffmpeg` (required for merging video/audio formats and audio extraction)
-
-## Running locally
-
-### Backend
-
-```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open the URL printed by Vite (default `http://localhost:5173`).
-
-## Features
-
-- Paste any video/playlist URL to fetch title, thumbnail, duration, and available formats
-- Choose video quality/format or extract audio only (MP3/M4A/WAV/FLAC)
-- Download entire playlists or pick individual entries
-- Live download progress via WebSocket
-- Manage and download completed files from the UI
+| App | Description |
+|-----|-------------|
+| [video-downloader](video-downloader/) | Omni video/audio downloader (yt-dlp + FastAPI + React) |
