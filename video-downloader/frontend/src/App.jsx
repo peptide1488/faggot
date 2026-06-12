@@ -153,9 +153,8 @@ export default function App() {
     fetchFiles()
   }
 
-  const videoFormats = (info?.formats || []).filter(
-    (f) => f.vcodec && f.vcodec !== 'none'
-  )
+  // Exclude only known audio-only formats; many sites report no vcodec at all
+  const videoFormats = (info?.formats || []).filter((f) => f.vcodec !== 'none')
 
   return (
     <div className="container">

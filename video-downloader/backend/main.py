@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -98,6 +99,24 @@ def normalize_url(url: str) -> str:
         if _has_dedicated_extractor(candidate):
             return candidate
     return url
+
+
+_HEIGHT_HINT = re.compile(r"(\d{3,4})[pP](?:[\b_./-]|$)")
+
+
+def infer_missing_heights(info: dict):
+    """Some sites name formats '720p_60fps' but report no height, so yt-dlp
+    sorts them below known-but-low resolutions. Recover heights from format
+    ids/notes/urls so 'best' actually picks the best."""
+    for f in info.get("formats") or []:
+        if f.get("height"):
+            continue
+        for hint in (f.get("format_id"), f.get("format_note"), f.get("url")):
+            m = _HEIGHT_HINT.search(hint or "")
+            if m and 100 <= int(m.group(1)) <= 4320:
+                f["height"] = int(m.group(1))
+                break
+
 
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
@@ -198,6 +217,7 @@ def get_info(url: str):
             ],
         }
 
+    infer_missing_heights(info)
     formats = []
     for f in info.get("formats", []):
         if not f.get("url"):
@@ -206,7 +226,9 @@ def get_info(url: str):
             {
                 "format_id": f.get("format_id"),
                 "ext": f.get("ext"),
-                "resolution": f.get("resolution") or f.get("format_note"),
+                "resolution": f.get("resolution")
+                or (f"{f['height']}p" if f.get("height") else None)
+                or f.get("format_note"),
                 "fps": f.get("fps"),
                 "vcodec": f.get("vcodec"),
                 "acodec": f.get("acodec"),
@@ -320,7 +342,12 @@ def run_download(job_id: str, req: DownloadRequest):
 
     def do_download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.extract_info(req.url, download=True)
+            # Extract first without format processing so missing heights can
+            # be recovered before "best" is chosen, then download
+            info = ydl.extract_info(req.url, download=False, process=False)
+            if isinstance(info, dict):
+                infer_missing_heights(info)
+            ydl.process_ie_result(info, download=True)
         moved, reasons = collect_staged_media()
         if not moved:
             raise ValueError(
