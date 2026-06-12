@@ -220,8 +220,11 @@ def run_download(job_id: str, req: DownloadRequest):
     try:
         try:
             filename = do_download(ydl_opts)
-        except Exception:
-            filename = do_download({**ydl_opts, "force_generic_extractor": True})
+        except Exception as primary_exc:
+            try:
+                filename = do_download({**ydl_opts, "force_generic_extractor": True})
+            except Exception:
+                raise primary_exc
         update_job(
             job_id,
             status="completed",
