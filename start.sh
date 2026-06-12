@@ -2,7 +2,16 @@
 set -e
 cd "$(dirname "$0")"
 
-# Kill anything already holding our ports (stale servers from old windows)
+# On Windows, --reload spawns a watcher subprocess that can survive a
+# closed terminal and keep holding the ports with stale code. Nuke any
+# leftover python/node processes every run so we always start clean.
+if command -v taskkill >/dev/null 2>&1; then
+  echo "Killing any leftover python/node processes..."
+  taskkill //F //IM python.exe >/dev/null 2>&1 || true
+  taskkill //F //IM node.exe >/dev/null 2>&1 || true
+fi
+
+# Kill anything still holding our ports (belt and suspenders)
 kill_port() {
   local port=$1
   if command -v taskkill >/dev/null 2>&1; then
