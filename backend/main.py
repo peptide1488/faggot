@@ -109,6 +109,20 @@ def update_job(job_id: str, **kwargs):
     broadcast({"type": "job_update", "job": snapshot})
 
 
+@app.get("/api/version")
+def get_version():
+    import subprocess
+
+    try:
+        rev = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, cwd=BASE_DIR, timeout=5,
+        ).stdout.strip()
+    except Exception:
+        rev = "unknown"
+    return {"revision": rev, "yt_dlp": yt_dlp.version.__version__}
+
+
 @app.get("/api/info")
 def get_info(url: str):
     ydl_opts = {
