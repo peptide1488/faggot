@@ -49,9 +49,10 @@ BASE_YDL_OPTS = {
     "concurrent_fragment_downloads": 4,
     # Avoid characters Windows can't handle in filenames
     "windowsfilenames": True,
-    # Explicitly rank formats by resolution first, then fps/bitrate, so
-    # "best" never picks a low-res stream on sites with odd format metadata
-    "format_sort": ["res", "fps", "vbr", "abr", "size"],
+    # Rank formats by resolution (height, then width as a fallback when
+    # height is unknown), prefer widely-compatible H.264 over AV1/HEVC which
+    # stutter in older players like VLC, then higher bitrate/fps.
+    "format_sort": ["res", "width", "vcodec:h264", "br", "fps"],
 }
 if COOKIES_FROM_BROWSER:
     BASE_YDL_OPTS["cookiesfrombrowser"] = (COOKIES_FROM_BROWSER,)
@@ -120,9 +121,10 @@ _HEIGHT_HINT = re.compile(r"(\d{3,4})[pP](?:[\b_./-]|$)")
 
 
 def infer_missing_heights(info: dict):
-    """Some sites name formats '720p_60fps' but report no height, so yt-dlp
-    sorts them below known-but-low resolutions. Recover heights from format
-    ids/notes/urls so 'best' actually picks the best."""
+    """Some sites report no height per format, so yt-dlp sorts them below
+    known-but-low resolutions and "best" yields a tiny stream. Recover a
+    height from the format name (e.g. '720p_60fps') or, failing that, from
+    the width assuming 16:9, so resolution sorting works."""
     for f in info.get("formats") or []:
         if f.get("height"):
             continue
@@ -131,6 +133,10 @@ def infer_missing_heights(info: dict):
             if m and 100 <= int(m.group(1)) <= 4320:
                 f["height"] = int(m.group(1))
                 break
+        else:
+            width = f.get("width")
+            if width:
+                f["height"] = round(width * 9 / 16)
 
 
 jobs: dict[str, dict] = {}
