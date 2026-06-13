@@ -86,10 +86,25 @@ def _has_dedicated_extractor(url: str) -> bool:
     return False
 
 
+_BEEG_URL = re.compile(r"(https?://(?:www\.)?beeg\.com(?:/video)?/-?)(\d+)")
+
+
+def _fixup_site_url(url: str) -> str:
+    """Per-site URL corrections for known extractor/API quirks."""
+    # Beeg's API rejects zero-padded IDs ("invalid integer"); strip leading
+    # zeros so the metadata lookup succeeds.
+    m = _BEEG_URL.match(url)
+    if m:
+        return m.group(1) + m.group(2).lstrip("0") + url[m.end():]
+    return url
+
+
 def normalize_url(url: str) -> str:
-    """Rewrite language subdomains (fr., de., ...) to www when that makes a
-    dedicated extractor match; otherwise sites silently fall back to the
-    generic extractor, which often grabs poster images instead of video."""
+    """Apply per-site fixups, then rewrite language subdomains (fr., de., ...)
+    to www when that makes a dedicated extractor match; otherwise sites
+    silently fall back to the generic extractor, which often grabs poster
+    images instead of video."""
+    url = _fixup_site_url(url)
     if _has_dedicated_extractor(url):
         return url
     parts = urlsplit(url)
