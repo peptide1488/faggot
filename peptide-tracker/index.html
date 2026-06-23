@@ -524,16 +524,49 @@ function parseVialFromMessage(message, hwSerial){
     }else if(rec.recordType==='text'){
       const txt=decodeRecordText(rec);
       try{ payload=JSON.parse(txt); }
-      catch(e){ if(!payload && txt.trim()) payload={serial:txt.trim()}; }
+      catch(e){ if(!payload){ const p=parseFreeText(txt); if(p) payload=p; } }
     }
   }
   return {payload, hwSerial:hwSerial||null};
 }
 
+// Understand tags written by generic NFC apps, e.g. "Retatrutide 10mg", "Reta 5 mg".
+function capitalizeFirst(s){ return s? s.charAt(0).toUpperCase()+s.slice(1) : s; }
+function parseFreeText(txt){
+  const s=(txt||'').trim();
+  if(!s) return null;
+  const mgM=s.match(/(\d+(?:\.\d+)?)\s*mg\b/i);
+  const mg=mgM? +mgM[1] : null;
+  const KNOWN=[
+    [/retatrutide|\breta\b/i,'Retatrutide'],
+    [/tirzepatide|\btirzep?\b|\btirz\b/i,'Tirzepatide'],
+    [/semaglutide|\bsema\b/i,'Semaglutide'],
+    [/liraglutide|\blira\b/i,'Liraglutide']
+  ];
+  let compound=null;
+  for(const [re,name] of KNOWN){ if(re.test(s)){ compound=name; break; } }
+  // No dose and no known compound — nothing structured, keep the whole string as a serial label.
+  if(!compound && mg==null) return {serial:s};
+  // Only pull out a separate serial token when we already recognized the compound,
+  // so hyphenated peptide names like "BPC-157 10mg" stay the compound, not a serial.
+  let serial=null;
+  if(compound){
+    const sm=s.match(/\b[A-Za-z0-9]{3,}-[A-Za-z0-9]{2,}\b/);
+    if(sm) serial=sm[0].toUpperCase();
+  }
+  const leftover=s.replace(/\s*\d+(?:\.\d+)?\s*mg\b/i,'').trim();
+  const comp=compound || capitalizeFirst(leftover) || 'Peptide';
+  const out={compound:comp, name:comp+(mg!=null?(' '+mg+'mg'):'')};
+  if(mg!=null) out.mg=mg;
+  if(serial) out.serial=serial;
+  return out;
+}
+
 function handleScannedTag({payload, hwSerial}){
   if(payload && (payload.compound || payload.serial)){
-    const serial=(payload.serial||hwSerial||'').toString().toUpperCase();
-    const id=payload.id || ('VL-'+serial.replace(/[^A-Z0-9]/g,'') || ('VL-'+(hwSerial||'').replace(/[^a-zA-Z0-9]/g,'').toUpperCase()));
+    const hasPrintedSerial=!!payload.serial;     // a serial we can ask the user to confirm against the label
+    const serial=(payload.serial||hwSerial||genSerial()).toString().toUpperCase();
+    const id=payload.id || ('VL-'+(serial.replace(/[^A-Z0-9]/g,'')||'TAG'));
     let v=Object.assign(freshVial(),{
       name: payload.name || ((payload.compound||'Vial')+(payload.mg?(' '+payload.mg+'mg'):'')),
       compound: payload.compound || 'Peptide',
@@ -550,7 +583,9 @@ function handleScannedTag({payload, hwSerial}){
     document.getElementById('chipSerial').textContent=vial.serial;
     resetVerifyInputs();
     toast('Vial read from tag ✓');
-    show(vial.reconstituted ? 'v-vial' : 'v-verify');
+    if(vial.reconstituted){ saveCurrentVial(); show('v-vial'); }
+    else if(hasPrintedSerial && !vial.verified){ show('v-verify'); }   // confirm serial vs label
+    else { vial.verified=true; saveCurrentVial(); show('v-recon'); calcConc(); }  // free-text tag: nothing to verify
   }else{
     pendingUid=hwSerial||null;
     toast('Blank tag — let’s register it');
