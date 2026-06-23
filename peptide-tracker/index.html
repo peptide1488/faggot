@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0b0f17">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pepti Mart">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Pepti Mart Vial Tracker</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#141a26; --panel2:#1b2333; --line:#26314a;
+    --txt:#e8edf6; --muted:#8a97b0; --accent:#4f8cff; --accent2:#27d3a2;
+    --warn:#ffb454; --danger:#ff5d6c; --good:#27d3a2;
+    --r:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; height:100%}
+  body{
+    background:var(--bg); color:var(--txt);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+    padding-bottom:78px; max-width:520px; margin:0 auto;
+    position:relative; min-height:100%;
+  }
+  h1,h2,h3{margin:0; font-weight:650; letter-spacing:-.01em}
+  .muted{color:var(--muted)}
+  .small{font-size:12.5px}
+  .mono{font-variant-numeric:tabular-nums; font-feature-settings:"tnum"}
+
+  header{
+    position:sticky; top:0; z-index:10; backdrop-filter:blur(12px);
+    background:rgba(11,15,23,.82); border-bottom:1px solid var(--line);
+    padding:14px 18px; display:flex; align-items:center; gap:10px;
+  }
+  .logo{width:30px;height:30px;border-radius:9px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:grid;place-items:center;font-weight:800;font-size:15px;color:#06121f}
+  header .sub{font-size:11.5px}
+
+  .view{display:none; padding:16px 16px 8px}
+  .view.active{display:block; animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+    padding:16px; margin-bottom:14px}
+  .card.tap{cursor:pointer; transition:.15s} .card.tap:active{transform:scale(.99); background:var(--panel2)}
+
+  .row{display:flex; align-items:center; gap:12px}
+  .between{justify-content:space-between}
+  .pill{font-size:11px; padding:4px 9px; border-radius:999px; font-weight:600;
+    display:inline-flex; align-items:center; gap:5px}
+  .pill.ok{background:rgba(39,211,162,.14); color:var(--good)}
+  .pill.warn{background:rgba(255,180,84,.14); color:var(--warn)}
+  .pill.dim{background:var(--panel2); color:var(--muted)}
+
+  label{display:block; font-size:12.5px; color:var(--muted); margin:0 0 6px 2px}
+  input,select{width:100%; background:var(--panel2); border:1px solid var(--line);
+    color:var(--txt); border-radius:11px; padding:12px 13px; font-size:15px; outline:none}
+  input:focus,select:focus{border-color:var(--accent)}
+  input.err{border-color:var(--danger)}
+  .field{margin-bottom:13px}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:11px}
+
+  .btn{display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+    background:var(--accent); color:#06121f; font-weight:700; border:none;
+    border-radius:12px; padding:14px; font-size:15px; cursor:pointer; transition:.15s}
+  .btn:active{transform:scale(.98)}
+  .btn:disabled{opacity:.4; cursor:not-allowed}
+  .btn.ghost{background:transparent; color:var(--txt); border:1px solid var(--line)}
+  .btn.sec{background:var(--panel2); color:var(--txt)}
+
+  .kv{display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--line); font-size:14px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-weight:600; text-align:right}
+
+  .big{font-size:34px; font-weight:750; letter-spacing:-.02em}
+  .unit{font-size:15px; color:var(--muted); font-weight:600}
+
+  /* bottom nav */
+  nav{position:fixed; bottom:0; left:50%; transform:translateX(-50%); width:100%; max-width:520px;
+    background:rgba(11,15,23,.92); backdrop-filter:blur(12px); border-top:1px solid var(--line);
+    display:flex; padding:8px 6px calc(8px + env(safe-area-inset-bottom)); z-index:20}
+  nav button{flex:1; background:none; border:none; color:var(--muted); font-size:10.5px;
+    display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px 2px; cursor:pointer; font-weight:600}
+  nav button.active{color:var(--accent)}
+  nav .ico{font-size:21px; line-height:1}
+
+  /* scan animation */
+  .scanwrap{display:grid; place-items:center; padding:30px 0 18px}
+  .nfc{width:150px;height:150px;border-radius:50%;position:relative;display:grid;place-items:center;
+    background:radial-gradient(circle,rgba(79,140,255,.18),transparent 70%)}
+  .nfc::before,.nfc::after{content:"";position:absolute;border:2px solid var(--accent);
+    border-radius:50%;opacity:0;animation:ring 2.4s ease-out infinite}
+  .nfc::after{animation-delay:1.2s}
+  @keyframes ring{0%{width:60px;height:60px;opacity:.7}100%{width:150px;height:150px;opacity:0}}
+  .nfc .core{width:62px;height:62px;border-radius:18px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:grid;place-items:center;font-size:30px;z-index:1}
+
+  .vialcard{background:linear-gradient(160deg,#1a2740,#141a26); border:1px solid #2c3b5c}
+  .vial-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; color:var(--accent)}
+  .badge-auth{background:rgba(39,211,162,.12); border:1px solid rgba(39,211,162,.4); border-radius:12px;
+    padding:11px 13px; display:flex; gap:10px; align-items:center; margin-top:4px}
+
+  /* wizard steps */
+  .steps{display:flex; gap:6px; margin-bottom:16px}
+  .steps .s{flex:1; height:5px; border-radius:3px; background:var(--panel2)}
+  .steps .s.on{background:var(--accent)}
+  .steps .s.done{background:var(--accent2)}
+  .steplabel{font-size:11.5px; color:var(--muted); margin-bottom:6px; font-weight:600; letter-spacing:.02em; text-transform:uppercase}
+
+  /* label-verify visual */
+  .labelchip{background:#0e1422; border:1px dashed #34416b; border-radius:14px; padding:16px; text-align:center; margin-bottom:16px}
+  .labelchip .serial{font-family:ui-monospace,Menlo,monospace; font-size:24px; letter-spacing:3px; color:var(--accent); margin-top:6px}
+
+  .seg{display:flex; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:4px; gap:4px; margin-bottom:14px}
+  .seg button{flex:1; background:none; border:none; color:var(--muted); padding:9px; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer}
+  .seg button.active{background:var(--accent); color:#06121f}
+
+  canvas{width:100%; display:block}
+  .legend{display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; font-size:12px}
+  .legend .dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:middle}
+
+  .toast{position:fixed; bottom:96px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--panel2); border:1px solid var(--line); color:var(--txt); padding:11px 16px;
+    border-radius:12px; font-size:13.5px; opacity:0; pointer-events:none; transition:.3s; z-index:50; box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+
+  a.coa{color:var(--accent); text-decoration:none; font-weight:600}
+  .divider{height:1px;background:var(--line);margin:14px 0}
+  .hint{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.4}
+  .stat{flex:1;background:var(--panel2);border-radius:12px;padding:12px;text-align:center}
+  .stat .n{font-size:22px;font-weight:700}
+  .stat .l{font-size:10.5px;color:var(--muted);margin-top:2px}
+  .empty{text-align:center;padding:26px 16px;color:var(--muted)}
+  .empty .ico{font-size:34px;margin-bottom:8px}
+
+  /* expiry meter */
+  .expbar{height:7px;border-radius:4px;background:var(--panel2);overflow:hidden;margin:8px 0 4px}
+  .expbar i{display:block;height:100%;border-radius:4px}
+
+  /* calendar */
+  .navmo{background:var(--panel2);border:1px solid var(--line);color:var(--txt);width:38px;height:38px;
+    border-radius:11px;font-size:20px;cursor:pointer;display:grid;place-items:center}
+  .caldow{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;color:var(--muted);
+    font-size:11px;font-weight:600;margin-bottom:6px}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .calday{aspect-ratio:1;display:grid;place-items:center;border-radius:11px;font-size:13.5px;
+    cursor:pointer;position:relative;color:var(--txt);background:var(--panel2);font-variant-numeric:tabular-nums}
+  .calday.today{outline:1px solid var(--accent)}
+  .calday.sel{background:var(--accent);color:#06121f;font-weight:700}
+  .calday .d{width:5px;height:5px;border-radius:50%;background:var(--accent2);position:absolute;bottom:5px}
+  .calday.sel .d{background:#06121f}
+  .del{background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:2px 4px;margin-left:6px}
+  .del:active{color:var(--danger)}
+  .logvol{font-size:12.5px;color:var(--accent2);font-weight:600;min-height:16px;margin:-4px 2px 10px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo" style="font-size:11px">PM</div>
+  <div style="flex:1">
+    <h1 style="font-size:17px">Pepti Mart Vial Tracker</h1>
+    <div class="sub muted">Peptide vial registry &amp; dosing</div>
+  </div>
+  <div class="pill ok" id="syncpill">● local</div>
+</header>
+
+<!-- ===================== SCAN ===================== -->
+<section class="view active" id="v-scan">
+  <div class="card" style="text-align:center">
+    <div class="scanwrap">
+      <div class="nfc"><div class="core">📡</div></div>
+    </div>
+    <h2 style="font-size:18px">Tap a vial to scan</h2>
+    <p class="muted small" style="margin:8px 0 16px">Hold the top of your phone near the NFC chip on the vial cap.</p>
+    <button class="btn" id="nfcScanBtn" onclick="nfcScan()">📡 Scan vial with NFC</button>
+    <button class="btn sec" id="nfcStopBtn" style="margin-top:10px;display:none" onclick="nfcStop()">Stop scanning</button>
+    <button class="btn sec" style="margin-top:10px" onclick="show('v-register')">✍️ Register a new vial to a tag</button>
+    <div class="divider"></div>
+    <button class="btn ghost" onclick="simulateScan()">Simulate scan (no tag)</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="loadDemo()">Load a finished demo vial</button>
+    <p class="hint" id="nfcHint">Checking NFC support…</p>
+  </div>
+</section>
+
+<!-- ===================== REGISTER · WRITE TAG ===================== -->
+<section class="view" id="v-register">
+  <div class="card">
+    <div class="steplabel">Register · Write tag</div>
+    <h2 style="font-size:18px;margin-bottom:4px">Program a new vial tag</h2>
+    <p class="muted small" style="margin-bottom:16px">Enter what's printed on the label, then hold a blank NFC tag to the back of your phone to write it. Reconstitution comes next.</p>
+
+    <div class="field">
+      <label>Compound</label>
+      <select id="reg_comp">
+        <option>Retatrutide</option>
+        <option>Tirzepatide</option>
+        <option>Semaglutide</option>
+        <option>Liraglutide</option>
+        <option>Other</option>
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Net peptide (mg)</label><input id="reg_mg" type="number" inputmode="decimal" value="10"></div>
+      <div class="field"><label>Serial · blank = auto</label><input id="reg_serial" autocomplete="off" placeholder="9C21-0042"></div>
+    </div>
+    <div class="field"><label>Origin / lot</label><input id="reg_origin" placeholder="Pepti Mart · Lot R24-118"></div>
+    <div class="field"><label>Tested purity</label><input id="reg_purity" placeholder="99.2% (HPLC)"></div>
+
+    <button class="btn" id="reg_btn" onclick="registerVial()">✍️ Write tag &amp; continue</button>
+    <p class="hint" id="reg_hint">A blank NTAG213/215/216 sticker works well. The serial you set here is what the verify step checks against.</p>
+    <button class="btn ghost" style="margin-top:6px" onclick="show('v-scan')">Cancel</button>
+  </div>
+</section>
+
+<!-- ===================== STEP 1 · VERIFY LABEL ===================== -->
+<section class="view" id="v-verify">
+  <div class="card">
+    <div class="steps"><div class="s on"></div><div class="s"></div><div class="s"></div></div>
+    <div class="steplabel">Step 1 of 3 · Authenticate</div>
+    <h2 style="font-size:18px;margin-bottom:4px">Verify the number on the label</h2>
+    <p class="muted small" style="margin-bottom:16px">The chip was read successfully. Now confirm it matches the serial <b>printed on the physical label</b> — this is what catches a re-stickered or counterfeit vial.</p>
+
+    <div class="labelchip">
+      <div class="small muted">Chip reports serial</div>
+      <div class="serial" id="chipSerial">9C21-0042</div>
+    </div>
+
+    <div class="field">
+      <label>Type the serial printed on the vial label</label>
+      <input id="ver_input" inputmode="text" autocomplete="off" placeholder="e.g. 9C21-0042" oninput="onVerifyType()">
+      <div class="hint" id="ver_hint">Must match the chip exactly.</div>
+    </div>
+
+    <button class="btn" id="ver_btn" onclick="doVerify()">Verify &amp; continue</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="show('v-scan')">Cancel</button>
+  </div>
+</section>
+
+<!-- ===================== STEP 2 · RECONSTITUTION ===================== -->
+<section class="view" id="v-recon">
+  <div class="card">
+    <div class="steps"><div class="s done"></div><div class="s on"></div><div class="s"></div></div>
+    <div class="steplabel">Step 2 of 3 · Reconstitute</div>
+    <h2 style="font-size:18px;margin-bottom:4px">Add bacteriostatic water</h2>
+    <p class="muted small" style="margin-bottom:16px">Enter how much BAC water you're drawing into the vial. The peptide amount comes from the verified label.</p>
+
+    <div class="field">
+      <label>Peptide in vial (mg) · from label</label>
+      <input id="r_mg" type="number" inputmode="decimal" value="10" oninput="calcConc()">
+    </div>
+    <div class="field">
+      <label>Bacteriostatic water you are adding (mL)</label>
+      <input id="r_ml" type="number" inputmode="decimal" placeholder="e.g. 2.0" oninput="calcConc()">
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label>Date reconstituted</label>
+        <input id="r_date" type="date">
+      </div>
+      <div class="field">
+        <label>Shelf life (days)</label>
+        <input id="r_bud" type="number" inputmode="numeric" value="28">
+      </div>
+    </div>
+
+    <div class="card" style="background:var(--panel2);margin:4px 0 0;text-align:center">
+      <div class="muted small">Resulting concentration</div>
+      <div class="big mono" id="r_conc">— <span class="unit">mg/mL</span></div>
+      <div class="muted small" id="r_per01">enter BAC water to calculate</div>
+    </div>
+
+    <button class="btn" id="r_save" style="margin-top:16px" disabled onclick="saveRecon()">Save &amp; set dose →</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="show('v-verify')">← Back</button>
+  </div>
+</section>
+
+<!-- ===================== STEP 3 · DOSE ===================== -->
+<section class="view" id="v-dose">
+  <div class="card">
+    <div class="steps" id="doseSteps"><div class="s done"></div><div class="s done"></div><div class="s on"></div></div>
+    <div class="steplabel" id="doseStepLabel">Step 3 of 3 · Desired dose</div>
+    <h2 style="font-size:18px;margin-bottom:4px">Dose calculator</h2>
+    <p class="muted small" style="margin-bottom:16px">Enter your desired dose — we'll show the exact volume to draw.</p>
+
+    <div class="grid2">
+      <div class="field">
+        <label>Peptide (mg)</label>
+        <input id="d_mg" type="number" inputmode="decimal" value="10" oninput="calcDose()">
+      </div>
+      <div class="field">
+        <label>BAC water (mL)</label>
+        <input id="d_ml" type="number" inputmode="decimal" placeholder="—" oninput="calcDose()">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Desired dose (mg)</label>
+      <input id="d_dose" type="number" inputmode="decimal" placeholder="e.g. 1.0" oninput="calcDose()">
+    </div>
+
+    <div class="card" style="background:linear-gradient(160deg,#16233b,#141a26);text-align:center;margin:2px 0 0">
+      <div class="muted small">Draw to</div>
+      <div class="big mono" id="d_vol">— <span class="unit">mL</span></div>
+      <div class="muted small mono" id="d_units">enter a dose</div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="kv"><span class="k">Concentration</span><span class="v mono" id="d_conc">—</span></div>
+    <div class="kv"><span class="k">Doses per vial</span><span class="v mono" id="d_count">—</span></div>
+    <div class="kv"><span class="k">Per 0.01 mL tick</span><span class="v mono" id="d_tick">—</span></div>
+
+    <button class="btn" id="d_finish" style="margin-top:16px" onclick="finishSetup()">Finish &amp; save vial</button>
+    <button class="btn sec" style="margin-top:10px" onclick="show('v-log')">📅 Go to dose calendar</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="show('v-vial')">← Back to vial</button>
+  </div>
+</section>
+
+<!-- ===================== VIAL DETAIL ===================== -->
+<section class="view" id="v-vial">
+  <div id="vialBody"></div>
+</section>
+
+<!-- ===================== PK PLOTTER ===================== -->
+<section class="view" id="v-plot">
+  <div class="card">
+    <h2 style="font-size:18px;margin-bottom:4px">GLP-1 plasma plotter</h2>
+    <p class="muted small" style="margin-bottom:14px">Plasma level over time using a 1-compartment model (absorption + half-life elimination).</p>
+
+    <div class="seg" id="pkSeg">
+      <button class="active" data-m="log" onclick="setPkMode('log')">From my log</button>
+      <button data-m="sim" onclick="setPkMode('sim')">Simulate</button>
+    </div>
+
+    <div class="field">
+      <label>Compound</label>
+      <select id="p_drug" onchange="drawPK()">
+        <option value="sema">Semaglutide · t½ 165 h</option>
+        <option value="tirz">Tirzepatide · t½ 120 h</option>
+        <option value="reta" selected>Retatrutide · t½ 144 h</option>
+        <option value="lira">Liraglutide · t½ 13 h</option>
+      </select>
+    </div>
+    <div id="pkSimControls" style="display:none">
+      <div class="grid2">
+        <div class="field">
+          <label>Dose (mg)</label>
+          <input id="p_dose" type="number" inputmode="decimal" value="2" oninput="drawPK()">
+        </div>
+        <div class="field">
+          <label>Interval (days)</label>
+          <input id="p_int" type="number" inputmode="decimal" value="7" oninput="drawPK()">
+        </div>
+      </div>
+      <div class="field">
+        <label>Weeks to simulate: <span id="p_wklbl" class="mono">8</span></label>
+        <input id="p_wk" type="range" min="2" max="16" value="8" oninput="document.getElementById('p_wklbl').textContent=this.value; drawPK()">
+      </div>
+    </div>
+
+    <canvas id="pk" height="220"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--accent)"></span>Plasma level</span>
+      <span><span class="dot" style="background:var(--warn)"></span>Doses</span>
+      <span><span class="dot" style="background:var(--accent2)"></span><span id="pkLegend3">Now</span></span>
+    </div>
+
+    <div class="row" style="gap:10px;margin-top:14px">
+      <div class="stat"><div class="n mono" id="p_peak">—</div><div class="l" id="p_l1">Current level</div></div>
+      <div class="stat"><div class="n mono" id="p_trough">—</div><div class="l" id="p_l2">Doses logged</div></div>
+      <div class="stat"><div class="n mono" id="p_acc">—</div><div class="l" id="p_l3">Days tracked</div></div>
+    </div>
+    <p class="hint" id="pkHint">Illustrative pharmacokinetics — relative units, not a clinical dosing guide.</p>
+  </div>
+</section>
+
+<!-- ===================== DOSE LOG / CALENDAR ===================== -->
+<section class="view" id="v-log">
+  <div class="card">
+    <h2 style="font-size:18px;margin-bottom:12px">Log a dose</h2>
+    <div class="grid2">
+      <div class="field">
+        <label>Date</label>
+        <input id="log_date" type="date" onchange="calSelect(this.value)">
+      </div>
+      <div class="field">
+        <label>Dose (mg)</label>
+        <input id="log_dose" type="number" inputmode="decimal" placeholder="e.g. 2.0" oninput="logVolPreview()">
+      </div>
+    </div>
+    <div class="logvol" id="log_vol"></div>
+    <button class="btn" onclick="addFromForm()">Add dose</button>
+  </div>
+
+  <div class="card">
+    <div class="row between" style="margin-bottom:12px">
+      <button class="navmo" onclick="calMove(-1)">‹</button>
+      <h2 id="calTitle" style="font-size:16px">—</h2>
+      <button class="navmo" onclick="calMove(1)">›</button>
+    </div>
+    <div class="caldow"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+    <div class="calgrid" id="calGrid"></div>
+  </div>
+
+  <div class="card" id="logList"></div>
+
+  <button class="btn ghost" onclick="show('v-vial')">← Back to vial</button>
+</section>
+
+<!-- ===================== NAV ===================== -->
+<nav>
+  <button class="active" data-v="v-scan" onclick="show('v-scan')"><span class="ico">📡</span>Scan</button>
+  <button data-v="v-vial" onclick="show('v-vial')"><span class="ico">💉</span>Vial</button>
+  <button data-v="v-dose" onclick="show('v-dose')"><span class="ico">🧮</span>Dose</button>
+  <button data-v="v-log" onclick="show('v-log')"><span class="ico">📅</span>Log</button>
+  <button data-v="v-plot" onclick="show('v-plot')"><span class="ico">📈</span>Plot</button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------- vial state ----------
+function freshVial(){
+  return {
+    name:'Retatrutide 10mg', compound:'Retatrutide', mg:10,
+    serial:'9C21-0042', id:'VL-7F3A-9C21-0042', uid:null,
+    origin:'Pepti Mart · Lot R24-118', purity:'99.2% (HPLC)',
+    verified:false, reconstituted:false,
+    bacMl:null, reconDate:null, dose:null, bud:28
+  };
+}
+let vial=freshVial();
+
+// ---------- vial persistence ----------
+const vialStore = loadVials();             // { id: vialObject }
+function loadVials(){ try{return JSON.parse(localStorage.getItem('pm_vials_v1')||'{}')}catch(e){return {}} }
+function saveCurrentVial(){
+  if(vial && vial.id && vial.verified){
+    vialStore[vial.id] = vial;
+    try{ localStorage.setItem('pm_vials_v1', JSON.stringify(vialStore)); }catch(e){}
+    try{ localStorage.setItem('pm_current_v1', vial.id); }catch(e){}
+  }
+}
+(function restoreVial(){
+  const cur = localStorage.getItem('pm_current_v1');
+  if(cur && vialStore[cur]) vial = Object.assign(freshVial(), vialStore[cur]);
+})();
+
+// ---------- navigation ----------
+function show(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===id));
+  // nav highlight: dose-wizard views map onto the Vial tab unless it's the dose tool
+  const navMap={'v-scan':'v-scan','v-register':'v-scan','v-vial':'v-vial','v-verify':'v-vial','v-recon':'v-vial','v-dose':'v-dose','v-log':'v-log','v-plot':'v-plot'};
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===navMap[id]));
+  window.scrollTo({top:0,behavior:'instant'});
+  if(id==='v-plot') syncPlotDefaults();
+  if(id==='v-vial') renderVial();
+  if(id==='v-dose') calcDose();
+  if(id==='v-log') renderLog();
+}
+let toastT;
+function toast(m){
+  const t=document.getElementById('toast'); t.textContent=m; t.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),1900);
+}
+
+// ---------- Web NFC ----------
+const NFC_SUPPORTED = ('NDEFReader' in window);
+let nfcReader=null, nfcAbort=null, pendingUid=null;
+
+function initNFC(){
+  const btn=document.getElementById('nfcScanBtn');
+  const hint=document.getElementById('nfcHint');
+  if(NFC_SUPPORTED){
+    hint.innerHTML='Tap <b>Scan vial with NFC</b>, then hold your phone to the chip. Requires Chrome on Android (HTTPS).';
+  }else{
+    btn.disabled=true; btn.textContent='NFC not available here';
+    hint.innerHTML='For real scanning, open this in <b>Chrome on Android</b>. You can still use <b>Simulate scan</b> below to explore the app.';
+  }
+}
+
+async function nfcScan(){
+  if(!NFC_SUPPORTED){ toast('Web NFC needs Chrome on Android'); return; }
+  try{
+    nfcReader=new NDEFReader();
+    nfcAbort=new AbortController();
+    await nfcReader.scan({signal:nfcAbort.signal});
+    document.getElementById('nfcScanBtn').textContent='📡 Scanning… hold to chip';
+    document.getElementById('nfcStopBtn').style.display='flex';
+    toast('Ready — hold your phone to the vial');
+    nfcReader.onreadingerror=()=>toast('Could not read that tag — try again');
+    nfcReader.onreading=(event)=>{
+      nfcStop();
+      handleScannedTag(parseVialFromMessage(event.message, event.serialNumber));
+    };
+  }catch(err){
+    nfcStop();
+    toast(err && err.name==='NotAllowedError' ? 'NFC permission denied' : 'NFC error: '+(err.message||err));
+  }
+}
+function nfcStop(){
+  if(nfcAbort){ try{nfcAbort.abort();}catch(e){} }
+  nfcReader=null; nfcAbort=null;
+  const b=document.getElementById('nfcScanBtn'); if(b){ b.textContent='📡 Scan vial with NFC'; }
+  const s=document.getElementById('nfcStopBtn'); if(s) s.style.display='none';
+}
+
+function decodeRecordText(rec){
+  try{ return new TextDecoder(rec.encoding||'utf-8').decode(rec.data); }
+  catch(e){ try{ return new TextDecoder().decode(rec.data); }catch(_){ return ''; } }
+}
+function parseVialFromMessage(message, hwSerial){
+  let payload=null;
+  for(const rec of (message&&message.records)||[]){
+    if(rec.recordType==='mime' && rec.mediaType==='application/json'){
+      try{ payload=JSON.parse(decodeRecordText(rec)); }catch(e){}
+    }else if(rec.recordType==='text'){
+      const txt=decodeRecordText(rec);
+      try{ payload=JSON.parse(txt); }
+      catch(e){ if(!payload && txt.trim()) payload={serial:txt.trim()}; }
+    }
+  }
+  return {payload, hwSerial:hwSerial||null};
+}
+
+function handleScannedTag({payload, hwSerial}){
+  if(payload && (payload.compound || payload.serial)){
+    const serial=(payload.serial||hwSerial||'').toString().toUpperCase();
+    const id=payload.id || ('VL-'+serial.replace(/[^A-Z0-9]/g,'') || ('VL-'+(hwSerial||'').replace(/[^a-zA-Z0-9]/g,'').toUpperCase()));
+    let v=Object.assign(freshVial(),{
+      name: payload.name || ((payload.compound||'Vial')+(payload.mg?(' '+payload.mg+'mg'):'')),
+      compound: payload.compound || 'Peptide',
+      mg: +payload.mg || 10,
+      serial, id,
+      origin: payload.origin || 'Unknown source',
+      purity: payload.purity || '—',
+      uid: hwSerial||null,
+      verified:false, reconstituted:false, bacMl:null, reconDate:null, dose:null, bud:28
+    });
+    // resume saved reconstitution/dose state if we've registered this tag before
+    if(vialStore[v.id]) v=Object.assign(v, vialStore[v.id], {uid:hwSerial||vialStore[v.id].uid});
+    vial=v;
+    document.getElementById('chipSerial').textContent=vial.serial;
+    resetVerifyInputs();
+    toast('Vial read from tag ✓');
+    show(vial.reconstituted ? 'v-vial' : 'v-verify');
+  }else{
+    pendingUid=hwSerial||null;
+    toast('Blank tag — let’s register it');
+    show('v-register');
+  }
+}
+
+async function nfcWrite(data){
+  if(!NFC_SUPPORTED) return false;
+  try{
+    const writer=new NDEFReader();
+    toast('Hold the blank tag to the back of your phone…');
+    await writer.write({records:[{
+      recordType:'mime', mediaType:'application/json',
+      data:new TextEncoder().encode(JSON.stringify(data))
+    }]});
+    return true;
+  }catch(e){
+    toast('Write failed: '+(e.message||e)); return false;
+  }
+}
+
+function genSerial(){
+  const s=Math.random().toString(36).replace(/[^a-z0-9]/g,'').slice(0,4).toUpperCase().padEnd(4,'0');
+  return s+'-'+Math.floor(1000+Math.random()*8999);
+}
+async function registerVial(){
+  const compound=document.getElementById('reg_comp').value;
+  const mg=+document.getElementById('reg_mg').value||0;
+  let serial=document.getElementById('reg_serial').value.trim().toUpperCase();
+  const origin=document.getElementById('reg_origin').value.trim()||'Pepti Mart';
+  const purity=document.getElementById('reg_purity').value.trim()||'—';
+  if(!compound || mg<=0){ toast('Pick a compound and enter mg'); return; }
+  if(!serial) serial=genSerial();
+  const id='VL-'+serial.replace(/[^A-Z0-9]/g,'');
+  const data={ver:1, id, name:compound+' '+mg+'mg', compound, mg, serial, origin, purity};
+
+  const wrote=NFC_SUPPORTED ? await nfcWrite(data) : false;
+  if(NFC_SUPPORTED && !wrote) return;       // write failed; stay so they can retry
+
+  vial=Object.assign(freshVial(), data, {uid:pendingUid||null, verified:false, reconstituted:false});
+  pendingUid=null;
+  document.getElementById('chipSerial').textContent=vial.serial;
+  resetVerifyInputs();
+  toast(wrote ? 'Tag written & vial registered ✓' : 'Saved — verify to continue');
+  show('v-verify');
+}
+
+function resetVerifyInputs(){
+  const inp=document.getElementById('ver_input'); if(inp){ inp.value=''; inp.classList.remove('err'); }
+  const btn=document.getElementById('ver_btn'); if(btn) btn.disabled=false;
+  const hint=document.getElementById('ver_hint'); if(hint) hint.textContent='Must match the chip exactly.';
+  document.getElementById('ver_input').placeholder='e.g. '+vial.serial;
+  document.getElementById('r_mg').value=vial.mg;
+  document.getElementById('r_ml').value=vial.bacMl||'';
+  document.getElementById('r_date').value=vial.reconDate||new Date().toISOString().slice(0,10);
+  document.getElementById('r_bud').value=vial.bud||28;
+  calcConc();
+}
+
+// ---------- scan (fallbacks) ----------
+function simulateScan(){
+  vial=freshVial();                       // brand-new, nothing entered yet
+  toast('Simulated chip detected · reading…');
+  setTimeout(()=>{
+    document.getElementById('chipSerial').textContent=vial.serial;
+    resetVerifyInputs();
+    show('v-verify');
+  },700);
+}
+function loadDemo(){
+  vial=freshVial();
+  vial.verified=true; vial.reconstituted=true;
+  vial.bacMl=2; vial.reconDate='2026-06-08'; vial.dose=2;
+  saveCurrentVial();
+  toast('Loaded demo vial');
+  show('v-vial');
+}
+
+// ---------- step 1: verify ----------
+function onVerifyType(){
+  const inp=document.getElementById('ver_input');
+  inp.classList.remove('err');
+  document.getElementById('ver_hint').textContent='Must match the chip exactly.';
+}
+function doVerify(){
+  const val=document.getElementById('ver_input').value.trim().toUpperCase();
+  const inp=document.getElementById('ver_input');
+  if(val===vial.serial.toUpperCase()){
+    vial.verified=true;
+    saveCurrentVial();
+    toast('Serial matches ✓ Authentic');
+    show('v-recon'); calcConc();
+  }else{
+    inp.classList.add('err');
+    document.getElementById('ver_hint').textContent='⚠ Does not match the chip — possible counterfeit. Check the label.';
+    toast('Serial mismatch');
+  }
+}
+
+// ---------- step 2: reconstitution ----------
+function calcConc(){
+  const mg=+document.getElementById('r_mg').value||0;
+  const mlRaw=document.getElementById('r_ml').value;
+  const ml=+mlRaw||0;
+  const c= ml>0? mg/ml : 0;
+  const save=document.getElementById('r_save');
+  if(ml>0){
+    document.getElementById('r_conc').innerHTML = c.toFixed(2)+' <span class="unit">mg/mL</span>';
+    document.getElementById('r_per01').textContent = '0.10 mL = '+(c*0.1).toFixed(2)+' mg';
+    save.disabled=false;
+  }else{
+    document.getElementById('r_conc').innerHTML = '— <span class="unit">mg/mL</span>';
+    document.getElementById('r_per01').textContent = 'enter BAC water to calculate';
+    save.disabled=true;
+  }
+}
+function saveRecon(){
+  vial.mg=+document.getElementById('r_mg').value||0;
+  vial.bacMl=+document.getElementById('r_ml').value||0;
+  vial.reconDate=document.getElementById('r_date').value;
+  vial.bud=+document.getElementById('r_bud').value||28;
+  vial.reconstituted=true;
+  saveCurrentVial();
+  toast('Reconstitution saved');
+  // hand the numbers to the dose step
+  document.getElementById('d_mg').value=vial.mg;
+  document.getElementById('d_ml').value=vial.bacMl;
+  document.getElementById('d_dose').value='';
+  document.getElementById('doseSteps').style.display='flex';
+  document.getElementById('doseStepLabel').style.display='block';
+  document.getElementById('d_finish').style.display='flex';
+  calcDose();
+  show('v-dose');
+}
+
+// ---------- step 3 / tool: dose calc ----------
+function calcDose(){
+  const mg=+document.getElementById('d_mg').value||0;
+  const ml=+document.getElementById('d_ml').value||0;
+  const doseRaw=document.getElementById('d_dose').value;
+  const dose=+doseRaw||0;
+  const c = ml>0? mg/ml : 0;
+  const has = c>0 && dose>0;
+  const vol = has? dose/c : 0;
+  const units = vol*100;
+  document.getElementById('d_vol').innerHTML = has? vol.toFixed(2)+' <span class="unit">mL</span>' : '— <span class="unit">mL</span>';
+  document.getElementById('d_units').textContent = has? '= '+units.toFixed(0)+' units (U-100)' : 'enter a dose';
+  document.getElementById('d_conc').textContent = c>0? c.toFixed(2)+' mg/mL' : '—';
+  document.getElementById('d_count').textContent = (has? Math.floor(mg/dose):'—')+(has?' doses':'');
+  document.getElementById('d_tick').textContent = c>0? (c*0.01).toFixed(2)+' mg' : '—';
+}
+function finishSetup(){
+  vial.dose=+document.getElementById('d_dose').value||null;
+  saveCurrentVial();
+  toast('Vial saved to registry ✓');
+  show('v-vial');
+}
+function logDose(){
+  const mg=+document.getElementById('d_mg').value||0,
+        ml=+document.getElementById('d_ml').value||0,
+        dose=+document.getElementById('d_dose').value||0;
+  if(!(mg>0&&ml>0&&dose>0)){ toast('Enter a dose first'); return; }
+  const vol=dose/(mg/ml);
+  addLoggedDose(new Date().toISOString().slice(0,10), dose, vol);
+  toast('Dose logged ✓');
+  show('v-log');
+}
+
+// ---------- vial detail (state-driven) ----------
+function renderVial(){
+  const el=document.getElementById('vialBody');
+  if(!vial.verified){
+    el.innerHTML=`
+      <div class="card"><div class="empty">
+        <div class="ico">💉</div>
+        <h3 style="font-size:16px;margin-bottom:6px">No active vial</h3>
+        <p class="small" style="margin-bottom:16px">Scan a vial's NFC chip to register and set it up.</p>
+        <button class="btn" onclick="show('v-scan')">Go to scan</button>
+      </div></div>`;
+    return;
+  }
+  const c = (vial.reconstituted && vial.bacMl>0)? vial.mg/vial.bacMl : 0;
+  const ex = vial.reconstituted ? expiryInfo(vial) : null;
+
+  // ---- dashboard usage stats ----
+  const entries = doseLog.filter(d=>d.vialId===vial.id);
+  const dosesTaken = entries.length;
+  const mgUsed = entries.reduce((s,d)=>s+(+d.dose||0),0);
+  const volUsed = entries.reduce((s,d)=>s+(+d.vol||0),0);
+  const mgLeft = Math.max(0, vial.mg - mgUsed);
+  const perDose = (vial.dose>0)? vial.dose : (dosesTaken? mgUsed/dosesTaken : 0);
+  const dosesLeft = perDose>0? Math.floor(mgLeft/perDose) : '—';
+  const volLeft = (vial.bacMl>0)? Math.max(0, vial.bacMl - volUsed) : 0;
+  const volPct = (vial.bacMl>0)? volLeft/vial.bacMl*100 : 0;
+  const volBar = vial.reconstituted ? `
+      <div class="expbar" style="margin-top:12px"><i style="width:${volPct}%;background:var(--accent)"></i></div>
+      <div class="small muted" style="margin-top:4px">${volLeft.toFixed(2)} mL of ${vial.bacMl.toFixed(2)} mL remaining</div>` : '';
+  const dash = `
+    <div class="card">
+      <div class="row" style="gap:10px">
+        <div class="stat"><div class="n mono">${dosesTaken}</div><div class="l">Doses taken</div></div>
+        <div class="stat"><div class="n mono">${dosesLeft}</div><div class="l">Doses left</div></div>
+        <div class="stat"><div class="n mono">${mgLeft.toFixed(mgLeft<10?1:0)}<span style="font-size:12px"> mg</span></div><div class="l">Peptide left</div></div>
+      </div>
+      ${volBar}
+    </div>`;
+  const reconBlock = vial.reconstituted ? `
+    <div class="card">
+      <div class="row between" style="margin-bottom:10px">
+        <h3 style="font-size:14px">Reconstitution</h3>
+        <span class="pill ${ex.cls}">${ex.label}</span>
+      </div>
+      <div class="kv"><span class="k">Date mixed</span><span class="v">${vial.reconDate||'—'}</span></div>
+      <div class="kv"><span class="k">BAC water added</span><span class="v">${vial.bacMl.toFixed(2)} mL</span></div>
+      <div class="kv"><span class="k">Concentration</span><span class="v">${c.toFixed(2)} mg/mL</span></div>
+      ${vial.dose?`<div class="kv"><span class="k">Saved dose</span><span class="v">${vial.dose} mg = ${(vial.dose/c).toFixed(2)} mL</span></div>`:''}
+      <div class="kv"><span class="k">Expires</span><span class="v">${ex.date}</span></div>
+      <div class="expbar"><i style="width:${ex.pct}%;background:${ex.color}"></i></div>
+      <div class="small" style="color:${ex.color};font-weight:600">${ex.detail}</div>
+      <button class="btn sec" style="margin-top:12px" onclick="show('v-recon')">Edit reconstitution</button>
+    </div>` : `
+    <div class="card">
+      <div class="row between" style="margin-bottom:10px">
+        <h3 style="font-size:14px">Reconstitution</h3>
+        <span class="pill warn">Not reconstituted</span>
+      </div>
+      <p class="small muted" style="margin-bottom:12px">This vial hasn't been mixed yet. Add bacteriostatic water to activate it.</p>
+      <button class="btn" onclick="show('v-recon')">Reconstitute now</button>
+    </div>`;
+
+  el.innerHTML=`
+    <div class="card vialcard">
+      <div class="row between">
+        <div>
+          <h2 style="font-size:19px">${vial.name}</h2>
+          <div class="vial-id">${vial.id}</div>
+        </div>
+        <div class="pill ok">✓ Authentic</div>
+      </div>
+      <div class="badge-auth">
+        <span style="font-size:20px">🛡️</span>
+        <div>
+          <div style="font-weight:650;font-size:13px">Label serial verified</div>
+          <div class="small muted">Chip + printed label matched</div>
+        </div>
+      </div>
+    </div>
+
+    ${dash}
+
+    <div class="card">
+      <h3 style="font-size:14px;margin-bottom:6px">Provenance</h3>
+      <div class="kv"><span class="k">Origin / lab</span><span class="v">${vial.origin}</span></div>
+      <div class="kv"><span class="k">Compound</span><span class="v">${vial.compound}</span></div>
+      <div class="kv"><span class="k">Net peptide</span><span class="v">${vial.mg} mg</span></div>
+      <div class="kv"><span class="k">Tested purity</span><span class="v">${vial.purity}</span></div>
+      <div class="kv"><span class="k">Unique serial</span><span class="v mono">${vial.serial}</span></div>
+      <div class="kv"><span class="k">COA</span><span class="v"><a class="coa" href="#" onclick="toast('Opening COA PDF…');return false">View certificate ↗</a></span></div>
+    </div>
+
+    ${reconBlock}
+
+    <button class="btn" onclick="openLogForVial()">📅 Log a dose</button>
+    <div style="height:8px"></div>
+    <button class="btn sec" onclick="show('v-dose')">Open dose calculator</button>
+    <div style="height:8px"></div>
+    <button class="btn ghost" onclick="show('v-scan')">← Back to scan</button>`;
+}
+
+// ---------- expiry ----------
+function expiryInfo(v){
+  const start=new Date((v.reconDate||new Date().toISOString().slice(0,10))+'T00:00:00');
+  const bud=v.bud||28;
+  const exp=new Date(start.getTime()+bud*864e5);
+  const days=Math.ceil((exp-new Date())/864e5);
+  const pct=Math.max(0,Math.min(100, days/bud*100));
+  let color='var(--good)', cls='ok', label=days+' days left', detail='Use within '+days+' days';
+  if(days<=0){ color='var(--danger)'; cls='warn'; label='Expired'; detail='Expired — discard vial'; }
+  else if(days<=7){ color='var(--warn)'; cls='warn'; label=days+' days left'; detail='Expiring soon — '+days+' days'; }
+  return {date:exp.toISOString().slice(0,10), days, pct, color, cls, label, detail};
+}
+
+// ---------- dose log + calendar ----------
+let doseLog=loadLog();
+function loadLog(){ try{return JSON.parse(localStorage.getItem('pm_doselog_v2')||'[]')}catch(e){return []} }
+function persistLog(){ try{localStorage.setItem('pm_doselog_v2',JSON.stringify(doseLog))}catch(e){} }
+
+let calY, calM, calSel;
+(function calInit(){ const t=new Date(); calY=t.getFullYear(); calM=t.getMonth(); calSel=t.toISOString().slice(0,10); })();
+
+function calMove(d){ calM+=d; if(calM<0){calM=11;calY--} if(calM>11){calM=0;calY++} renderCalendar(); }
+function calSelect(ds){ calSel=ds; const di=document.getElementById('log_date'); if(di) di.value=ds;
+  // jump the visible month to the selected date
+  const dt=new Date(ds+'T00:00:00'); calY=dt.getFullYear(); calM=dt.getMonth(); renderCalendar(); }
+
+function renderCalendar(){
+  const title=new Date(calY,calM,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  document.getElementById('calTitle').textContent=title;
+  const first=new Date(calY,calM,1).getDay();
+  const days=new Date(calY,calM+1,0).getDate();
+  const today=new Date().toISOString().slice(0,10);
+  let html='';
+  for(let i=0;i<first;i++) html+='<div></div>';
+  for(let d=1;d<=days;d++){
+    const ds=`${calY}-${String(calM+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const has=doseLog.some(x=>x.date===ds);
+    let cls='calday'; if(ds===today)cls+=' today'; if(ds===calSel)cls+=' sel';
+    html+=`<div class="${cls}" onclick="calSelect('${ds}')">${d}${has?'<span class="d"></span>':''}</div>`;
+  }
+  document.getElementById('calGrid').innerHTML=html;
+}
+
+function logVolPreview(){
+  const dose=+document.getElementById('log_dose').value||0;
+  const el=document.getElementById('log_vol');
+  if(vial.reconstituted && vial.bacMl>0 && dose>0){
+    el.textContent='Draw '+(dose/(vial.mg/vial.bacMl)).toFixed(2)+' mL ('+(dose/(vial.mg/vial.bacMl)*100).toFixed(0)+' units)';
+  } else if(dose>0){ el.textContent='Reconstitute a vial to auto-calc volume'; }
+  else el.textContent='';
+}
+
+function addLoggedDose(date,dose,vol){
+  doseLog.push({id:Date.now()+Math.floor(Math.random()*999), date, compound:vial.compound||'—', dose, vol, vialId:vial.id});
+  persistLog();
+}
+function addFromForm(){
+  const date=document.getElementById('log_date').value;
+  const dose=+document.getElementById('log_dose').value||0;
+  if(!date||dose<=0){ toast('Pick a date and dose'); return; }
+  let vol=null;
+  if(vial.reconstituted && vial.bacMl>0) vol=dose/(vial.mg/vial.bacMl);
+  addLoggedDose(date,dose,vol);
+  document.getElementById('log_dose').value=''; logVolPreview();
+  toast('Dose logged ✓'); renderLog();
+}
+function deleteDose(id){ doseLog=doseLog.filter(d=>d.id!==id); persistLog(); renderLog(); }
+function clearLog(){ if(!confirm('Clear all logged doses?')) return; doseLog=[]; persistLog(); renderLog(); toast('Dose log cleared'); }
+function openLogForVial(){
+  const today=new Date().toISOString().slice(0,10);
+  calSel=today;
+  const di=document.getElementById('log_date'); if(di) di.value=today;
+  document.getElementById('log_dose').value = vial.dose || '';
+  show('v-log');
+}
+
+function fmtDate(s){ return new Date(s+'T00:00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}); }
+function renderLogList(){
+  const el=document.getElementById('logList');
+  if(!doseLog.length){ el.innerHTML='<div class="empty"><div class="ico">📅</div><p class="small">No doses logged yet. Pick a day above and add one.</p></div>'; return; }
+  const sorted=[...doseLog].sort((a,b)=> b.date.localeCompare(a.date) || b.id-a.id);
+  el.innerHTML='<div class="row between" style="margin-bottom:8px"><h3 style="font-size:14px">Dose history · '+doseLog.length+'</h3><button class="del" style="font-size:12px" onclick="clearLog()">Clear all</button></div>'+
+    sorted.map(d=>`<div class="kv"><span class="k">${fmtDate(d.date)}</span>
+      <span class="v">${d.compound} · ${d.dose} mg${d.vol?` · ${d.vol.toFixed(2)} mL`:''}
+      <button class="del" onclick="deleteDose(${d.id})">✕</button></span></div>`).join('');
+}
+function renderLog(){
+  const di=document.getElementById('log_date'); if(di && !di.value) di.value=calSel;
+  renderCalendar(); logVolPreview(); renderLogList();
+}
+
+// ---------- PK model (Bateman / 1-compartment) ----------
+const DRUGS={
+  sema:{thalf:165, ka:0.030},
+  tirz:{thalf:120, ka:0.040},
+  reta:{thalf:144, ka:0.035},
+  lira:{thalf:13,  ka:0.25}
+};
+function conc(t, dose, ke, ka){
+  if(t<0) return 0;
+  if(Math.abs(ka-ke)<1e-9) return dose*ke*t*Math.exp(-ke*t);
+  return dose*(ka/(ka-ke))*(Math.exp(-ke*t)-Math.exp(-ka*t));
+}
+let pkMode='log';
+const COMPOUND_KEY={'Retatrutide':'reta','Semaglutide':'sema','Tirzepatide':'tirz','Liraglutide':'lira'};
+function setPkMode(m){
+  pkMode=m;
+  document.querySelectorAll('#pkSeg button').forEach(b=>b.classList.toggle('active',b.dataset.m===m));
+  document.getElementById('pkSimControls').style.display = (m==='sim')?'block':'none';
+  drawPK();
+}
+function syncPlotDefaults(){
+  const key=COMPOUND_KEY[vial.compound]; if(key) document.getElementById('p_drug').value=key;
+  const has=doseLog.some(x=>x.vialId===vial.id && (+x.dose)>0);
+  setPkMode(has?'log':'sim');
+}
+
+function drawPKlog(){
+  const d=DRUGS[document.getElementById('p_drug').value];
+  const ke=Math.LN2/d.thalf, ka=d.ka;
+  document.getElementById('p_l1').textContent='Current level';
+  document.getElementById('p_l2').textContent='Doses logged';
+  document.getElementById('p_l3').textContent='Days tracked';
+  document.getElementById('pkHint').textContent='Built from your logged doses for this vial — relative units.';
+
+  const entries=doseLog.filter(x=>x.vialId===vial.id && (+x.dose)>0)
+    .map(x=>({t:new Date(x.date+'T12:00:00').getTime(), dose:+x.dose}))
+    .sort((a,b)=>a.t-b.t);
+
+  const cv=document.getElementById('pk'), dpr=window.devicePixelRatio||1;
+  const W=cv.clientWidth, H=220;
+  cv.width=W*dpr; cv.height=H*dpr;
+  const g=cv.getContext('2d'); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
+
+  if(!entries.length){
+    g.fillStyle='#5b6a86'; g.font='13px system-ui'; g.textAlign='center';
+    g.fillText('No logged doses for this vial yet.', W/2, H/2-6);
+    g.fillText('Add doses in the Log tab.', W/2, H/2+12); g.textAlign='left';
+    document.getElementById('p_peak').textContent='—';
+    document.getElementById('p_trough').textContent='0';
+    document.getElementById('p_acc').textContent='—';
+    return;
+  }
+
+  const t0=entries[0].t, now=Date.now(), lastT=entries[entries.length-1].t;
+  const endT=Math.max(now,lastT)+7*864e5;
+  const totalH=(endT-t0)/36e5, nowH=(now-t0)/36e5;
+  const doses=entries.map(e=>({h:(e.t-t0)/36e5, dose:e.dose}));
+
+  const N=400, xs=[], ys=[]; let ymax=0;
+  for(let i=0;i<=N;i++){ const h=totalH*i/N; let c=0; for(const dd of doses) c+=conc(h-dd.h,dd.dose,ke,ka); xs.push(h); ys.push(c); if(c>ymax)ymax=c; }
+  let curLevel=0; for(const dd of doses) curLevel+=conc(nowH-dd.h,dd.dose,ke,ka);
+  if(curLevel>ymax)ymax=curLevel;
+
+  const padL=8,padR=8,padT=14,padB=20;
+  const x=h=>padL+(W-padL-padR)*(h/totalH);
+  const y=c=>H-padB-(H-padT-padB)*(ymax>0?c/ymax:0);
+
+  g.strokeStyle='rgba(255,255,255,.05)'; g.lineWidth=1; g.fillStyle='#5b6a86'; g.font='10px system-ui';
+  const weeks=Math.ceil(totalH/(24*7));
+  for(let w=0;w<=weeks;w++){ const xx=x(w*7*24); if(xx>W-padR+1)break; g.beginPath(); g.moveTo(xx,padT); g.lineTo(xx,H-padB); g.stroke(); g.fillText('w'+w,xx+2,H-7); }
+
+  const grad=g.createLinearGradient(0,padT,0,H-padB);
+  grad.addColorStop(0,'rgba(79,140,255,.35)'); grad.addColorStop(1,'rgba(79,140,255,0)');
+  g.beginPath(); g.moveTo(x(0),y(0));
+  for(let i=0;i<=N;i++) g.lineTo(x(xs[i]),y(ys[i]));
+  g.lineTo(x(totalH),H-padB); g.closePath(); g.fillStyle=grad; g.fill();
+  g.beginPath(); for(let i=0;i<=N;i++){const px=x(xs[i]),py=y(ys[i]); i?g.lineTo(px,py):g.moveTo(px,py);} g.strokeStyle='#4f8cff'; g.lineWidth=2.4; g.lineJoin='round'; g.stroke();
+
+  g.strokeStyle='rgba(255,180,84,.6)';
+  doses.forEach(dd=>{ const xx=x(dd.h); g.beginPath(); g.moveTo(xx,H-padB); g.lineTo(xx,padT+4); g.stroke(); });
+
+  const nx=x(nowH);
+  g.setLineDash([4,4]); g.strokeStyle='#27d3a2'; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(nx,padT); g.lineTo(nx,H-padB); g.stroke(); g.setLineDash([]);
+  g.fillStyle='#27d3a2'; g.beginPath(); g.arc(nx,y(curLevel),5,0,7); g.fill();
+
+  document.getElementById('p_peak').textContent  = curLevel.toFixed(1);
+  document.getElementById('p_trough').textContent= entries.length;
+  document.getElementById('p_acc').textContent   = Math.max(1, Math.round((now-t0)/864e5));
+}
+
+function drawPK(){
+  if(pkMode==='log') return drawPKlog();
+  document.getElementById('p_l1').textContent='Steady peak';
+  document.getElementById('p_l2').textContent='Steady trough';
+  document.getElementById('p_l3').textContent='Accumulation ×';
+  document.getElementById('pkHint').textContent='Illustrative pharmacokinetics — relative units, not a clinical dosing guide.';
+  const d=DRUGS[document.getElementById('p_drug').value];
+  const dose=+document.getElementById('p_dose').value||0;
+  const intD=+document.getElementById('p_int').value||7;
+  const weeks=+document.getElementById('p_wk').value||8;
+  const ke=Math.LN2/d.thalf, ka=d.ka;
+  const totalH=weeks*7*24, intH=intD*24;
+  const doses=[]; for(let t=0;t<=totalH;t+=intH) doses.push(t);
+
+  const N=400, xs=[], ys=[]; let ymax=0;
+  for(let i=0;i<=N;i++){
+    const t=totalH*i/N; let c=0;
+    for(const dt of doses) c+=conc(t-dt,dose,ke,ka);
+    xs.push(t); ys.push(c); if(c>ymax)ymax=c;
+  }
+  let peak=0,trough=1e9;
+  const lastDose=doses[doses.length-1];
+  for(let t=lastDose;t<=lastDose+intH && t<=totalH;t+=1){
+    let c=0; for(const dt of doses) c+=conc(t-dt,dose,ke,ka);
+    if(c>peak)peak=c; if(c<trough)trough=c;
+  }
+
+  const cv=document.getElementById('pk'), dpr=window.devicePixelRatio||1;
+  const W=cv.clientWidth, H=220;
+  cv.width=W*dpr; cv.height=H*dpr;
+  const g=cv.getContext('2d'); g.scale(dpr,dpr);
+  g.clearRect(0,0,W,H);
+  const padL=8,padR=8,padT=14,padB=20;
+  const x=t=> padL+(W-padL-padR)*(t/totalH);
+  const y=c=> H-padB-(H-padT-padB)*(ymax>0?c/ymax:0);
+
+  g.fillStyle='rgba(39,211,162,.10)';
+  g.fillRect(padL,y(peak),W-padL-padR,Math.max(1,y(trough)-y(peak)));
+
+  g.strokeStyle='rgba(255,255,255,.05)'; g.lineWidth=1; g.fillStyle='#5b6a86'; g.font='10px system-ui';
+  for(let w=0;w<=weeks;w++){
+    const xx=x(w*7*24); g.beginPath(); g.moveTo(xx,padT); g.lineTo(xx,H-padB); g.stroke();
+    if(w%2===0){ g.fillText('w'+w, xx+2, H-7); }
+  }
+
+  g.strokeStyle='rgba(255,180,84,.55)';
+  doses.forEach(dt=>{ const xx=x(dt); g.beginPath(); g.moveTo(xx,H-padB); g.lineTo(xx,y(ys[Math.round(dt/totalH*N)])); g.stroke(); });
+
+  const grad=g.createLinearGradient(0,padT,0,H-padB);
+  grad.addColorStop(0,'rgba(79,140,255,.35)'); grad.addColorStop(1,'rgba(79,140,255,0)');
+  g.beginPath(); g.moveTo(x(0),y(0));
+  for(let i=0;i<=N;i++) g.lineTo(x(xs[i]),y(ys[i]));
+  g.lineTo(x(totalH),H-padB); g.closePath(); g.fillStyle=grad; g.fill();
+
+  g.beginPath();
+  for(let i=0;i<=N;i++){ const px=x(xs[i]),py=y(ys[i]); i?g.lineTo(px,py):g.moveTo(px,py); }
+  g.strokeStyle='#4f8cff'; g.lineWidth=2.4; g.lineJoin='round'; g.stroke();
+
+  document.getElementById('p_peak').textContent  = peak.toFixed(1);
+  document.getElementById('p_trough').textContent= trough.toFixed(1);
+  document.getElementById('p_acc').textContent   = (conc(0,dose,ke,ka)>0? (peak/conc(0,dose,ke,ka)).toFixed(1):'—');
+}
+
+// init
+initNFC(); renderVial(); calcConc(); calcDose();
+// pick up where we left off if a vial is already registered
+if(vial.verified){ document.getElementById('syncpill').textContent='● '+vial.compound; }
+window.addEventListener('resize',()=>{ if(document.getElementById('v-plot').classList.contains('active')) drawPK(); });
+
+// PWA: register the service worker for offline + installability
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
