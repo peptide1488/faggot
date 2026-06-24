@@ -171,7 +171,7 @@ function updatePreview(){
 }
 ['g_comp','g_strength','g_unit','g_start','g_order'].forEach(id=>document.getElementById(id).addEventListener('input',updatePreview));
 
-function generate(){
+async function generate(){
   const f=readForm();
   if(!f.order){ toast('Enter an order number'); return; }
   if(!(f.strength>0)){ toast('Enter a valid strength'); return; }
@@ -182,6 +182,8 @@ function generate(){
       serials.push({serial:PMSerial.encode({compound:f.compound,strength:f.strength,unit:f.unit,order:f.order,vial}), vial, written:false});
     }
   }catch(e){ toast(e.message); return; }
+  try{ for(const s of serials) s.verify=await PMSerial.verifyCode(s.serial); }
+  catch(e){ toast('Verify codes need HTTPS — '+(e.message||e)); }
   document.getElementById('g_outcard').style.display='block';
   document.getElementById('g_count').textContent=serials.length;
   renderList();
@@ -193,9 +195,12 @@ function renderList(){
   const el=document.getElementById('g_list');
   el.innerHTML=serials.map((s,i)=>`
     <div class="serialrow ${s.written?'done':''} ${i===cursor&&!s.written?'cur':''}">
-      <div class="row" style="gap:10px">
-        <span class="tag idx">#${String(s.vial).padStart(2,'0')}</span>
-        <span class="s">${s.serial}</span>
+      <div style="min-width:0">
+        <div class="row" style="gap:10px">
+          <span class="tag idx">#${String(s.vial).padStart(2,'0')}</span>
+          <span class="s">${s.serial}</span>
+        </div>
+        ${s.verify?`<div class="small" style="margin-top:6px"><span class="muted">print on vial → </span><span class="mono" style="color:var(--accent2);font-size:14px;letter-spacing:1px">${s.verify}</span></div>`:''}
       </div>
       ${s.written?'<span class="tag ok">written ✓</span>':''}
     </div>`).join('');
@@ -229,8 +234,8 @@ function copyAll(){
 }
 function downloadCSV(){
   const f=readForm();
-  const rows=[['order','vial','compound','strength','unit','serial']]
-    .concat(serials.map(s=>[f.order, s.vial, f.name, f.strength, f.unit, s.serial]));
+  const rows=[['order','vial','compound','strength','unit','serial','verify_code']]
+    .concat(serials.map(s=>[f.order, s.vial, f.name, f.strength, f.unit, s.serial, s.verify||'']));
   const csv=rows.map(r=>r.join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');

@@ -605,12 +605,13 @@ function handleScannedTag({payload, hwSerial}){
     // resume saved reconstitution/dose state if we've registered this tag before
     if(vialStore[v.id]) v=Object.assign(v, vialStore[v.id], {uid:hwSerial||vialStore[v.id].uid});
     vial=v;
-    document.getElementById('chipSerial').textContent=vial.serial;
     resetVerifyInputs();
     toast('Vial read from tag ✓');
     if(vial.reconstituted){ saveCurrentVial(); show('v-vial'); }
-    else if(hasPrintedSerial && !vial.verified){ show('v-verify'); }   // confirm serial vs label
-    else { vial.verified=true; saveCurrentVial(); show('v-recon'); calcConc(); }  // free-text tag: nothing to verify
+    else if(vial.verified){ saveCurrentVial(); show('v-recon'); calcConc(); }      // already verified earlier
+    else if(payload.decoded){ configureVerify('code'); show('v-verify'); }          // enter printed code
+    else if(hasPrintedSerial){ configureVerify('serial'); show('v-verify'); }        // legacy: retype serial
+    else { vial.verified=true; saveCurrentVial(); show('v-recon'); calcConc(); }    // free-text tag: nothing to verify
   }else{
     pendingUid=hwSerial||null;
     toast('Blank tag — let’s register it');
@@ -653,8 +654,8 @@ async function registerVial(){
 
   vial=Object.assign(freshVial(), data, {uid:pendingUid||null, verified:false, reconstituted:false});
   pendingUid=null;
-  document.getElementById('chipSerial').textContent=vial.serial;
   resetVerifyInputs();
+  configureVerify('serial');
   toast(wrote ? 'Tag written & vial registered ✓' : 'Saved — verify to continue');
   show('v-verify');
 }
@@ -676,8 +677,8 @@ function simulateScan(){
   vial=freshVial();                       // brand-new, nothing entered yet
   toast('Simulated chip detected · reading…');
   setTimeout(()=>{
-    document.getElementById('chipSerial').textContent=vial.serial;
     resetVerifyInputs();
+    configureVerify('serial');
     show('v-verify');
   },700);
 }
@@ -691,17 +692,62 @@ function loadDemo(){
 }
 
 // ---------- step 1: verify ----------
+// verify can run in two modes: 'code' (enter the secret code printed on the vial,
+// for decoded PM- serials) or 'serial' (legacy: retype the serial on the label).
+let verifyMode='serial';
+function configureVerify(mode){
+  verifyMode=mode;
+  const cap=document.querySelector('#v-verify .labelchip .small');
+  const title=document.querySelector('#v-verify h2');
+  const intro=document.querySelector('#v-verify p.muted');
+  const lbl=document.querySelector('#v-verify label');
+  const inp=document.getElementById('ver_input');
+  if(mode==='code'){
+    cap.textContent='Scanned vial';
+    document.getElementById('chipSerial').textContent=vial.name;
+    title.textContent='Enter your verification code';
+    intro.innerHTML='Scan succeeded. Now enter the <b>verification code printed on the vial</b> to confirm it’s genuine.';
+    lbl.textContent='Verification code on the vial';
+    inp.placeholder='e.g. 4K2-9QX';
+    document.getElementById('ver_hint').textContent='Find it on the vial label / scratch panel.';
+  }else{
+    cap.textContent='Chip reports serial';
+    document.getElementById('chipSerial').textContent=vial.serial;
+    title.textContent='Verify the number on the label';
+    intro.innerHTML='The chip was read successfully. Now confirm it matches the serial <b>printed on the physical label</b>.';
+    lbl.textContent='Type the serial printed on the vial label';
+    inp.placeholder='e.g. '+vial.serial;
+    document.getElementById('ver_hint').textContent='Must match the chip exactly.';
+  }
+  inp.value=''; inp.classList.remove('err');
+  document.getElementById('ver_btn').disabled=false;
+}
 function onVerifyType(){
   const inp=document.getElementById('ver_input');
   inp.classList.remove('err');
-  document.getElementById('ver_hint').textContent='Must match the chip exactly.';
+  document.getElementById('ver_hint').textContent =
+    verifyMode==='code' ? 'Find it on the vial label / scratch panel.' : 'Must match the chip exactly.';
 }
-function doVerify(){
-  const val=document.getElementById('ver_input').value.trim().toUpperCase();
+async function doVerify(){
   const inp=document.getElementById('ver_input');
-  if(val===vial.serial.toUpperCase()){
-    vial.verified=true;
-    saveCurrentVial();
+  const val=inp.value.trim();
+  if(verifyMode==='code'){
+    let ok=false;
+    try{ ok=await PMSerial.checkVerifyCode(vial.serial, val); }
+    catch(e){ toast(e.message||'Verify unavailable'); return; }
+    if(ok){
+      vial.verified=true; saveCurrentVial();
+      toast('Verified ✓ Genuine vial');
+      show(vial.reconstituted?'v-vial':'v-recon'); calcConc();
+    }else{
+      inp.classList.add('err');
+      document.getElementById('ver_hint').textContent='⚠ Code doesn’t match — check the vial or contact the seller.';
+      toast('Verification failed');
+    }
+    return;
+  }
+  if(val.toUpperCase()===vial.serial.toUpperCase()){
+    vial.verified=true; saveCurrentVial();
     toast('Serial matches ✓ Authentic');
     show('v-recon'); calcConc();
   }else{

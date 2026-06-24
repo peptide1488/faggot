@@ -154,9 +154,49 @@
     };
   }
 
+  // ---- verification code (2nd factor printed on the vial) ----
+  // The code is HMAC-SHA256(secret, serial) truncated to a short typeable string.
+  // NOTE: this secret ships in the app, so the code is a strong DETERRENT against
+  // casual tag cloning, not unforgeable against someone who reverse-engineers the
+  // app. Changing this secret invalidates every code already printed — keep it stable.
+  var VERIFY_SECRET = 'pm_verify_v1_8tF3kQ9zR2wLp6Yh-do-not-change';
+  // Crockford-style base32 without I, L, O, U to avoid look-alikes when typing.
+  var B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+  function bytesToB32(bytes, len) {
+    var bits = 0, val = 0, out = '';
+    for (var i = 0; i < bytes.length && out.length < len; i++) {
+      val = (val << 8) | bytes[i]; bits += 8;
+      while (bits >= 5 && out.length < len) { out += B32[(val >>> (bits - 5)) & 31]; bits -= 5; }
+    }
+    return out;
+  }
+  function normalizeCode(s) {
+    return String(s || '').toUpperCase()
+      .replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V')  // forgive common typos
+      .replace(/[^0-9A-Z]/g, '');
+  }
+  function subtle() {
+    var c = (typeof globalThis !== 'undefined' ? globalThis : global).crypto;
+    if (!c || !c.subtle) throw new Error('Web Crypto unavailable (needs HTTPS/localhost)');
+    return c.subtle;
+  }
+  async function verifyCode(serial) {
+    var enc = new TextEncoder();
+    var key = await subtle().importKey('raw', enc.encode(VERIFY_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    var sig = await subtle().sign('HMAC', key, enc.encode(String(serial).trim().toUpperCase()));
+    var code = bytesToB32(new Uint8Array(sig), 6);   // 6 chars ~ 30 bits
+    return code.slice(0, 3) + '-' + code.slice(3);    // e.g. 4K2-9QX
+  }
+  async function checkVerifyCode(serial, input) {
+    var expected = await verifyCode(serial);
+    return !!input && normalizeCode(input) === normalizeCode(expected);
+  }
+
   var api = {
     PREFIX: PREFIX, PRODUCTS: PRODUCTS, CODE_TO_NAME: CODE_TO_NAME, UNITS: UNITS,
-    encode: encode, decode: decode, checkChar: checkChar, codeForCompound: codeForCompound
+    encode: encode, decode: decode, checkChar: checkChar, codeForCompound: codeForCompound,
+    verifyCode: verifyCode, checkVerifyCode: checkVerifyCode, normalizeCode: normalizeCode
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PMSerial = api;
