@@ -253,7 +253,7 @@
     <p class="muted small" style="margin-bottom:16px">Enter how much BAC water you're drawing into the vial. The peptide amount comes from the verified label.</p>
 
     <div class="field">
-      <label>Peptide in vial (mg) · from label</label>
+      <label id="r_mg_lbl">Peptide in vial (mg) · from label</label>
       <input id="r_mg" type="number" inputmode="decimal" value="10" oninput="calcConc()">
     </div>
     <div class="field">
@@ -292,7 +292,7 @@
 
     <div class="grid2">
       <div class="field">
-        <label>Peptide (mg)</label>
+        <label id="d_mg_lbl">Peptide (mg)</label>
         <input id="d_mg" type="number" inputmode="decimal" value="10" oninput="calcDose()">
       </div>
       <div class="field">
@@ -302,7 +302,7 @@
     </div>
 
     <div class="field">
-      <label>Desired dose (mg)</label>
+      <label id="d_dose_lbl">Desired dose (mg)</label>
       <input id="d_dose" type="number" inputmode="decimal" placeholder="e.g. 1.0" oninput="calcDose()">
     </div>
 
@@ -408,7 +408,7 @@
         <input id="log_date" type="date" onchange="calSelect(this.value)">
       </div>
       <div class="field">
-        <label>Dose (mg)</label>
+        <label id="log_dose_lbl">Dose (mg)</label>
         <input id="log_dose" type="number" inputmode="decimal" placeholder="e.g. 2.0" oninput="logVolPreview()">
       </div>
     </div>
@@ -483,8 +483,9 @@ function show(id){
   if(id==='v-plot') syncPlotDefaults();
   if(id==='v-vials') renderVials();
   if(id==='v-vial') renderVial();
-  if(id==='v-dose') calcDose();
-  if(id==='v-log') renderLog();
+  if(id==='v-recon'){ updateUnitLabels(); calcConc(); }
+  if(id==='v-dose'){ updateUnitLabels(); calcDose(); }
+  if(id==='v-log'){ updateUnitLabels(); renderLog(); }
 }
 let toastT;
 function toast(m){
@@ -778,6 +779,17 @@ async function doVerify(){
   }
 }
 
+// ---------- unit awareness ----------
+function vunit(){ return (vial && vial.unit) || 'mg'; }
+function updateUnitLabels(){
+  const u=vunit();
+  const set=(id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent=txt; };
+  set('r_mg_lbl','Peptide in vial ('+u+') · from label');
+  set('d_mg_lbl','Peptide ('+u+')');
+  set('d_dose_lbl','Desired dose ('+u+')');
+  set('log_dose_lbl','Dose ('+u+')');
+}
+
 // ---------- step 2: reconstitution ----------
 function calcConc(){
   const mg=+document.getElementById('r_mg').value||0;
@@ -785,12 +797,13 @@ function calcConc(){
   const ml=+mlRaw||0;
   const c= ml>0? mg/ml : 0;
   const save=document.getElementById('r_save');
+  const u=vunit();
   if(ml>0){
-    document.getElementById('r_conc').innerHTML = c.toFixed(2)+' <span class="unit">mg/mL</span>';
-    document.getElementById('r_per01').textContent = '0.10 mL = '+(c*0.1).toFixed(2)+' mg';
+    document.getElementById('r_conc').innerHTML = c.toFixed(2)+' <span class="unit">'+u+'/mL</span>';
+    document.getElementById('r_per01').textContent = '0.10 mL = '+(c*0.1).toFixed(2)+' '+u;
     save.disabled=false;
   }else{
-    document.getElementById('r_conc').innerHTML = '— <span class="unit">mg/mL</span>';
+    document.getElementById('r_conc').innerHTML = '— <span class="unit">'+u+'/mL</span>';
     document.getElementById('r_per01').textContent = 'enter BAC water to calculate';
     save.disabled=true;
   }
@@ -824,11 +837,12 @@ function calcDose(){
   const has = c>0 && dose>0;
   const vol = has? dose/c : 0;
   const units = vol*100;
+  const u=vunit();
   document.getElementById('d_vol').innerHTML = has? vol.toFixed(2)+' <span class="unit">mL</span>' : '— <span class="unit">mL</span>';
   document.getElementById('d_units').textContent = has? '= '+units.toFixed(0)+' units (U-100)' : 'enter a dose';
-  document.getElementById('d_conc').textContent = c>0? c.toFixed(2)+' mg/mL' : '—';
+  document.getElementById('d_conc').textContent = c>0? c.toFixed(2)+' '+u+'/mL' : '—';
   document.getElementById('d_count').textContent = (has? Math.floor(mg/dose):'—')+(has?' doses':'');
-  document.getElementById('d_tick').textContent = c>0? (c*0.01).toFixed(2)+' mg' : '—';
+  document.getElementById('d_tick').textContent = c>0? (c*0.01).toFixed(2)+' '+u : '—';
 }
 function finishSetup(){
   vial.dose=+document.getElementById('d_dose').value||null;
@@ -858,6 +872,28 @@ function vialStats(v){
   const perDose=(v.dose>0)?v.dose:(entries.length?mgUsed/entries.length:0);
   const dosesLeft=perDose>0?Math.floor(mgLeft/perDose):null;
   return {doses:entries.length, volUsed, volLeft, volPct, mgUsed, mgLeft, perDose, dosesLeft};
+}
+// Infer a dosing cadence from logged dates: "Last dose 3d ago · next in 4d".
+function doseSchedule(entries){
+  const dates=[...new Set(entries.map(d=>d.date))].sort();
+  if(!dates.length) return null;
+  const day=864e5, today=Date.now();
+  const last=new Date(dates[dates.length-1]+'T12:00:00').getTime();
+  const lastAgo=Math.round((today-last)/day);
+  let next='';
+  let due=false;
+  if(dates.length>=2){
+    const gaps=[];
+    for(let i=1;i<dates.length;i++) gaps.push(Math.round((new Date(dates[i])-new Date(dates[i-1]))/day));
+    gaps.sort((a,b)=>a-b);
+    const med=gaps[Math.floor(gaps.length/2)];
+    if(med>0){
+      const nd=Math.round((last+med*day-today)/day);
+      if(nd>0) next=' · next in '+nd+'d';
+      else { next=' · due now'; due=true; if(nd<0){ next=' · '+(-nd)+'d overdue'; } }
+    }
+  }
+  return {text:'Last dose '+(lastAgo<=0?'today':lastAgo+'d ago')+next, due};
 }
 let _vgid=0;
 function vialGraphic(pct,label,caption){
@@ -997,6 +1033,7 @@ function renderVial(){
   const volBar = vial.reconstituted ? `
       <div class="expbar" style="margin-top:12px"><i style="width:${volPct}%;background:var(--accent)"></i></div>
       <div class="small muted" style="margin-top:4px">${volLeft.toFixed(2)} mL of ${vial.bacMl.toFixed(2)} mL remaining</div>` : '';
+  const sched = doseSchedule(entries);
   const dash = `
     <div class="card">
       <div class="row" style="gap:14px;align-items:center">
@@ -1008,6 +1045,7 @@ function renderVial(){
             <div class="stat"><div class="n mono">${mgLeft.toFixed(mgLeft<10?1:0)}<span style="font-size:12px"> ${vial.unit||'mg'}</span></div><div class="l">Peptide left</div></div>
           </div>
           ${volBar}
+          ${sched?`<div class="small" style="margin-top:10px;color:${sched.due?'var(--warn)':'var(--muted)'}">${sched.text}</div>`:''}
         </div>
       </div>
     </div>`;
@@ -1019,8 +1057,8 @@ function renderVial(){
       </div>
       <div class="kv"><span class="k">Date mixed</span><span class="v">${vial.reconDate||'—'}</span></div>
       <div class="kv"><span class="k">BAC water added</span><span class="v">${vial.bacMl.toFixed(2)} mL</span></div>
-      <div class="kv"><span class="k">Concentration</span><span class="v">${c.toFixed(2)} mg/mL</span></div>
-      ${vial.dose?`<div class="kv"><span class="k">Saved dose</span><span class="v">${vial.dose} mg = ${(vial.dose/c).toFixed(2)} mL</span></div>`:''}
+      <div class="kv"><span class="k">Concentration</span><span class="v">${c.toFixed(2)} ${vial.unit||'mg'}/mL</span></div>
+      ${vial.dose?`<div class="kv"><span class="k">Saved dose</span><span class="v">${vial.dose} ${vial.unit||'mg'} = ${(vial.dose/c).toFixed(2)} mL</span></div>`:''}
       <div class="kv"><span class="k">Expires</span><span class="v">${ex.date}</span></div>
       <div class="expbar"><i style="width:${ex.pct}%;background:${ex.color}"></i></div>
       <div class="small" style="color:${ex.color};font-weight:600">${ex.detail}</div>
