@@ -425,6 +425,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="serial.js"></script>
 <script>
 // ---------- vial state ----------
 function freshVial(){
@@ -523,8 +524,18 @@ function parseVialFromMessage(message, hwSerial){
       try{ payload=JSON.parse(decodeRecordText(rec)); }catch(e){}
     }else if(rec.recordType==='text'){
       const txt=decodeRecordText(rec);
-      try{ payload=JSON.parse(txt); }
-      catch(e){ if(!payload){ const p=parseFreeText(txt); if(p) payload=p; } }
+      const dec = (typeof PMSerial!=='undefined') ? PMSerial.decode(txt) : null;
+      if(dec && dec.valid){
+        payload={
+          decoded:true, compound:dec.compound, mg:dec.mg,
+          serial:dec.serial, id:dec.serial, order:dec.order, vial:dec.vial,
+          name:dec.compound+' '+dec.mg+'mg',
+          origin:'Pepti Mart · Order '+dec.order+' · Vial '+dec.vial
+        };
+      }else{
+        try{ payload=JSON.parse(txt); }
+        catch(e){ if(!payload){ const p=parseFreeText(txt); if(p) payload=p; } }
+      }
     }
   }
   return {payload, hwSerial:hwSerial||null};
@@ -564,7 +575,9 @@ function parseFreeText(txt){
 
 function handleScannedTag({payload, hwSerial}){
   if(payload && (payload.compound || payload.serial)){
-    const hasPrintedSerial=!!payload.serial;     // a serial we can ask the user to confirm against the label
+    // Ask the user to confirm a serial against the label only when it isn't a
+    // self-describing PM- code (those are integrity-checked by their checksum).
+    const hasPrintedSerial=!!payload.serial && !payload.decoded;
     const serial=(payload.serial||hwSerial||genSerial()).toString().toUpperCase();
     const id=payload.id || ('VL-'+(serial.replace(/[^A-Z0-9]/g,'')||'TAG'));
     let v=Object.assign(freshVial(),{
