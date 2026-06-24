@@ -76,10 +76,17 @@
     <h2 style="font-size:16px;margin-bottom:12px">Batch details</h2>
     <div class="field">
       <label>Compound</label>
-      <select id="g_comp"></select>
+      <select id="g_comp" onchange="applyProductDefaults();updatePreview()"></select>
     </div>
-    <div class="grid3">
-      <div class="field"><label>Strength (mg)</label><input id="g_mg" type="number" inputmode="numeric" value="10"></div>
+    <div class="grid2">
+      <div class="field"><label>Strength</label><input id="g_strength" type="number" inputmode="decimal" value="10"></div>
+      <div class="field"><label>Unit</label>
+        <select id="g_unit">
+          <option>MG</option><option>MCG</option><option>IU</option><option>ML</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid2">
       <div class="field"><label>Start vial #</label><input id="g_start" type="number" inputmode="numeric" value="1"></div>
       <div class="field"><label>Quantity</label><input id="g_qty" type="number" inputmode="numeric" value="1"></div>
     </div>
@@ -115,16 +122,22 @@ const NFC_SUPPORTED = ('NDEFReader' in window);
 let serials = [];     // [{serial, vial, written}]
 let cursor = 0;       // index of next tag to write
 
-// populate compound dropdown from the shared codec
+// populate compound dropdown from the shared product table
 (function initCompounds(){
   const sel=document.getElementById('g_comp');
-  const map=PMSerial.CODE_TO_NAME;
-  Object.keys(map).forEach(code=>{
+  PMSerial.PRODUCTS.forEach(p=>{
     const o=document.createElement('option');
-    o.value=map[code]; o.textContent=map[code]+'  ('+code+')';
+    o.value=p.code; o.textContent=p.name+'  ('+p.code+')';
     sel.appendChild(o);
   });
+  applyProductDefaults();
 })();
+function applyProductDefaults(){
+  const code=document.getElementById('g_comp').value;
+  const p=PMSerial.PRODUCTS.find(x=>x.code===code); if(!p) return;
+  document.getElementById('g_strength').value=p.doses[0];
+  document.getElementById('g_unit').value=p.unit.toUpperCase();
+}
 
 let toastT;
 function toast(m){ const t=document.getElementById('toast'); t.textContent=m; t.classList.add('show');
@@ -139,32 +152,34 @@ function initNFC(){
 }
 
 function readForm(){
-  const compound=document.getElementById('g_comp').value;
-  const mg=+document.getElementById('g_mg').value||0;
+  const code=document.getElementById('g_comp').value;
+  const product=PMSerial.PRODUCTS.find(x=>x.code===code);
+  const strength=+document.getElementById('g_strength').value||0;
+  const unit=document.getElementById('g_unit').value;
   const start=Math.max(1, Math.floor(+document.getElementById('g_start').value||1));
   const qty=Math.max(1, Math.floor(+document.getElementById('g_qty').value||1));
   const order=document.getElementById('g_order').value.trim();
-  return {compound, mg, start, qty, order};
+  return {code, compound:code, name:product?product.name:code, strength, unit, start, qty, order};
 }
 
 function updatePreview(){
   const f=readForm();
   const el=document.getElementById('g_preview');
-  if(!f.order || !(f.mg>0)){ el.textContent='Enter an order number and strength to preview.'; return; }
-  try{ el.innerHTML='Preview: <span class="mono" style="color:var(--accent)">'+PMSerial.encode({compound:f.compound,mg:f.mg,order:f.order,vial:f.start})+'</span>'; }
+  if(!f.order || !(f.strength>0)){ el.textContent='Enter an order number and strength to preview.'; return; }
+  try{ el.innerHTML='Preview: <span class="mono" style="color:var(--accent)">'+PMSerial.encode({compound:f.compound,strength:f.strength,unit:f.unit,order:f.order,vial:f.start})+'</span>'; }
   catch(e){ el.textContent=e.message; }
 }
-['g_comp','g_mg','g_start','g_order'].forEach(id=>document.getElementById(id).addEventListener('input',updatePreview));
+['g_comp','g_strength','g_unit','g_start','g_order'].forEach(id=>document.getElementById(id).addEventListener('input',updatePreview));
 
 function generate(){
   const f=readForm();
   if(!f.order){ toast('Enter an order number'); return; }
-  if(!(f.mg>0)){ toast('Enter a valid strength'); return; }
+  if(!(f.strength>0)){ toast('Enter a valid strength'); return; }
   serials=[]; cursor=0;
   try{
     for(let i=0;i<f.qty;i++){
       const vial=f.start+i;
-      serials.push({serial:PMSerial.encode({compound:f.compound,mg:f.mg,order:f.order,vial}), vial, written:false});
+      serials.push({serial:PMSerial.encode({compound:f.compound,strength:f.strength,unit:f.unit,order:f.order,vial}), vial, written:false});
     }
   }catch(e){ toast(e.message); return; }
   document.getElementById('g_outcard').style.display='block';
@@ -214,8 +229,8 @@ function copyAll(){
 }
 function downloadCSV(){
   const f=readForm();
-  const rows=[['order','vial','compound','mg','serial']]
-    .concat(serials.map(s=>[f.order, s.vial, f.compound, f.mg, s.serial]));
+  const rows=[['order','vial','compound','strength','unit','serial']]
+    .concat(serials.map(s=>[f.order, s.vial, f.name, f.strength, f.unit, s.serial]));
   const csv=rows.map(r=>r.join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');

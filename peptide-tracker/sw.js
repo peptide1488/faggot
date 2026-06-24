@@ -1,5 +1,5 @@
 // Pepti Mart Vial Tracker — offline app-shell service worker
-const CACHE = 'peptimart-v3';
+const CACHE = 'peptimart-v4';
 const ASSETS = [
   './',
   './index.html',
