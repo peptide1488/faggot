@@ -185,8 +185,7 @@
     var enc = new TextEncoder();
     var key = await subtle().importKey('raw', enc.encode(VERIFY_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
     var sig = await subtle().sign('HMAC', key, enc.encode(String(serial).trim().toUpperCase()));
-    var code = bytesToB32(new Uint8Array(sig), 6);   // 6 chars ~ 30 bits
-    return code.slice(0, 3) + '-' + code.slice(3);    // e.g. 4K2-9QX
+    return bytesToB32(new Uint8Array(sig), 7);       // 7 chars ~ 35 bits, e.g. Q262JH2
   }
   async function checkVerifyCode(serial, input) {
     var expected = await verifyCode(serial);

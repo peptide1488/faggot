@@ -432,6 +432,7 @@ function freshVial(){
   return {
     name:'Retatrutide 10mg', compound:'Retatrutide', mg:10,
     serial:'9C21-0042', id:'VL-7F3A-9C21-0042', uid:null, unit:'mg',
+    orderNo:null, vialNo:null,
     origin:'Pepti Mart · Lot R24-118', purity:'99.2% (HPLC)',
     verified:false, reconstituted:false,
     bacMl:null, reconDate:null, dose:null, bud:28
@@ -530,7 +531,7 @@ function parseVialFromMessage(message, hwSerial){
           decoded:true, compound:dec.compound, mg:dec.mg, unit:dec.unit,
           serial:dec.serial, id:dec.serial, order:dec.order, vial:dec.vial,
           name:dec.compound+' '+dec.strengthText,
-          origin:'Pepti Mart · Order '+dec.order+' · Vial '+dec.vial
+          origin:'Pepti Mart', orderNo:dec.order, vialNo:dec.vial
         };
       }else if(/^\s*PM-/i.test(txt)){
         // Looks like a Pepti Mart serial but failed its integrity check — don't guess.
@@ -597,6 +598,7 @@ function handleScannedTag({payload, hwSerial}){
       mg: +payload.mg || 10,
       unit: payload.unit || 'mg',
       serial, id,
+      orderNo: payload.orderNo||null, vialNo: payload.vialNo||null,
       origin: payload.origin || 'Unknown source',
       purity: payload.purity || '—',
       uid: hwSerial||null,
@@ -708,7 +710,7 @@ function configureVerify(mode){
     title.textContent='Enter your verification code';
     intro.innerHTML='Scan succeeded. Now enter the <b>verification code printed on the vial</b> to confirm it’s genuine.';
     lbl.textContent='Verification code on the vial';
-    inp.placeholder='e.g. 4K2-9QX';
+    inp.placeholder='e.g. Q262JH2';
     document.getElementById('ver_hint').textContent='Find it on the vial label / scratch panel.';
   }else{
     cap.textContent='Chip reports serial';
@@ -893,7 +895,7 @@ function renderVial(){
       <div class="row between">
         <div>
           <h2 style="font-size:19px">${vial.name}</h2>
-          <div class="vial-id">${vial.id}</div>
+          ${vial.orderNo?`<div class="vial-id">Order ${vial.orderNo} · Vial ${String(vial.vialNo||'').padStart(2,'0')}</div>`:''}
         </div>
         <div class="pill ok">✓ Authentic</div>
       </div>
@@ -914,7 +916,6 @@ function renderVial(){
       <div class="kv"><span class="k">Compound</span><span class="v">${vial.compound}</span></div>
       <div class="kv"><span class="k">Net peptide</span><span class="v">${vial.mg} ${vial.unit||'mg'}</span></div>
       <div class="kv"><span class="k">Tested purity</span><span class="v">${vial.purity}</span></div>
-      <div class="kv"><span class="k">Unique serial</span><span class="v mono">${vial.serial}</span></div>
       <div class="kv"><span class="k">COA</span><span class="v"><a class="coa" href="#" onclick="toast('Opening COA PDF…');return false">View certificate ↗</a></span></div>
     </div>
 
