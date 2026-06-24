@@ -323,6 +323,18 @@
   </div>
 </section>
 
+<!-- ===================== VIAL LIBRARY ===================== -->
+<section class="view" id="v-vials">
+  <div class="card">
+    <div class="row between">
+      <h2 style="font-size:18px">My vials</h2>
+      <button class="btn sec" style="width:auto;padding:9px 13px;font-size:13px" onclick="show('v-scan')">+ Add vial</button>
+    </div>
+    <p class="muted small" style="margin-top:8px">Tap a vial to open it. The tube shows how much liquid is left.</p>
+  </div>
+  <div id="vialsList"></div>
+</section>
+
 <!-- ===================== VIAL DETAIL ===================== -->
 <section class="view" id="v-vial">
   <div id="vialBody"></div>
@@ -417,7 +429,7 @@
 <!-- ===================== NAV ===================== -->
 <nav>
   <button class="active" data-v="v-scan" onclick="show('v-scan')"><span class="ico">📡</span>Scan</button>
-  <button data-v="v-vial" onclick="show('v-vial')"><span class="ico">💉</span>Vial</button>
+  <button data-v="v-vials" onclick="show('v-vials')"><span class="ico">💉</span>Vials</button>
   <button data-v="v-dose" onclick="show('v-dose')"><span class="ico">🧮</span>Dose</button>
   <button data-v="v-log" onclick="show('v-log')"><span class="ico">📅</span>Log</button>
   <button data-v="v-plot" onclick="show('v-plot')"><span class="ico">📈</span>Plot</button>
@@ -459,10 +471,11 @@ function saveCurrentVial(){
 function show(id){
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===id));
   // nav highlight: dose-wizard views map onto the Vial tab unless it's the dose tool
-  const navMap={'v-scan':'v-scan','v-register':'v-scan','v-vial':'v-vial','v-verify':'v-vial','v-recon':'v-vial','v-dose':'v-dose','v-log':'v-log','v-plot':'v-plot'};
+  const navMap={'v-scan':'v-scan','v-register':'v-scan','v-vials':'v-vials','v-vial':'v-vials','v-verify':'v-vials','v-recon':'v-vials','v-dose':'v-dose','v-log':'v-log','v-plot':'v-plot'};
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===navMap[id]));
   window.scrollTo({top:0,behavior:'instant'});
   if(id==='v-plot') syncPlotDefaults();
+  if(id==='v-vials') renderVials();
   if(id==='v-vial') renderVial();
   if(id==='v-dose') calcDose();
   if(id==='v-log') renderLog();
@@ -828,6 +841,83 @@ function logDose(){
   show('v-log');
 }
 
+// ---------- usage stats + vial graphic ----------
+function vialStats(v){
+  const entries=doseLog.filter(d=>d.vialId===v.id);
+  const volUsed=entries.reduce((s,d)=>s+(+d.vol||0),0);
+  const volLeft=(v.bacMl>0)?Math.max(0,v.bacMl-volUsed):0;
+  const volPct=(v.bacMl>0)?volLeft/v.bacMl*100:0;
+  const mgUsed=entries.reduce((s,d)=>s+(+d.dose||0),0);
+  const mgLeft=Math.max(0,(+v.mg||0)-mgUsed);
+  return {doses:entries.length, volUsed, volLeft, volPct, mgUsed, mgLeft};
+}
+let _vgid=0;
+function vialGraphic(pct){
+  const id=++_vgid, bx=9, by=12, bw=22, bh=58;
+  const p=Math.max(0,Math.min(100,pct||0));
+  const liqH=bh*p/100, liqY=by+bh-liqH;
+  return `<svg width="40" height="78" viewBox="0 0 40 78" style="flex:none" aria-hidden="true">
+    <defs>
+      <linearGradient id="lq${id}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#4f8cff"/><stop offset="1" stop-color="#27d3a2"/>
+      </linearGradient>
+      <clipPath id="cl${id}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"/></clipPath>
+    </defs>
+    <rect x="14" y="1" width="12" height="5" rx="2" fill="#8a97b0"/>
+    <rect x="15.5" y="6" width="9" height="4" fill="#6b7790"/>
+    <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#0e1422" stroke="#26314a"/>
+    ${p>0?`<g clip-path="url(#cl${id})">
+      <rect x="${bx}" y="${liqY}" width="${bw}" height="${liqH}" fill="url(#lq${id})"/>
+      <ellipse cx="${bx+bw/2}" cy="${liqY}" rx="${bw/2}" ry="2" fill="#9cc4ff" opacity=".75"/>
+    </g>`:''}
+    <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="none" stroke="#2c3b5c"/>
+    <rect x="${bx+3}" y="${by+4}" width="3" height="${bh-12}" rx="1.5" fill="#ffffff" opacity=".06"/>
+  </svg>`;
+}
+
+// ---------- vial library ----------
+function renderVials(){
+  const wrap=document.getElementById('vialsList');
+  const list=Object.values(vialStore).filter(v=>v.verified);
+  if(!list.length){
+    wrap.innerHTML=`<div class="card"><div class="empty">
+      <div class="ico">🧪</div>
+      <h3 style="font-size:16px;margin-bottom:6px">No vials yet</h3>
+      <p class="small" style="margin-bottom:16px">Scan a vial to add it to your library.</p>
+      <button class="btn" onclick="show('v-scan')">Go to scan</button></div></div>`;
+    return;
+  }
+  list.sort((a,b)=> (a.id===vial.id?-1:b.id===vial.id?1:0) || String(a.name||'').localeCompare(String(b.name||'')));
+  wrap.innerHTML=list.map(v=>{
+    const st=vialStats(v);
+    const ex=v.reconstituted?expiryInfo(v):null;
+    const pct=v.reconstituted?st.volPct:0;
+    const active=v.id===vial.id;
+    const barCol=v.reconstituted?(ex?ex.color:'var(--accent)'):'var(--line)';
+    const sub=v.reconstituted? `${st.volLeft.toFixed(2)} / ${(+v.bacMl).toFixed(2)} mL left` : 'Not reconstituted';
+    return `<div class="card tap" onclick="selectVial('${v.id}')">
+      <div class="row" style="gap:14px;align-items:center">
+        ${vialGraphic(pct)}
+        <div style="flex:1;min-width:0">
+          <div class="row between"><h3 style="font-size:15px">${v.name}</h3>${active?'<span class="pill ok">Active</span>':''}</div>
+          ${v.orderNo?`<div class="small muted">Order ${v.orderNo} · Vial ${String(v.vialNo||'').padStart(2,'0')}</div>`:''}
+          <div class="expbar" style="margin:9px 0 5px"><i style="width:${pct}%;background:${barCol}"></i></div>
+          <div class="row between">
+            <span class="small" style="color:${v.reconstituted?'var(--accent2)':'var(--muted)'}">${sub}</span>
+            ${ex?`<span class="pill ${ex.cls}" style="font-size:10px">${ex.label}</span>`:''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function selectVial(id){
+  const v=vialStore[id]; if(!v) return;
+  vial=Object.assign(freshVial(), v);
+  saveCurrentVial();
+  show('v-vial');
+}
+
 // ---------- vial detail (state-driven) ----------
 function renderVial(){
   const el=document.getElementById('vialBody');
@@ -859,12 +949,17 @@ function renderVial(){
       <div class="small muted" style="margin-top:4px">${volLeft.toFixed(2)} mL of ${vial.bacMl.toFixed(2)} mL remaining</div>` : '';
   const dash = `
     <div class="card">
-      <div class="row" style="gap:10px">
-        <div class="stat"><div class="n mono">${dosesTaken}</div><div class="l">Doses taken</div></div>
-        <div class="stat"><div class="n mono">${dosesLeft}</div><div class="l">Doses left</div></div>
-        <div class="stat"><div class="n mono">${mgLeft.toFixed(mgLeft<10?1:0)}<span style="font-size:12px"> mg</span></div><div class="l">Peptide left</div></div>
+      <div class="row" style="gap:14px;align-items:center">
+        ${vialGraphic(vial.reconstituted?volPct:0)}
+        <div style="flex:1;min-width:0">
+          <div class="row" style="gap:10px">
+            <div class="stat"><div class="n mono">${dosesTaken}</div><div class="l">Doses taken</div></div>
+            <div class="stat"><div class="n mono">${dosesLeft}</div><div class="l">Doses left</div></div>
+            <div class="stat"><div class="n mono">${mgLeft.toFixed(mgLeft<10?1:0)}<span style="font-size:12px"> ${vial.unit||'mg'}</span></div><div class="l">Peptide left</div></div>
+          </div>
+          ${volBar}
+        </div>
       </div>
-      ${volBar}
     </div>`;
   const reconBlock = vial.reconstituted ? `
     <div class="card">
@@ -925,7 +1020,7 @@ function renderVial(){
     <div style="height:8px"></div>
     <button class="btn sec" onclick="show('v-dose')">Open dose calculator</button>
     <div style="height:8px"></div>
-    <button class="btn ghost" onclick="show('v-scan')">← Back to scan</button>`;
+    <button class="btn ghost" onclick="show('v-vials')">← All vials</button>`;
 }
 
 // ---------- expiry ----------
