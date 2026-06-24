@@ -331,6 +331,11 @@
       <button class="btn sec" style="width:auto;padding:9px 13px;font-size:13px" onclick="show('v-scan')">+ Add vial</button>
     </div>
     <p class="muted small" style="margin-top:8px">Tap a vial to open it. The tube shows how much liquid is left.</p>
+    <div class="seg" id="vialSort" style="margin:12px 0 0">
+      <button class="active" data-s="recent" onclick="setVialSort('recent')">Recent</button>
+      <button data-s="expiry" onclick="setVialSort('expiry')">Expiry</button>
+      <button data-s="name" onclick="setVialSort('name')">Name</button>
+    </div>
   </div>
   <div id="vialsList"></div>
 </section>
@@ -457,6 +462,7 @@ const vialStore = loadVials();             // { id: vialObject }
 function loadVials(){ try{return JSON.parse(localStorage.getItem('pm_vials_v1')||'{}')}catch(e){return {}} }
 function saveCurrentVial(){
   if(vial && vial.id && vial.verified){
+    vial.updatedAt = Date.now();
     vialStore[vial.id] = vial;
     try{ localStorage.setItem('pm_vials_v1', JSON.stringify(vialStore)); }catch(e){}
     try{ localStorage.setItem('pm_current_v1', vial.id); }catch(e){}
@@ -849,14 +855,16 @@ function vialStats(v){
   const volPct=(v.bacMl>0)?volLeft/v.bacMl*100:0;
   const mgUsed=entries.reduce((s,d)=>s+(+d.dose||0),0);
   const mgLeft=Math.max(0,(+v.mg||0)-mgUsed);
-  return {doses:entries.length, volUsed, volLeft, volPct, mgUsed, mgLeft};
+  const perDose=(v.dose>0)?v.dose:(entries.length?mgUsed/entries.length:0);
+  const dosesLeft=perDose>0?Math.floor(mgLeft/perDose):null;
+  return {doses:entries.length, volUsed, volLeft, volPct, mgUsed, mgLeft, perDose, dosesLeft};
 }
 let _vgid=0;
-function vialGraphic(pct){
-  const id=++_vgid, bx=9, by=12, bw=22, bh=58;
+function vialGraphic(pct,label,caption){
+  const id=++_vgid, bx=9, by=12, bw=22, bh=58, cx=bx+bw/2;
   const p=Math.max(0,Math.min(100,pct||0));
   const liqH=bh*p/100, liqY=by+bh-liqH;
-  return `<svg width="40" height="78" viewBox="0 0 40 78" style="flex:none" aria-hidden="true">
+  return `<svg width="40" height="86" viewBox="0 0 40 86" style="flex:none" aria-hidden="true">
     <defs>
       <linearGradient id="lq${id}" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0" stop-color="#4f8cff"/><stop offset="1" stop-color="#27d3a2"/>
@@ -868,16 +876,30 @@ function vialGraphic(pct){
     <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#0e1422" stroke="#26314a"/>
     ${p>0?`<g clip-path="url(#cl${id})">
       <rect x="${bx}" y="${liqY}" width="${bw}" height="${liqH}" fill="url(#lq${id})"/>
-      <ellipse cx="${bx+bw/2}" cy="${liqY}" rx="${bw/2}" ry="2" fill="#9cc4ff" opacity=".75"/>
+      <ellipse cx="${cx}" cy="${liqY}" rx="${bw/2}" ry="2" fill="#9cc4ff" opacity=".75"/>
     </g>`:''}
     <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="none" stroke="#2c3b5c"/>
     <rect x="${bx+3}" y="${by+4}" width="3" height="${bh-12}" rx="1.5" fill="#ffffff" opacity=".06"/>
+    ${label?`<text x="${cx}" y="45" text-anchor="middle" font-size="13" font-weight="800" fill="#fff" stroke="#0b0f17" stroke-width="2.6" paint-order="stroke" style="font-family:system-ui">${label}</text>`:''}
+    ${caption?`<text x="20" y="83" text-anchor="middle" font-size="9" fill="#8a97b0" style="font-family:system-ui">${caption}</text>`:''}
   </svg>`;
 }
 
 // ---------- vial library ----------
+let vialSort='recent';
+function setVialSort(mode){
+  vialSort=mode;
+  document.querySelectorAll('#vialSort button').forEach(b=>b.classList.toggle('active',b.dataset.s===mode));
+  renderVials();
+}
+function vialGraphicLabel(v,st){
+  if(!v.reconstituted) return {label:'', caption:'powder'};
+  if(st.dosesLeft!=null) return {label:String(st.dosesLeft), caption:'doses'};
+  return {label:st.volLeft.toFixed(1), caption:'mL'};
+}
 function renderVials(){
   const wrap=document.getElementById('vialsList');
+  const seg=document.getElementById('vialSort'); if(seg) seg.style.display = Object.keys(vialStore).length? 'flex':'none';
   const list=Object.values(vialStore).filter(v=>v.verified);
   if(!list.length){
     wrap.innerHTML=`<div class="card"><div class="empty">
@@ -887,19 +909,33 @@ function renderVials(){
       <button class="btn" onclick="show('v-scan')">Go to scan</button></div></div>`;
     return;
   }
-  list.sort((a,b)=> (a.id===vial.id?-1:b.id===vial.id?1:0) || String(a.name||'').localeCompare(String(b.name||'')));
+  list.sort((a,b)=>{
+    if(vialSort==='name') return String(a.name||'').localeCompare(String(b.name||''));
+    if(vialSort==='expiry'){
+      const ea=a.reconstituted?expiryInfo(a).days:1e9, eb=b.reconstituted?expiryInfo(b).days:1e9;
+      return ea-eb;
+    }
+    return (b.updatedAt||0)-(a.updatedAt||0);  // recent
+  });
   wrap.innerHTML=list.map(v=>{
     const st=vialStats(v);
     const ex=v.reconstituted?expiryInfo(v):null;
     const pct=v.reconstituted?st.volPct:0;
     const active=v.id===vial.id;
+    const g=vialGraphicLabel(v,st);
     const barCol=v.reconstituted?(ex?ex.color:'var(--accent)'):'var(--line)';
     const sub=v.reconstituted? `${st.volLeft.toFixed(2)} / ${(+v.bacMl).toFixed(2)} mL left` : 'Not reconstituted';
     return `<div class="card tap" onclick="selectVial('${v.id}')">
       <div class="row" style="gap:14px;align-items:center">
-        ${vialGraphic(pct)}
+        ${vialGraphic(pct,g.label,g.caption)}
         <div style="flex:1;min-width:0">
-          <div class="row between"><h3 style="font-size:15px">${v.name}</h3>${active?'<span class="pill ok">Active</span>':''}</div>
+          <div class="row between">
+            <h3 style="font-size:15px">${v.name}</h3>
+            <span class="row" style="gap:8px">
+              ${active?'<span class="pill ok">Active</span>':''}
+              <button class="del" onclick="event.stopPropagation();deleteVial('${v.id}')" aria-label="Delete vial">✕</button>
+            </span>
+          </div>
           ${v.orderNo?`<div class="small muted">Order ${v.orderNo} · Vial ${String(v.vialNo||'').padStart(2,'0')}</div>`:''}
           <div class="expbar" style="margin:9px 0 5px"><i style="width:${pct}%;background:${barCol}"></i></div>
           <div class="row between">
@@ -916,6 +952,20 @@ function selectVial(id){
   vial=Object.assign(freshVial(), v);
   saveCurrentVial();
   show('v-vial');
+}
+function deleteVial(id){
+  const v=vialStore[id]; if(!v) return;
+  if(!confirm('Delete '+(v.name||'this vial')+' and its dose history?')) return;
+  delete vialStore[id];
+  try{ localStorage.setItem('pm_vials_v1',JSON.stringify(vialStore)); }catch(e){}
+  doseLog=doseLog.filter(d=>d.vialId!==id); persistLog();
+  if(vial.id===id){
+    const rest=Object.values(vialStore).filter(x=>x.verified);
+    vial=rest.length?Object.assign(freshVial(),rest[0]):freshVial();
+    try{ localStorage.setItem('pm_current_v1', vial.verified?vial.id:''); }catch(e){}
+  }
+  renderVials();
+  toast('Vial deleted');
 }
 
 // ---------- vial detail (state-driven) ----------
@@ -950,7 +1000,7 @@ function renderVial(){
   const dash = `
     <div class="card">
       <div class="row" style="gap:14px;align-items:center">
-        ${vialGraphic(vial.reconstituted?volPct:0)}
+        ${vialGraphic(vial.reconstituted?volPct:0, vial.reconstituted?(dosesLeft!=='—'?String(dosesLeft):volLeft.toFixed(1)):'', vial.reconstituted?(dosesLeft!=='—'?'doses':'mL'):'powder')}
         <div style="flex:1;min-width:0">
           <div class="row" style="gap:10px">
             <div class="stat"><div class="n mono">${dosesTaken}</div><div class="l">Doses taken</div></div>
@@ -1078,6 +1128,7 @@ function logVolPreview(){
 function addLoggedDose(date,dose,vol){
   doseLog.push({id:Date.now()+Math.floor(Math.random()*999), date, compound:vial.compound||'—', dose, vol, vialId:vial.id});
   persistLog();
+  saveCurrentVial();   // bump recency so the Vials "Recent" sort reflects logging
 }
 function addFromForm(){
   const date=document.getElementById('log_date').value;
