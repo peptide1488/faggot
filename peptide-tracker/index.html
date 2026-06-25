@@ -159,6 +159,31 @@
   .del{background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:2px 4px;margin-left:6px}
   .del:active{color:var(--danger)}
   .logvol{font-size:12.5px;color:var(--accent2);font-weight:600;min-height:16px;margin:-4px 2px 10px}
+
+  /* peptide fridge */
+  .fridge{position:relative; overflow:hidden; background:linear-gradient(165deg,#18233a,#0f1626);
+    border:1px solid #2c3b5c; border-radius:18px; padding:6px 10px 8px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 14px 34px rgba(0,0,0,.4)}
+  .fridge .light{position:absolute; top:12px; right:14px; width:7px; height:7px; border-radius:50%;
+    background:var(--good); box-shadow:0 0 8px var(--good); z-index:1}
+  .shelf{position:relative; padding:10px 2px 16px}
+  .shelf .items{display:flex; gap:6px; align-items:flex-end; flex-wrap:wrap}
+  .shelf .glass{position:absolute; left:2px; right:2px; bottom:6px; height:3px; border-radius:3px;
+    background:linear-gradient(90deg,transparent,rgba(160,200,255,.28),transparent);
+    box-shadow:0 3px 8px rgba(120,170,255,.18)}
+  .fvial{width:72px; padding:3px 2px; text-align:center; cursor:pointer; border-radius:10px; transition:.15s}
+  .fvial:active{transform:scale(.95); background:var(--panel2)}
+  .fvial .nm{font-size:10px; line-height:1.2; margin-top:1px; color:var(--txt);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:24px}
+  .fdoor{position:absolute; inset:0; border-radius:18px; z-index:3; pointer-events:none;
+    transform-origin:left center; animation:fdooropen .7s cubic-bezier(.5,.05,.5,1) forwards;
+    background:linear-gradient(160deg,#26375a,#18223c); border:1px solid #324a73;
+    box-shadow:inset 0 0 50px rgba(0,0,0,.35)}
+  .fdoor .dhandle{position:absolute; right:11px; top:50%; transform:translateY(-50%);
+    width:7px; height:58px; border-radius:5px; background:#aab6cc}
+  .fdoor .frost{position:absolute; inset:0; border-radius:18px;
+    background:radial-gradient(circle at 32% 28%, rgba(255,255,255,.07), transparent 62%)}
+  @keyframes fdooropen{0%{transform:perspective(900px) rotateY(0deg)}100%{transform:perspective(900px) rotateY(-115deg); opacity:0}}
 </style>
 </head>
 <body>
@@ -327,7 +352,7 @@
 <section class="view" id="v-vials">
   <div class="card">
     <div class="row between">
-      <h2 style="font-size:18px">My vials</h2>
+      <h2 style="font-size:18px">🧊 Peptide fridge</h2>
       <button class="btn sec" style="width:auto;padding:9px 13px;font-size:13px" onclick="show('v-scan')">+ Add vial</button>
     </div>
     <p class="muted small" style="margin-top:8px">Tap a vial to open it. The tube shows how much liquid is left.</p>
@@ -630,10 +655,10 @@ function handleScannedTag({payload, hwSerial}){
     resetVerifyInputs();
     toast('Vial read from tag ✓');
     if(vial.reconstituted){ saveCurrentVial(); show('v-vial'); }
-    else if(vial.verified){ saveCurrentVial(); show('v-recon'); calcConc(); }      // already verified earlier
-    else if(payload.decoded){ configureVerify('code'); show('v-verify'); }          // enter printed code
-    else if(hasPrintedSerial){ configureVerify('serial'); show('v-verify'); }        // legacy: retype serial
-    else { vial.verified=true; saveCurrentVial(); show('v-recon'); calcConc(); }    // free-text tag: nothing to verify
+    else if(vial.verified){ saveCurrentVial(); show('v-vial'); }                      // already in fridge
+    else if(payload.decoded){ configureVerify('code'); show('v-verify'); }            // enter printed code
+    else if(hasPrintedSerial){ configureVerify('serial'); show('v-verify'); }          // legacy: retype serial
+    else { vial.verified=true; saveCurrentVial(); show('v-vial'); }                   // free-text tag: nothing to verify
   }else{
     pendingUid=hwSerial||null;
     toast('Blank tag — let’s register it');
@@ -759,8 +784,8 @@ async function doVerify(){
     catch(e){ toast(e.message||'Verify unavailable'); return; }
     if(ok){
       vial.verified=true; saveCurrentVial();
-      toast('Verified ✓ Genuine vial');
-      show(vial.reconstituted?'v-vial':'v-recon'); calcConc();
+      toast('Verified ✓ Added to your fridge');
+      show('v-vial');
     }else{
       inp.classList.add('err');
       document.getElementById('ver_hint').textContent='⚠ Code doesn’t match — check the vial or contact the seller.';
@@ -770,8 +795,8 @@ async function doVerify(){
   }
   if(val.toUpperCase()===vial.serial.toUpperCase()){
     vial.verified=true; saveCurrentVial();
-    toast('Serial matches ✓ Authentic');
-    show('v-recon'); calcConc();
+    toast('Verified ✓ Added to your fridge');
+    show('v-vial');
   }else{
     inp.classList.add('err');
     document.getElementById('ver_hint').textContent='⚠ Does not match the chip — possible counterfeit. Check the label.';
@@ -938,11 +963,14 @@ function renderVials(){
   const seg=document.getElementById('vialSort'); if(seg) seg.style.display = Object.keys(vialStore).length? 'flex':'none';
   const list=Object.values(vialStore).filter(v=>v.verified);
   if(!list.length){
-    wrap.innerHTML=`<div class="card"><div class="empty">
-      <div class="ico">🧪</div>
-      <h3 style="font-size:16px;margin-bottom:6px">No vials yet</h3>
-      <p class="small" style="margin-bottom:16px">Scan a vial to add it to your library.</p>
-      <button class="btn" onclick="show('v-scan')">Go to scan</button></div></div>`;
+    wrap.innerHTML=`<div class="fridge"><div class="light"></div>
+      <div class="empty" style="padding:36px 16px">
+        <div class="ico">🧊</div>
+        <h3 style="font-size:16px;margin-bottom:6px">Your fridge is empty</h3>
+        <p class="small" style="margin-bottom:16px">Scan a vial to stock it.</p>
+        <button class="btn" onclick="show('v-scan')">Go to scan</button>
+      </div>
+      <div class="fdoor"><div class="frost"></div><div class="dhandle"></div></div></div>`;
     return;
   }
   list.sort((a,b)=>{
@@ -953,35 +981,27 @@ function renderVials(){
     }
     return (b.updatedAt||0)-(a.updatedAt||0);  // recent
   });
-  wrap.innerHTML=list.map(v=>{
-    const st=vialStats(v);
-    const ex=v.reconstituted?expiryInfo(v):null;
-    const pct=v.reconstituted?st.volPct:0;
-    const active=v.id===vial.id;
-    const g=vialGraphicLabel(v,st);
-    const barCol=v.reconstituted?(ex?ex.color:'var(--accent)'):'var(--line)';
-    const sub=v.reconstituted? `${st.volLeft.toFixed(2)} / ${(+v.bacMl).toFixed(2)} mL left` : 'Not reconstituted';
-    return `<div class="card tap" onclick="selectVial('${v.id}')">
-      <div class="row" style="gap:14px;align-items:center">
+  const perShelf=3;
+  let shelves='';
+  for(let i=0;i<list.length;i+=perShelf){
+    const items=list.slice(i,i+perShelf).map(v=>{
+      const st=vialStats(v), g=vialGraphicLabel(v,st);
+      const ex=v.reconstituted?expiryInfo(v):null;
+      const pct=v.reconstituted?st.volPct:0;
+      const active=v.id===vial.id;
+      const warn=ex && ex.days<=7;
+      const tag = active ? `<div style="font-size:9px;color:var(--accent2);font-weight:700">● active</div>`
+        : warn ? `<div style="font-size:9px;color:${ex.color};font-weight:700">${ex.label}</div>`
+        : !v.reconstituted ? `<div style="font-size:9px;color:var(--muted)">not mixed</div>` : `<div style="height:12px"></div>`;
+      return `<div class="fvial" onclick="selectVial('${v.id}')">
         ${vialGraphic(pct,g.label,g.caption)}
-        <div style="flex:1;min-width:0">
-          <div class="row between">
-            <h3 style="font-size:15px">${v.name}</h3>
-            <span class="row" style="gap:8px">
-              ${active?'<span class="pill ok">Active</span>':''}
-              <button class="del" onclick="event.stopPropagation();deleteVial('${v.id}')" aria-label="Delete vial">✕</button>
-            </span>
-          </div>
-          ${v.orderNo?`<div class="small muted">Order ${v.orderNo} · Vial ${String(v.vialNo||'').padStart(2,'0')}</div>`:''}
-          <div class="expbar" style="margin:9px 0 5px"><i style="width:${pct}%;background:${barCol}"></i></div>
-          <div class="row between">
-            <span class="small" style="color:${v.reconstituted?'var(--accent2)':'var(--muted)'}">${sub}</span>
-            ${ex?`<span class="pill ${ex.cls}" style="font-size:10px">${ex.label}</span>`:''}
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
+        <div class="nm">${v.name}</div>
+        ${tag}
+      </div>`;
+    }).join('');
+    shelves+=`<div class="shelf"><div class="items">${items}</div><div class="glass"></div></div>`;
+  }
+  wrap.innerHTML=`<div class="fridge"><div class="light"></div>${shelves}<div class="fdoor"><div class="frost"></div><div class="dhandle"></div></div></div>`;
 }
 function selectVial(id){
   const v=vialStore[id]; if(!v) return;
@@ -1000,8 +1020,8 @@ function deleteVial(id){
     vial=rest.length?Object.assign(freshVial(),rest[0]):freshVial();
     try{ localStorage.setItem('pm_current_v1', vial.verified?vial.id:''); }catch(e){}
   }
-  renderVials();
-  toast('Vial deleted');
+  toast('Vial removed from fridge');
+  show('v-vials');
 }
 
 // ---------- vial detail (state-driven) ----------
@@ -1108,7 +1128,9 @@ function renderVial(){
     <div style="height:8px"></div>
     <button class="btn sec" onclick="show('v-dose')">Open dose calculator</button>
     <div style="height:8px"></div>
-    <button class="btn ghost" onclick="show('v-vials')">← All vials</button>`;
+    <button class="btn ghost" onclick="show('v-vials')">← Back to fridge</button>
+    <div style="height:8px"></div>
+    <button class="btn ghost" style="color:var(--danger)" onclick="deleteVial('${vial.id}')">Remove from fridge</button>`;
 }
 
 // ---------- expiry ----------
