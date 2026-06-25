@@ -212,6 +212,7 @@
     <button class="btn ghost" onclick="simulateScan()">Simulate scan (no tag)</button>
     <button class="btn ghost" style="margin-top:10px" onclick="loadDemo()">Load a finished demo vial</button>
     <p class="hint" id="nfcHint">Checking NFC support…</p>
+    <p class="hint" style="opacity:.55">App version <span id="appVer">—</span></p>
   </div>
 </section>
 
@@ -1380,15 +1381,21 @@ function drawPK(){
 }
 
 // init
+const APP_VERSION='v11';
 initNFC(); renderVial(); calcConc(); calcDose();
+const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 // pick up where we left off if a vial is already registered
 if(vial.verified){ document.getElementById('syncpill').textContent='● '+vial.compound; }
 window.addEventListener('resize',()=>{ if(document.getElementById('v-plot').classList.contains('active')) drawPK(); });
 
-// PWA: register the service worker for offline + installability
+// PWA: register the service worker and auto-reload when a new version ships
 if('serviceWorker' in navigator){
+  let _swReloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(_swReloaded) return; _swReloaded=true; location.reload();
+  });
   window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('sw.js').catch(()=>{});
+    navigator.serviceWorker.register('sw.js').then(reg=>{ if(reg.update) reg.update(); }).catch(()=>{});
   });
 }
 </script>
