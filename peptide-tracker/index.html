@@ -194,6 +194,7 @@
     <h1 style="font-size:17px">Pepti Mart Vial Tracker</h1>
     <div class="sub muted">Peptide vial registry &amp; dosing</div>
   </div>
+  <button id="soundBtn" onclick="toggleSound()" aria-label="Toggle sound" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 6px">🔊</button>
   <div class="pill ok" id="syncpill">● local</div>
 </header>
 
@@ -519,6 +520,49 @@ function toast(m){
   clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),1900);
 }
 
+// ---------- sound effects (synthesized, no files) ----------
+let soundOn = (()=>{ try{ return localStorage.getItem('pm_sound')!=='0'; }catch(e){ return true; } })();
+const SFX=(()=>{
+  let ctx;
+  function ac(){
+    if(!ctx){ try{ ctx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
+    if(ctx && ctx.state==='suspended') ctx.resume();
+    return ctx;
+  }
+  function tone(freq,t0,dur,type,vol){
+    const c=ac(); if(!c) return;
+    const o=c.createOscillator(), g=c.createGain(), s=c.currentTime+t0;
+    o.type=type||'sine'; o.frequency.value=freq;
+    g.gain.setValueAtTime(0.0001,s);
+    g.gain.linearRampToValueAtTime(vol||0.16, s+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, s+dur);
+    o.connect(g).connect(c.destination); o.start(s); o.stop(s+dur+0.02);
+  }
+  function glide(f1,f2,dur,type,vol){
+    const c=ac(); if(!c) return;
+    const o=c.createOscillator(), g=c.createGain(), s=c.currentTime;
+    o.type=type||'sine'; o.frequency.setValueAtTime(f1,s); o.frequency.exponentialRampToValueAtTime(f2,s+dur*0.8);
+    g.gain.setValueAtTime(0.0001,s); g.gain.linearRampToValueAtTime(vol||0.16,s+0.03); g.gain.exponentialRampToValueAtTime(0.0001,s+dur);
+    o.connect(g).connect(c.destination); o.start(s); o.stop(s+dur+0.02);
+  }
+  const lib={
+    scan:   ()=>tone(990,0,.09,'sine',.10),
+    success:()=>{ tone(659.25,0,.15,'sine',.15); tone(783.99,.09,.16,'sine',.15); tone(1046.5,.18,.26,'sine',.13); },
+    recon:  ()=>glide(300,720,.32,'sine',.15),
+    dose:   ()=>{ tone(880,0,.06,'triangle',.09); tone(1318.5,.05,.10,'sine',.11); },
+    delete: ()=>{ tone(440,0,.07,'sine',.10); tone(294,.07,.13,'sine',.10); },
+    error:  ()=>{ tone(196,0,.16,'sawtooth',.10); tone(155,.12,.24,'sawtooth',.10); }
+  };
+  return (name)=>{ if(!soundOn) return; try{ (lib[name]||lib.success)(); }catch(e){} };
+})();
+function toggleSound(){
+  soundOn=!soundOn;
+  try{ localStorage.setItem('pm_sound', soundOn?'1':'0'); }catch(e){}
+  const b=document.getElementById('soundBtn'); if(b) b.textContent=soundOn?'🔊':'🔇';
+  if(soundOn) SFX('dose');
+  toast(soundOn?'Sound on':'Sound off');
+}
+
 // ---------- Web NFC ----------
 const NFC_SUPPORTED = ('NDEFReader' in window);
 let nfcReader=null, nfcAbort=null, pendingUid=null;
@@ -628,6 +672,7 @@ function handleScannedTag({payload, hwSerial}){
     const why = payload.reason==='checksum' ? 'failed its check digit' :
                 payload.reason==='unknown-code' ? 'has an unrecognized product code' :
                 'is not a valid Pepti Mart serial';
+    SFX('error');
     toast('⚠ This tag '+why+' — possible tampering');
     show('v-scan');
     return;
@@ -654,6 +699,7 @@ function handleScannedTag({payload, hwSerial}){
     if(vialStore[v.id]) v=Object.assign(v, vialStore[v.id], {uid:hwSerial||vialStore[v.id].uid});
     vial=v;
     resetVerifyInputs();
+    SFX('scan');
     toast('Vial read from tag ✓');
     if(vial.reconstituted){ saveCurrentVial(); show('v-vial'); }
     else if(vial.verified){ saveCurrentVial(); show('v-vial'); }                      // already in fridge
@@ -795,10 +841,12 @@ async function doVerify(){
     catch(e){ toast(e.message||'Verify unavailable'); return; }
     if(ok){
       vial.verified=true; saveCurrentVial();
+      SFX('success');
       toast('Verified ✓ Added to your fridge');
       show('v-vial');
     }else{
       inp.classList.add('err');
+      SFX('error');
       document.getElementById('ver_hint').textContent='⚠ Code doesn’t match — check the vial or contact the seller.';
       toast('Verification failed');
     }
@@ -806,10 +854,12 @@ async function doVerify(){
   }
   if(val.toUpperCase()===vial.serial.toUpperCase()){
     vial.verified=true; saveCurrentVial();
+    SFX('success');
     toast('Verified ✓ Added to your fridge');
     show('v-vial');
   }else{
     inp.classList.add('err');
+    SFX('error');
     document.getElementById('ver_hint').textContent='⚠ Does not match the chip — possible counterfeit. Check the label.';
     toast('Serial mismatch');
   }
@@ -851,6 +901,7 @@ function saveRecon(){
   vial.bud=+document.getElementById('r_bud').value||28;
   vial.reconstituted=true;
   saveCurrentVial();
+  SFX('recon');
   toast('Reconstitution saved');
   // hand the numbers to the dose step
   document.getElementById('d_mg').value=vial.mg;
@@ -883,6 +934,7 @@ function calcDose(){
 function finishSetup(){
   vial.dose=+document.getElementById('d_dose').value||null;
   saveCurrentVial();
+  SFX('success');
   toast('Vial saved to registry ✓');
   show('v-vial');
 }
@@ -1031,6 +1083,7 @@ function deleteVial(id){
     vial=rest.length?Object.assign(freshVial(),rest[0]):freshVial();
     try{ localStorage.setItem('pm_current_v1', vial.verified?vial.id:''); }catch(e){}
   }
+  SFX('delete');
   toast('Vial removed from fridge');
   show('v-vials');
 }
@@ -1200,6 +1253,7 @@ function addLoggedDose(date,dose,vol){
   doseLog.push({id:Date.now()+Math.floor(Math.random()*999), date, compound:vial.compound||'—', dose, vol, vialId:vial.id});
   persistLog();
   saveCurrentVial();   // bump recency so the Vials "Recent" sort reflects logging
+  SFX('dose');
 }
 function addFromForm(){
   const date=document.getElementById('log_date').value;
@@ -1391,9 +1445,10 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v12';
+const APP_VERSION='v13';
 initNFC(); renderVial(); calcConc(); calcDose();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
+const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
 // pick up where we left off if a vial is already registered
 if(vial.verified){ document.getElementById('syncpill').textContent='● '+vial.compound; }
 window.addEventListener('resize',()=>{ if(document.getElementById('v-plot').classList.contains('active')) drawPK(); });
