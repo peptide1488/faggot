@@ -24,7 +24,7 @@
   body{
     background:var(--bg); color:var(--txt);
     font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
-    padding-bottom:78px; max-width:520px; margin:0 auto;
+    padding-bottom:calc(96px + env(safe-area-inset-bottom)); max-width:520px; margin:0 auto;
     position:relative; min-height:100%;
   }
   h1,h2,h3{margin:0; font-weight:650; letter-spacing:-.01em}
@@ -1002,6 +1002,10 @@ function vialGraphic(pct,label,caption){
       <rect x="${bx}" y="${liqY}" width="${bw}" height="${liqH}" fill="url(#lq${id})"/>
       <ellipse cx="${cx}" cy="${liqY}" rx="${bw/2}" ry="2" fill="#9cc4ff" opacity=".75"/>
     </g>`:''}
+    ${(p<=0 && caption==='powder')?`<g clip-path="url(#cl${id})">
+      <rect x="${bx}" y="${by+bh-10}" width="${bw}" height="10" fill="#e6e1d3"/>
+      <path d="M${bx} ${by+bh-9} Q${cx} ${by+bh-15} ${bx+bw} ${by+bh-9} L${bx+bw} ${by+bh-7} Q${cx} ${by+bh-12} ${bx} ${by+bh-7} Z" fill="#f2eee2"/>
+    </g>`:''}
     <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="none" stroke="#2c3b5c"/>
     <rect x="${bx+3}" y="${by+4}" width="3" height="${bh-12}" rx="1.5" fill="#ffffff" opacity=".06"/>
     ${label?`<text x="${cx}" y="45" text-anchor="middle" font-size="13" font-weight="800" fill="#fff" stroke="#0b0f17" stroke-width="2.6" paint-order="stroke" style="font-family:system-ui">${label}</text>`:''}
@@ -1445,7 +1449,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v13';
+const APP_VERSION='v14';
 initNFC(); renderVial(); calcConc(); calcDose();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
