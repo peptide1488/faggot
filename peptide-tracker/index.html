@@ -679,17 +679,21 @@ function closeShareModal(){ document.getElementById('shareModal').classList.remo
 function postShareX(){
   const text=document.getElementById('shareTextArea').value;
   const enc=encodeURIComponent(text);
-  const appUrl='twitter://post?message='+enc;            // opens the X app composer pre-filled
-  const webUrl='https://x.com/intent/post?text='+enc;    // fallback if the app isn't installed
-  let handled=false;
-  const cancel=()=>{ handled=true; };
-  // if the app opens, this tab gets hidden/blurred — use that to skip the web fallback
-  window.addEventListener('blur', cancel, {once:true});
-  document.addEventListener('visibilitychange', function vc(){ if(document.hidden){ cancel(); document.removeEventListener('visibilitychange', vc); } });
-  const t=setTimeout(()=>{ if(!handled && !document.hidden){ try{ window.open(webUrl,'_blank','noopener'); }catch(e){} } }, 1000);
-  try{ window.location.href=appUrl; }catch(e){ clearTimeout(t); try{ window.open(webUrl,'_blank','noopener'); }catch(_){} }
+  const webUrl='https://x.com/intent/post?text='+enc;
   awardShare();
   closeShareModal();
+  // Android: fire an explicit SEND intent to the X app so the composer opens pre-filled
+  // (X ignores text in its twitter:// / intent/tweet links, but honors EXTRA_TEXT).
+  if(/Android/i.test(navigator.userAgent)){
+    const intentUrl='intent:#Intent;action=android.intent.action.SEND;type=text/plain;'
+      +'S.android.intent.extra.TEXT='+enc+';'
+      +'package=com.twitter.android;'
+      +'S.browser_fallback_url='+encodeURIComponent(webUrl)+';end';
+    try{ window.location.href=intentUrl; return; }catch(e){}
+  }
+  // iOS / other: the OS share sheet reliably hands text to the X app
+  if(navigator.share){ navigator.share({text}).catch(()=>{}); return; }
+  try{ window.open(webUrl,'_blank','noopener'); }catch(e){}
 }
 function copyShareText(){
   const text=document.getElementById('shareTextArea').value;
@@ -1740,7 +1744,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v20';
+const APP_VERSION='v21';
 initNFC(); renderVial(); calcConc(); calcDose(); updatePtsBadge();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
