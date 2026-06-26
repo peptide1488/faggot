@@ -726,10 +726,11 @@ function renderRewards(){
       </label>
     </div>
     <div class="card">
-      <h3 style="font-size:14px;margin-bottom:8px">Earn points</h3>
-      <div class="kv"><span class="k">Reconstitute a vial</span><span class="v">+10</span></div>
-      <div class="kv"><span class="k">Log a dose</span><span class="v">+5</span></div>
-      <div class="kv"><span class="k">Share to X</span><span class="v">+15</span></div>
+      <h3 style="font-size:14px;margin-bottom:4px">Earn points</h3>
+      <p class="muted small" style="margin-bottom:8px">Points are earned <b>only</b> when you post to X.</p>
+      <div class="kv"><span class="k">Post a dose to X</span><span class="v">+15</span></div>
+      <div class="kv"><span class="k">Post a fresh reconstitution to X</span><span class="v">+15</span></div>
+      <div class="kv"><span class="k">Share anytime to X</span><span class="v">+15</span></div>
     </div>
     <div class="card">
       <h3 style="font-size:14px;margin-bottom:8px">Redeem for coupons</h3>
@@ -962,7 +963,10 @@ function resetApp(){
     localStorage.removeItem('pm_vials_v1');
     localStorage.removeItem('pm_doselog_v2');
     localStorage.removeItem('pm_current_v1');
+    localStorage.removeItem('pm_points');
+    localStorage.removeItem('pm_coupons');
   }catch(e){}
+  points=0; coupons=[];
   toast('All data cleared');
   setTimeout(()=>location.reload(),400);
 }
@@ -1082,9 +1086,8 @@ function saveRecon(){
   vial.reconstituted=true;
   saveCurrentVial();
   SFX('recon');
-  addPoints(10);
-  toast('Reconstitution saved · +10 pts');
-  if(autoShare) shareToX('recon');
+  toast('Reconstitution saved');
+  if(autoShare) shareModal('recon');
   // hand the numbers to the dose step
   document.getElementById('d_mg').value=vial.mg;
   document.getElementById('d_ml').value=vial.bacMl;
@@ -1176,7 +1179,7 @@ function logDose(){
   if(!(mg>0&&ml>0&&dose>0)){ toast('Enter a dose first'); return; }
   const vol=dose/(mg/ml);
   addLoggedDose(new Date().toISOString().slice(0,10), dose, vol);
-  toast('Dose logged ✓ · +5 pts');
+  toast('Dose logged ✓');
   show('v-log');
 }
 
@@ -1500,8 +1503,7 @@ function addLoggedDose(date,dose,vol){
   persistLog();
   saveCurrentVial();   // bump recency so the Vials "Recent" sort reflects logging
   SFX('dose');
-  addPoints(5);
-  if(autoShare) shareToX('dose');
+  if(autoShare) shareModal('dose');
 }
 function addFromForm(){
   const date=document.getElementById('log_date').value;
@@ -1511,7 +1513,7 @@ function addFromForm(){
   if(vial.reconstituted && vial.bacMl>0) vol=dose/(vial.mg/vial.bacMl);
   addLoggedDose(date,dose,vol);
   document.getElementById('log_dose').value=''; logVolPreview();
-  toast('Dose logged ✓ · +5 pts'); renderLog();
+  toast('Dose logged ✓'); renderLog();
 }
 function deleteDose(id){ doseLog=doseLog.filter(d=>d.id!==id); persistLog(); renderLog(); }
 function clearLog(){ if(!confirm('Clear all logged doses?')) return; doseLog=[]; persistLog(); renderLog(); toast('Dose log cleared'); }
@@ -1731,7 +1733,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v18';
+const APP_VERSION='v19';
 initNFC(); renderVial(); calcConc(); calcDose(); updatePtsBadge();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
