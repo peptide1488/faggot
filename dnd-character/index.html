@@ -195,6 +195,13 @@
   .seg button{flex:1;background:none;border:0;color:var(--mut);padding:8px;border-radius:7px;font-size:13px;font-weight:600}
   .seg button.on{background:var(--accent2);color:#f5f3ff}
   .pbinfo{font-size:13px;color:var(--mut);margin-bottom:10px}
+  .abrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .abrow:last-child{border-bottom:0}
+  .abrow .nm{width:40px;font-weight:700;text-transform:uppercase;font-size:12px;color:var(--mut)}
+  .abrow .rcl{width:30px;text-align:center;font-size:12px;color:var(--gold)}
+  .abrow .tot{margin-left:auto;min-width:64px;text-align:center}
+  .profdot{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--line);flex:none}
+  .profdot.on{background:var(--accent);border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -284,6 +291,31 @@ function applyClassDefaults(c){
   if(sv){ c.saveProf={str:false,dex:false,con:false,int:false,wis:false,cha:false}; sv.forEach(s=>c.saveProf[s]=true); }
   const hd=CLASS_HITDIE[c.cls];
   if(hd) c.hitDice.total=(Number(c.level)||1)+'d'+hd;
+}
+// Standard racial ability increases (2014 PHB-style). Modern "custom origin" lets you reassign.
+const RACE_ASI = {
+  'Dragonborn':{str:2,cha:1},'Dwarf':{con:2},'Elf':{dex:2},'Gnome':{int:2},'Half-Elf':{cha:2},
+  'Half-Orc':{str:2,con:1},'Halfling':{dex:2},'Human':{str:1,dex:1,con:1,int:1,wis:1,cha:1},
+  'Tiefling':{cha:2,int:1},'Aarakocra':{dex:2,wis:1},'Aasimar':{cha:2},'Bugbear':{str:2,dex:1},
+  'Centaur':{str:2,wis:1},'Changeling':{cha:2},'Fairy':{dex:2},'Firbolg':{wis:2,str:1},'Genasi':{con:2},
+  'Githyanki':{str:2,int:1},'Githzerai':{wis:2,int:1},'Goblin':{dex:2,con:1},'Goliath':{str:2,con:1},
+  'Harengon':{dex:2},'Hobgoblin':{con:2,int:1},'Kalashtar':{wis:2,cha:1},'Kenku':{dex:2,wis:1},'Kobold':{dex:2},
+  'Leonin':{con:2,str:1},'Lizardfolk':{con:2,wis:1},'Loxodon':{con:2,wis:1},'Minotaur':{str:2,con:1},
+  'Orc':{str:2,con:1},'Owlin':{dex:2},'Satyr':{cha:2,dex:1},'Shifter':{dex:2},'Simic Hybrid':{con:2},
+  'Tabaxi':{dex:2,cha:1},'Tortle':{str:2,wis:1},'Triton':{str:1,con:1,cha:1},'Vedalken':{int:2,wis:1},
+  'Warforged':{con:2},'Yuan-Ti':{cha:2,int:1}
+};
+function raceBonus(c,k){ return ((RACE_ASI[c.race]||{})[k])||0; }
+function abil(c,k){ const b=Number(c.abilities[k]); return (isNaN(b)?0:b) + raceBonus(c,k); }   // final score
+// Skill proficiencies granted: class count + 2 (background).
+const CLASS_SKILLS_N = {Bard:3, Ranger:3, Rogue:4};
+function skillBudget(c){ return (CLASS_SKILLS_N[c.cls]||2) + 2; }
+function skillCount(c){ return SKILLS.filter(([k])=>c.skillProf[k]).length; }
+// Average HP for the class/level: max die at L1, then per-level average, all + CON each level.
+function autoHP(c){
+  const hd=CLASS_HITDIE[c.cls]; if(!hd) return null;
+  const lvl=Number(c.level)||1, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
+  return Math.max(1, hd + con + (lvl-1)*(avg+con));
 }
 
 /* ---- data ---- */
@@ -442,8 +474,8 @@ function profBonus(c){
   if(c.profOverride!=='' && c.profOverride!=null && !isNaN(c.profOverride)) return Number(c.profOverride);
   return Math.ceil(Number(c.level||1)/4)+1;
 }
-function skillBonus(c, key, abil, exp){
-  let b = mod(c.abilities[abil]);
+function skillBonus(c, key, ab, exp){
+  let b = mod(abil(c, ab));
   const pb = profBonus(c);
   if(c.skillProf[key]) b += pb;
   if(exp && c.skillExp[key]) b += pb;
@@ -458,7 +490,7 @@ function spendHitDie(c){
   const hd=parseHitDice(c);
   if(!hd){ flashBanner('Set hit dice first (e.g. 5d10)'); return; }
   if((c.hitDice.used||0) >= hd.count){ flashBanner('No hit dice left'); return; }
-  const conMod=mod(c.abilities.con);
+  const conMod=mod(abil(c,"con"));
   const note='1d'+hd.sides+(conMod?(conMod>0?'+'+conMod:String(conMod)):'');
   const res=rollNotation(note);
   c.hp.cur=Math.min(c.hp.max, c.hp.cur+Math.max(0,res.total));
@@ -535,10 +567,9 @@ function renderBio(c){
         <div><label>Subclass</label>${fieldSelect('f_subclass', SUBCLASSES[c.cls]||[], c.subclass, 'Custom subclass')}</div>
         <div><label>Level</label><input id="f_level" type="number" min="1" max="20" value="${c.level}"></div>
       </div>
-      <div class="g3 grid">
-        <div><label>Alignment</label>${select('f_alignment', ALIGN, c.alignment)}</div>
+      <div class="g2 grid">
         <div><label>XP</label><input id="f_xp" type="number" min="0" value="${c.xp}"></div>
-        <div><label>Prof. bonus</label><input id="f_profOverride" type="number" value="${c.profOverride}" placeholder="${profBonus(c)} (auto)"></div>
+        <div><label>Prof. bonus (auto)</label><input id="f_profOverride" type="number" value="${c.profOverride}" placeholder="${profBonus(c)}"></div>
       </div>
     </div>
   </div>
@@ -547,7 +578,7 @@ function renderBio(c){
     <h2>At a glance</h2>
     <div class="tiles">
       <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
-      <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(c.abilities.dex)+Number(c.initMisc||0))}</div></div>
+      <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</div></div>
       <div class="tile"><div class="lab">Armor Class</div><div class="big">${c.ac}</div></div>
       <div class="tile"><div class="lab">Speed</div><div class="big">${c.speed}</div></div>
     </div>
@@ -565,7 +596,7 @@ function renderBio(c){
   $('#f_cls').addEventListener('change',e=>{ c.cls=e.target.value; c.subclass=''; applyClassDefaults(c); save(); render(); });
   bindSelectCustom('f_subclass','subclass');
   $('#f_level').addEventListener('change',e=>{ c.level=Math.max(1,Math.min(20,Number(e.target.value)||1)); const hd=CLASS_HITDIE[c.cls]; if(hd) c.hitDice.total=c.level+'d'+hd; save(); render(); });
-  bind('f_alignment','alignment'); bindNum('f_xp','xp');
+  bindNum('f_xp','xp');
   $('#f_profOverride').addEventListener('change',e=>{ c.profOverride = e.target.value===''?'':Number(e.target.value); save(); render(); });
   $('#f_insp').addEventListener('change',e=>{ c.inspiration=e.target.checked; save(); });
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
@@ -576,44 +607,37 @@ function abilCard(c){
   const method=c.abilMethod||'manual';
   const seg=`<div class="seg">${[['pointbuy','Point Buy'],['array','Std Array'],['manual','Manual']]
     .map(([k,l])=>`<button class="${method===k?'on':''}" data-abmethod="${k}">${l}</button>`).join('')}</div>`;
-  let body='';
-  if(method==='pointbuy'){
-    const used=pbUsed(c);
-    body=`<div class="pbinfo">Points: <b style="color:${used>27?'var(--bad)':'var(--good)'}">${used}</b> / 27 ${used>27?'· over budget':''}</div>`+
-      ABILITIES.map(([k,nm])=>{
-        const v=Number(c.abilities[k])||8;
-        const canUp = v<15 && (used - pbCost(v) + pbCost(v+1)) <= 27;
-        return `<div class="listrow">
-          <div class="nm">${nm}</div>
-          <div class="stepper">
-            <button data-pb="${k}" data-d="-1" ${v<=8?'disabled':''}>−</button>
-            <div class="val" style="min-width:26px;text-align:center">${v}</div>
-            <button data-pb="${k}" data-d="1" ${canUp?'':'disabled'}>＋</button>
-          </div>
-          <button class="val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(v)}">${sgn(mod(v))}</button>
-        </div>`;
+  let head='';
+  if(method==='pointbuy'){ const u=pbUsed(c); head=`<div class="pbinfo">Point budget: <b style="color:${u>27?'var(--bad)':'var(--good)'}">${27-u}</b> left · ${u}/27 used</div>`; }
+  else if(method==='array'){ head=`<div class="muted" style="font-size:12px;margin-bottom:8px">Assign 15, 14, 13, 12, 10, 8 — each once.</div>`; }
+  const anyRace = ABILITIES.some(([k])=>raceBonus(c,k));
+  const rows = ABILITIES.map(([k,nm])=>{
+    const base=Number(c.abilities[k]); const hasBase=!isNaN(base);
+    const rb=raceBonus(c,k); const total=abil(c,k);
+    let control;
+    if(method==='pointbuy'){
+      const v=hasBase?base:8, used=pbUsed(c), canUp=v<15 && (used-pbCost(v)+pbCost(v+1))<=27;
+      control=`<div class="stepper"><button data-pb="${k}" data-d="-1" ${v<=8?'disabled':''}>−</button><div class="val" style="min-width:24px;text-align:center">${v}</div><button data-pb="${k}" data-d="1" ${canUp?'':'disabled'}>＋</button></div>`;
+    } else if(method==='array'){
+      const taken=ABILITIES.filter(([k2])=>k2!==k).map(([k2])=>Number(c.abilities[k2]));
+      const opts=['—',...STD_ARRAY].map(v=>{
+        if(v==='—') return `<option value="—" ${hasBase&&STD_ARRAY.includes(base)?'':'selected'}>—</option>`;
+        const dis=(taken.includes(v)&&base!==v)?'disabled':'';
+        return `<option value="${v}" ${base===v?'selected':''} ${dis}>${v}</option>`;
       }).join('');
-  } else if(method==='array'){
-    body=`<div class="muted" style="font-size:12px;margin-bottom:8px">Assign 15, 14, 13, 12, 10, 8 — each once.</div>`+
-      ABILITIES.map(([k,nm])=>{
-        const assigned = STD_ARRAY.includes(Number(c.abilities[k]));
-        const taken = ABILITIES.filter(([k2])=>k2!==k).map(([k2])=>Number(c.abilities[k2]));
-        const opts = ['—',...STD_ARRAY].map(v=>{
-          if(v==='—') return `<option value="—" ${assigned?'':'selected'}>—</option>`;
-          const dis = (taken.includes(v) && Number(c.abilities[k])!==v) ? 'disabled':'';
-          return `<option value="${v}" ${Number(c.abilities[k])===v?'selected':''} ${dis}>${v}</option>`;
-        }).join('');
-        return `<div class="listrow"><div class="nm">${nm}</div>
-          <select data-arr="${k}" style="width:auto">${opts}</select>
-          <button class="val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(c.abilities[k])}">${sgn(mod(c.abilities[k]))}</button></div>`;
-      }).join('');
-  } else {
-    body=`<div class="abis">${ABILITIES.map(([k,nm])=>`
-      <div class="abi"><div class="nm">${k}</div>
-      <button class="mod rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(c.abilities[k])}">${sgn(mod(c.abilities[k]))}</button>
-      <input type="number" id="ab_${k}" value="${c.abilities[k]}" min="1" max="30" aria-label="${nm}"></div>`).join('')}</div>`;
-  }
-  return seg+body;
+      control=`<select data-arr="${k}" style="width:auto">${opts}</select>`;
+    } else {
+      control=`<input type="number" id="ab_${k}" value="${hasBase?base:10}" min="1" max="30" style="width:66px" aria-label="${nm}">`;
+    }
+    const show = hasBase || rb;
+    return `<div class="abrow">
+      <div class="nm">${k}</div>
+      ${control}
+      ${anyRace?`<div class="rcl">${rb?'+'+rb:''}</div>`:''}
+      <button class="tot val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(total)}" title="Roll ${nm} check">${show?total:'—'} <small style="color:var(--mut);font-weight:400">${show?sgn(mod(total)):''}</small></button>
+    </div>`;
+  }).join('');
+  return seg+head+rows;
 }
 function renderAbil(c){
   const pb = profBonus(c);
@@ -624,11 +648,12 @@ function renderAbil(c){
   </div>
 
   <div class="card">
-    <h2>Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— set by your class</span></h2>
+    <h2>Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— ● = proficient (from ${esc(c.cls)})</span></h2>
     ${ABILITIES.map(([k,nm])=>{
-      const b = mod(c.abilities[k]) + (c.saveProf[k]?pb:0);
+      const prof=!!c.saveProf[k];
+      const b = mod(abil(c,k)) + (prof?pb:0);
       return `<div class="listrow">
-        <input type="checkbox" class="chk" data-save="${k}" ${c.saveProf[k]?'checked':''}>
+        <span class="profdot ${prof?'on':''}"></span>
         <div class="nm">${nm}</div>
         <button class="val rollbtn" data-rollcheck data-label="${nm} save" data-bonus="${b}" title="Roll ${nm} save">${sgn(b)}</button>
       </div>`;
@@ -636,7 +661,7 @@ function renderAbil(c){
   </div>
 
   <div class="card">
-    <h2>Skills <span class="muted" style="text-transform:none;font-size:11px">— tap ◇ for expertise</span></h2>
+    <h2>Skills <span class="muted" style="text-transform:none;font-size:11px">— ${skillCount(c)}/${skillBudget(c)} chosen · tap ◇ for expertise</span></h2>
     ${SKILLS.map(([key,nm,ab])=>{
       const b = skillBonus(c,key,ab,true);
       return `<div class="listrow">
@@ -677,11 +702,12 @@ function renderAbil(c){
     c.abilities[el.dataset.arr] = e.target.value==='—' ? null : Number(e.target.value);
     save(); render();
   }));
-  app.querySelectorAll('[data-save]').forEach(el=>el.addEventListener('change',e=>{
-    c.saveProf[e.target.dataset.save]=e.target.checked; save(); render();
-  }));
   app.querySelectorAll('[data-skill]').forEach(el=>el.addEventListener('change',e=>{
-    c.skillProf[e.target.dataset.skill]=e.target.checked; save(); render();
+    const key=e.target.dataset.skill;
+    if(e.target.checked && skillCount(c) >= skillBudget(c)){
+      e.target.checked=false; flashBanner('Skill limit reached ('+skillBudget(c)+')'); return;
+    }
+    c.skillProf[key]=e.target.checked; save(); render();
   }));
   app.querySelectorAll('[data-exp]').forEach(el=>el.addEventListener('click',e=>{
     const k=el.dataset.exp; c.skillExp[k]=!c.skillExp[k]; save(); render();
@@ -704,6 +730,7 @@ function renderCombat(c){
       <input type="number" id="hpamt" value="1" min="1" inputmode="numeric">
       <button class="btn sm" id="healBtn" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button>
     </div>
+    ${autoHP(c)?`<button class="btn ghost sm block" id="autoHp" style="margin-top:10px">Set max HP to class average — ${autoHP(c)} (${esc(c.cls)} d${CLASS_HITDIE[c.cls]} + CON)</button>`:''}
   </div>
 
   <div class="card">
@@ -714,10 +741,10 @@ function renderCombat(c){
       <div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div>
     </div>
     <div class="tiles" style="margin-top:12px">
-      <div class="tile"><div class="lab">Initiative</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${mod(c.abilities.dex)+Number(c.initMisc||0)}" title="Roll initiative">${sgn(mod(c.abilities.dex)+Number(c.initMisc||0))}</button></div>
+      <div class="tile"><div class="lab">Initiative</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${mod(abil(c,"dex"))+Number(c.initMisc||0)}" title="Roll initiative">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</button></div>
       <div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div>
-      <div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(c.abilities[c.spellAbility])}</div></div>
-      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(c.abilities[c.spellAbility]))}</div></div>
+      <div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(abil(c,c.spellAbility))}</div></div>
+      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>
     </div>
   </div>
 
@@ -777,6 +804,7 @@ function renderCombat(c){
   </div>`;
 
   $('#hpmax').addEventListener('change',e=>{ c.hp.max=Number(e.target.value)||0; save(); });
+  const ahp=$('#autoHp'); if(ahp) ahp.addEventListener('click',()=>{ const v=autoHP(c); if(v){ c.hp.max=v; c.hp.cur=v; save(); render(); } });
   $('#hptemp').addEventListener('change',e=>{ c.hp.temp=Number(e.target.value)||0; save(); render(); });
   $('#cb_ac').addEventListener('change',e=>{ c.ac=Number(e.target.value)||0; save(); render(); });
   $('#cb_speed').addEventListener('change',e=>{ c.speed=Number(e.target.value)||0; save(); });
@@ -831,8 +859,8 @@ function applyHp(c,delta){
 
 /* ---------- SPELLS ---------- */
 function renderSpells(c){
-  const dc = 8+profBonus(c)+mod(c.abilities[c.spellAbility]);
-  const atk = profBonus(c)+mod(c.abilities[c.spellAbility]);
+  const dc = 8+profBonus(c)+mod(abil(c,c.spellAbility));
+  const atk = profBonus(c)+mod(abil(c,c.spellAbility));
   // group spells by level
   const byLvl={};
   for(let i=0;i<=9;i++) byLvl[i]=[];
@@ -1025,12 +1053,11 @@ function fieldSelect(id, opts, val, ph){
 function bindSelectCustom(id, field){
   const sel=$('#'+id+'_sel'), cust=$('#'+id+'_cust');
   sel.addEventListener('change',()=>{
-    if(sel.value==='Custom…'){ cust.style.display=''; cust.focus(); cur()[field]=cust.value||''; }
-    else { cust.style.display='none'; cur()[field]= sel.value==='—'?'':sel.value; }
-    save(); renderHeader();
+    if(sel.value==='Custom…'){ cust.style.display=''; cust.focus(); cur()[field]=cust.value||''; save(); renderHeader(); }
+    else { cust.style.display='none'; cur()[field]= sel.value==='—'?'':sel.value; save(); render(); }
   });
   cust.addEventListener('input',()=>{ cur()[field]=cust.value; });
-  cust.addEventListener('change',()=>{ cur()[field]=cust.value; save(); renderHeader(); });
+  cust.addEventListener('change',()=>{ cur()[field]=cust.value; save(); render(); });
 }
 
 /* ---- character ops ---- */
@@ -1088,7 +1115,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v3';
+const APP_VERSION='v4';
 if('serviceWorker' in navigator){
   let _reloaded=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
