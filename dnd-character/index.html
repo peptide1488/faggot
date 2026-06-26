@@ -351,6 +351,43 @@ function computeAC(c){
 const RACE_SPEED = {'Dwarf':25,'Halfling':25,'Gnome':25,'Kobold':30,'Tortle':30,'Aarakocra':25,'Centaur':40,'Minotaur':40,'Elf':30};
 const RACE_SPEED_FAST = {'Wood Elf':35,'Tabaxi':30};
 function defaultSpeed(c){ return RACE_SPEED[c.race]||30; }
+
+/* ---- spell list (curated SRD-ish; class letters A B C D P R S K W) ---- */
+const CLASS_LETTER = {Artificer:'A',Bard:'B',Cleric:'C',Druid:'D',Paladin:'P',Ranger:'R',Sorcerer:'S',Warlock:'K',Wizard:'W'};
+const SPELL_SRC = {
+0:"Acid Splash:SWA|Chill Touch:SWK|Dancing Lights:BSW|Druidcraft:D|Eldritch Blast:K|Fire Bolt:SWA|Guidance:CDA|Light:BCSWA|Mage Hand:BSWKA|Mending:BCDSWA|Message:BSWA|Minor Illusion:BSWK|Poison Spray:DSWKA|Prestidigitation:BSWKA|Produce Flame:D|Ray of Frost:SWA|Resistance:CDA|Sacred Flame:C|Shillelagh:D|Shocking Grasp:SWA|Spare the Dying:CA|Thaumaturgy:C|Thorn Whip:D|True Strike:BSW|Vicious Mockery:B",
+1:"Alarm:RWA|Animal Friendship:BDR|Bane:BC|Bless:CP|Burning Hands:SW|Charm Person:BDSWK|Color Spray:SW|Command:CP|Comprehend Languages:BSWK|Create or Destroy Water:CD|Cure Wounds:BCDPRA|Detect Magic:BCDPRSWA|Disguise Self:BSWA|Divine Favor:P|Entangle:D|Expeditious Retreat:SWA|Faerie Fire:BD|False Life:SWA|Feather Fall:BSW|Find Familiar:W|Fog Cloud:DRSW|Goodberry:DR|Grease:WA|Guiding Bolt:C|Healing Word:BCD|Hellish Rebuke:K|Heroism:BP|Hex:K|Hunter's Mark:R|Identify:BWA|Inflict Wounds:C|Jump:DRSWA|Longstrider:BDRWA|Mage Armor:SW|Magic Missile:SW|Protection from Evil and Good:CPWK|Purify Food and Drink:CDP|Ray of Sickness:SW|Sanctuary:CA|Shield:SW|Shield of Faith:CP|Silent Image:BSW|Sleep:BSW|Speak with Animals:BDR|Tasha's Hideous Laughter:BW|Thunderwave:BDSW|Unseen Servant:BWK|Witch Bolt:SWK",
+2:"Aid:CPA|Alter Self:SWA|Animal Messenger:BDR|Barkskin:DR|Blindness/Deafness:BCSW|Blur:SWA|Calm Emotions:BC|Cloud of Daggers:BSWK|Continual Flame:CWA|Crown of Madness:BSWK|Darkness:SWK|Darkvision:DRSWA|Detect Thoughts:BSW|Enhance Ability:BCDSA|Enlarge/Reduce:SWA|Flaming Sphere:DSW|Gentle Repose:CW|Gust of Wind:DSW|Heat Metal:BDA|Hold Person:BCDSWK|Invisibility:BSWKA|Knock:BSW|Lesser Restoration:BCDPRA|Levitate:SWA|Locate Object:BCDPRW|Magic Weapon:PWA|Mirror Image:SWK|Misty Step:SWK|Moonbeam:D|Pass without Trace:DR|Prayer of Healing:C|Protection from Poison:CDPRA|Ray of Enfeeblement:WK|Rope Trick:WA|Scorching Ray:SW|See Invisibility:BSWA|Shatter:BSWK|Silence:BCR|Spider Climb:SWKA|Spike Growth:DR|Spiritual Weapon:C|Suggestion:BSWK|Web:SWA|Zone of Truth:BCP",
+3:"Animate Dead:CW|Beacon of Hope:C|Bestow Curse:BCWK|Blink:SW|Call Lightning:D|Clairvoyance:BCSW|Conjure Animals:DR|Counterspell:SWK|Create Food and Water:CP|Daylight:CDPRSW|Dispel Magic:BCDPSWKA|Fear:BSWK|Fireball:SW|Fly:SWKA|Gaseous Form:SWK|Haste:SWA|Hypnotic Pattern:BSWK|Lightning Bolt:SW|Magic Circle:CPWK|Major Image:BSWK|Mass Healing Word:C|Meld into Stone:CD|Nondetection:BRWA|Plant Growth:BDR|Protection from Energy:CDRSWA|Remove Curse:CPWK|Revivify:CPA|Sending:BCW|Sleet Storm:DSW|Slow:SW|Speak with Dead:BC|Spirit Guardians:C|Stinking Cloud:BSW|Tongues:BCSWK|Vampiric Touch:SWK|Water Breathing:DRSWA|Water Walk:CDRSA|Wind Wall:DR",
+4:"Arcane Eye:WA|Banishment:CPSWK|Blight:DSWK|Compulsion:B|Confusion:BDSWK|Conjure Woodland Beings:DR|Control Water:CDW|Death Ward:CP|Dimension Door:BSWK|Divination:C|Dominate Beast:DS|Fabricate:W|Freedom of Movement:BCDRA|Greater Invisibility:BSW|Guardian of Faith:C|Ice Storm:DSW|Locate Creature:BCDPRW|Phantasmal Killer:W|Polymorph:BDSW|Stone Shape:CDWA|Stoneskin:DRSW|Wall of Fire:DSWA",
+5:"Animate Objects:BSWA|Awaken:BD|Cloudkill:SW|Commune:C|Commune with Nature:DR|Cone of Cold:SW|Conjure Elemental:DW|Contact Other Plane:WK|Dispel Evil and Good:CP|Dominate Person:BSW|Dream:BWK|Flame Strike:CP|Geas:BCDPW|Greater Restoration:BCDA|Hallow:C|Hold Monster:BSWK|Insect Plague:CDS|Legend Lore:BCW|Mass Cure Wounds:BCD|Mislead:BW|Modify Memory:BW|Planar Binding:BCDWK|Raise Dead:BCP|Reincarnate:D|Scrying:BCDWK|Seeming:BSW|Telekinesis:SW|Teleportation Circle:BSWK|Tree Stride:DR|Wall of Force:W|Wall of Stone:DSWA",
+6:"Chain Lightning:SW|Circle of Death:SWK|Disintegrate:SW|Eyebite:BSWK|Find the Path:BCD|Globe of Invulnerability:SW|Harm:C|Heal:CD|Heroes' Feast:CD|Mass Suggestion:BSWK|Sunbeam:DSW|True Seeing:BCSWK|Wall of Ice:W|Word of Recall:C",
+7:"Conjure Celestial:C|Delayed Blast Fireball:SW|Etherealness:BCSWK|Finger of Death:SWK|Fire Storm:CDS|Forcecage:BWK|Plane Shift:CDSWK|Prismatic Spray:SW|Regenerate:BCD|Resurrection:BCP|Reverse Gravity:DSW|Teleport:BSW",
+8:"Animal Shapes:D|Antimagic Field:CW|Dominate Monster:BSWK|Earthquake:CDS|Feeblemind:BDSWK|Holy Aura:C|Maze:W|Mind Blank:BW|Power Word Stun:BSWK|Sunburst:DSW",
+9:"Astral Projection:CWK|Foresight:BDWK|Gate:CSW|Mass Heal:C|Meteor Swarm:SW|Power Word Kill:BSWK|Time Stop:SW|True Resurrection:CD|Wish:SW|Storm of Vengeance:D"
+};
+const SPELLS = [];
+Object.keys(SPELL_SRC).forEach(lvl=>{ SPELL_SRC[lvl].split('|').forEach(e=>{ const i=e.lastIndexOf(':'); SPELLS.push({n:e.slice(0,i), l:Number(lvl), c:e.slice(i+1)}); }); });
+function classSpells(c, maxLevel){
+  const lt=CLASS_LETTER[c.cls]; if(!lt) return [];
+  return SPELLS.filter(s=> s.c.includes(lt) && (maxLevel==null || s.l<=maxLevel));
+}
+function maxSpellLevel(c){ // highest spell level the class can cast at this level (full-caster approximation)
+  const lvl=Number(c.level)||1;
+  if(c.cls==='Paladin'||c.cls==='Ranger'||c.cls==='Artificer') return Math.min(5, Math.ceil(Math.max(1,lvl-1)/4)+1);
+  if(c.cls==='Warlock') return Math.min(5, Math.ceil(lvl/2));
+  return Math.min(9, Math.ceil(lvl/2)); // full casters
+}
+function spellLearnSelect(c, atLevel){
+  const known=new Set(c.spells.map(s=>s.name.toLowerCase()));
+  const max=maxSpellLevel({cls:c.cls, level:atLevel});
+  const opts=[0,1,2,3,4,5,6,7,8,9].filter(l=>l<=max).map(l=>{
+    const list=classSpells(c).filter(s=>s.l===l && !known.has(s.n.toLowerCase()));
+    if(!list.length) return '';
+    return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${esc(s.n)}</option>`).join('')+`</optgroup>`;
+  }).join('');
+  return `<select id="luSpell" style="flex:2"><option value="">— pick a spell —</option>${opts}</select>`;
+}
 // Skill proficiencies granted: class count + 2 (background).
 const CLASS_SKILLS_N = {Bard:3, Ranger:3, Rogue:4};
 function skillBudget(c){ return (CLASS_SKILLS_N[c.cls]||2) + 2; }
@@ -616,9 +653,18 @@ const WIZ_BASE = [
   {key:'abil',  title:'Set ability scores'},
   {key:'skills',title:'Pick skill proficiencies'},
   {key:'feat',  title:'Choose a starting feat'},
+  {key:'spells',title:'Choose starting spells'},
   {key:'review',title:'Review & finish'}
 ];
-function wizSteps(c){ return WIZ_BASE.filter(s=> s.key!=='feat' || grantsL1Feat(c)); }
+function wizSteps(c){ return WIZ_BASE.filter(s=> (s.key!=='feat' || grantsL1Feat(c)) && (s.key!=='spells' || isCaster(c)) ); }
+function wizSpellPicker(c){
+  const known=new Set(c.spells.map(s=>s.name.toLowerCase()));
+  return `<p class="muted" style="font-size:13px;margin-top:0">Pick starting cantrips and 1st-level spells for your ${esc(c.cls)}. Add more anytime on the Spells tab.</p>`+
+    [0,1].map(l=>{ const list=classSpells(c).filter(s=>s.l===l); if(!list.length) return '';
+      return `<div class="tag" style="display:inline-block;margin:12px 0 4px">${l===0?'Cantrips':'1st level'}</div>`+
+        list.map(s=>`<div class="listrow"><input type="checkbox" class="chk" data-wspell="${esc(s.n)}|${s.l}" ${known.has(s.n.toLowerCase())?'checked':''}><div class="nm">${esc(s.n)}</div></div>`).join('');
+    }).join('');
+}
 function racePreview(c){
   const a=RACE_ASI[c.race];
   if(!a) return c.race?`<p class="muted" style="font-size:13px;margin-top:8px">Homebrew race — no automatic ability bonuses.</p>`:'';
@@ -665,6 +711,7 @@ function renderWizard(c){
   else if(def.key==='abil') body=abilCard(c, true);
   else if(def.key==='skills') body=skillsPicker(c);
   else if(def.key==='feat') body=`<div class="field"><label>Starting feat · Variant Human</label>${select('wz_feat', FEATS, (c.feats[0]&&c.feats[0].name)||FEATS[0])}</div><p class="muted" style="font-size:13px">Variant Human grants one feat at level 1. Assign your +1 to two abilities on the Stats tab afterwards.</p>`;
+  else if(def.key==='spells') body=wizSpellPicker(c);
   else body=reviewBlock(c);
   const isLast = step===steps.length-1;
   app.innerHTML=`
@@ -687,6 +734,12 @@ function renderWizard(c){
   if(def.key==='abil') bindAbilHandlers(c);
   if(def.key==='skills') bindSkillHandlers(c);
   if(def.key==='feat') $('#wz_feat').addEventListener('change',e=>{ c.feats[0]={name:e.target.value}; save(); });
+  if(def.key==='spells') app.querySelectorAll('[data-wspell]').forEach(el=>el.addEventListener('change',e=>{
+    const [n,l]=el.dataset.wspell.split('|');
+    if(e.target.checked){ if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())) c.spells.push({name:n,level:Number(l),prepared:false,notes:''}); }
+    else c.spells=c.spells.filter(s=>s.name.toLowerCase()!==n.toLowerCase());
+    c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
+  }));
   if(def.key==='review'){
     const set=(m)=>{ wiz.hpMode=m; wiz.hpValue = m==='roll' ? Math.max(1, rnd(CLASS_HITDIE[c.cls]||8)+mod(abil(c,'con'))) : autoHP(c); render(); };
     const mx=$('#wzHpMax'), rl=$('#wzHpRoll'); if(mx) mx.onclick=()=>set('max'); if(rl) rl.onclick=()=>set('roll');
@@ -734,6 +787,9 @@ function levelUp(){
      ${isAsi?`<div class="card" style="margin:0 0 12px"><h2>Ability Score Improvement</h2>
         <div class="seg" id="luSeg"><button class="on" data-asi="asi">+2 / +1×2</button><button data-asi="feat">Take a feat</button></div>
         <div id="luBody"></div></div>`:''}
+     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn a spell (optional)</h2>
+        <div class="addrow">${spellLearnSelect(c, nl)}<button class="btn sm" id="luLearn">Add</button></div>
+        <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px"></div></div>`:''}
      <button class="btn block" id="luApply">Apply level ${nl}</button>
    </div></div>`;
   const setHp=(v,m)=>{ hpGain=Math.max(1,v); $('#luHpMsg').textContent=m; };
@@ -748,6 +804,16 @@ function levelUp(){
       : `<div><label>Feat</label>${select('luFeat', FEATS, FEATS[0])}</div>`;
   }
   if(isAsi){ luBody(); $('#luSeg').querySelectorAll('[data-asi]').forEach(b=>b.onclick=()=>{ asiMode=b.dataset.asi; $('#luSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); luBody(); }); }
+  { const lb=$('#luLearn'); if(lb) lb.onclick=()=>{
+    const sel=$('#luSpell'); if(!sel||!sel.value) return;
+    const [n,l]=sel.value.split('|');
+    if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
+      c.spells.push({name:n,level:Number(l),prepared:false,notes:''});
+      c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
+      $('#luLearnMsg').textContent='Learned: '+n;
+      const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
+    }
+  }; }
   $('#luModal').onclick=e=>{ if(e.target.id==='luModal') $('#modalRoot').innerHTML=''; };
   $('#luApply').onclick=()=>{
     if(hpGain==null) hpGain=Math.max(1,avg+con);
@@ -1003,9 +1069,10 @@ function renderCombat(c){
 
   <div class="card">
     <h2>Hit Dice & Death Saves</h2>
-    <div class="row2">
-      <div><label>Hit dice (total)</label><input id="hd_total" value="${esc(c.hitDice.total)}" placeholder="e.g. 5d10"></div>
-      <div><label>Hit dice used</label><input type="number" id="hd_used" value="${c.hitDice.used}" min="0"></div>
+    <div class="slot">
+      <div class="lvl">Hit dice${hd?` · d${hd.sides}`:''}</div>
+      <div class="pips">${hd?hdPips(hd.count, c.hitDice.used||0):'<span class="muted" style="font-size:12px">set a class</span>'}</div>
+      <div class="muted" style="font-size:12px">${hd?`${hdLeft}/${hd.count}`:''}</div>
     </div>
     <div style="margin-top:12px">
       <label>Death saves</label>
@@ -1072,8 +1139,12 @@ function renderCombat(c){
   });
   { const sc=$('#cb_spdcust'); if(sc) sc.addEventListener('change',e=>{ c.speed=Number(e.target.value)||30; save(); render(); }); }
   $('#cb_init').addEventListener('change',e=>{ c.initMisc=Number(e.target.value)||0; save(); render(); });
-  $('#hd_total').addEventListener('change',e=>{ c.hitDice.total=e.target.value; save(); });
-  $('#hd_used').addEventListener('change',e=>{ c.hitDice.used=Number(e.target.value)||0; save(); });
+  app.querySelectorAll('[data-hdpip]').forEach(el=>el.addEventListener('click',()=>{
+    const n=Number(el.dataset.hdpip), total=hd?hd.count:0, avail=total-(c.hitDice.used||0);
+    if(n<=avail) c.hitDice.used=Math.min(total,(c.hitDice.used||0)+1);
+    else c.hitDice.used=Math.max(0,(c.hitDice.used||0)-1);
+    save(); render();
+  }));
 
   $('#dmgBtn').addEventListener('click',()=>applyHp(c,-Math.abs(Number($('#hpamt').value)||0)));
   $('#healBtn').addEventListener('click',()=>applyHp(c,Math.abs(Number($('#hpamt').value)||0)));
@@ -1109,6 +1180,11 @@ function pips(max,val,kind){
   for(let i=1;i<=max;i++) h+=`<button class="pip ${i<=val?'on':''}" data-pip="${i}" data-kind="${kind}"></button>`;
   return h;
 }
+function hdPips(total, used){
+  let h=''; const avail=total-used;
+  for(let i=1;i<=total;i++) h+=`<button class="pip ${i<=avail?'on':''}" data-hdpip="${i}" title="${i<=avail?'available':'spent'}"></button>`;
+  return h;
+}
 function applyHp(c,delta){
   if(delta<0){
     let dmg=-delta;
@@ -1121,6 +1197,13 @@ function applyHp(c,delta){
 }
 
 /* ---------- SPELLS ---------- */
+function addSpellTo(c, name, level){
+  name=String(name).trim(); if(!name) return;
+  if(c.spells.some(s=>s.name.toLowerCase()===name.toLowerCase())){ flashBanner(name+' is already known'); return; }
+  c.spells.push({name, level:Number(level)||0, prepared:false, notes:''});
+  c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
+  save(); render();
+}
 function renderSpells(c){
   const dc = 8+profBonus(c)+mod(abil(c,c.spellAbility));
   const atk = profBonus(c)+mod(abil(c,c.spellAbility));
@@ -1156,9 +1239,17 @@ function renderSpells(c){
   <div class="card">
     <h2>Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ✓ = prepared</span></h2>
     <div class="addrow">
-      <input id="sp_name" placeholder="Spell name">
-      ${select('sp_level', ['Cantrip','1','2','3','4','5','6','7','8','9'], 'Cantrip')}
+      <select id="sp_pick" style="flex:2">
+        <option value="">— add a ${esc(c.cls)} spell —</option>
+        ${[0,1,2,3,4,5,6,7,8,9].map(l=>{ const list=classSpells(c).filter(s=>s.l===l); if(!list.length) return ''; return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${esc(s.n)}</option>`).join('')+`</optgroup>`; }).join('')}
+        <option value="__custom__">+ Custom spell…</option>
+      </select>
       <button class="btn sm" id="addSpell">Add</button>
+    </div>
+    <div class="addrow" id="customSpellRow" style="display:none">
+      <input id="sp_name" placeholder="Custom spell name">
+      ${select('sp_level', ['Cantrip','1','2','3','4','5','6','7','8','9'], 'Cantrip')}
+      <button class="btn sm" id="addCustomSpell">Add</button>
     </div>
     <div style="margin-top:6px">
       ${c.spells.length? [0,1,2,3,4,5,6,7,8,9].map(l=>{
@@ -1196,12 +1287,17 @@ function renderSpells(c){
     else sl.used = Math.max(0, sl.used-1);
     save(); render();
   }));
+  $('#sp_pick').addEventListener('change',e=>{
+    $('#customSpellRow').style.display = e.target.value==='__custom__' ? 'flex' : 'none';
+  });
   $('#addSpell').addEventListener('click',()=>{
+    const v=$('#sp_pick').value;
+    if(!v || v==='__custom__'){ if(v==='__custom__') $('#sp_name').focus(); return; }
+    const [name,lvl]=v.split('|'); addSpellTo(c, name, Number(lvl));
+  });
+  $('#addCustomSpell').addEventListener('click',()=>{
     const name=$('#sp_name').value.trim(); if(!name) return;
-    const lv=$('#sp_level').value; const level=lv==='Cantrip'?0:Number(lv);
-    c.spells.push({name, level, prepared:false, notes:''});
-    c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
-    save(); render();
+    const lv=$('#sp_level').value; addSpellTo(c, name, lv==='Cantrip'?0:Number(lv));
   });
   app.querySelectorAll('[data-prep]').forEach(el=>el.addEventListener('change',e=>{
     c.spells[Number(el.dataset.prep)].prepared=e.target.checked; save();
@@ -1377,7 +1473,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v8';
+const APP_VERSION='v9';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
