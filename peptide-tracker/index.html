@@ -678,9 +678,16 @@ function shareModal(kind){
 function closeShareModal(){ document.getElementById('shareModal').classList.remove('show'); }
 function postShareX(){
   const text=document.getElementById('shareTextArea').value;
-  const url='https://x.com/intent/post?text='+encodeURIComponent(text);
-  let w=null; try{ w=window.open(url,'_blank','noopener'); }catch(e){}
-  if(!w){ try{ location.href=url; }catch(e){} }
+  const enc=encodeURIComponent(text);
+  const appUrl='twitter://post?message='+enc;            // opens the X app composer pre-filled
+  const webUrl='https://x.com/intent/post?text='+enc;    // fallback if the app isn't installed
+  let handled=false;
+  const cancel=()=>{ handled=true; };
+  // if the app opens, this tab gets hidden/blurred — use that to skip the web fallback
+  window.addEventListener('blur', cancel, {once:true});
+  document.addEventListener('visibilitychange', function vc(){ if(document.hidden){ cancel(); document.removeEventListener('visibilitychange', vc); } });
+  const t=setTimeout(()=>{ if(!handled && !document.hidden){ try{ window.open(webUrl,'_blank','noopener'); }catch(e){} } }, 1000);
+  try{ window.location.href=appUrl; }catch(e){ clearTimeout(t); try{ window.open(webUrl,'_blank','noopener'); }catch(_){} }
   awardShare();
   closeShareModal();
 }
@@ -1733,7 +1740,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v19';
+const APP_VERSION='v20';
 initNFC(); renderVial(); calcConc(); calcDose(); updatePtsBadge();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
