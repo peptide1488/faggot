@@ -532,7 +532,7 @@
 <div class="modal" id="shareModal">
   <div class="sheet">
     <h3 id="shareTitle" style="font-size:16px;margin-bottom:4px">Share &amp; earn ⭐</h3>
-    <p class="muted small">Post it to X to advertise &amp; bank <b>+15 points</b>. In the menu, tap the <b>X</b> app — your post is also copied as a backup.</p>
+    <p class="muted small">Earn <b>+15 points</b>. We copy this post and open X — just <b>long-press the composer → Paste</b>. (X blocks auto-filling from other apps.)</p>
     <textarea id="shareTextArea" rows="5"></textarea>
     <button class="btn" onclick="postShareX()">🐦 Post to X · +15 pts</button>
     <button class="btn sec" onclick="copyShareText()">Copy text</button>
@@ -676,21 +676,39 @@ function shareModal(kind){
   document.getElementById('shareModal').classList.add('show');
 }
 function closeShareModal(){ document.getElementById('shareModal').classList.remove('show'); }
-function postShareX(){
+function fallbackCopy(text){
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text; ta.setAttribute('readonly',''); ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0,text.length);
+    const ok=document.execCommand('copy'); document.body.removeChild(ta); return ok;
+  }catch(e){ return false; }
+}
+async function copyText(text){
+  try{ if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); return true; } }catch(e){}
+  return fallbackCopy(text);
+}
+async function postShareX(){
   const text=document.getElementById('shareTextArea').value;
   awardShare();
-  // Always copy first as a guaranteed backup (X strips text from its links).
-  if(navigator.clipboard) navigator.clipboard.writeText(text).catch(()=>{});
+  await copyText(text);                 // ensure it's on the clipboard before we leave
   closeShareModal();
-  // The OS share menu is the only reliable way to hand text to the installed X app.
-  if(navigator.share){ navigator.share({text}).catch(()=>{}); return; }
-  // Desktop / no share API: open the web composer.
+  const mobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if(mobile){
+    toast('📋 Post copied — long-press in X and tap Paste');
+    // open the X app composer; the text is on the clipboard to paste
+    let opened=false;
+    window.addEventListener('blur',()=>{ opened=true; },{once:true});
+    setTimeout(()=>{ if(!opened && !document.hidden){ try{ window.open('https://x.com/intent/post?text='+encodeURIComponent(text),'_blank','noopener'); }catch(e){} } }, 1200);
+    try{ window.location.href='twitter://post'; }catch(e){}
+    return;
+  }
+  // desktop: web composer pre-fills fine
   try{ window.open('https://x.com/intent/post?text='+encodeURIComponent(text),'_blank','noopener'); }catch(e){}
 }
-function copyShareText(){
-  const text=document.getElementById('shareTextArea').value;
-  if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast('Copied — paste into X')).catch(()=>toast('Copy failed')); }
-  else toast('Copy not supported here');
+async function copyShareText(){
+  const ok=await copyText(document.getElementById('shareTextArea').value);
+  toast(ok?'Copied — paste into X':'Copy failed');
 }
 // alias kept so existing buttons/flows open the prompt
 function shareToX(kind){ shareModal(kind); }
@@ -1736,7 +1754,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v22';
+const APP_VERSION='v23';
 initNFC(); renderVial(); calcConc(); calcDose(); updatePtsBadge();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
