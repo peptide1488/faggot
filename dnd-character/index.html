@@ -298,6 +298,46 @@ const BG_INFO = {
 const BACKGROUNDS = Object.keys(BG_INFO);
 function bgInfo(name){ const b=BG_INFO[name]; if(!b){ showInfo(name||'Background','Background','Custom background — note its skills & feature in Notes.'); return; }
   showInfo(name,'Background','<b>Skills:</b> '+b.s+'.<br><b>Feature:</b> '+esc(b.f)); }
+// Core class features by level [level, name, summary]
+const CLASS_FEATURES = {
+Barbarian:[[1,'Rage','Bonus action: +damage, resistance to physical damage, advantage on Strength.'],[1,'Unarmored Defense','AC = 10 + Dex + Con when unarmored.'],[2,'Reckless Attack','Attack with advantage; foes get advantage on you too.'],[2,'Danger Sense','Advantage on Dex saves you can see.'],[3,'Primal Path','Your barbarian subclass.'],[5,'Extra Attack','Attack twice.'],[5,'Fast Movement','+10 ft speed in light/medium armor.']],
+Bard:[[1,'Bardic Inspiration','Bonus action: give an ally a d6 to add to a roll.'],[1,'Spellcasting','Cast bard spells (Charisma).'],[2,'Jack of All Trades','Half proficiency on non-proficient checks.'],[2,'Song of Rest','Allies heal extra on a short rest.'],[3,'Expertise','Double proficiency on two skills.'],[3,'Bard College','Your bard subclass.'],[5,'Font of Inspiration','Regain Inspiration on a short rest.']],
+Cleric:[[1,'Spellcasting','Cast cleric spells (Wisdom).'],[1,'Divine Domain','Your cleric subclass and its features.'],[2,'Channel Divinity','Turn Undead + a domain effect, once per rest.'],[5,'Destroy Undead','Low-CR turned undead are destroyed.']],
+Druid:[[1,'Druidic','The secret druid language.'],[1,'Spellcasting','Cast druid spells (Wisdom).'],[2,'Wild Shape','Transform into a beast you have seen.'],[2,'Druid Circle','Your druid subclass.']],
+Fighter:[[1,'Fighting Style','A combat specialty bonus.'],[1,'Second Wind','Bonus action: heal 1d10 + level once per rest.'],[2,'Action Surge','One extra action, once per rest.'],[3,'Martial Archetype','Your fighter subclass.'],[5,'Extra Attack','Attack twice.']],
+Monk:[[1,'Unarmored Defense','AC = 10 + Dex + Wis when unarmored.'],[1,'Martial Arts','Dex for unarmed strikes; bonus unarmed strike.'],[2,'Ki','Flurry of Blows, Patient Defense, Step of the Wind.'],[2,'Unarmored Movement','+10 ft speed unarmored.'],[3,'Monastic Tradition','Your monk subclass.'],[3,'Deflect Missiles','Reaction to reduce ranged damage.'],[4,'Slow Fall','Reaction to reduce falling damage.'],[5,'Extra Attack','Attack twice.'],[5,'Stunning Strike','Spend ki to stun a creature you hit.']],
+Paladin:[[1,'Divine Sense','Detect celestials, fiends, undead.'],[1,'Lay on Hands','Healing pool equal to 5 × level.'],[2,'Fighting Style','A combat specialty bonus.'],[2,'Spellcasting','Cast paladin spells (Charisma).'],[2,'Divine Smite','Burn a slot for extra radiant on a hit.'],[3,'Sacred Oath','Your paladin subclass.'],[5,'Extra Attack','Attack twice.']],
+Ranger:[[1,'Favored Enemy','Advantage tracking/recalling chosen foes.'],[1,'Natural Explorer','Travel bonuses in favored terrain.'],[2,'Fighting Style','A combat specialty bonus.'],[2,'Spellcasting','Cast ranger spells (Wisdom).'],[3,'Ranger Archetype','Your ranger subclass.'],[5,'Extra Attack','Attack twice.']],
+Rogue:[[1,'Expertise','Double proficiency on two skills.'],[1,'Sneak Attack','Extra damage with advantage or a nearby ally.'],[1,"Thieves' Cant",'Secret rogue code.'],[2,'Cunning Action','Bonus action Dash, Disengage, or Hide.'],[3,'Roguish Archetype','Your rogue subclass.'],[5,'Uncanny Dodge','Reaction to halve an attack\'s damage.']],
+Sorcerer:[[1,'Spellcasting','Cast sorcerer spells (Charisma).'],[1,'Sorcerous Origin','Your sorcerer subclass.'],[2,'Font of Magic','Sorcery points fuel your magic.'],[3,'Metamagic','Twist spells (Twin, Quicken, …).']],
+Warlock:[[1,'Otherworldly Patron','Your warlock subclass.'],[1,'Pact Magic','Few slots that recharge on a short rest.'],[2,'Eldritch Invocations','Magical enhancements you choose.'],[3,'Pact Boon','Blade, Chain, or Tome.']],
+Wizard:[[1,'Spellcasting','Cast from your spellbook (Intelligence).'],[1,'Arcane Recovery','Recover some slots on a short rest.'],[2,'Arcane Tradition','Your wizard school subclass.']],
+Artificer:[[1,'Magical Tinkering','Imbue tiny objects with minor magic.'],[1,'Spellcasting','Cast artificer spells via tools (Intelligence).'],[2,'Infuse Item','Grant items magical infusions.'],[3,'Artificer Specialist','Your artificer subclass.']]
+};
+const RACE_TRAITS = {
+Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
+Elf:[['Darkvision','See 60 ft in dim light.'],['Keen Senses','Perception proficiency.'],['Fey Ancestry','Advantage vs charm; no magic sleep.'],['Trance','Rest fully in 4 hours.']],
+Halfling:[['Lucky','Reroll natural 1s.'],['Brave','Advantage vs frightened.'],['Nimbleness','Move through larger creatures\' space.']],
+Human:[['Versatile','+1 to all abilities; an extra language.']],
+'Human (Variant)':[['Custom Origin','+1 to two abilities, a skill, and a level-1 feat.']],
+Dragonborn:[['Draconic Ancestry','Pick a dragon type.'],['Breath Weapon','Exhale energy (line/cone).'],['Damage Resistance','Resist your ancestry\'s type.']],
+Gnome:[['Darkvision','See 60 ft in dim light.'],['Gnome Cunning','Advantage on Int/Wis/Cha saves vs magic.']],
+'Half-Elf':[['Darkvision','See 60 ft in dim light.'],['Fey Ancestry','Advantage vs charm; no magic sleep.'],['Skill Versatility','Two skills of your choice.']],
+'Half-Orc':[['Darkvision','See 60 ft in dim light.'],['Relentless Endurance','Drop to 1 HP once per long rest.'],['Savage Attacks','Extra die on a melee crit.'],['Menacing','Intimidation proficiency.']],
+Tiefling:[['Darkvision','See 60 ft in dim light.'],['Hellish Resistance','Resist fire.'],['Infernal Legacy','Thaumaturgy + spells as you level.']],
+Aasimar:[['Darkvision','See 60 ft in dim light.'],['Celestial Resistance','Resist necrotic and radiant.'],['Healing Hands','Touch heal once per long rest.'],['Light Bearer','Know the Light cantrip.']],
+Tabaxi:[['Darkvision','See 60 ft in dim light.'],['Feline Agility','Briefly double your speed.'],['Claws','Climb speed and natural claws.'],['Talents','Perception and Stealth proficiency.']],
+Goliath:[['Stone\'s Endurance','Reaction to reduce damage.'],['Powerful Build','Count as larger for carrying.'],['Mountain Born','Cold resistance; altitude adapted.']],
+Firbolg:[['Firbolg Magic','Cast Detect Magic & Disguise Self.'],['Hidden Step','Bonus action: briefly invisible.'],['Speech of Beast and Leaf','Talk simply with beasts/plants.']],
+Goblin:[['Darkvision','See 60 ft in dim light.'],['Fury of the Small','Extra damage to a bigger foe.'],['Nimble Escape','Bonus action Disengage or Hide.']],
+Kobold:[['Darkvision','See 60 ft in dim light.'],['Pack Tactics','Advantage with an adjacent ally.'],['Sunlight Sensitivity','Disadvantage in direct sun.']],
+Lizardfolk:[['Bite','Natural bite attack.'],['Natural Armor','AC 13 + Dex unarmored.'],['Hold Breath','Up to 15 minutes.'],['Hungry Jaws','Bonus-action bite that heals you.']],
+Tortle:[['Natural Armor','Base AC 17.'],['Shell Defense','Withdraw for cover.'],['Hold Breath','Up to 1 hour.'],['Claws','Natural claw attack.']],
+Warforged:[['Constructed Resilience','Vs poison/disease; no food/air needed.'],['Integrated Protection','+1 AC; armor stays on.'],['Sentry\'s Rest','Stay alert during rest.']],
+Kenku:[['Mimicry','Copy sounds and voices.'],['Expert Forgery','Duplicate writing/craft.'],['Training','Two skill proficiencies.']],
+Aarakocra:[['Flight','50 ft fly (no heavy armor).'],['Talons','Natural claw attack.']],
+'Yuan-Ti':[['Magic Resistance','Advantage on saves vs magic.'],['Poison Immunity','Immune to poison & poisoned.'],['Innate Spellcasting','Know a few innate spells.']]
+};
 const SUBCLASSES = {
   Artificer:['Alchemist','Armorer','Artillerist','Battle Smith'],
   Barbarian:['Path of the Berserker','Path of the Totem Warrior','Ancestral Guardian','Storm Herald','Zealot','Path of the Beast','Wild Magic','Battlerager'],
@@ -828,9 +868,8 @@ const WIZ_BASE = [
   {key:'review',title:'Review & finish'}
 ];
 function wizSteps(c){ return WIZ_BASE.filter(s=>
-  (s.key!=='feat' || grantsL1Feat(c)) &&
   (s.key!=='spells' || isCaster(c)) &&
-  (s.key!=='subclass' || (subclassLevel(c)===1 && (SUBCLASSES[c.cls]||[]).length>0))
+  (s.key!=='subclass' || (SUBCLASSES[c.cls]||[]).length>0)
 ); }
 const CANTRIPS_KNOWN_L1={Bard:2,Cleric:3,Druid:2,Sorcerer:4,Warlock:2,Wizard:3,Artificer:2};
 function cantripLimit(c){ return CANTRIPS_KNOWN_L1[c.cls]||0; }
@@ -897,11 +936,11 @@ function renderWizard(c){
   if(def.key==='name') body=`<div class="field"><label>Character name</label><input id="wz_name" value="${esc(c.name)}" placeholder="e.g. Lúthien"></div><p class="muted" style="font-size:13px">You'll build a level 1 hero, then level up as you play.</p>`;
   else if(def.key==='race') body=`<div class="field"><label>Race / Species</label>${fieldSelect('wz_race', RACES, c.race, 'Custom race')}</div>${racePreview(c)}`;
   else if(def.key==='class') body=`<div class="field"><label>Class</label>${select('wz_cls', CLASSES, c.cls)}</div>${classPreview(c)}`;
-  else if(def.key==='subclass') body=`<div class="field"><label>${esc(c.cls)} subclass</label>${select('wz_sub', SUBCLASSES[c.cls]||['—'], c.subclass||(SUBCLASSES[c.cls]||['—'])[0])}</div><p class="muted" style="font-size:13px">Your ${esc(c.cls)} chooses its subclass at level 1.</p>`;
+  else if(def.key==='subclass') body=`<div class="field"><label>${esc(c.cls)} subclass</label>${select('wz_sub', SUBCLASSES[c.cls]||['—'], c.subclass||(SUBCLASSES[c.cls]||['—'])[0])}</div><p class="muted" style="font-size:13px">In play, ${esc(c.cls)}s choose their subclass at level ${subclassLevel(c)} — but you can set it now.</p>`;
   else if(def.key==='bg') body=`<div class="field"><label>Background</label>${fieldSelect('wz_bg', BACKGROUNDS, c.background, 'Custom background')}</div>${BG_INFO[c.background]?`<div class="pill" style="margin-top:8px;display:block;line-height:1.5"><b>Skills:</b> ${BG_INFO[c.background].s}<br><b>Feature:</b> ${esc(BG_INFO[c.background].f)}</div>`:'<p class="muted" style="font-size:13px">Backgrounds give 2 skill proficiencies and a feature.</p>'}`;
   else if(def.key==='abil') body=abilCard(c, true);
   else if(def.key==='skills') body=skillsPicker(c);
-  else if(def.key==='feat') body=`<div class="field"><label>Starting feat · Variant Human</label>${select('wz_feat', FEATS, (c.feats[0]&&c.feats[0].name)||FEATS[0])}</div><p class="muted" style="font-size:13px">Variant Human grants one feat at level 1. Assign your +1 to two abilities on the Stats tab afterwards.</p>`;
+  else if(def.key==='feat'){ const cur0=(c.feats[0]&&c.feats[0].name)||(grantsL1Feat(c)?FEATS[0]:'(no feat)'); body=`<div class="field"><label>Starting feat ${grantsL1Feat(c)?'· Variant Human':'(optional)'}</label>${select('wz_feat', ['(no feat)',...FEATS], cur0)}</div><div class="muted" id="wzFeatDesc" style="font-size:13px;line-height:1.5">${FEAT_DESC[cur0]||(grantsL1Feat(c)?'Variant Human grants one feat at level 1.':'Most level-1 characters have no feat — pick one only if your DM allows it.')}</div>`; }
   else if(def.key==='spells') body=wizSpellPicker(c);
   else body=reviewBlock(c);
   const isLast = step===steps.length-1;
@@ -925,7 +964,7 @@ function renderWizard(c){
   if(def.key==='bg') bindSelectCustom('wz_bg','background');
   if(def.key==='abil') bindAbilHandlers(c);
   if(def.key==='skills') bindSkillHandlers(c);
-  if(def.key==='feat') $('#wz_feat').addEventListener('change',e=>{ c.feats[0]={name:e.target.value}; save(); });
+  if(def.key==='feat') $('#wz_feat').addEventListener('change',e=>{ const v=e.target.value; if(v==='(no feat)'){ if(c.feats[0]) c.feats.shift(); } else { if(c.feats[0]) c.feats[0]={name:v}; else c.feats.unshift({name:v}); } const d=$('#wzFeatDesc'); if(d) d.textContent=FEAT_DESC[v]||''; save(); });
   if(def.key==='spells') app.querySelectorAll('[data-wspell]').forEach(el=>el.addEventListener('change',e=>{
     const [n,l]=el.dataset.wspell.split('|'); const lv=Number(l);
     const cap = lv===0?cantripLimit(c):spell1Limit(c);
@@ -950,7 +989,7 @@ function renderWizard(c){
 function wizNext(){
   const c=cur(), steps=wizSteps(c), def=steps[wiz.step];
   if(def.key==='name'){ c.name=($('#wz_name')?$('#wz_name').value:c.name)||''; if(!c.name.trim()){ flashBanner('Enter a name first'); return; } }
-  if(def.key==='feat'){ const v=$('#wz_feat'); if(v) c.feats[0]={name:v.value}; }
+  if(def.key==='feat'){ const v=$('#wz_feat'); if(v && v.value!=='(no feat)' && !c.feats[0]) c.feats.unshift({name:v.value}); }
   if(def.key==='subclass'){ const v=$('#wz_sub'); if(v && !c.subclass) c.subclass=v.value; }
   save();
   if(wiz.step < steps.length-1){ wiz.step++; render(); return; }
@@ -970,7 +1009,8 @@ function levelUp(){
   const isAsi=asiLevels(c).includes(nl);
   const needsSub = nl>=subclassLevel(c) && !c.subclass && (SUBCLASSES[c.cls]||[]).length>0;
   const hd=CLASS_HITDIE[c.cls]||8, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
-  let hpGain=null, asiMode='asi';
+  const learnCap = ({Wizard:2,Bard:1,Sorcerer:1,Warlock:1,Ranger:1})[c.cls] ?? 2;
+  let hpGain=null, asiMode='asi', learnedThisLevel=0;
   $('#modalRoot').innerHTML=`
    <div class="modal" id="luModal"><div class="sheet">
      <div class="grip"></div>
@@ -984,7 +1024,7 @@ function levelUp(){
      ${isAsi?`<div class="card" style="margin:0 0 12px"><h2>Ability Score Improvement</h2>
         <div class="seg" id="luSeg"><button class="on" data-asi="asi">+2 / +1×2</button><button data-asi="feat">Take a feat</button></div>
         <div id="luBody"></div></div>`:''}
-     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn a spell (optional)</h2>
+     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— up to ${learnCap} this level</span></h2>
         <div class="addrow">${spellLearnSelect(c, nl)}<button class="btn sm" id="luLearn">Add</button></div>
         <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px"></div></div>`:''}
      <button class="btn block" id="luApply">Apply level ${nl}</button>
@@ -994,20 +1034,25 @@ function levelUp(){
   $('#luRoll').onclick=()=>{ const r=rnd(hd); setHp(r+con,`Rolled ${r} ${sgn(con)} = ${Math.max(1,r+con)} HP`); };
   function luBody(){
     const el=$('#luBody'); if(!el) return;
-    el.innerHTML = asiMode==='asi'
-      ? `<p class="muted" style="font-size:13px">+2 to one, or +1 to two (capped at 20).</p>
+    if(asiMode==='asi'){
+      el.innerHTML = `<p class="muted" style="font-size:13px">+2 to one, or +1 to two (capped at 20).</p>
          <div class="row2"><div><label>Increase</label>${select('luA1', ABILITIES.map(a=>a[1]), ABILITIES[0][1])}</div>
-         <div><label>And +1 to (optional)</label>${select('luA2', ['—',...ABILITIES.map(a=>a[1])], '—')}</div></div>`
-      : `<div><label>Feat</label>${select('luFeat', FEATS, FEATS[0])}</div>`;
+         <div><label>And +1 to (optional)</label>${select('luA2', ['—',...ABILITIES.map(a=>a[1])], '—')}</div></div>`;
+    } else {
+      el.innerHTML = `<div><label>Feat</label>${select('luFeat', FEATS, FEATS[0])}</div><div class="muted" id="luFeatDesc" style="font-size:12px;margin-top:6px;line-height:1.5">${esc(FEAT_DESC[FEATS[0]]||'')}</div>`;
+      const f=$('#luFeat'); if(f) f.addEventListener('change',e=>{ $('#luFeatDesc').textContent=FEAT_DESC[e.target.value]||''; });
+    }
   }
   if(isAsi){ luBody(); $('#luSeg').querySelectorAll('[data-asi]').forEach(b=>b.onclick=()=>{ asiMode=b.dataset.asi; $('#luSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); luBody(); }); }
   { const lb=$('#luLearn'); if(lb) lb.onclick=()=>{
+    if(learnedThisLevel>=learnCap){ $('#luLearnMsg').textContent='Reached this level’s limit ('+learnCap+'). Add more on the Spells tab.'; return; }
     const sel=$('#luSpell'); if(!sel||!sel.value) return;
     const [n,l]=sel.value.split('|');
     if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
       c.spells.push({name:n,level:Number(l),prepared:false,notes:''});
       c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
-      $('#luLearnMsg').textContent='Learned: '+n;
+      learnedThisLevel++;
+      $('#luLearnMsg').textContent='Learned: '+n+' ('+learnedThisLevel+'/'+learnCap+')';
       const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
     }
   }; }
@@ -1090,8 +1135,15 @@ function renderBio(c){
     <div class="listrow"><div class="nm">Saving throws</div><div class="val">${(CLASS_SAVES[c.cls]||[]).map(s=>s.toUpperCase()).join(', ')||'—'}</div></div>
     ${isCaster(c)?`<div class="listrow"><div class="nm">Spellcasting</div><div class="val">${(ABILITIES.find(a=>a[0]===c.spellAbility)||['','—'])[1]}</div></div>`:''}
     ${c.feats.length?`<div class="listrow"><div class="nm">Feats</div><div class="val" style="font-weight:500">${c.feats.map(f=>esc(f.name||f)).join(', ')}</div></div>`:''}
-    <p class="muted" style="font-size:11.5px;margin:10px 0 0">Detailed feature text (Rage, Sneak Attack, racial traits…) lives in your Player's Handbook — jot the ones you use in Notes → Features &amp; Traits.</p>
   </div>
+
+  ${(()=>{ const ct=RACE_TRAITS[c.race]||[]; const cf=(CLASS_FEATURES[c.cls]||[]).filter(f=>f[0]<=(Number(c.level)||1));
+    if(!ct.length && !cf.length) return '';
+    return `<div class="card"><h2>Features &amp; Traits</h2>
+      ${ct.length?`<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">${esc(c.race)} traits</div>`+ct.map(t=>`<div class="spell"><div class="nm"><b>${esc(t[0])}</b><small>${esc(t[1])}</small></div></div>`).join(''):''}
+      ${cf.length?`<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">${esc(c.cls)} features${c.subclass?' · '+esc(c.subclass):''}</div>`+cf.map(f=>`<div class="spell"><div class="nm"><b>${esc(f[1])} <span class="sub">Lv ${f[0]}</span></b><small>${esc(f[2])}</small></div></div>`).join(''):''}
+      <p class="muted" style="font-size:11px;margin:10px 0 0">Auto-generated summaries through level ${Number(c.level)||1}. Subclass features and full text are in your PHB.</p></div>`;
+  })()}
 
   <div class="card">
     <h2>Feats ${c.feats.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${c.feats.length}</span>`:''}</h2>
@@ -1731,7 +1783,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v14';
+const APP_VERSION='v15';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
