@@ -143,6 +143,53 @@
   @media(min-width:560px){.modal{align-items:center;padding:16px}.modal .sheet{border-radius:18px}}
   .modal h2{font-size:16px;color:var(--ink);text-transform:none;letter-spacing:0;margin-bottom:14px}
   .modal .grip{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px}
+
+  /* rollable affordance */
+  .rollbtn{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:5px 8px;
+    font-family:Georgia,serif;font-weight:700;cursor:pointer;min-width:40px}
+  .rollbtn:active{background:var(--accent2);border-color:var(--accent)}
+  .abi .mod.rollbtn{display:block;width:100%;margin:0 auto;padding:4px}
+
+  /* dice FAB */
+  .dicefab{position:fixed;right:14px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:35;
+    width:54px;height:54px;border-radius:50%;border:1px solid var(--accent);
+    background:linear-gradient(160deg,var(--accent2),#5b21b6);color:#f5f3ff;font-size:24px;
+    box-shadow:0 8px 22px rgba(124,58,237,.45);display:flex;align-items:center;justify-content:center}
+  .dicefab:active{transform:scale(.94)}
+
+  /* roll result banner */
+  .rollbanner{position:fixed;left:50%;transform:translateX(-50%) translateY(20px);
+    bottom:calc(80px + env(safe-area-inset-bottom));z-index:40;width:calc(100% - 24px);max-width:440px;
+    background:var(--panel);border:1px solid var(--accent);border-radius:14px;
+    padding:10px 12px;box-shadow:0 10px 34px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.22s}
+  .rollbanner.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+  .rollbanner .rb-main{display:flex;align-items:center;gap:12px}
+  .rollbanner .rb-total{font-family:Georgia,serif;font-size:30px;font-weight:700;min-width:48px;text-align:center;color:var(--accent)}
+  .rollbanner .rb-info{flex:1;min-width:0}
+  .rollbanner .rb-detail{font-size:12px;color:var(--mut);margin-top:1px}
+  .rollbanner .rb-detail s{opacity:.6}
+  .rollbanner .rb-actions{display:flex;gap:6px;margin-top:8px;justify-content:flex-end}
+  .rb-btn{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:600}
+  .rb-btn:active{background:var(--accent2)}
+  .crit{color:var(--good);font-weight:700;font-size:12px}
+  .fumble{color:var(--bad);font-weight:700;font-size:12px}
+
+  /* dice tray */
+  .dietray{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .diebtn{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px 0;font-family:Georgia,serif;font-weight:700;font-size:16px}
+  .diebtn:active{background:var(--accent2);border-color:var(--accent)}
+  .logrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .logrow:last-child{border-bottom:0}
+  .logrow .lr-total{font-family:Georgia,serif;font-weight:700;font-size:18px;color:var(--accent);min-width:34px;text-align:right}
+  .logrow .lr-lab{font-weight:600;min-width:0}
+  .logrow .lr-det{font-size:12px;color:var(--mut);margin-left:auto;text-align:right}
+
+  /* condition chips */
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:6px 11px;font-size:13px}
+  .chip.on{background:#3b1b22;border-color:#7f1d1d;color:#fecaca}
+  .stepper{display:flex;align-items:center;gap:10px}
+  .stepper button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;width:34px;height:34px;font-size:18px}
 </style>
 </head>
 <body>
@@ -163,6 +210,9 @@
 <main id="app"></main>
 
 <nav class="tabs" id="tabs"></nav>
+
+<button id="diceFab" class="dicefab" title="Dice tray">🎲</button>
+<div id="rollBanner" class="rollbanner"></div>
 
 <div id="modalRoot"></div>
 
@@ -226,6 +276,110 @@ function newCharacter(name){
   };
 }
 function cur(){ return DB.find(c=>c.id===curId) || null; }
+
+/* ---- dice ---- */
+let rollLog = [];      // {id, label, total, detail, crit, kind, bonus, notation}
+let lastRoll = null;
+const rnd = sides => Math.floor(Math.random()*sides)+1;
+
+function parseDice(notation){
+  const terms=[]; let flat=0;
+  const s=String(notation||'').replace(/\s+/g,'').toLowerCase();
+  const re=/([+-]?)(\d*)d(\d+)|([+-]?\d+)/g; let m;
+  while((m=re.exec(s))){
+    if(m[3]){ terms.push({n:Number(m[2]||1), sides:Number(m[3]), sign:m[1]==='-'?-1:1}); }
+    else if(m[4]!=null && m[4]!==''){ flat+=Number(m[4]); }
+  }
+  return {terms, flat};
+}
+function rollNotation(notation){
+  const {terms,flat}=parseDice(notation);
+  let total=flat; const parts=[];
+  terms.forEach(t=>{
+    const rolls=[]; for(let i=0;i<t.n;i++){ const r=rnd(t.sides); rolls.push(r); total+=r*t.sign; }
+    parts.push((t.sign<0?'−':'')+t.n+'d'+t.sides+' ['+rolls.join(',')+']');
+  });
+  if(flat) parts.push((flat>0?'+':'−')+Math.abs(flat));
+  if(!terms.length && !flat) return null;
+  return {total, detail:parts.join(' ')};
+}
+function rollCheck(label, bonus, mode){
+  bonus=Number(bonus)||0;
+  const r1=rnd(20), r2=rnd(20);
+  let kept=r1, dropped=null;
+  if(mode==='adv'){ kept=Math.max(r1,r2); dropped=Math.min(r1,r2); }
+  else if(mode==='dis'){ kept=Math.min(r1,r2); dropped=Math.max(r1,r2); }
+  const total=kept+bonus;
+  const crit = kept===20?'crit':kept===1?'fumble':null;
+  const btxt = bonus? (bonus>0?' +'+bonus:' −'+Math.abs(bonus)) : '';
+  const detail = `d20${mode==='adv'?' adv':mode==='dis'?' dis':''} ${dropped!=null?`(<s>${dropped}</s> ${kept})`:`(${kept})`}${btxt}`;
+  pushRoll({label, total, detail, crit, kind:'check', bonus});
+}
+function rollDmg(label, notation){
+  const res=rollNotation(notation); if(!res) return;
+  pushRoll({label, total:res.total, detail:res.detail, kind:'dmg', notation});
+}
+function pushRoll(r){
+  r.id=uid(); r.ts=Date.now();
+  rollLog.unshift(r); if(rollLog.length>40) rollLog.pop();
+  lastRoll=r;
+  showRollBanner(r);
+  renderDiceLog();
+}
+function showRollBanner(r){
+  const el=$('#rollBanner');
+  const crit = r.crit==='crit'?'<span class="crit">CRIT!</span>':r.crit==='fumble'?'<span class="fumble">NAT 1</span>':'';
+  const actions = r.kind==='check'
+    ? `<button class="rb-btn" data-rr="adv">ADV</button><button class="rb-btn" data-rr="dis">DIS</button><button class="rb-btn" data-rr="re">↻</button>`
+    : `<button class="rb-btn" data-rr="re">↻ Reroll</button>`;
+  el.innerHTML = `
+    <div class="rb-main">
+      <div class="rb-total">${r.total}</div>
+      <div class="rb-info"><b>${esc(r.label)}</b> ${crit}<div class="rb-detail">${r.detail}</div></div>
+    </div>
+    <div class="rb-actions">${actions}<button class="rb-btn" data-rr="x">✕</button></div>`;
+  el.classList.add('show');
+  clearTimeout(showRollBanner._t);
+  showRollBanner._t=setTimeout(()=>el.classList.remove('show'), 9000);
+  el.querySelectorAll('[data-rr]').forEach(b=>b.onclick=()=>{
+    const a=b.dataset.rr;
+    if(a==='x'){ el.classList.remove('show'); return; }
+    if(a==='adv') rollCheck(r.label, r.bonus, 'adv');
+    else if(a==='dis') rollCheck(r.label, r.bonus, 'dis');
+    else if(a==='re'){ r.kind==='dmg' ? rollDmg(r.label, r.notation) : rollCheck(r.label, r.bonus, 'normal'); }
+  });
+}
+function openDiceTray(){
+  $('#modalRoot').innerHTML = `
+   <div class="modal" id="diceModal"><div class="sheet">
+     <div class="grip"></div>
+     <h2>🎲 Dice tray</h2>
+     <div class="dietray">${[4,6,8,10,12,20,100].map(d=>`<button class="diebtn" data-die="${d}">d${d}</button>`).join('')}
+       <button class="diebtn" data-die="20" data-adv="1" title="Roll with advantage">d20⊕</button></div>
+     <div class="addrow" style="margin-top:10px">
+       <input id="diceNote" placeholder="e.g. 2d6+3 or 1d20+5" inputmode="text">
+       <button class="btn sm" id="diceRollNote">Roll</button>
+     </div>
+     <h2 style="margin-top:16px">History <button class="btn ghost sm" id="diceClear" style="float:right">Clear</button></h2>
+     <div id="diceLog"></div>
+   </div></div>`;
+  const root=$('#modalRoot');
+  root.querySelectorAll('[data-die]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.adv) rollCheck('d20', 0, 'adv');
+    else rollDmg('d'+b.dataset.die, '1d'+b.dataset.die);
+  });
+  $('#diceRollNote').onclick=()=>{ const v=$('#diceNote').value.trim(); if(v){ rollDmg(v, v); } };
+  $('#diceNote').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#diceRollNote').click(); });
+  $('#diceClear').onclick=()=>{ rollLog=[]; renderDiceLog(); };
+  $('#diceModal').onclick=e=>{ if(e.target.id==='diceModal') $('#modalRoot').innerHTML=''; };
+  renderDiceLog();
+}
+function renderDiceLog(){
+  const el=$('#diceLog'); if(!el) return;
+  el.innerHTML = rollLog.length
+    ? rollLog.map(r=>`<div class="logrow"><span class="lr-total">${r.total}</span><span class="lr-lab">${esc(r.label)}${r.crit==='crit'?' <span class="crit">✦</span>':''}</span><span class="lr-det">${r.detail}</span></div>`).join('')
+    : '<div class="empty">No rolls yet. Tap a skill, save, attack, or a die.</div>';
+}
 
 /* ---- math ---- */
 const mod = s => Math.floor((Number(s||10)-10)/2);
@@ -352,7 +506,7 @@ function renderAbil(c){
       ${ABILITIES.map(([k,nm])=>`
         <div class="abi">
           <div class="nm">${k}</div>
-          <div class="mod" id="mod_${k}">${sgn(mod(c.abilities[k]))}</div>
+          <button class="mod rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(c.abilities[k])}" title="Roll ${nm} check">${sgn(mod(c.abilities[k]))}</button>
           <input type="number" id="ab_${k}" value="${c.abilities[k]}" min="1" max="30" aria-label="${nm}">
         </div>`).join('')}
     </div>
@@ -365,7 +519,7 @@ function renderAbil(c){
       return `<div class="listrow">
         <input type="checkbox" class="chk" data-save="${k}" ${c.saveProf[k]?'checked':''}>
         <div class="nm">${nm}</div>
-        <div class="val" id="save_${k}">${sgn(b)}</div>
+        <button class="val rollbtn" data-rollcheck data-label="${nm} save" data-bonus="${b}" title="Roll ${nm} save">${sgn(b)}</button>
       </div>`;
     }).join('')}
   </div>
@@ -378,7 +532,7 @@ function renderAbil(c){
         <input type="checkbox" class="chk" data-skill="${key}" ${c.skillProf[key]?'checked':''}>
         <button class="del" data-exp="${key}" title="Expertise" style="color:${c.skillExp[key]?'var(--gold)':'var(--mut)'}">${c.skillExp[key]?'◆':'◇'}</button>
         <div class="nm">${nm} <span class="sub">(${ab})</span></div>
-        <div class="val" id="skill_${key}">${sgn(b)}</div>
+        <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
       </div>`;
     }).join('')}
   </div>
@@ -432,7 +586,7 @@ function renderCombat(c){
       <div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div>
     </div>
     <div class="tiles" style="margin-top:12px">
-      <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(c.abilities.dex)+Number(c.initMisc||0))}</div></div>
+      <div class="tile"><div class="lab">Initiative</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${mod(c.abilities.dex)+Number(c.initMisc||0)}" title="Roll initiative">${sgn(mod(c.abilities.dex)+Number(c.initMisc||0))}</button></div>
       <div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div>
       <div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(c.abilities[c.spellAbility])}</div></div>
       <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(c.abilities[c.spellAbility]))}</div></div>
@@ -455,11 +609,14 @@ function renderCombat(c){
   <div class="card">
     <h2>Attacks & Weapons</h2>
     <div id="attackList">
-      ${c.attacks.length?c.attacks.map((a,i)=>`
-        <div class="spell">
-          <div class="nm"><b>${esc(a.name)}</b><small>${esc(a.bonus)?('to hit '+esc(a.bonus)+'  ·  '):''}${esc(a.damage)}</small></div>
+      ${c.attacks.length?c.attacks.map((a,i)=>{
+        const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
+        return `<div class="spell">
+          <div class="nm"><b>${esc(a.name)}</b>${a.damage?`<small>${esc(a.damage)}</small>`:''}</div>
+          <button class="rollbtn" data-rollcheck data-label="${esc(a.name)} attack" data-bonus="${bn}" title="Attack roll">🎯 ${esc(a.bonus||'+0')}</button>
+          ${a.damage?`<button class="rollbtn" data-rolldmg data-label="${esc(a.name)} damage" data-notation="${esc(a.damage)}" title="Roll ${esc(a.damage)}">⚔</button>`:''}
           <button class="del" data-delatk="${i}">✕</button>
-        </div>`).join(''):'<div class="empty">No attacks yet.</div>'}
+        </div>`;}).join(''):'<div class="empty">No attacks yet.</div>'}
     </div>
     <div class="addrow">
       <input id="atk_name" placeholder="Name">
@@ -733,6 +890,11 @@ function importData(e){
 
 /* ---- wiring ---- */
 document.addEventListener('click',e=>{
+  const rc=e.target.closest('[data-rollcheck]');
+  if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal'); return; }
+  const rd=e.target.closest('[data-rolldmg]');
+  if(rd){ rollDmg(rd.dataset.label, rd.dataset.notation); return; }
+  if(e.target.closest('#diceFab')){ openDiceTray(); return; }
   const t=e.target.closest('[data-tab]');
   if(t){ tab=t.dataset.tab; render(); }
   if(e.target.id==='welcomeNew'||e.target.id==='newChar') createCharacterFlow();
