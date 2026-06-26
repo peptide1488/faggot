@@ -1095,8 +1095,9 @@ function renderBio(c){
 
   <div class="card">
     <h2>Feats ${c.feats.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${c.feats.length}</span>`:''}</h2>
-    <div>${c.feats.length? c.feats.map((f,i)=>`<div class="spell"><div class="nm"><b>${esc(f.name||f)}</b>${FEAT_DESC[f.name||f]?`<small>${esc(FEAT_DESC[f.name||f])}</small>`:(f.note?`<small>${esc(f.note)}</small>`:'')}</div><button class="del" data-featinfo="${esc(f.name||f)}" title="Info">ⓘ</button><button class="del" data-delfeat="${i}">✕</button></div>`).join('') : '<div class="empty">None yet — gained at ASI levels (4, 8, 12…) when you level up.</div>'}</div>
-    <div class="addrow"><input id="feat_name" placeholder="Add a feat manually"><button class="btn sm" id="addFeat">Add</button></div>
+    <div>${c.feats.length? c.feats.map((f,i)=>`<div class="spell"><div class="nm"><b>${esc(f.name||f)}</b>${FEAT_DESC[f.name||f]?`<small>${esc(FEAT_DESC[f.name||f])}</small>`:(f.note?`<small>${esc(f.note)}</small>`:'')}</div><button class="del" data-featinfo="${esc(f.name||f)}" title="Info">ⓘ</button><button class="del" data-delfeat="${i}">✕</button></div>`).join('') : '<div class="empty">None yet. You gain a feat at ASI levels (4, 8, 12…) or as a Variant Human — or just pick one below.</div>'}</div>
+    <div class="addrow"><select id="feat_pick" style="flex:2"><option value="">— choose a feat to add —</option>${FEATS.map(f=>`<option>${esc(f)}</option>`).join('')}</select><button class="btn sm" id="addFeat">Add</button></div>
+    <div class="muted" id="featPickDesc" style="font-size:12px;margin-top:6px"></div>
   </div>
 
   <div class="card">
@@ -1114,7 +1115,8 @@ function renderBio(c){
   $('#pfpBtn').addEventListener('click',()=>$('#pfpFile').click());
   $('#pfpFile').addEventListener('change',e=>{ if(e.target.files[0]) setPortrait(e.target.files[0]); });
   { const d=$('#pfpDel'); if(d) d.addEventListener('click',()=>{ c.portrait=''; save(); render(); }); }
-  $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_name').value.trim(); if(!v) return; c.feats.push({name:v}); logChange(c,'Gained feat: '+v); save(); render(); });
+  $('#feat_pick').addEventListener('change',e=>{ $('#featPickDesc').textContent=FEAT_DESC[e.target.value]||''; });
+  $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_pick').value; if(!v) return; if(c.feats.some(f=>(f.name||f)===v)){ flashBanner('Already have '+v); return; } c.feats.push({name:v}); logChange(c,'Gained feat: '+v); save(); render(); });
   app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
 }
@@ -1729,7 +1731,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v13';
+const APP_VERSION='v14';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
