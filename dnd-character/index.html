@@ -241,6 +241,7 @@ const SKILLS = [
 ];
 const CLASSES = ['Artificer','Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin','Ranger','Rogue','Sorcerer','Warlock','Wizard','Other'];
 const ALIGN = ['—','LG','NG','CG','LN','TN','CN','LE','NE','CE'];
+const CONDITIONS = ['Blinded','Charmed','Deafened','Frightened','Grappled','Incapacitated','Invisible','Paralyzed','Petrified','Poisoned','Prone','Restrained','Stunned','Unconscious'];
 
 /* ---- data ---- */
 let DB = load();
@@ -248,7 +249,7 @@ let curId = localStorage.getItem(LS_CUR) || (DB[0] && DB[0].id) || null;
 let tab = 'bio';
 
 function load(){
-  try{ const v = JSON.parse(localStorage.getItem(LS_KEY)); return Array.isArray(v)?v:[]; }
+  try{ const v = JSON.parse(localStorage.getItem(LS_KEY)); return Array.isArray(v)?v.map(ensureFields):[]; }
   catch(e){ return []; }
 }
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
@@ -272,8 +273,15 @@ function newCharacter(name){
     attacks:[],
     spellAbility:'int', spells:[], slots,
     items:[], currency:{cp:0,sp:0,ep:0,gp:0,pp:0},
+    conditions:{}, exhaustion:0, concentration:{active:false, spell:''},
     features:'', notes:''
   };
+}
+function ensureFields(c){
+  if(!c.conditions) c.conditions={};
+  if(c.exhaustion==null) c.exhaustion=0;
+  if(!c.concentration) c.concentration={active:false, spell:''};
+  return c;
 }
 function cur(){ return DB.find(c=>c.id===curId) || null; }
 
@@ -331,6 +339,7 @@ function showRollBanner(r){
   const crit = r.crit==='crit'?'<span class="crit">CRIT!</span>':r.crit==='fumble'?'<span class="fumble">NAT 1</span>':'';
   const actions = r.kind==='check'
     ? `<button class="rb-btn" data-rr="adv">ADV</button><button class="rb-btn" data-rr="dis">DIS</button><button class="rb-btn" data-rr="re">↻</button>`
+    : r.kind==='msg' ? ''
     : `<button class="rb-btn" data-rr="re">↻ Reroll</button>`;
   el.innerHTML = `
     <div class="rb-main">
@@ -394,6 +403,24 @@ function skillBonus(c, key, abil, exp){
   if(c.skillProf[key]) b += pb;
   if(exp && c.skillExp[key]) b += pb;
   return b;
+}
+function parseHitDice(c){
+  const m = String((c.hitDice&&c.hitDice.total)||'').match(/(\d+)\s*d\s*(\d+)/i);
+  return m ? {count:Number(m[1]), sides:Number(m[2])} : null;
+}
+function flashBanner(msg){ pushRoll({label:msg, total:'⚠', detail:'', kind:'msg'}); }
+function spendHitDie(c){
+  const hd=parseHitDice(c);
+  if(!hd){ flashBanner('Set hit dice first (e.g. 5d10)'); return; }
+  if((c.hitDice.used||0) >= hd.count){ flashBanner('No hit dice left'); return; }
+  const conMod=mod(c.abilities.con);
+  const note='1d'+hd.sides+(conMod?(conMod>0?'+'+conMod:String(conMod)):'');
+  const res=rollNotation(note);
+  c.hp.cur=Math.min(c.hp.max, c.hp.cur+Math.max(0,res.total));
+  c.hitDice.used=(c.hitDice.used||0)+1;
+  save();
+  pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
+  render();
 }
 
 /* ---- rendering ---- */
@@ -563,6 +590,7 @@ function renderAbil(c){
 
 /* ---------- COMBAT ---------- */
 function renderCombat(c){
+  const hd=parseHitDice(c); const hdLeft=hd?Math.max(0,hd.count-(c.hitDice.used||0)):0;
   app.innerHTML = `
   <div class="card">
     <h2>Hit Points</h2>
@@ -604,6 +632,28 @@ function renderCombat(c){
       <div class="listrow"><div class="nm">Successes</div><div class="pips" id="deathSucc">${pips(3,c.death.succ,'succ')}</div></div>
       <div class="listrow"><div class="nm">Failures</div><div class="pips" id="deathFail">${pips(3,c.death.fail,'fail')}</div></div>
     </div>
+    <button class="btn ghost block" id="spendHd" style="margin-top:12px">☾ Spend a hit die to heal${hd?` · ${hdLeft}/${hd.count} left`:''}</button>
+  </div>
+
+  <div class="card">
+    <h2>Conditions ${Object.keys(c.conditions).length?`<span class="muted" style="text-transform:none;font-size:11px">— ${Object.keys(c.conditions).length} active</span>`:''}</h2>
+    <div class="chips">
+      ${CONDITIONS.map(cn=>`<button class="chip ${c.conditions[cn]?'on':''}" data-cond="${cn}">${cn}</button>`).join('')}
+    </div>
+    <div class="listrow" style="margin-top:14px">
+      <div class="nm">Exhaustion ${c.exhaustion?`<span class="muted">(disadvantage etc.)</span>`:''}</div>
+      <div class="stepper">
+        <button id="exhDown">−</button>
+        <div class="val" style="min-width:48px">${c.exhaustion||0} / 6</div>
+        <button id="exhUp">＋</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Concentration</h2>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="concOn" ${c.concentration.active?'checked':''}> Concentrating</label>
+    <div style="margin-top:10px"><input id="concSpell" value="${esc(c.concentration.spell||'')}" placeholder="On which spell?" ${c.concentration.active?'':'disabled style="opacity:.5"'}></div>
   </div>
 
   <div class="card">
@@ -651,6 +701,17 @@ function renderCombat(c){
   app.querySelectorAll('[data-delatk]').forEach(el=>el.addEventListener('click',()=>{
     c.attacks.splice(Number(el.dataset.delatk),1); save(); render();
   }));
+
+  $('#spendHd').addEventListener('click',()=>spendHitDie(c));
+  app.querySelectorAll('[data-cond]').forEach(el=>el.addEventListener('click',()=>{
+    const k=el.dataset.cond;
+    if(c.conditions[k]) delete c.conditions[k]; else c.conditions[k]=true;
+    save(); render();
+  }));
+  $('#exhUp').addEventListener('click',()=>{ c.exhaustion=Math.min(6,(c.exhaustion||0)+1); save(); render(); });
+  $('#exhDown').addEventListener('click',()=>{ c.exhaustion=Math.max(0,(c.exhaustion||0)-1); save(); render(); });
+  $('#concOn').addEventListener('change',e=>{ c.concentration.active=e.target.checked; if(!e.target.checked) c.concentration.spell=''; save(); render(); });
+  $('#concSpell').addEventListener('change',e=>{ c.concentration.spell=e.target.value; save(); });
 }
 function pips(max,val,kind){
   let h='';
@@ -726,7 +787,11 @@ function renderSpells(c){
   $('#restBtn').addEventListener('click',()=>{
     for(let l=1;l<=9;l++) if(c.slots[l]) c.slots[l].used=0;
     c.hp.cur=c.hp.max; c.death={succ:0,fail:0};
+    const hd=parseHitDice(c);                 // long rest: regain half your hit dice
+    if(hd) c.hitDice.used=Math.max(0,(c.hitDice.used||0)-Math.max(1,Math.floor(hd.count/2)));
+    c.exhaustion=Math.max(0,(c.exhaustion||0)-1);  // a long rest removes 1 exhaustion
     save(); render();
+    flashBanner('Long rest — HP, slots & hit dice restored');
   });
   app.querySelectorAll('[data-slottotal]').forEach(el=>el.addEventListener('change',e=>{
     const l=el.dataset.slottotal; const t=Math.max(0,Number(e.target.value)||0);
@@ -736,9 +801,9 @@ function renderSpells(c){
     const l=el.dataset.slotpip, n=Number(el.dataset.n);
     const sl=c.slots[l];
     const available = sl.total - sl.used;
-    // Tap a pip to set how many slots remain; tap the lowest lit one again to spend it.
-    const newAvail = (available===n) ? n-1 : n;
-    sl.used = Math.max(0, Math.min(sl.total, sl.total - newAvail));
+    // Tap a lit (available) slot to spend it; tap a dim (spent) slot to recover one.
+    if(n<=available) sl.used = Math.min(sl.total, sl.used+1);
+    else sl.used = Math.max(0, sl.used-1);
     save(); render();
   }));
   $('#addSpell').addEventListener('click',()=>{
