@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Grimoire — D&D 5e Character Keeper</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon.svg">
+<link rel="apple-touch-icon" href="./icon.svg">
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#121826; --panel2:#0f1623; --line:#243049;
+    --ink:#e7ecf5; --mut:#93a0bb; --accent:#a78bfa; --accent2:#7c3aed;
+    --good:#34d399; --bad:#f87171; --gold:#f5c451;
+    --r:14px; --sp:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    -webkit-text-size-adjust:100%;
+    padding-bottom:calc(72px + env(safe-area-inset-bottom));
+  }
+  .serif{font-family:Georgia,"Times New Roman",serif}
+  h1,h2,h3{margin:0}
+  button{font:inherit;color:inherit;cursor:pointer}
+  input,select,textarea{font:inherit;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 10px;width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{resize:vertical;min-height:84px}
+  label{display:block;font-size:12px;color:var(--mut);margin:0 0 4px 2px;text-transform:uppercase;letter-spacing:.04em}
+  a{color:var(--accent)}
+
+  header{
+    position:sticky;top:0;z-index:20;background:rgba(11,15,23,.92);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;
+  }
+  .hrow{display:flex;align-items:center;gap:10px}
+  .hrow .d20{width:30px;height:30px;flex:none}
+  .htitle{font-weight:700;font-size:17px;letter-spacing:.02em}
+  .hsub{font-size:12px;color:var(--mut)}
+  .charpick{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .charpick select{width:auto;max-width:46vw;padding:7px 9px}
+  .iconbtn{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 10px;line-height:1}
+
+  main{padding:14px;max-width:760px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin:0 0 14px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px}
+  .grid{display:grid;gap:10px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1fr 1fr 1fr}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:520px){.g4{grid-template-columns:repeat(2,1fr)}}
+
+  .pill{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:6px 11px;font-size:13px}
+
+  /* abilities */
+  .abis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+  @media(max-width:560px){.abis{grid-template-columns:repeat(3,1fr)}}
+  .abi{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px;text-align:center}
+  .abi .nm{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+  .abi .mod{font-family:Georgia,serif;font-size:24px;font-weight:700;line-height:1.1}
+  .abi input{text-align:center;padding:6px;margin-top:6px;font-weight:600}
+
+  /* big stat tiles */
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  @media(max-width:520px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center}
+  .tile .lab{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+  .tile .big{font-family:Georgia,serif;font-size:26px;font-weight:700}
+  .tile input{text-align:center}
+
+  .listrow{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .listrow:last-child{border-bottom:0}
+  .listrow .chk{flex:none}
+  .listrow .nm{flex:1;min-width:0}
+  .listrow .val{font-family:Georgia,serif;font-weight:700;min-width:34px;text-align:right}
+  .listrow .sub{font-size:12px;color:var(--mut)}
+  .chk{width:20px;height:20px;accent-color:var(--accent);cursor:pointer}
+
+  .hp{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center}
+  .hpbtns{display:flex;gap:8px;margin-top:10px}
+  .hpbtns input{flex:1}
+  .btn{background:var(--accent2);border:1px solid var(--accent);border-radius:10px;padding:9px 12px;font-weight:600;text-align:center}
+  .btn.ghost{background:var(--panel2);border-color:var(--line);color:var(--ink);font-weight:500}
+  .btn.bad{background:#3b1b22;border-color:#7f1d1d;color:#fecaca}
+  .btn.sm{padding:6px 10px;font-size:13px}
+  .btn.block{width:100%}
+
+  .slot{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .slot:last-child{border-bottom:0}
+  .slot .lvl{width:64px;font-size:13px;color:var(--mut)}
+  .pips{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+  .pip{width:22px;height:22px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);cursor:pointer}
+  .pip.on{background:var(--accent2);border-color:var(--accent)}
+  .slotcfg{width:54px}
+  .slotcfg input{padding:5px;text-align:center}
+
+  .spell{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .spell:last-child{border-bottom:0}
+  .spell .nm{flex:1;min-width:0}
+  .spell .nm b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .spell .nm small{color:var(--mut)}
+  .tag{font-size:11px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
+  .del{background:none;border:0;color:var(--mut);font-size:18px;padding:2px 6px;line-height:1}
+  .del:hover{color:var(--bad)}
+
+  .addrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .addrow input,.addrow select{flex:1;min-width:90px;width:auto}
+
+  .currency{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;text-align:center}
+  .currency .lab{font-size:11px;color:var(--mut);text-transform:uppercase}
+
+  .muted{color:var(--mut)}
+  .empty{color:var(--mut);font-size:13px;text-align:center;padding:14px 0}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .sectionhide{display:none}
+
+  /* bottom nav */
+  nav.tabs{
+    position:fixed;left:0;right:0;bottom:0;z-index:30;
+    background:rgba(11,15,23,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line);
+    display:grid;grid-template-columns:repeat(6,1fr);
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  nav.tabs button{background:none;border:0;color:var(--mut);font-size:10.5px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;border-radius:10px}
+  nav.tabs button .ic{font-size:18px;line-height:1}
+  nav.tabs button.on{color:var(--accent)}
+
+  .fade{animation:f .18s ease}
+  @keyframes f{from{opacity:.3;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* welcome / empty state */
+  .welcome{text-align:center;padding:40px 16px}
+  .welcome .d20big{width:84px;height:84px;margin:0 auto 16px}
+  .welcome h1{font-size:24px;margin-bottom:8px}
+  .welcome p{color:var(--mut);max-width:380px;margin:0 auto 20px}
+
+  /* modal */
+  .modal{position:fixed;inset:0;z-index:50;background:rgba(4,7,13,.7);display:flex;align-items:flex-end;justify-content:center;padding:0}
+  .modal .sheet{background:var(--panel);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:760px;max-height:90vh;overflow:auto;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
+  @media(min-width:560px){.modal{align-items:center;padding:16px}.modal .sheet{border-radius:18px}}
+  .modal h2{font-size:16px;color:var(--ink);text-transform:none;letter-spacing:0;margin-bottom:14px}
+  .modal .grip{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px}
+
+  /* rollable affordance */
+  .rollbtn{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:5px 8px;
+    font-family:Georgia,serif;font-weight:700;cursor:pointer;min-width:40px}
+  .rollbtn:active{background:var(--accent2);border-color:var(--accent)}
+  .abi .mod.rollbtn{display:block;width:100%;margin:0 auto;padding:4px}
+
+  /* dice FAB */
+  .dicefab{position:fixed;right:14px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:35;
+    width:54px;height:54px;border-radius:50%;border:1px solid var(--accent);
+    background:linear-gradient(160deg,var(--accent2),#5b21b6);color:#f5f3ff;font-size:24px;
+    box-shadow:0 8px 22px rgba(124,58,237,.45);display:flex;align-items:center;justify-content:center}
+  .dicefab:active{transform:scale(.94)}
+
+  /* roll result banner */
+  .rollbanner{position:fixed;left:50%;transform:translateX(-50%) translateY(20px);
+    bottom:calc(80px + env(safe-area-inset-bottom));z-index:40;width:calc(100% - 24px);max-width:440px;
+    background:var(--panel);border:1px solid var(--accent);border-radius:14px;
+    padding:10px 12px;box-shadow:0 10px 34px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.22s}
+  .rollbanner.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+  .rollbanner .rb-main{display:flex;align-items:center;gap:12px}
+  .rollbanner .rb-total{font-family:Georgia,serif;font-size:30px;font-weight:700;min-width:48px;text-align:center;color:var(--accent)}
+  .rollbanner .rb-info{flex:1;min-width:0}
+  .rollbanner .rb-detail{font-size:12px;color:var(--mut);margin-top:1px}
+  .rollbanner .rb-detail s{opacity:.6}
+  .rollbanner .rb-actions{display:flex;gap:6px;margin-top:8px;justify-content:flex-end}
+  .rb-btn{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:600}
+  .rb-btn:active{background:var(--accent2)}
+  .crit{color:var(--good);font-weight:700;font-size:12px}
+  .fumble{color:var(--bad);font-weight:700;font-size:12px}
+
+  /* dice tray */
+  .dietray{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .diebtn{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px 0;font-family:Georgia,serif;font-weight:700;font-size:16px}
+  .diebtn:active{background:var(--accent2);border-color:var(--accent)}
+  .logrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .logrow:last-child{border-bottom:0}
+  .logrow .lr-total{font-family:Georgia,serif;font-weight:700;font-size:18px;color:var(--accent);min-width:34px;text-align:right}
+  .logrow .lr-lab{font-weight:600;min-width:0}
+  .logrow .lr-det{font-size:12px;color:var(--mut);margin-left:auto;text-align:right}
+
+  /* condition chips */
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:6px 11px;font-size:13px}
+  .chip.on{background:#3b1b22;border-color:#7f1d1d;color:#fecaca}
+  .stepper{display:flex;align-items:center;gap:10px}
+  .stepper button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;width:34px;height:34px;font-size:18px}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <svg class="d20" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(32 32)"><polygon points="0,-22 19,-11 19,11 0,22 -19,11 -19,-11" fill="#7c3aed" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-22 11,-7 0,3 -11,-7" fill="#a78bfa"/><polygon points="0,3 11,-7 19,11 0,22" fill="#6d28d9"/><polygon points="0,3 -11,-7 -19,11 0,22" fill="#5b21b6"/></g></svg>
+    <div>
+      <div class="htitle serif">Grimoire</div>
+      <div class="hsub" id="hsub">D&D 5e character keeper</div>
+    </div>
+    <div class="charpick">
+      <select id="charSelect" title="Switch character"></select>
+      <button class="iconbtn" id="newChar" title="New character">＋</button>
+    </div>
+  </div>
+</header>
+
+<main id="app"></main>
+
+<nav class="tabs" id="tabs"></nav>
+
+<button id="diceFab" class="dicefab" title="Dice tray">🎲</button>
+<div id="rollBanner" class="rollbanner"></div>
+
+<div id="modalRoot"></div>
+
+<script>
+"use strict";
+/* ----------------------------------------------------------------------------
+   Grimoire — D&D 5e character keeper.  Single-file PWA, all data in localStorage.
+---------------------------------------------------------------------------- */
+const LS_KEY = 'grimoire.characters.v1';
+const LS_CUR = 'grimoire.current.v1';
+
+const ABILITIES = [
+  ['str','Strength'],['dex','Dexterity'],['con','Constitution'],
+  ['int','Intelligence'],['wis','Wisdom'],['cha','Charisma']
+];
+const SKILLS = [
+  ['acrobatics','Acrobatics','dex'],['animal','Animal Handling','wis'],
+  ['arcana','Arcana','int'],['athletics','Athletics','str'],
+  ['deception','Deception','cha'],['history','History','int'],
+  ['insight','Insight','wis'],['intimidation','Intimidation','cha'],
+  ['investigation','Investigation','int'],['medicine','Medicine','wis'],
+  ['nature','Nature','int'],['perception','Perception','wis'],
+  ['performance','Performance','cha'],['persuasion','Persuasion','cha'],
+  ['religion','Religion','int'],['sleight','Sleight of Hand','dex'],
+  ['stealth','Stealth','dex'],['survival','Survival','wis']
+];
+const CLASSES = ['Artificer','Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin','Ranger','Rogue','Sorcerer','Warlock','Wizard','Other'];
+const ALIGN = ['—','LG','NG','CG','LN','TN','CN','LE','NE','CE'];
+const CONDITIONS = ['Blinded','Charmed','Deafened','Frightened','Grappled','Incapacitated','Invisible','Paralyzed','Petrified','Poisoned','Prone','Restrained','Stunned','Unconscious'];
+
+/* ---- data ---- */
+let DB = load();
+let curId = localStorage.getItem(LS_CUR) || (DB[0] && DB[0].id) || null;
+let tab = 'bio';
+
+function load(){
+  try{ const v = JSON.parse(localStorage.getItem(LS_KEY)); return Array.isArray(v)?v.map(ensureFields):[]; }
+  catch(e){ return []; }
+}
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+
+function newCharacter(name){
+  const slots = {};
+  for(let i=1;i<=9;i++) slots[i] = {total:0, used:0};
+  return {
+    id: uid(),
+    name: name || 'New Adventurer',
+    race:'', cls:'Fighter', subclass:'', level:1, background:'', alignment:'—', xp:0,
+    inspiration:false,
+    abilities:{str:10,dex:10,con:10,int:10,wis:10,cha:10},
+    saveProf:{str:false,dex:false,con:false,int:false,wis:false,cha:false},
+    skillProf:{}, skillExp:{},
+    ac:10, speed:30, initMisc:0, profOverride:'',
+    hp:{max:8,cur:8,temp:0},
+    hitDice:{total:'1d10', used:0},
+    death:{succ:0, fail:0},
+    attacks:[],
+    spellAbility:'int', spells:[], slots,
+    items:[], currency:{cp:0,sp:0,ep:0,gp:0,pp:0},
+    conditions:{}, exhaustion:0, concentration:{active:false, spell:''},
+    features:'', notes:''
+  };
+}
+function ensureFields(c){
+  if(!c.conditions) c.conditions={};
+  if(c.exhaustion==null) c.exhaustion=0;
+  if(!c.concentration) c.concentration={active:false, spell:''};
+  return c;
+}
+function cur(){ return DB.find(c=>c.id===curId) || null; }
+
+/* ---- dice ---- */
+let rollLog = [];      // {id, label, total, detail, crit, kind, bonus, notation}
+let lastRoll = null;
+const rnd = sides => Math.floor(Math.random()*sides)+1;
+
+function parseDice(notation){
+  const terms=[]; let flat=0;
+  const s=String(notation||'').replace(/\s+/g,'').toLowerCase();
+  const re=/([+-]?)(\d*)d(\d+)|([+-]?\d+)/g; let m;
+  while((m=re.exec(s))){
+    if(m[3]){ terms.push({n:Number(m[2]||1), sides:Number(m[3]), sign:m[1]==='-'?-1:1}); }
+    else if(m[4]!=null && m[4]!==''){ flat+=Number(m[4]); }
+  }
+  return {terms, flat};
+}
+function rollNotation(notation){
+  const {terms,flat}=parseDice(notation);
+  let total=flat; const parts=[];
+  terms.forEach(t=>{
+    const rolls=[]; for(let i=0;i<t.n;i++){ const r=rnd(t.sides); rolls.push(r); total+=r*t.sign; }
+    parts.push((t.sign<0?'−':'')+t.n+'d'+t.sides+' ['+rolls.join(',')+']');
+  });
+  if(flat) parts.push((flat>0?'+':'−')+Math.abs(flat));
+  if(!terms.length && !flat) return null;
+  return {total, detail:parts.join(' ')};
+}
+function rollCheck(label, bonus, mode){
+  bonus=Number(bonus)||0;
+  const r1=rnd(20), r2=rnd(20);
+  let kept=r1, dropped=null;
+  if(mode==='adv'){ kept=Math.max(r1,r2); dropped=Math.min(r1,r2); }
+  else if(mode==='dis'){ kept=Math.min(r1,r2); dropped=Math.max(r1,r2); }
+  const total=kept+bonus;
+  const crit = kept===20?'crit':kept===1?'fumble':null;
+  const btxt = bonus? (bonus>0?' +'+bonus:' −'+Math.abs(bonus)) : '';
+  const detail = `d20${mode==='adv'?' adv':mode==='dis'?' dis':''} ${dropped!=null?`(<s>${dropped}</s> ${kept})`:`(${kept})`}${btxt}`;
+  pushRoll({label, total, detail, crit, kind:'check', bonus});
+}
+function rollDmg(label, notation){
+  const res=rollNotation(notation); if(!res) return;
+  pushRoll({label, total:res.total, detail:res.detail, kind:'dmg', notation});
+}
+function pushRoll(r){
+  r.id=uid(); r.ts=Date.now();
+  rollLog.unshift(r); if(rollLog.length>40) rollLog.pop();
+  lastRoll=r;
+  showRollBanner(r);
+  renderDiceLog();
+}
+function showRollBanner(r){
+  const el=$('#rollBanner');
+  const crit = r.crit==='crit'?'<span class="crit">CRIT!</span>':r.crit==='fumble'?'<span class="fumble">NAT 1</span>':'';
+  const actions = r.kind==='check'
+    ? `<button class="rb-btn" data-rr="adv">ADV</button><button class="rb-btn" data-rr="dis">DIS</button><button class="rb-btn" data-rr="re">↻</button>`
+    : r.kind==='msg' ? ''
+    : `<button class="rb-btn" data-rr="re">↻ Reroll</button>`;
+  el.innerHTML = `
+    <div class="rb-main">
+      <div class="rb-total">${r.total}</div>
+      <div class="rb-info"><b>${esc(r.label)}</b> ${crit}<div class="rb-detail">${r.detail}</div></div>
+    </div>
+    <div class="rb-actions">${actions}<button class="rb-btn" data-rr="x">✕</button></div>`;
+  el.classList.add('show');
+  clearTimeout(showRollBanner._t);
+  showRollBanner._t=setTimeout(()=>el.classList.remove('show'), 9000);
+  el.querySelectorAll('[data-rr]').forEach(b=>b.onclick=()=>{
+    const a=b.dataset.rr;
+    if(a==='x'){ el.classList.remove('show'); return; }
+    if(a==='adv') rollCheck(r.label, r.bonus, 'adv');
+    else if(a==='dis') rollCheck(r.label, r.bonus, 'dis');
+    else if(a==='re'){ r.kind==='dmg' ? rollDmg(r.label, r.notation) : rollCheck(r.label, r.bonus, 'normal'); }
+  });
+}
+function openDiceTray(){
+  $('#modalRoot').innerHTML = `
+   <div class="modal" id="diceModal"><div class="sheet">
+     <div class="grip"></div>
+     <h2>🎲 Dice tray</h2>
+     <div class="dietray">${[4,6,8,10,12,20,100].map(d=>`<button class="diebtn" data-die="${d}">d${d}</button>`).join('')}
+       <button class="diebtn" data-die="20" data-adv="1" title="Roll with advantage">d20⊕</button></div>
+     <div class="addrow" style="margin-top:10px">
+       <input id="diceNote" placeholder="e.g. 2d6+3 or 1d20+5" inputmode="text">
+       <button class="btn sm" id="diceRollNote">Roll</button>
+     </div>
+     <h2 style="margin-top:16px">History <button class="btn ghost sm" id="diceClear" style="float:right">Clear</button></h2>
+     <div id="diceLog"></div>
+   </div></div>`;
+  const root=$('#modalRoot');
+  root.querySelectorAll('[data-die]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.adv) rollCheck('d20', 0, 'adv');
+    else rollDmg('d'+b.dataset.die, '1d'+b.dataset.die);
+  });
+  $('#diceRollNote').onclick=()=>{ const v=$('#diceNote').value.trim(); if(v){ rollDmg(v, v); } };
+  $('#diceNote').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#diceRollNote').click(); });
+  $('#diceClear').onclick=()=>{ rollLog=[]; renderDiceLog(); };
+  $('#diceModal').onclick=e=>{ if(e.target.id==='diceModal') $('#modalRoot').innerHTML=''; };
+  renderDiceLog();
+}
+function renderDiceLog(){
+  const el=$('#diceLog'); if(!el) return;
+  el.innerHTML = rollLog.length
+    ? rollLog.map(r=>`<div class="logrow"><span class="lr-total">${r.total}</span><span class="lr-lab">${esc(r.label)}${r.crit==='crit'?' <span class="crit">✦</span>':''}</span><span class="lr-det">${r.detail}</span></div>`).join('')
+    : '<div class="empty">No rolls yet. Tap a skill, save, attack, or a die.</div>';
+}
+
+/* ---- math ---- */
+const mod = s => Math.floor((Number(s||10)-10)/2);
+const sgn = n => (n>=0?'+':'') + n;
+function profBonus(c){
+  if(c.profOverride!=='' && c.profOverride!=null && !isNaN(c.profOverride)) return Number(c.profOverride);
+  return Math.ceil(Number(c.level||1)/4)+1;
+}
+function skillBonus(c, key, abil, exp){
+  let b = mod(c.abilities[abil]);
+  const pb = profBonus(c);
+  if(c.skillProf[key]) b += pb;
+  if(exp && c.skillExp[key]) b += pb;
+  return b;
+}
+function parseHitDice(c){
+  const m = String((c.hitDice&&c.hitDice.total)||'').match(/(\d+)\s*d\s*(\d+)/i);
+  return m ? {count:Number(m[1]), sides:Number(m[2])} : null;
+}
+function flashBanner(msg){ pushRoll({label:msg, total:'⚠', detail:'', kind:'msg'}); }
+function spendHitDie(c){
+  const hd=parseHitDice(c);
+  if(!hd){ flashBanner('Set hit dice first (e.g. 5d10)'); return; }
+  if((c.hitDice.used||0) >= hd.count){ flashBanner('No hit dice left'); return; }
+  const conMod=mod(c.abilities.con);
+  const note='1d'+hd.sides+(conMod?(conMod>0?'+'+conMod:String(conMod)):'');
+  const res=rollNotation(note);
+  c.hp.cur=Math.min(c.hp.max, c.hp.cur+Math.max(0,res.total));
+  c.hitDice.used=(c.hitDice.used||0)+1;
+  save();
+  pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
+  render();
+}
+
+/* ---- rendering ---- */
+const $ = sel => document.querySelector(sel);
+const app = $('#app');
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+function render(){
+  renderHeader();
+  renderTabs();
+  const c = cur();
+  if(!c){ renderWelcome(); return; }
+  app.className='fade';
+  void app.offsetWidth;
+  if(tab==='bio') renderBio(c);
+  else if(tab==='abil') renderAbil(c);
+  else if(tab==='combat') renderCombat(c);
+  else if(tab==='spells') renderSpells(c);
+  else if(tab==='items') renderItems(c);
+  else if(tab==='notes') renderNotes(c);
+}
+
+function renderHeader(){
+  const sel = $('#charSelect');
+  if(!DB.length){ sel.style.display='none'; $('#hsub').textContent='D&D 5e character keeper'; return; }
+  sel.style.display='';
+  sel.innerHTML = DB.map(c=>`<option value="${c.id}" ${c.id===curId?'selected':''}>${esc(c.name)}</option>`).join('');
+  const c=cur();
+  $('#hsub').textContent = c ? `${esc(c.race||'')} ${esc(c.cls)} ${c.level}`.trim() : 'D&D 5e character keeper';
+}
+
+const TABDEF = [
+  ['bio','Bio','🪪'],['abil','Stats','🎲'],['combat','Combat','⚔️'],
+  ['spells','Spells','✨'],['items','Items','🎒'],['notes','Notes','📜']
+];
+function renderTabs(){
+  $('#tabs').innerHTML = TABDEF.map(([k,l,ic])=>
+    `<button class="${k===tab?'on':''}" data-tab="${k}"><span class="ic">${ic}</span>${l}</button>`
+  ).join('');
+}
+
+function renderWelcome(){
+  app.className='fade'; void app.offsetWidth;
+  app.innerHTML = `
+    <div class="welcome">
+      <svg class="d20big" viewBox="0 0 64 64"><g transform="translate(32 32)"><polygon points="0,-26 22,-13 22,13 0,26 -22,13 -22,-13" fill="#7c3aed" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-26 13,-8 0,4 -13,-8" fill="#a78bfa"/><polygon points="0,4 13,-8 22,13 0,26" fill="#6d28d9"/><polygon points="0,4 -13,-8 -22,13 0,26" fill="#5b21b6"/><text x="0" y="3" text-anchor="middle" font-family="Georgia,serif" font-size="15" font-weight="bold" fill="#f5f3ff">20</text></g></svg>
+      <h1 class="serif">Welcome, adventurer</h1>
+      <p>Create a character to track abilities, skills, hit points, spell slots, inventory and more. Everything is saved on this device and works offline.</p>
+      <button class="btn block" id="welcomeNew" style="max-width:280px;margin:0 auto">Create a character</button>
+    </div>`;
+}
+
+/* ---------- BIO ---------- */
+function renderBio(c){
+  app.innerHTML = `
+  <div class="card">
+    <h2>Identity</h2>
+    <div class="grid">
+      <div><label>Character name</label><input id="f_name" value="${esc(c.name)}"></div>
+      <div class="g2 grid">
+        <div><label>Race / Species</label><input id="f_race" value="${esc(c.race)}" placeholder="e.g. Half-Elf"></div>
+        <div><label>Background</label><input id="f_background" value="${esc(c.background)}" placeholder="e.g. Sage"></div>
+      </div>
+      <div class="g3 grid">
+        <div><label>Class</label>${select('f_cls', CLASSES, c.cls)}</div>
+        <div><label>Subclass</label><input id="f_subclass" value="${esc(c.subclass)}" placeholder="optional"></div>
+        <div><label>Level</label><input id="f_level" type="number" min="1" max="20" value="${c.level}"></div>
+      </div>
+      <div class="g3 grid">
+        <div><label>Alignment</label>${select('f_alignment', ALIGN, c.alignment)}</div>
+        <div><label>XP</label><input id="f_xp" type="number" min="0" value="${c.xp}"></div>
+        <div><label>Prof. bonus</label><input id="f_profOverride" type="number" value="${c.profOverride}" placeholder="${profBonus(c)} (auto)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>At a glance</h2>
+    <div class="tiles">
+      <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
+      <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(c.abilities.dex)+Number(c.initMisc||0))}</div></div>
+      <div class="tile"><div class="lab">Armor Class</div><div class="big">${c.ac}</div></div>
+      <div class="tile"><div class="lab">Speed</div><div class="big">${c.speed}</div></div>
+    </div>
+    <div class="addrow" style="margin-top:12px">
+      <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="f_insp" ${c.inspiration?'checked':''}> Inspiration</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <button class="btn bad block" id="deleteChar">Delete this character</button>
+  </div>`;
+
+  bind('f_name','name'); bind('f_race','race'); bind('f_background','background');
+  bind('f_cls','cls'); bind('f_subclass','subclass'); bindNum('f_level','level');
+  bind('f_alignment','alignment'); bindNum('f_xp','xp');
+  $('#f_profOverride').addEventListener('change',e=>{ c.profOverride = e.target.value===''?'':Number(e.target.value); save(); render(); });
+  $('#f_insp').addEventListener('change',e=>{ c.inspiration=e.target.checked; save(); });
+  $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
+}
+
+/* ---------- ABILITIES & SKILLS ---------- */
+function renderAbil(c){
+  const pb = profBonus(c);
+  app.innerHTML = `
+  <div class="card">
+    <h2>Ability Scores</h2>
+    <div class="abis">
+      ${ABILITIES.map(([k,nm])=>`
+        <div class="abi">
+          <div class="nm">${k}</div>
+          <button class="mod rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(c.abilities[k])}" title="Roll ${nm} check">${sgn(mod(c.abilities[k]))}</button>
+          <input type="number" id="ab_${k}" value="${c.abilities[k]}" min="1" max="30" aria-label="${nm}">
+        </div>`).join('')}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Saving Throws</h2>
+    ${ABILITIES.map(([k,nm])=>{
+      const b = mod(c.abilities[k]) + (c.saveProf[k]?pb:0);
+      return `<div class="listrow">
+        <input type="checkbox" class="chk" data-save="${k}" ${c.saveProf[k]?'checked':''}>
+        <div class="nm">${nm}</div>
+        <button class="val rollbtn" data-rollcheck data-label="${nm} save" data-bonus="${b}" title="Roll ${nm} save">${sgn(b)}</button>
+      </div>`;
+    }).join('')}
+  </div>
+
+  <div class="card">
+    <h2>Skills <span class="muted" style="text-transform:none;font-size:11px">— tap ◇ for expertise</span></h2>
+    ${SKILLS.map(([key,nm,ab])=>{
+      const b = skillBonus(c,key,ab,true);
+      return `<div class="listrow">
+        <input type="checkbox" class="chk" data-skill="${key}" ${c.skillProf[key]?'checked':''}>
+        <button class="del" data-exp="${key}" title="Expertise" style="color:${c.skillExp[key]?'var(--gold)':'var(--mut)'}">${c.skillExp[key]?'◆':'◇'}</button>
+        <div class="nm">${nm} <span class="sub">(${ab})</span></div>
+        <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
+      </div>`;
+    }).join('')}
+  </div>
+
+  <div class="card">
+    <h2>Passive senses</h2>
+    <div class="tiles">
+      <div class="tile"><div class="lab">Passive Perception</div><div class="big" id="pp">${10+skillBonus(c,'perception','wis',true)}</div></div>
+      <div class="tile"><div class="lab">Passive Investigation</div><div class="big" id="pi">${10+skillBonus(c,'investigation','int',true)}</div></div>
+    </div>
+  </div>`;
+
+  ABILITIES.forEach(([k])=>{
+    $('#ab_'+k).addEventListener('change',e=>{
+      c.abilities[k]=Number(e.target.value)||10; save(); render();
+    });
+  });
+  app.querySelectorAll('[data-save]').forEach(el=>el.addEventListener('change',e=>{
+    c.saveProf[e.target.dataset.save]=e.target.checked; save(); render();
+  }));
+  app.querySelectorAll('[data-skill]').forEach(el=>el.addEventListener('change',e=>{
+    c.skillProf[e.target.dataset.skill]=e.target.checked; save(); render();
+  }));
+  app.querySelectorAll('[data-exp]').forEach(el=>el.addEventListener('click',e=>{
+    const k=el.dataset.exp; c.skillExp[k]=!c.skillExp[k]; save(); render();
+  }));
+}
+
+/* ---------- COMBAT ---------- */
+function renderCombat(c){
+  const hd=parseHitDice(c); const hdLeft=hd?Math.max(0,hd.count-(c.hitDice.used||0)):0;
+  app.innerHTML = `
+  <div class="card">
+    <h2>Hit Points</h2>
+    <div class="hp">
+      <div class="tile"><div class="lab">Current</div><div class="big" style="color:var(--good)" id="hpcur">${c.hp.cur}</div></div>
+      <div class="tile"><div class="lab">Max</div><input type="number" id="hpmax" value="${c.hp.max}"></div>
+      <div class="tile"><div class="lab">Temp</div><input type="number" id="hptemp" value="${c.hp.temp}"></div>
+    </div>
+    <div class="hpbtns">
+      <button class="btn bad sm" id="dmgBtn">– Damage</button>
+      <input type="number" id="hpamt" value="1" min="1" inputmode="numeric">
+      <button class="btn sm" id="healBtn" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Defenses</h2>
+    <div class="g3 grid">
+      <div><label>Armor Class</label><input type="number" id="cb_ac" value="${c.ac}"></div>
+      <div><label>Speed</label><input type="number" id="cb_speed" value="${c.speed}"></div>
+      <div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div>
+    </div>
+    <div class="tiles" style="margin-top:12px">
+      <div class="tile"><div class="lab">Initiative</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${mod(c.abilities.dex)+Number(c.initMisc||0)}" title="Roll initiative">${sgn(mod(c.abilities.dex)+Number(c.initMisc||0))}</button></div>
+      <div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div>
+      <div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(c.abilities[c.spellAbility])}</div></div>
+      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(c.abilities[c.spellAbility]))}</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Hit Dice & Death Saves</h2>
+    <div class="row2">
+      <div><label>Hit dice (total)</label><input id="hd_total" value="${esc(c.hitDice.total)}" placeholder="e.g. 5d10"></div>
+      <div><label>Hit dice used</label><input type="number" id="hd_used" value="${c.hitDice.used}" min="0"></div>
+    </div>
+    <div style="margin-top:12px">
+      <label>Death saves</label>
+      <div class="listrow"><div class="nm">Successes</div><div class="pips" id="deathSucc">${pips(3,c.death.succ,'succ')}</div></div>
+      <div class="listrow"><div class="nm">Failures</div><div class="pips" id="deathFail">${pips(3,c.death.fail,'fail')}</div></div>
+    </div>
+    <button class="btn ghost block" id="spendHd" style="margin-top:12px">☾ Spend a hit die to heal${hd?` · ${hdLeft}/${hd.count} left`:''}</button>
+  </div>
+
+  <div class="card">
+    <h2>Conditions ${Object.keys(c.conditions).length?`<span class="muted" style="text-transform:none;font-size:11px">— ${Object.keys(c.conditions).length} active</span>`:''}</h2>
+    <div class="chips">
+      ${CONDITIONS.map(cn=>`<button class="chip ${c.conditions[cn]?'on':''}" data-cond="${cn}">${cn}</button>`).join('')}
+    </div>
+    <div class="listrow" style="margin-top:14px">
+      <div class="nm">Exhaustion ${c.exhaustion?`<span class="muted">(disadvantage etc.)</span>`:''}</div>
+      <div class="stepper">
+        <button id="exhDown">−</button>
+        <div class="val" style="min-width:48px">${c.exhaustion||0} / 6</div>
+        <button id="exhUp">＋</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Concentration</h2>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="concOn" ${c.concentration.active?'checked':''}> Concentrating</label>
+    <div style="margin-top:10px"><input id="concSpell" value="${esc(c.concentration.spell||'')}" placeholder="On which spell?" ${c.concentration.active?'':'disabled style="opacity:.5"'}></div>
+  </div>
+
+  <div class="card">
+    <h2>Attacks & Weapons</h2>
+    <div id="attackList">
+      ${c.attacks.length?c.attacks.map((a,i)=>{
+        const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
+        return `<div class="spell">
+          <div class="nm"><b>${esc(a.name)}</b>${a.damage?`<small>${esc(a.damage)}</small>`:''}</div>
+          <button class="rollbtn" data-rollcheck data-label="${esc(a.name)} attack" data-bonus="${bn}" title="Attack roll">🎯 ${esc(a.bonus||'+0')}</button>
+          ${a.damage?`<button class="rollbtn" data-rolldmg data-label="${esc(a.name)} damage" data-notation="${esc(a.damage)}" title="Roll ${esc(a.damage)}">⚔</button>`:''}
+          <button class="del" data-delatk="${i}">✕</button>
+        </div>`;}).join(''):'<div class="empty">No attacks yet.</div>'}
+    </div>
+    <div class="addrow">
+      <input id="atk_name" placeholder="Name">
+      <input id="atk_bonus" placeholder="+5" style="max-width:70px">
+      <input id="atk_dmg" placeholder="1d8+3 slashing">
+      <button class="btn sm" id="addAtk">Add</button>
+    </div>
+  </div>`;
+
+  $('#hpmax').addEventListener('change',e=>{ c.hp.max=Number(e.target.value)||0; save(); });
+  $('#hptemp').addEventListener('change',e=>{ c.hp.temp=Number(e.target.value)||0; save(); render(); });
+  $('#cb_ac').addEventListener('change',e=>{ c.ac=Number(e.target.value)||0; save(); render(); });
+  $('#cb_speed').addEventListener('change',e=>{ c.speed=Number(e.target.value)||0; save(); });
+  $('#cb_init').addEventListener('change',e=>{ c.initMisc=Number(e.target.value)||0; save(); render(); });
+  $('#hd_total').addEventListener('change',e=>{ c.hitDice.total=e.target.value; save(); });
+  $('#hd_used').addEventListener('change',e=>{ c.hitDice.used=Number(e.target.value)||0; save(); });
+
+  $('#dmgBtn').addEventListener('click',()=>applyHp(c,-Math.abs(Number($('#hpamt').value)||0)));
+  $('#healBtn').addEventListener('click',()=>applyHp(c,Math.abs(Number($('#hpamt').value)||0)));
+
+  app.querySelectorAll('[data-pip]').forEach(el=>el.addEventListener('click',()=>{
+    const kind=el.dataset.kind, n=Number(el.dataset.pip);
+    const field=kind==='succ'?'succ':'fail';
+    c.death[field] = (c.death[field]===n)?n-1:n; save(); render();
+  }));
+
+  $('#addAtk').addEventListener('click',()=>{
+    const name=$('#atk_name').value.trim(); if(!name) return;
+    c.attacks.push({name, bonus:$('#atk_bonus').value.trim(), damage:$('#atk_dmg').value.trim()});
+    save(); render();
+  });
+  app.querySelectorAll('[data-delatk]').forEach(el=>el.addEventListener('click',()=>{
+    c.attacks.splice(Number(el.dataset.delatk),1); save(); render();
+  }));
+
+  $('#spendHd').addEventListener('click',()=>spendHitDie(c));
+  app.querySelectorAll('[data-cond]').forEach(el=>el.addEventListener('click',()=>{
+    const k=el.dataset.cond;
+    if(c.conditions[k]) delete c.conditions[k]; else c.conditions[k]=true;
+    save(); render();
+  }));
+  $('#exhUp').addEventListener('click',()=>{ c.exhaustion=Math.min(6,(c.exhaustion||0)+1); save(); render(); });
+  $('#exhDown').addEventListener('click',()=>{ c.exhaustion=Math.max(0,(c.exhaustion||0)-1); save(); render(); });
+  $('#concOn').addEventListener('change',e=>{ c.concentration.active=e.target.checked; if(!e.target.checked) c.concentration.spell=''; save(); render(); });
+  $('#concSpell').addEventListener('change',e=>{ c.concentration.spell=e.target.value; save(); });
+}
+function pips(max,val,kind){
+  let h='';
+  for(let i=1;i<=max;i++) h+=`<button class="pip ${i<=val?'on':''}" data-pip="${i}" data-kind="${kind}"></button>`;
+  return h;
+}
+function applyHp(c,delta){
+  if(delta<0){
+    let dmg=-delta;
+    if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
+    c.hp.cur=Math.max(0,c.hp.cur-dmg);
+  }else{
+    c.hp.cur=Math.min(c.hp.max,c.hp.cur+delta);
+  }
+  save(); render();
+}
+
+/* ---------- SPELLS ---------- */
+function renderSpells(c){
+  const dc = 8+profBonus(c)+mod(c.abilities[c.spellAbility]);
+  const atk = profBonus(c)+mod(c.abilities[c.spellAbility]);
+  // group spells by level
+  const byLvl={};
+  for(let i=0;i<=9;i++) byLvl[i]=[];
+  c.spells.forEach((s,i)=>{ byLvl[s.level||0].push({s,i}); });
+
+  app.innerHTML = `
+  <div class="card">
+    <h2>Spellcasting</h2>
+    <div class="g3 grid">
+      <div><label>Ability</label>${select('sp_ability', ABILITIES.map(a=>a[1]), ABILITIES.find(a=>a[0]===c.spellAbility)[1])}</div>
+      <div class="tile"><div class="lab">Spell save DC</div><div class="big">${dc}</div></div>
+      <div class="tile"><div class="lab">Spell attack</div><div class="big">${sgn(atk)}</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Spell Slots <button class="btn ghost sm" id="restBtn" style="float:right">Long rest</button></h2>
+    ${[1,2,3,4,5,6,7,8,9].map(l=>{
+      const sl=c.slots[l]||{total:0,used:0};
+      return `<div class="slot">
+        <div class="lvl">Level ${l}</div>
+        <div class="pips">${slotPips(l,sl)}</div>
+        <div class="slotcfg"><input type="number" min="0" max="9" value="${sl.total}" data-slottotal="${l}" title="Total slots"></div>
+      </div>`;
+    }).join('')}
+  </div>
+
+  <div class="card">
+    <h2>Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ✓ = prepared</span></h2>
+    <div class="addrow">
+      <input id="sp_name" placeholder="Spell name">
+      ${select('sp_level', ['Cantrip','1','2','3','4','5','6','7','8','9'], 'Cantrip')}
+      <button class="btn sm" id="addSpell">Add</button>
+    </div>
+    <div style="margin-top:6px">
+      ${c.spells.length? [0,1,2,3,4,5,6,7,8,9].map(l=>{
+        if(!byLvl[l].length) return '';
+        return `<div style="margin-top:10px"><div class="tag" style="display:inline-block;margin-bottom:4px">${l===0?'Cantrips':'Level '+l}</div>`+
+          byLvl[l].map(({s,i})=>`
+          <div class="spell">
+            <input type="checkbox" class="chk" data-prep="${i}" ${s.prepared?'checked':''} title="Prepared">
+            <div class="nm"><b>${esc(s.name)}</b>${s.notes?`<small>${esc(s.notes)}</small>`:''}</div>
+            <button class="del" data-delspell="${i}">✕</button>
+          </div>`).join('')+`</div>`;
+      }).join('') : '<div class="empty">No spells yet. Add cantrips and spells above.</div>'}
+    </div>
+  </div>`;
+
+  $('#sp_ability').addEventListener('change',e=>{
+    const found=ABILITIES.find(a=>a[1]===e.target.value); c.spellAbility=found?found[0]:'int'; save(); render();
+  });
+  $('#restBtn').addEventListener('click',()=>{
+    for(let l=1;l<=9;l++) if(c.slots[l]) c.slots[l].used=0;
+    c.hp.cur=c.hp.max; c.death={succ:0,fail:0};
+    const hd=parseHitDice(c);                 // long rest: regain half your hit dice
+    if(hd) c.hitDice.used=Math.max(0,(c.hitDice.used||0)-Math.max(1,Math.floor(hd.count/2)));
+    c.exhaustion=Math.max(0,(c.exhaustion||0)-1);  // a long rest removes 1 exhaustion
+    save(); render();
+    flashBanner('Long rest — HP, slots & hit dice restored');
+  });
+  app.querySelectorAll('[data-slottotal]').forEach(el=>el.addEventListener('change',e=>{
+    const l=el.dataset.slottotal; const t=Math.max(0,Number(e.target.value)||0);
+    c.slots[l].total=t; if(c.slots[l].used>t) c.slots[l].used=t; save(); render();
+  }));
+  app.querySelectorAll('[data-slotpip]').forEach(el=>el.addEventListener('click',()=>{
+    const l=el.dataset.slotpip, n=Number(el.dataset.n);
+    const sl=c.slots[l];
+    const available = sl.total - sl.used;
+    // Tap a lit (available) slot to spend it; tap a dim (spent) slot to recover one.
+    if(n<=available) sl.used = Math.min(sl.total, sl.used+1);
+    else sl.used = Math.max(0, sl.used-1);
+    save(); render();
+  }));
+  $('#addSpell').addEventListener('click',()=>{
+    const name=$('#sp_name').value.trim(); if(!name) return;
+    const lv=$('#sp_level').value; const level=lv==='Cantrip'?0:Number(lv);
+    c.spells.push({name, level, prepared:false, notes:''});
+    c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
+    save(); render();
+  });
+  app.querySelectorAll('[data-prep]').forEach(el=>el.addEventListener('change',e=>{
+    c.spells[Number(el.dataset.prep)].prepared=e.target.checked; save();
+  }));
+  app.querySelectorAll('[data-delspell]').forEach(el=>el.addEventListener('click',()=>{
+    c.spells.splice(Number(el.dataset.delspell),1); save(); render();
+  }));
+}
+function slotPips(l,sl){
+  if(!sl.total) return '<span class="muted" style="font-size:12px">—</span>';
+  let h='';
+  // Available slots glow; spent slots are dimmed. Click a pip to set used count.
+  for(let i=1;i<=sl.total;i++){
+    h+=`<button class="pip ${i<=sl.total-sl.used?'on':''}" data-slotpip="${l}" data-n="${i}" title="${i<=sl.total-sl.used?'available':'spent'}"></button>`;
+  }
+  return h;
+}
+
+/* ---------- ITEMS ---------- */
+function renderItems(c){
+  app.innerHTML = `
+  <div class="card">
+    <h2>Currency</h2>
+    <div class="currency">
+      ${['cp','sp','ep','gp','pp'].map(k=>`
+        <div><div class="lab">${k.toUpperCase()}</div><input type="number" id="cur_${k}" value="${c.currency[k]}" min="0"></div>
+      `).join('')}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Inventory</h2>
+    <div id="itemList">
+      ${c.items.length?c.items.map((it,i)=>`
+        <div class="spell">
+          <div class="nm"><b>${esc(it.name)}</b>${it.notes?`<small>${esc(it.notes)}</small>`:''}</div>
+          <span class="tag">×${it.qty||1}</span>
+          <button class="del" data-delitem="${i}">✕</button>
+        </div>`).join(''):'<div class="empty">No items yet.</div>'}
+    </div>
+    <div class="addrow">
+      <input id="it_name" placeholder="Item">
+      <input id="it_qty" type="number" min="1" value="1" style="max-width:70px">
+      <input id="it_notes" placeholder="notes (optional)">
+      <button class="btn sm" id="addItem">Add</button>
+    </div>
+  </div>`;
+
+  ['cp','sp','ep','gp','pp'].forEach(k=>$('#cur_'+k).addEventListener('change',e=>{
+    c.currency[k]=Number(e.target.value)||0; save();
+  }));
+  $('#addItem').addEventListener('click',()=>{
+    const name=$('#it_name').value.trim(); if(!name) return;
+    c.items.push({name, qty:Number($('#it_qty').value)||1, notes:$('#it_notes').value.trim()});
+    save(); render();
+  });
+  app.querySelectorAll('[data-delitem]').forEach(el=>el.addEventListener('click',()=>{
+    c.items.splice(Number(el.dataset.delitem),1); save(); render();
+  }));
+}
+
+/* ---------- NOTES ---------- */
+function renderNotes(c){
+  app.innerHTML = `
+  <div class="card">
+    <h2>Features & Traits</h2>
+    <textarea id="nt_features" style="min-height:160px" placeholder="Class features, racial traits, feats…">${esc(c.features)}</textarea>
+  </div>
+  <div class="card">
+    <h2>Notes & Backstory</h2>
+    <textarea id="nt_notes" style="min-height:200px" placeholder="Allies, quests, backstory, anything…">${esc(c.notes)}</textarea>
+  </div>
+  <div class="card">
+    <h2>Backup</h2>
+    <p class="muted" style="font-size:13px;margin-top:0">Export all characters to a file, or import a backup.</p>
+    <div class="row2">
+      <button class="btn ghost" id="exportBtn">⬇ Export</button>
+      <button class="btn ghost" id="importBtn">⬆ Import</button>
+    </div>
+    <input type="file" id="importFile" accept="application/json" style="display:none">
+    <p class="muted" style="font-size:11px;text-align:center;margin:14px 0 0">Grimoire ${APP_VERSION} · works offline</p>
+  </div>`;
+
+  $('#nt_features').addEventListener('change',e=>{ c.features=e.target.value; save(); });
+  $('#nt_notes').addEventListener('change',e=>{ c.notes=e.target.value; save(); });
+  $('#exportBtn').addEventListener('click',exportData);
+  $('#importBtn').addEventListener('click',()=>$('#importFile').click());
+  $('#importFile').addEventListener('change',importData);
+}
+
+/* ---- form helpers ---- */
+function select(id, opts, val){
+  return `<select id="${id}">`+opts.map(o=>`<option ${o===val?'selected':''}>${esc(o)}</option>`).join('')+`</select>`;
+}
+function bind(id, field){
+  $('#'+id).addEventListener('change',e=>{ cur()[field]=e.target.value; save(); renderHeader(); });
+}
+function bindNum(id, field){
+  $('#'+id).addEventListener('change',e=>{ cur()[field]=Number(e.target.value)||0; save(); render(); });
+}
+
+/* ---- character ops ---- */
+function deleteCharacter(c){
+  if(!confirm(`Delete "${c.name}"? This cannot be undone.`)) return;
+  DB = DB.filter(x=>x.id!==c.id);
+  curId = DB[0]?DB[0].id:null;
+  localStorage.setItem(LS_CUR, curId||'');
+  save(); render();
+}
+function createCharacterFlow(){
+  const c=newCharacter();
+  DB.push(c); curId=c.id; localStorage.setItem(LS_CUR,curId);
+  tab='bio'; save(); render();
+  setTimeout(()=>{ const n=$('#f_name'); if(n){ n.focus(); n.select(); } },60);
+}
+
+/* ---- backup ---- */
+function exportData(){
+  const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='grimoire-characters.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function importData(e){
+  const file=e.target.files[0]; if(!file) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const data=JSON.parse(r.result);
+      if(!Array.isArray(data)) throw new Error('bad');
+      if(!confirm('Import will merge these characters into your list. Continue?')){ e.target.value=''; return; }
+      const ids=new Set(DB.map(c=>c.id));
+      data.forEach(c=>{ if(!ids.has(c.id)) DB.push(c); });
+      save(); render();
+      alert('Imported '+data.length+' character(s).');
+    }catch(err){ alert('That file could not be read as a Grimoire backup.'); }
+    e.target.value='';
+  };
+  r.readAsText(file);
+}
+
+/* ---- wiring ---- */
+document.addEventListener('click',e=>{
+  const rc=e.target.closest('[data-rollcheck]');
+  if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal'); return; }
+  const rd=e.target.closest('[data-rolldmg]');
+  if(rd){ rollDmg(rd.dataset.label, rd.dataset.notation); return; }
+  if(e.target.closest('#diceFab')){ openDiceTray(); return; }
+  const t=e.target.closest('[data-tab]');
+  if(t){ tab=t.dataset.tab; render(); }
+  if(e.target.id==='welcomeNew'||e.target.id==='newChar') createCharacterFlow();
+});
+$('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
+
+/* ---- service worker (auto-update on new version) ---- */
+const APP_VERSION='v2';
+if('serviceWorker' in navigator){
+  let _reloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(reg=>{ if(reg.update) reg.update(); }).catch(()=>{}));
+}
+
+render();
+</script>
+</body>
+</html>
