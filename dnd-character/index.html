@@ -202,6 +202,9 @@
   .abrow .tot{margin-left:auto;min-width:64px;text-align:center}
   .profdot{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--line);flex:none}
   .profdot.on{background:var(--accent);border-color:var(--accent)}
+  .wzprog{display:flex;gap:5px;margin-bottom:12px}
+  .wzprog span{flex:1;height:5px;border-radius:3px;background:var(--panel2)}
+  .wzprog span.on{background:var(--accent)}
 </style>
 </head>
 <body>
@@ -306,7 +309,15 @@ const RACE_ASI = {
   'Warforged':{con:2},'Yuan-Ti':{cha:2,int:1}
 };
 function raceBonus(c,k){ return ((RACE_ASI[c.race]||{})[k])||0; }
-function abil(c,k){ const b=Number(c.abilities[k]); return (isNaN(b)?0:b) + raceBonus(c,k); }   // final score
+function abil(c,k){ const b=Number(c.abilities[k]); return (isNaN(b)?0:b) + raceBonus(c,k) + ((c.asiBonus&&c.asiBonus[k])||0); }   // final score
+// Levels that grant an Ability Score Improvement / feat (class-dependent).
+function asiLevels(c){
+  const base=[4,8,12,16,19];
+  if(c.cls==='Fighter') return [4,6,8,12,14,16,19];
+  if(c.cls==='Rogue') return [4,8,10,12,16,19];
+  return base;
+}
+const FEATS = ['Alert','Athlete','Actor','Charger','Crossbow Expert','Defensive Duelist','Dual Wielder','Dungeon Delver','Durable','Elemental Adept','Fey Touched','Grappler','Great Weapon Master','Gunner','Healer','Heavily Armored','Heavy Armor Master','Inspiring Leader','Keen Mind','Lightly Armored','Lucky','Mage Slayer','Magic Initiate','Martial Adept','Medium Armor Master','Mobile','Moderately Armored','Mounted Combatant','Observant','Polearm Master','Resilient','Ritual Caster','Savage Attacker','Sentinel','Shadow Touched','Sharpshooter','Shield Master','Skill Expert','Skilled','Skulker','Spell Sniper','Tavern Brawler','Telekinetic','Telepathic','Tough','War Caster','Weapon Master'];
 // Skill proficiencies granted: class count + 2 (background).
 const CLASS_SKILLS_N = {Bard:3, Ranger:3, Rogue:4};
 function skillBudget(c){ return (CLASS_SKILLS_N[c.cls]||2) + 2; }
@@ -322,6 +333,7 @@ function autoHP(c){
 let DB = load();
 let curId = localStorage.getItem(LS_CUR) || (DB[0] && DB[0].id) || null;
 let tab = 'bio';
+let wiz = null;   // { step } while the creation wizard is active
 
 function load(){
   try{ const v = JSON.parse(localStorage.getItem(LS_KEY)); return Array.isArray(v)?v.map(ensureFields):[]; }
@@ -340,6 +352,8 @@ function newCharacter(name){
     inspiration:false,
     abilMethod:'pointbuy',
     abilities:{str:8,dex:8,con:8,int:8,wis:8,cha:8},
+    asiBonus:{str:0,dex:0,con:0,int:0,wis:0,cha:0},
+    feats:[],
     saveProf:{str:true,dex:false,con:true,int:false,wis:false,cha:false},
     skillProf:{}, skillExp:{},
     ac:10, speed:30, initMisc:0, profOverride:'',
@@ -358,6 +372,8 @@ function ensureFields(c){
   if(c.exhaustion==null) c.exhaustion=0;
   if(!c.concentration) c.concentration={active:false, spell:''};
   if(!c.abilMethod) c.abilMethod='manual';   // keep existing characters' scores as-is
+  if(!c.asiBonus) c.asiBonus={str:0,dex:0,con:0,int:0,wis:0,cha:0};
+  if(!c.feats) c.feats=[];
   return c;
 }
 function cur(){ return DB.find(c=>c.id===curId) || null; }
@@ -508,8 +524,12 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;',
 
 function render(){
   renderHeader();
-  renderTabs();
   const c = cur();
+  const inWiz = !!(wiz && c);
+  $('#tabs').style.display = inWiz ? 'none' : '';
+  const fab=$('#diceFab'); if(fab) fab.style.display = inWiz ? 'none' : '';
+  if(inWiz){ renderWizard(c); return; }
+  renderTabs();
   if(!c){ renderWelcome(); return; }
   app.className='fade';
   void app.offsetWidth;
@@ -551,6 +571,149 @@ function renderWelcome(){
     </div>`;
 }
 
+/* ---------- CREATION WIZARD ---------- */
+const WIZ = [
+  {key:'name',  title:'Name your character'},
+  {key:'race',  title:'Choose a race'},
+  {key:'class', title:'Choose a class'},
+  {key:'bg',    title:'Choose a background'},
+  {key:'abil',  title:'Set ability scores'},
+  {key:'skills',title:'Pick skill proficiencies'},
+  {key:'review',title:'Review & finish'}
+];
+function racePreview(c){
+  const a=RACE_ASI[c.race];
+  if(!a) return c.race?`<p class="muted" style="font-size:13px;margin-top:8px">Homebrew race — no automatic ability bonuses.</p>`:'';
+  return `<div class="pill" style="margin-top:8px">Ability bonus: ${Object.entries(a).map(([k,v])=>k.toUpperCase()+' +'+v).join(', ')}</div>`;
+}
+function classPreview(c){
+  const sv=CLASS_SAVES[c.cls], hd=CLASS_HITDIE[c.cls]; if(!sv) return '';
+  return `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+    <span class="pill">Hit die d${hd}</span>
+    <span class="pill">Saves: ${sv.map(s=>s.toUpperCase()).join(' & ')}</span>
+    <span class="pill">${(CLASS_SKILLS_N[c.cls]||2)} class skills</span></div>`;
+}
+function skillsPicker(c){
+  return `<p class="muted" style="font-size:13px;margin-top:0">Choose up to <b>${skillBudget(c)}</b> (class + background). Chosen ${skillCount(c)}/${skillBudget(c)}.</p>`+
+    SKILLS.map(([key,nm,ab])=>`<div class="listrow">
+      <input type="checkbox" class="chk" data-skill="${key}" ${c.skillProf[key]?'checked':''}>
+      <div class="nm">${nm} <span class="sub">(${ab})</span></div>
+      <div class="val">${sgn(skillBonus(c,key,ab,true))}</div></div>`).join('');
+}
+function reviewBlock(c){
+  const hp=autoHP(c);
+  return `
+    <div class="listrow"><div class="nm">Name</div><div class="val">${esc(c.name)}</div></div>
+    <div class="listrow"><div class="nm">Race</div><div class="val">${esc(c.race||'—')}</div></div>
+    <div class="listrow"><div class="nm">Class</div><div class="val">${esc(c.cls)} 1</div></div>
+    <div class="listrow"><div class="nm">Background</div><div class="val">${esc(c.background||'—')}</div></div>
+    <div class="listrow"><div class="nm">Scores</div><div class="val" style="font-size:13px">${ABILITIES.map(([k])=>k.toUpperCase()+' '+abil(c,k)).join(' · ')}</div></div>
+    <div class="listrow"><div class="nm">Starting HP</div><div class="val">${hp||c.hp.max}</div></div>
+    <p class="muted" style="font-size:13px;margin-top:12px">Finish to set HP and open the full sheet — you can change anything later.</p>`;
+}
+function renderWizard(c){
+  app.className='fade'; void app.offsetWidth;
+  const step=wiz.step, def=WIZ[step];
+  let body='';
+  if(def.key==='name') body=`<div class="field"><label>Character name</label><input id="wz_name" value="${esc(c.name)}" placeholder="e.g. Lúthien"></div><p class="muted" style="font-size:13px">You'll build a level 1 hero, then level up as you play.</p>`;
+  else if(def.key==='race') body=`<div class="field"><label>Race / Species</label>${fieldSelect('wz_race', RACES, c.race, 'Custom race')}</div>${racePreview(c)}`;
+  else if(def.key==='class') body=`<div class="field"><label>Class</label>${select('wz_cls', CLASSES, c.cls)}</div>${classPreview(c)}`;
+  else if(def.key==='bg') body=`<div class="field"><label>Background</label>${fieldSelect('wz_bg', BACKGROUNDS, c.background, 'Custom background')}</div><p class="muted" style="font-size:13px">Backgrounds give 2 skills and flavor.</p>`;
+  else if(def.key==='abil') body=abilCard(c);
+  else if(def.key==='skills') body=skillsPicker(c);
+  else body=reviewBlock(c);
+  const isLast = step===WIZ.length-1;
+  app.innerHTML=`
+    <div class="card">
+      <div class="wzprog">${WIZ.map((w,i)=>`<span class="${i<=step?'on':''}"></span>`).join('')}</div>
+      <div class="muted" style="font-size:12px;margin-bottom:4px">Step ${step+1} of ${WIZ.length}</div>
+      <h2 style="font-size:18px;text-transform:none;letter-spacing:0;color:var(--ink);margin-bottom:14px">${def.title}</h2>
+      ${body}
+    </div>
+    <div class="row2">
+      <button class="btn ghost" id="wzBack" ${step===0?'disabled style="opacity:.4"':''}>← Back</button>
+      <button class="btn" id="wzNext">${isLast?'✓ Finish':'Next →'}</button>
+    </div>
+    <button class="btn ghost block" id="wzCancel" style="margin-top:10px;color:var(--bad)">Cancel &amp; delete</button>`;
+  // handlers
+  if(def.key==='name') $('#wz_name').addEventListener('input',e=>{ c.name=e.target.value; renderHeader(); });
+  if(def.key==='race') bindSelectCustom('wz_race','race');
+  if(def.key==='class') $('#wz_cls').addEventListener('change',e=>{ c.cls=e.target.value; c.subclass=''; applyClassDefaults(c); save(); render(); });
+  if(def.key==='bg') bindSelectCustom('wz_bg','background');
+  if(def.key==='abil') bindAbilHandlers(c);
+  if(def.key==='skills') bindSkillHandlers(c);
+  $('#wzBack').addEventListener('click',()=>{ if(wiz.step>0){ wiz.step--; render(); } });
+  $('#wzNext').addEventListener('click',wizNext);
+  $('#wzCancel').addEventListener('click',()=>{
+    if(!confirm('Cancel and delete this character?')) return;
+    const id=c.id; wiz=null; DB=DB.filter(x=>x.id!==id);
+    curId=DB[0]?DB[0].id:null; localStorage.setItem(LS_CUR,curId||''); save(); render();
+  });
+}
+function wizNext(){
+  const c=cur(), def=WIZ[wiz.step];
+  if(def.key==='name'){ c.name=($('#wz_name')?$('#wz_name').value:c.name)||''; if(!c.name.trim()){ flashBanner('Enter a name first'); return; } }
+  save();
+  if(wiz.step < WIZ.length-1){ wiz.step++; render(); return; }
+  const hp=autoHP(c); if(hp){ c.hp.max=hp; c.hp.cur=hp; }
+  wiz=null; tab='bio'; save(); render();
+}
+
+/* ---------- LEVEL UP ---------- */
+function abilKeyByName(nm){ const f=ABILITIES.find(a=>a[1]===nm); return f?f[0]:null; }
+function clampAbil(c){ ABILITIES.forEach(([k])=>{ const total=abil(c,k); if(total>20){ c.asiBonus[k]=Math.max(0,c.asiBonus[k]-(total-20)); } }); }
+function levelUp(){
+  const c=cur(); if(c.level>=20){ flashBanner('Already level 20'); return; }
+  const nl=c.level+1;
+  const isAsi=asiLevels(c).includes(nl);
+  const needsSub = nl>=3 && !c.subclass && (SUBCLASSES[c.cls]||[]).length>0;
+  const hd=CLASS_HITDIE[c.cls]||8, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
+  let hpGain=null, asiMode='asi';
+  $('#modalRoot').innerHTML=`
+   <div class="modal" id="luModal"><div class="sheet">
+     <div class="grip"></div>
+     <h2>Level up → ${esc(c.cls)} ${nl}</h2>
+     <div class="card" style="margin:0 0 12px"><h2>Hit points (+CON ${sgn(con)})</h2>
+       <div class="row2"><button class="btn ghost" id="luAvg">Average +${Math.max(1,avg+con)}</button>
+         <button class="btn ghost" id="luRoll">Roll d${hd}</button></div>
+       <div class="muted" id="luHpMsg" style="font-size:13px;margin-top:8px">Pick how to gain HP.</div>
+     </div>
+     ${needsSub?`<div class="card" style="margin:0 0 12px"><h2>Choose subclass</h2>${select('luSub', SUBCLASSES[c.cls], SUBCLASSES[c.cls][0])}</div>`:''}
+     ${isAsi?`<div class="card" style="margin:0 0 12px"><h2>Ability Score Improvement</h2>
+        <div class="seg" id="luSeg"><button class="on" data-asi="asi">+2 / +1×2</button><button data-asi="feat">Take a feat</button></div>
+        <div id="luBody"></div></div>`:''}
+     <button class="btn block" id="luApply">Apply level ${nl}</button>
+   </div></div>`;
+  const setHp=(v,m)=>{ hpGain=Math.max(1,v); $('#luHpMsg').textContent=m; };
+  $('#luAvg').onclick=()=>setHp(avg+con,`+${Math.max(1,avg+con)} HP (average)`);
+  $('#luRoll').onclick=()=>{ const r=rnd(hd); setHp(r+con,`Rolled ${r} ${sgn(con)} = ${Math.max(1,r+con)} HP`); };
+  function luBody(){
+    const el=$('#luBody'); if(!el) return;
+    el.innerHTML = asiMode==='asi'
+      ? `<p class="muted" style="font-size:13px">+2 to one, or +1 to two (capped at 20).</p>
+         <div class="row2"><div><label>Increase</label>${select('luA1', ABILITIES.map(a=>a[1]), ABILITIES[0][1])}</div>
+         <div><label>And +1 to (optional)</label>${select('luA2', ['—',...ABILITIES.map(a=>a[1])], '—')}</div></div>`
+      : `<div><label>Feat</label>${select('luFeat', FEATS, FEATS[0])}</div>`;
+  }
+  if(isAsi){ luBody(); $('#luSeg').querySelectorAll('[data-asi]').forEach(b=>b.onclick=()=>{ asiMode=b.dataset.asi; $('#luSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); luBody(); }); }
+  $('#luModal').onclick=e=>{ if(e.target.id==='luModal') $('#modalRoot').innerHTML=''; };
+  $('#luApply').onclick=()=>{
+    if(hpGain==null) hpGain=Math.max(1,avg+con);
+    c.hp.max+=hpGain; c.hp.cur+=hpGain;
+    if(needsSub){ const s=$('#luSub'); if(s) c.subclass=s.value; }
+    if(isAsi){
+      if(asiMode==='asi'){
+        const k1=abilKeyByName($('#luA1').value), a2=$('#luA2').value;
+        if(k1) c.asiBonus[k1]+= (a2==='—'?2:1);
+        if(a2!=='—'){ const k2=abilKeyByName(a2); if(k2) c.asiBonus[k2]+=1; }
+        clampAbil(c);
+      } else { c.feats.push({name:$('#luFeat').value}); }
+    }
+    c.level=nl; const h=CLASS_HITDIE[c.cls]; if(h) c.hitDice.total=nl+'d'+h;
+    $('#modalRoot').innerHTML=''; save(); render(); flashBanner('Welcome to level '+nl+'!');
+  };
+}
+
 /* ---------- BIO ---------- */
 function renderBio(c){
   app.innerHTML = `
@@ -562,10 +725,9 @@ function renderBio(c){
         <div><label>Race / Species</label>${fieldSelect('f_race', RACES, c.race, 'Custom race')}</div>
         <div><label>Background</label>${fieldSelect('f_background', BACKGROUNDS, c.background, 'Custom background')}</div>
       </div>
-      <div class="g3 grid">
+      <div class="g2 grid">
         <div><label>Class</label>${select('f_cls', CLASSES, c.cls)}</div>
         <div><label>Subclass</label>${fieldSelect('f_subclass', SUBCLASSES[c.cls]||[], c.subclass, 'Custom subclass')}</div>
-        <div><label>Level</label><input id="f_level" type="number" min="1" max="20" value="${c.level}"></div>
       </div>
       <div class="g2 grid">
         <div><label>XP</label><input id="f_xp" type="number" min="0" value="${c.xp}"></div>
@@ -575,7 +737,10 @@ function renderBio(c){
   </div>
 
   <div class="card">
-    <h2>At a glance</h2>
+    <div class="row between" style="margin-bottom:12px">
+      <h2 style="margin:0;color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px">Level ${c.level} ${esc(c.cls)}${c.subclass?` · ${esc(c.subclass)}`:''}</h2>
+      <button class="btn sm" id="levelUpBtn" ${c.level>=20?'disabled style="opacity:.4"':''}>⬆ Level Up</button>
+    </div>
     <div class="tiles">
       <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
       <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</div></div>
@@ -588,6 +753,12 @@ function renderBio(c){
   </div>
 
   <div class="card">
+    <h2>Feats ${c.feats.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${c.feats.length}</span>`:''}</h2>
+    <div>${c.feats.length? c.feats.map((f,i)=>`<div class="spell"><div class="nm"><b>${esc(f.name||f)}</b>${f.note?`<small>${esc(f.note)}</small>`:''}</div><button class="del" data-delfeat="${i}">✕</button></div>`).join('') : '<div class="empty">None yet — gained at ASI levels (4, 8, 12…) when you level up.</div>'}</div>
+    <div class="addrow"><input id="feat_name" placeholder="Add a feat manually"><button class="btn sm" id="addFeat">Add</button></div>
+  </div>
+
+  <div class="card">
     <button class="btn bad block" id="deleteChar">Delete this character</button>
   </div>`;
 
@@ -595,10 +766,12 @@ function renderBio(c){
   bindSelectCustom('f_race','race'); bindSelectCustom('f_background','background');
   $('#f_cls').addEventListener('change',e=>{ c.cls=e.target.value; c.subclass=''; applyClassDefaults(c); save(); render(); });
   bindSelectCustom('f_subclass','subclass');
-  $('#f_level').addEventListener('change',e=>{ c.level=Math.max(1,Math.min(20,Number(e.target.value)||1)); const hd=CLASS_HITDIE[c.cls]; if(hd) c.hitDice.total=c.level+'d'+hd; save(); render(); });
   bindNum('f_xp','xp');
   $('#f_profOverride').addEventListener('change',e=>{ c.profOverride = e.target.value===''?'':Number(e.target.value); save(); render(); });
   $('#f_insp').addEventListener('change',e=>{ c.inspiration=e.target.checked; save(); });
+  $('#levelUpBtn').addEventListener('click',levelUp);
+  $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_name').value.trim(); if(!v) return; c.feats.push({name:v}); save(); render(); });
+  app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
 }
 
@@ -681,6 +854,10 @@ function renderAbil(c){
     </div>
   </div>`;
 
+  bindAbilHandlers(c);
+  bindSkillHandlers(c);
+}
+function bindAbilHandlers(c){
   ABILITIES.forEach(([k])=>{
     const inp=$('#ab_'+k);   // only present in Manual mode
     if(inp) inp.addEventListener('change',e=>{ c.abilities[k]=Math.max(1,Math.min(30,Number(e.target.value)||10)); save(); render(); });
@@ -702,6 +879,8 @@ function renderAbil(c){
     c.abilities[el.dataset.arr] = e.target.value==='—' ? null : Number(e.target.value);
     save(); render();
   }));
+}
+function bindSkillHandlers(c){
   app.querySelectorAll('[data-skill]').forEach(el=>el.addEventListener('change',e=>{
     const key=e.target.dataset.skill;
     if(e.target.checked && skillCount(c) >= skillBudget(c)){
@@ -1071,8 +1250,8 @@ function deleteCharacter(c){
 function createCharacterFlow(){
   const c=newCharacter();
   DB.push(c); curId=c.id; localStorage.setItem(LS_CUR,curId);
-  tab='bio'; save(); render();
-  setTimeout(()=>{ const n=$('#f_name'); if(n){ n.focus(); n.select(); } },60);
+  wiz={step:0}; tab='bio'; save(); render();
+  setTimeout(()=>{ const n=$('#wz_name'); if(n){ n.focus(); n.select(); } },60);
 }
 
 /* ---- backup ---- */
@@ -1115,7 +1294,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v4';
+const APP_VERSION='v5';
 if('serviceWorker' in navigator){
   let _reloaded=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
