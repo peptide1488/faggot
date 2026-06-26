@@ -257,7 +257,10 @@ const SKILLS = [
 const CLASSES = ['Artificer','Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin','Ranger','Rogue','Sorcerer','Warlock','Wizard','Other'];
 const ALIGN = ['—','LG','NG','CG','LN','TN','CN','LE','NE','CE'];
 const CONDITIONS = ['Blinded','Charmed','Deafened','Frightened','Grappled','Incapacitated','Invisible','Paralyzed','Petrified','Poisoned','Prone','Restrained','Stunned','Unconscious'];
-const RACES = ['Aarakocra','Aasimar','Bugbear','Centaur','Changeling','Dragonborn','Dwarf','Elf','Fairy','Firbolg','Genasi','Githyanki','Githzerai','Gnome','Goblin','Goliath','Half-Elf','Half-Orc','Halfling','Harengon','Hobgoblin','Human','Kalashtar','Kenku','Kobold','Leonin','Lizardfolk','Loxodon','Minotaur','Orc','Owlin','Satyr','Shifter','Simic Hybrid','Tabaxi','Tiefling','Tortle','Triton','Vedalken','Warforged','Yuan-Ti'];
+const RACES = ['Aarakocra','Aasimar','Bugbear','Centaur','Changeling','Dragonborn','Dwarf','Elf','Fairy','Firbolg','Genasi','Githyanki','Githzerai','Gnome','Goblin','Goliath','Half-Elf','Half-Orc','Halfling','Harengon','Hobgoblin','Human','Human (Variant)','Kalashtar','Kenku','Kobold','Leonin','Lizardfolk','Loxodon','Minotaur','Orc','Owlin','Satyr','Shifter','Simic Hybrid','Tabaxi','Tiefling','Tortle','Triton','Vedalken','Warforged','Yuan-Ti'];
+// Races that grant a feat at level 1 (the player still picks +1 to two abilities manually).
+const RACE_L1_FEAT = {'Human (Variant)':true};
+function grantsL1Feat(c){ return !!RACE_L1_FEAT[c.race]; }
 const BACKGROUNDS = ['Acolyte','Anthropologist','Archaeologist','Charlatan','City Watch','Clan Crafter','Cloistered Scholar','Courtier','Criminal','Entertainer','Faction Agent','Far Traveler','Folk Hero','Gladiator','Guild Artisan','Haunted One','Hermit','Knight','Mercenary Veteran','Noble','Outlander','Pirate','Sage','Sailor','Soldier','Spy','Urchin'];
 const SUBCLASSES = {
   Artificer:['Alchemist','Armorer','Artillerist','Battle Smith'],
@@ -289,11 +292,15 @@ const PB_COST = {8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9};
 const STD_ARRAY = [15,14,13,12,10,8];
 function pbCost(v){ return PB_COST[Math.max(8,Math.min(15,Number(v)||8))]||0; }
 function pbUsed(c){ return ABILITIES.reduce((s,[k])=>s+pbCost(c.abilities[k]),0); }
+// Spellcasting ability by class (non-casters have none).
+const CLASS_SPELL_ABILITY = {Bard:'cha',Paladin:'cha',Sorcerer:'cha',Warlock:'cha',Cleric:'wis',Druid:'wis',Ranger:'wis',Wizard:'int',Artificer:'int'};
+function isCaster(c){ return !!CLASS_SPELL_ABILITY[c.cls]; }
 function applyClassDefaults(c){
   const sv=CLASS_SAVES[c.cls];
   if(sv){ c.saveProf={str:false,dex:false,con:false,int:false,wis:false,cha:false}; sv.forEach(s=>c.saveProf[s]=true); }
   const hd=CLASS_HITDIE[c.cls];
   if(hd) c.hitDice.total=(Number(c.level)||1)+'d'+hd;
+  if(CLASS_SPELL_ABILITY[c.cls]) c.spellAbility=CLASS_SPELL_ABILITY[c.cls];   // derived from class
 }
 // Standard racial ability increases (2014 PHB-style). Modern "custom origin" lets you reassign.
 const RACE_ASI = {
@@ -318,6 +325,32 @@ function asiLevels(c){
   return base;
 }
 const FEATS = ['Alert','Athlete','Actor','Charger','Crossbow Expert','Defensive Duelist','Dual Wielder','Dungeon Delver','Durable','Elemental Adept','Fey Touched','Grappler','Great Weapon Master','Gunner','Healer','Heavily Armored','Heavy Armor Master','Inspiring Leader','Keen Mind','Lightly Armored','Lucky','Mage Slayer','Magic Initiate','Martial Adept','Medium Armor Master','Mobile','Moderately Armored','Mounted Combatant','Observant','Polearm Master','Resilient','Ritual Caster','Savage Attacker','Sentinel','Shadow Touched','Sharpshooter','Shield Master','Skill Expert','Skilled','Skulker','Spell Sniper','Tavern Brawler','Telekinetic','Telepathic','Tough','War Caster','Weapon Master'];
+// AC from armor (5e armor table). dexCap: how much DEX adds. base = armor AC.
+const ARMOR = [
+  {key:'none',       name:'Unarmored',       base:10, dexCap:99},
+  {key:'padded',     name:'Padded',          base:11, dexCap:99},
+  {key:'leather',    name:'Leather',         base:11, dexCap:99},
+  {key:'studded',    name:'Studded Leather', base:12, dexCap:99},
+  {key:'hide',       name:'Hide',            base:12, dexCap:2},
+  {key:'chainshirt', name:'Chain Shirt',     base:13, dexCap:2},
+  {key:'scale',      name:'Scale Mail',      base:14, dexCap:2},
+  {key:'breastplate',name:'Breastplate',     base:14, dexCap:2},
+  {key:'halfplate',  name:'Half Plate',      base:15, dexCap:2},
+  {key:'ringmail',   name:'Ring Mail',       base:14, dexCap:0},
+  {key:'chainmail',  name:'Chain Mail',      base:16, dexCap:0},
+  {key:'splint',     name:'Splint',          base:17, dexCap:0},
+  {key:'plate',      name:'Plate',           base:18, dexCap:0}
+];
+function armorDef(key){ return ARMOR.find(a=>a.key===key)||ARMOR[0]; }
+function computeAC(c){
+  if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride);
+  const a=armorDef(c.armor||'none');
+  return a.base + Math.min(mod(abil(c,'dex')), a.dexCap) + (c.shield?2:0);
+}
+// Base walking speed by race (most are 30; small races 25; a few faster).
+const RACE_SPEED = {'Dwarf':25,'Halfling':25,'Gnome':25,'Kobold':30,'Tortle':30,'Aarakocra':25,'Centaur':40,'Minotaur':40,'Elf':30};
+const RACE_SPEED_FAST = {'Wood Elf':35,'Tabaxi':30};
+function defaultSpeed(c){ return RACE_SPEED[c.race]||30; }
 // Skill proficiencies granted: class count + 2 (background).
 const CLASS_SKILLS_N = {Bard:3, Ranger:3, Rogue:4};
 function skillBudget(c){ return (CLASS_SKILLS_N[c.cls]||2) + 2; }
@@ -356,7 +389,7 @@ function newCharacter(name){
     feats:[],
     saveProf:{str:true,dex:false,con:true,int:false,wis:false,cha:false},
     skillProf:{}, skillExp:{},
-    ac:10, speed:30, initMisc:0, profOverride:'',
+    ac:10, armor:'none', shield:false, acOverride:'', speed:30, initMisc:0, profOverride:'',
     hp:{max:8,cur:8,temp:0},
     hitDice:{total:'1d10', used:0},
     death:{succ:0, fail:0},
@@ -374,6 +407,7 @@ function ensureFields(c){
   if(!c.abilMethod) c.abilMethod='manual';   // keep existing characters' scores as-is
   if(!c.asiBonus) c.asiBonus={str:0,dex:0,con:0,int:0,wis:0,cha:0};
   if(!c.feats) c.feats=[];
+  if(c.armor==null){ c.armor='none'; c.shield=!!c.shield; c.acOverride=(c.ac!=null?c.ac:''); }   // keep old AC as override
   return c;
 }
 function cur(){ return DB.find(c=>c.id===curId) || null; }
@@ -572,15 +606,17 @@ function renderWelcome(){
 }
 
 /* ---------- CREATION WIZARD ---------- */
-const WIZ = [
+const WIZ_BASE = [
   {key:'name',  title:'Name your character'},
   {key:'race',  title:'Choose a race'},
   {key:'class', title:'Choose a class'},
   {key:'bg',    title:'Choose a background'},
   {key:'abil',  title:'Set ability scores'},
   {key:'skills',title:'Pick skill proficiencies'},
+  {key:'feat',  title:'Choose a starting feat'},
   {key:'review',title:'Review & finish'}
 ];
+function wizSteps(c){ return WIZ_BASE.filter(s=> s.key!=='feat' || grantsL1Feat(c)); }
 function racePreview(c){
   const a=RACE_ASI[c.race];
   if(!a) return c.race?`<p class="muted" style="font-size:13px;margin-top:8px">Homebrew race — no automatic ability bonuses.</p>`:'';
@@ -601,32 +637,38 @@ function skillsPicker(c){
       <div class="val">${sgn(skillBonus(c,key,ab,true))}</div></div>`).join('');
 }
 function reviewBlock(c){
-  const hp=autoHP(c);
+  const hd=CLASS_HITDIE[c.cls]||8;
+  if(wiz.hpValue==null){ wiz.hpMode='max'; wiz.hpValue=autoHP(c)||c.hp.max; }
   return `
     <div class="listrow"><div class="nm">Name</div><div class="val">${esc(c.name)}</div></div>
     <div class="listrow"><div class="nm">Race</div><div class="val">${esc(c.race||'—')}</div></div>
     <div class="listrow"><div class="nm">Class</div><div class="val">${esc(c.cls)} 1</div></div>
     <div class="listrow"><div class="nm">Background</div><div class="val">${esc(c.background||'—')}</div></div>
     <div class="listrow"><div class="nm">Scores</div><div class="val" style="font-size:13px">${ABILITIES.map(([k])=>k.toUpperCase()+' '+abil(c,k)).join(' · ')}</div></div>
-    <div class="listrow"><div class="nm">Starting HP</div><div class="val">${hp||c.hp.max}</div></div>
-    <p class="muted" style="font-size:13px;margin-top:12px">Finish to set HP and open the full sheet — you can change anything later.</p>`;
+    ${c.feats.length?`<div class="listrow"><div class="nm">Feat</div><div class="val">${esc(c.feats[0].name||c.feats[0])}</div></div>`:''}
+    <div class="listrow"><div class="nm">Starting HP</div><div class="val">${wiz.hpValue}</div></div>
+    <div class="seg" style="margin-top:10px"><button class="${wiz.hpMode==='max'?'on':''}" id="wzHpMax">Max — ${autoHP(c)}</button><button class="${wiz.hpMode==='roll'?'on':''}" id="wzHpRoll">Roll d${hd}+CON</button></div>
+    <p class="muted" style="font-size:13px;margin-top:12px">Finish to open the full sheet — you can change anything later.</p>`;
 }
 function renderWizard(c){
   app.className='fade'; void app.offsetWidth;
-  const step=wiz.step, def=WIZ[step];
+  const steps=wizSteps(c);
+  if(wiz.step>=steps.length) wiz.step=steps.length-1;
+  const step=wiz.step, def=steps[step];
   let body='';
   if(def.key==='name') body=`<div class="field"><label>Character name</label><input id="wz_name" value="${esc(c.name)}" placeholder="e.g. Lúthien"></div><p class="muted" style="font-size:13px">You'll build a level 1 hero, then level up as you play.</p>`;
   else if(def.key==='race') body=`<div class="field"><label>Race / Species</label>${fieldSelect('wz_race', RACES, c.race, 'Custom race')}</div>${racePreview(c)}`;
   else if(def.key==='class') body=`<div class="field"><label>Class</label>${select('wz_cls', CLASSES, c.cls)}</div>${classPreview(c)}`;
   else if(def.key==='bg') body=`<div class="field"><label>Background</label>${fieldSelect('wz_bg', BACKGROUNDS, c.background, 'Custom background')}</div><p class="muted" style="font-size:13px">Backgrounds give 2 skills and flavor.</p>`;
-  else if(def.key==='abil') body=abilCard(c);
+  else if(def.key==='abil') body=abilCard(c, true);
   else if(def.key==='skills') body=skillsPicker(c);
+  else if(def.key==='feat') body=`<div class="field"><label>Starting feat · Variant Human</label>${select('wz_feat', FEATS, (c.feats[0]&&c.feats[0].name)||FEATS[0])}</div><p class="muted" style="font-size:13px">Variant Human grants one feat at level 1. Assign your +1 to two abilities on the Stats tab afterwards.</p>`;
   else body=reviewBlock(c);
-  const isLast = step===WIZ.length-1;
+  const isLast = step===steps.length-1;
   app.innerHTML=`
     <div class="card">
-      <div class="wzprog">${WIZ.map((w,i)=>`<span class="${i<=step?'on':''}"></span>`).join('')}</div>
-      <div class="muted" style="font-size:12px;margin-bottom:4px">Step ${step+1} of ${WIZ.length}</div>
+      <div class="wzprog">${steps.map((w,i)=>`<span class="${i<=step?'on':''}"></span>`).join('')}</div>
+      <div class="muted" style="font-size:12px;margin-bottom:4px">Step ${step+1} of ${steps.length}</div>
       <h2 style="font-size:18px;text-transform:none;letter-spacing:0;color:var(--ink);margin-bottom:14px">${def.title}</h2>
       ${body}
     </div>
@@ -642,6 +684,11 @@ function renderWizard(c){
   if(def.key==='bg') bindSelectCustom('wz_bg','background');
   if(def.key==='abil') bindAbilHandlers(c);
   if(def.key==='skills') bindSkillHandlers(c);
+  if(def.key==='feat') $('#wz_feat').addEventListener('change',e=>{ c.feats[0]={name:e.target.value}; save(); });
+  if(def.key==='review'){
+    const set=(m)=>{ wiz.hpMode=m; wiz.hpValue = m==='roll' ? Math.max(1, rnd(CLASS_HITDIE[c.cls]||8)+mod(abil(c,'con'))) : autoHP(c); render(); };
+    const mx=$('#wzHpMax'), rl=$('#wzHpRoll'); if(mx) mx.onclick=()=>set('max'); if(rl) rl.onclick=()=>set('roll');
+  }
   $('#wzBack').addEventListener('click',()=>{ if(wiz.step>0){ wiz.step--; render(); } });
   $('#wzNext').addEventListener('click',wizNext);
   $('#wzCancel').addEventListener('click',()=>{
@@ -651,11 +698,14 @@ function renderWizard(c){
   });
 }
 function wizNext(){
-  const c=cur(), def=WIZ[wiz.step];
+  const c=cur(), steps=wizSteps(c), def=steps[wiz.step];
   if(def.key==='name'){ c.name=($('#wz_name')?$('#wz_name').value:c.name)||''; if(!c.name.trim()){ flashBanner('Enter a name first'); return; } }
+  if(def.key==='feat'){ const v=$('#wz_feat'); if(v) c.feats[0]={name:v.value}; }
   save();
-  if(wiz.step < WIZ.length-1){ wiz.step++; render(); return; }
-  const hp=autoHP(c); if(hp){ c.hp.max=hp; c.hp.cur=hp; }
+  if(wiz.step < steps.length-1){ wiz.step++; render(); return; }
+  c.speed=defaultSpeed(c);
+  const hp = wiz.hpValue!=null ? wiz.hpValue : (autoHP(c)||c.hp.max);
+  c.hp.max=hp; c.hp.cur=hp;
   wiz=null; tab='bio'; save(); render();
 }
 
@@ -744,7 +794,7 @@ function renderBio(c){
     <div class="tiles">
       <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
       <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</div></div>
-      <div class="tile"><div class="lab">Armor Class</div><div class="big">${c.ac}</div></div>
+      <div class="tile"><div class="lab">Armor Class</div><div class="big">${computeAC(c)}</div></div>
       <div class="tile"><div class="lab">Speed</div><div class="big">${c.speed}</div></div>
     </div>
     <div class="addrow" style="margin-top:12px">
@@ -776,7 +826,21 @@ function renderBio(c){
 }
 
 /* ---------- ABILITIES & SKILLS ---------- */
-function abilCard(c){
+function abilCard(c, wizard){
+  if(!wizard){
+    // Post-creation: no point-buy/array machinery — just the final scores (base editable).
+    return ABILITIES.map(([k,nm])=>{
+      const base=Number(c.abilities[k]); const hasBase=!isNaN(base);
+      const rb=raceBonus(c,k), as=(c.asiBonus&&c.asiBonus[k])||0, total=abil(c,k);
+      const extra=[rb?'+'+rb+' race':'', as?'+'+as+' ASI':''].filter(Boolean).join('  ');
+      return `<div class="abrow">
+        <div class="nm">${k}</div>
+        <input type="number" id="ab_${k}" value="${hasBase?base:10}" min="1" max="30" style="width:62px" aria-label="${nm}">
+        <div class="rcl" style="width:auto;color:var(--gold);font-size:11px">${extra}</div>
+        <button class="tot val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(total)}" title="Roll ${nm} check">${total} <small style="color:var(--mut);font-weight:400">${sgn(mod(total))}</small></button>
+      </div>`;
+    }).join('');
+  }
   const method=c.abilMethod||'manual';
   const seg=`<div class="seg">${[['pointbuy','Point Buy'],['array','Std Array'],['manual','Manual']]
     .map(([k,l])=>`<button class="${method===k?'on':''}" data-abmethod="${k}">${l}</button>`).join('')}</div>`;
@@ -914,16 +978,21 @@ function renderCombat(c){
 
   <div class="card">
     <h2>Defenses</h2>
-    <div class="g3 grid">
-      <div><label>Armor Class</label><input type="number" id="cb_ac" value="${c.ac}"></div>
-      <div><label>Speed</label><input type="number" id="cb_speed" value="${c.speed}"></div>
-      <div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div>
+    <div class="g2 grid">
+      <div><label>Armor</label><select id="cb_armor">${ARMOR.map(a=>`<option value="${a.key}" ${(c.armor||'none')===a.key?'selected':''}>${a.name} (${a.base}${a.dexCap>=99?'+DEX':a.dexCap>0?'+DEX≤'+a.dexCap:''})</option>`).join('')}<option value="custom" ${c.acOverride!==''&&c.acOverride!=null?'selected':''}>Custom AC…</option></select></div>
+      <div><label>Speed (ft)</label><select id="cb_speed">${[25,30,35,40,50].map(s=>`<option ${Number(c.speed)===s?'selected':''}>${s}</option>`).join('')}<option value="custom" ${[25,30,35,40,50].includes(Number(c.speed))?'':'selected'}>Custom…</option></select></div>
     </div>
+    <div class="g2 grid" style="margin-top:10px">
+      <div id="acCustWrap" style="${(c.acOverride!==''&&c.acOverride!=null)?'':'display:none'}"><label>Custom AC</label><input type="number" id="cb_acover" value="${c.acOverride}" placeholder="e.g. 17"></div>
+      <div id="spdCustWrap" style="${[25,30,35,40,50].includes(Number(c.speed))?'display:none':''}"><label>Custom speed</label><input type="number" id="cb_spdcust" value="${c.speed}"></div>
+    </div>
+    <label class="pill" style="cursor:pointer;margin-top:12px;${(c.acOverride!==''&&c.acOverride!=null)?'opacity:.5':''}"><input type="checkbox" class="chk" id="cb_shield" ${c.shield?'checked':''} ${(c.acOverride!==''&&c.acOverride!=null)?'disabled':''}> Shield (+2 AC)</label>
+    <div class="g3 grid" style="margin-top:8px"><div></div><div></div><div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div></div>
     <div class="tiles" style="margin-top:12px">
+      <div class="tile"><div class="lab">Armor Class</div><div class="big">${computeAC(c)}</div></div>
       <div class="tile"><div class="lab">Initiative</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${mod(abil(c,"dex"))+Number(c.initMisc||0)}" title="Roll initiative">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</button></div>
-      <div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div>
-      <div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(abil(c,c.spellAbility))}</div></div>
-      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>
+      ${isCaster(c)?`<div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(abil(c,c.spellAbility))}</div></div>
+      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>`:`<div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div><div class="tile"><div class="lab">Speed</div><div class="big">${c.speed}</div></div>`}
     </div>
   </div>
 
@@ -985,8 +1054,18 @@ function renderCombat(c){
   $('#hpmax').addEventListener('change',e=>{ c.hp.max=Number(e.target.value)||0; save(); });
   const ahp=$('#autoHp'); if(ahp) ahp.addEventListener('click',()=>{ const v=autoHP(c); if(v){ c.hp.max=v; c.hp.cur=v; save(); render(); } });
   $('#hptemp').addEventListener('change',e=>{ c.hp.temp=Number(e.target.value)||0; save(); render(); });
-  $('#cb_ac').addEventListener('change',e=>{ c.ac=Number(e.target.value)||0; save(); render(); });
-  $('#cb_speed').addEventListener('change',e=>{ c.speed=Number(e.target.value)||0; save(); });
+  $('#cb_armor').addEventListener('change',e=>{
+    if(e.target.value==='custom'){ if(c.acOverride===''||c.acOverride==null) c.acOverride=computeAC(c); }
+    else { c.armor=e.target.value; c.acOverride=''; }
+    save(); render();
+  });
+  { const ov=$('#cb_acover'); if(ov) ov.addEventListener('change',e=>{ c.acOverride=e.target.value===''?'':Number(e.target.value); save(); render(); }); }
+  $('#cb_shield').addEventListener('change',e=>{ c.shield=e.target.checked; save(); render(); });
+  $('#cb_speed').addEventListener('change',e=>{
+    if(e.target.value==='custom'){ const w=$('#spdCustWrap'); if(w) w.style.display=''; const i=$('#cb_spdcust'); if(i) i.focus(); }
+    else { c.speed=Number(e.target.value)||30; save(); render(); }
+  });
+  { const sc=$('#cb_spdcust'); if(sc) sc.addEventListener('change',e=>{ c.speed=Number(e.target.value)||30; save(); render(); }); }
   $('#cb_init').addEventListener('change',e=>{ c.initMisc=Number(e.target.value)||0; save(); render(); });
   $('#hd_total').addEventListener('change',e=>{ c.hitDice.total=e.target.value; save(); });
   $('#hd_used').addEventListener('change',e=>{ c.hitDice.used=Number(e.target.value)||0; save(); });
@@ -1045,11 +1124,13 @@ function renderSpells(c){
   for(let i=0;i<=9;i++) byLvl[i]=[];
   c.spells.forEach((s,i)=>{ byLvl[s.level||0].push({s,i}); });
 
+  const spellAbilName = (ABILITIES.find(a=>a[0]===c.spellAbility)||['','—'])[1];
   app.innerHTML = `
+  ${!isCaster(c)?`<div class="card"><div class="empty">${esc(c.cls)} isn't a spellcasting class by default. You can still track spells below if a subclass or feat grants them.</div></div>`:''}
   <div class="card">
     <h2>Spellcasting</h2>
     <div class="g3 grid">
-      <div><label>Ability</label>${select('sp_ability', ABILITIES.map(a=>a[1]), ABILITIES.find(a=>a[0]===c.spellAbility)[1])}</div>
+      <div class="tile"><div class="lab">Ability${isCaster(c)?' · from class':''}</div><div class="big" style="font-size:18px">${spellAbilName}</div></div>
       <div class="tile"><div class="lab">Spell save DC</div><div class="big">${dc}</div></div>
       <div class="tile"><div class="lab">Spell attack</div><div class="big">${sgn(atk)}</div></div>
     </div>
@@ -1088,9 +1169,6 @@ function renderSpells(c){
     </div>
   </div>`;
 
-  $('#sp_ability').addEventListener('change',e=>{
-    const found=ABILITIES.find(a=>a[1]===e.target.value); c.spellAbility=found?found[0]:'int'; save(); render();
-  });
   $('#restBtn').addEventListener('click',()=>{
     for(let l=1;l<=9;l++) if(c.slots[l]) c.slots[l].used=0;
     c.hp.cur=c.hp.max; c.death={succ:0,fail:0};
@@ -1294,7 +1372,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v6';
+const APP_VERSION='v7';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
