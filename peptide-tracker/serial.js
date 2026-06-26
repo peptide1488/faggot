@@ -17,67 +17,68 @@
   // APPEND-ONLY product table. Adding a product = add a row. Never change or
   // reuse an existing CODE, or already-printed tags decode to the wrong product.
   // doses are suggestions for the generator UI; the generator can override.
+  // slug = product page on peptimart.xyz (/products/<slug>)
   var PRODUCTS = [
     // GLP-1 / metabolic
-    { code: 'RETA',    name: 'Retatrutide',                 unit: 'mg', doses: [5, 10, 20] },
-    { code: 'TIRZ',    name: 'Tirzepatide',                 unit: 'mg', doses: [5, 10, 15, 30, 60] },
-    { code: 'SEMA',    name: 'Semaglutide',                 unit: 'mg', doses: [5, 10] },
-    { code: 'CAGRI',   name: 'Cagrilintide',                unit: 'mg', doses: [5] },
-    { code: 'CAGSEM',  name: 'Cagrilintide / Semaglutide',  unit: 'mg', doses: [10] },
-    { code: 'SURVO',   name: 'Survodutide',                 unit: 'mg', doses: [10] },
-    { code: 'ADIPO',   name: 'Adipotide',                   unit: 'mg', doses: [5] },
-    { code: 'AOD',     name: 'AOD-9604',                    unit: 'mg', doses: [2] },
-    { code: 'AMINO',   name: '5-Amino-1MQ',                 unit: 'mg', doses: [5] },
-    { code: 'SLU',     name: 'SLU-PP-332',                  unit: 'mg', doses: [5] },
+    { code: 'RETA',    name: 'Retatrutide',                 unit: 'mg', doses: [5, 10, 20], slug:'retatrutide' },
+    { code: 'TIRZ',    name: 'Tirzepatide',                 unit: 'mg', doses: [5, 10, 15, 30, 60], slug:'tirzepatide' },
+    { code: 'SEMA',    name: 'Semaglutide',                 unit: 'mg', doses: [5, 10], slug:'semaglutide' },
+    { code: 'CAGRI',   name: 'Cagrilintide',                unit: 'mg', doses: [5], slug:'cagrilintide' },
+    { code: 'CAGSEM',  name: 'Cagrilintide / Semaglutide',  unit: 'mg', doses: [10], slug:'cagrilintide-semaglutide' },
+    { code: 'SURVO',   name: 'Survodutide',                 unit: 'mg', doses: [10], slug:'survodutide' },
+    { code: 'ADIPO',   name: 'Adipotide',                   unit: 'mg', doses: [5], slug:'adipotide' },
+    { code: 'AOD',     name: 'AOD-9604',                    unit: 'mg', doses: [2], slug:'aod-9604' },
+    { code: 'AMINO',   name: '5-Amino-1MQ',                 unit: 'mg', doses: [5], slug:'5-amino-1mq' },
+    { code: 'SLU',     name: 'SLU-PP-332',                  unit: 'mg', doses: [5], slug:'slu-pp-332' },
     // Healing / recovery
-    { code: 'BPC',     name: 'BPC-157',                     unit: 'mg', doses: [5, 10] },
-    { code: 'TB',      name: 'TB-500',                      unit: 'mg', doses: [2, 10] },
-    { code: 'BPCTB',   name: 'BPC-157 / TB-500 Blend',      unit: 'mg', doses: [10] },
-    { code: 'KPV',     name: 'KPV',                         unit: 'mg', doses: [10] },
-    { code: 'GHK',     name: 'GHK-Cu',                      unit: 'mg', doses: [50, 100] },
-    { code: 'LL37',    name: 'LL-37',                       unit: 'mg', doses: [5] },
-    { code: 'GLOW',    name: 'GLOW Blend (TB/BPC/GHK)',     unit: 'mg', doses: [70] },
-    { code: 'KLOW',    name: 'KLOW Blend (TB/BPC/GHK/KPV)', unit: 'mg', doses: [80] },
+    { code: 'BPC',     name: 'BPC-157',                     unit: 'mg', doses: [5, 10], slug:'bpc-157' },
+    { code: 'TB',      name: 'TB-500',                      unit: 'mg', doses: [2, 10], slug:'tb500' },
+    { code: 'BPCTB',   name: 'BPC-157 / TB-500 Blend',      unit: 'mg', doses: [10], slug:'bpc-tb-blend' },
+    { code: 'KPV',     name: 'KPV',                         unit: 'mg', doses: [10], slug:'kpv' },
+    { code: 'GHK',     name: 'GHK-Cu',                      unit: 'mg', doses: [50, 100], slug:'ghk-cu' },
+    { code: 'LL37',    name: 'LL-37',                       unit: 'mg', doses: [5], slug:'ll37' },
+    { code: 'GLOW',    name: 'GLOW Blend (TB/BPC/GHK)',     unit: 'mg', doses: [70], slug:'glow-tb10mg-bpc-157-10mg-ghk50mg' },
+    { code: 'KLOW',    name: 'KLOW Blend (TB/BPC/GHK/KPV)', unit: 'mg', doses: [80], slug:'klow-tb10mg-bpc-157-10mg-ghk50mg-kpv10mg' },
     // Growth-hormone secretagogues
-    { code: 'CJCDAC',  name: 'CJC-1295 with DAC',           unit: 'mg', doses: [2] },
-    { code: 'CJC',     name: 'CJC-1295 (no DAC)',           unit: 'mg', doses: [2] },
-    { code: 'CJCIPA',  name: 'CJC-1295 / Ipamorelin',       unit: 'mg', doses: [10] },
-    { code: 'IPA',     name: 'Ipamorelin',                  unit: 'mg', doses: [5] },
-    { code: 'GHRP2',   name: 'GHRP-2',                      unit: 'mg', doses: [5] },
-    { code: 'GHRP6',   name: 'GHRP-6',                      unit: 'mg', doses: [5] },
-    { code: 'HEXA',    name: 'Hexarelin',                   unit: 'mg', doses: [5] },
-    { code: 'SERMO',   name: 'Sermorelin',                  unit: 'mg', doses: [5] },
-    { code: 'TESA',    name: 'Tesamorelin',                 unit: 'mg', doses: [2] },
-    { code: 'MGF',     name: 'MGF',                         unit: 'mg', doses: [2] },
-    { code: 'PEGMGF',  name: 'PEG-MGF',                     unit: 'mg', doses: [2] },
-    { code: 'IGF',     name: 'IGF-1 LR3',                   unit: 'mg', doses: [0.1] },
-    { code: 'HGH',     name: 'HGH 191aa (Somatropin)',      unit: 'iu', doses: [10] },
+    { code: 'CJCDAC',  name: 'CJC-1295 with DAC',           unit: 'mg', doses: [2], slug:'cjc-1295-with-dac' },
+    { code: 'CJC',     name: 'CJC-1295 (no DAC)',           unit: 'mg', doses: [2], slug:'cjc-1295-without-dac' },
+    { code: 'CJCIPA',  name: 'CJC-1295 / Ipamorelin',       unit: 'mg', doses: [10], slug:'cjc-1295-without-dac-ipamorelin' },
+    { code: 'IPA',     name: 'Ipamorelin',                  unit: 'mg', doses: [5], slug:'ipamorelin' },
+    { code: 'GHRP2',   name: 'GHRP-2',                      unit: 'mg', doses: [5], slug:'ghrp-2-acetate' },
+    { code: 'GHRP6',   name: 'GHRP-6',                      unit: 'mg', doses: [5], slug:'ghrp-6-acetate' },
+    { code: 'HEXA',    name: 'Hexarelin',                   unit: 'mg', doses: [5], slug:'hexarelin-acetate' },
+    { code: 'SERMO',   name: 'Sermorelin',                  unit: 'mg', doses: [5], slug:'sermorelin' },
+    { code: 'TESA',    name: 'Tesamorelin',                 unit: 'mg', doses: [2], slug:'tesamorelin' },
+    { code: 'MGF',     name: 'MGF',                         unit: 'mg', doses: [2], slug:'mgf' },
+    { code: 'PEGMGF',  name: 'PEG-MGF',                     unit: 'mg', doses: [2], slug:'peg-mgf' },
+    { code: 'IGF',     name: 'IGF-1 LR3',                   unit: 'mg', doses: [0.1], slug:'igf-1-lr3' },
+    { code: 'HGH',     name: 'HGH 191aa (Somatropin)',      unit: 'iu', doses: [10], slug:'hgh-191aa-somatropin' },
     // Longevity / mitochondrial
-    { code: 'MOTS',    name: 'MOTS-c',                      unit: 'mg', doses: [10, 20] },
-    { code: 'NAD',     name: 'NAD+',                        unit: 'mg', doses: [100, 500] },
-    { code: 'EPI',     name: 'Epitalon',                    unit: 'mg', doses: [10] },
-    { code: 'THYM',    name: 'Thymalin',                    unit: 'mg', doses: [10] },
-    { code: 'FOXO',    name: 'FOXO4-DRI',                   unit: 'mg', doses: [10] },
-    { code: 'SS31',    name: 'SS-31',                       unit: 'mg', doses: [10] },
-    { code: 'GLUT',    name: 'Glutathione',                 unit: 'mg', doses: [600] },
-    { code: 'ARA',     name: 'ARA-290',                     unit: 'mg', doses: [10] },
-    { code: 'AICAR',   name: 'AICAR',                       unit: 'mg', doses: [50] },
+    { code: 'MOTS',    name: 'MOTS-c',                      unit: 'mg', doses: [10, 20], slug:'mots-c' },
+    { code: 'NAD',     name: 'NAD+',                        unit: 'mg', doses: [100, 500], slug:'nad' },
+    { code: 'EPI',     name: 'Epitalon',                    unit: 'mg', doses: [10], slug:'epitalon' },
+    { code: 'THYM',    name: 'Thymalin',                    unit: 'mg', doses: [10], slug:'thymalin' },
+    { code: 'FOXO',    name: 'FOXO4-DRI',                   unit: 'mg', doses: [10], slug:'foxo4' },
+    { code: 'SS31',    name: 'SS-31',                       unit: 'mg', doses: [10], slug:'ss-31' },
+    { code: 'GLUT',    name: 'Glutathione',                 unit: 'mg', doses: [600], slug:'glutathione' },
+    { code: 'ARA',     name: 'ARA-290',                     unit: 'mg', doses: [10], slug:'ara-290' },
+    { code: 'AICAR',   name: 'AICAR',                       unit: 'mg', doses: [50], slug:'aicar' },
     // Cognitive / nootropic
-    { code: 'SELANK',  name: 'Selank',                      unit: 'mg', doses: [5] },
-    { code: 'SEMAX',   name: 'Semax',                       unit: 'mg', doses: [5] },
-    { code: 'DSIP',    name: 'DSIP',                        unit: 'mg', doses: [5] },
-    { code: 'VIP',     name: 'VIP',                         unit: 'mg', doses: [10] },
+    { code: 'SELANK',  name: 'Selank',                      unit: 'mg', doses: [5], slug:'selank' },
+    { code: 'SEMAX',   name: 'Semax',                       unit: 'mg', doses: [5], slug:'semax' },
+    { code: 'DSIP',    name: 'DSIP',                        unit: 'mg', doses: [5], slug:'dsip' },
+    { code: 'VIP',     name: 'VIP',                         unit: 'mg', doses: [10], slug:'vip' },
     // Sexual / cosmetic
-    { code: 'PT141',   name: 'PT-141',                      unit: 'mg', doses: [10] },
-    { code: 'MT1',     name: 'Melanotan-1',                 unit: 'mg', doses: [10] },
-    { code: 'MT2',     name: 'Melanotan-2',                 unit: 'mg', doses: [10] },
-    { code: 'OXY',     name: 'Oxytocin',                    unit: 'mg', doses: [2] },
-    { code: 'KISS',    name: 'Kisspeptin-10',               unit: 'mg', doses: [5] },
-    { code: 'DERMO',   name: 'Dermorphin',                  unit: 'mg', doses: [5] },
-    { code: 'GONA',    name: 'Gonadorelin',                 unit: 'mg', doses: [2] },
+    { code: 'PT141',   name: 'PT-141',                      unit: 'mg', doses: [10], slug:'pt-141' },
+    { code: 'MT1',     name: 'Melanotan-1',                 unit: 'mg', doses: [10], slug:'melanotan-1' },
+    { code: 'MT2',     name: 'Melanotan-2',                 unit: 'mg', doses: [10], slug:'mt-2-melanotan-2-acetate' },
+    { code: 'OXY',     name: 'Oxytocin',                    unit: 'mg', doses: [2], slug:'oxytocin-acetate' },
+    { code: 'KISS',    name: 'Kisspeptin-10',               unit: 'mg', doses: [5], slug:'kisspeptin-10' },
+    { code: 'DERMO',   name: 'Dermorphin',                  unit: 'mg', doses: [5], slug:'dermorphin' },
+    { code: 'GONA',    name: 'Gonadorelin',                 unit: 'mg', doses: [2], slug:'gonadorelin' },
     // Hormones / fertility
-    { code: 'HCG',     name: 'HCG',                         unit: 'iu', doses: [5000] },
-    { code: 'HMG',     name: 'HMG',                         unit: 'iu', doses: [75] }
+    { code: 'HCG',     name: 'HCG',                         unit: 'iu', doses: [5000], slug:'hcg' },
+    { code: 'HMG',     name: 'HMG',                         unit: 'iu', doses: [75], slug:'hmg' }
   ];
 
   var CODE_TO_NAME = {}, CODE_TO_PRODUCT = {}, NAME_TO_CODE = {};
@@ -106,6 +107,13 @@
     var k = String(nameOrCode);
     if (CODE_TO_NAME[k.toUpperCase()]) return k.toUpperCase();   // already a code
     return NAME_TO_CODE[k.toLowerCase()] || null;
+  }
+
+  var CATALOG_URL = 'https://peptimart.xyz/catalog';
+  function productUrl(nameOrCode) {
+    var code = codeForCompound(nameOrCode);
+    var p = code && CODE_TO_PRODUCT[code];
+    return (p && p.slug) ? 'https://peptimart.xyz/products/' + p.slug : CATALOG_URL;
   }
 
   // "10" -> "10", "0.1" -> "0P1"
@@ -195,7 +203,8 @@
   var api = {
     PREFIX: PREFIX, PRODUCTS: PRODUCTS, CODE_TO_NAME: CODE_TO_NAME, UNITS: UNITS,
     encode: encode, decode: decode, checkChar: checkChar, codeForCompound: codeForCompound,
-    verifyCode: verifyCode, checkVerifyCode: checkVerifyCode, normalizeCode: normalizeCode
+    verifyCode: verifyCode, checkVerifyCode: checkVerifyCode, normalizeCode: normalizeCode,
+    productUrl: productUrl, CATALOG_URL: CATALOG_URL
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PMSerial = api;

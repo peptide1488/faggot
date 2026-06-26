@@ -631,18 +631,27 @@ function updatePtsBadge(){ const e=document.getElementById('ptsVal'); if(e) e.te
 function savePoints(){ try{ localStorage.setItem('pm_points', points); }catch(e){} updatePtsBadge(); }
 function addPoints(n){ points=Math.max(0, points+n); savePoints(); }
 
+function productLink(){
+  return (typeof PMSerial!=='undefined' && PMSerial.productUrl) ? PMSerial.productUrl(vial.compound) : SHARE_URL;
+}
 function shareText(kind){
   const c=vial.compound||'my peptide';
   const dose=vial.dose?(' '+vial.dose+(vial.unit||'mg')):'';
-  if(kind==='recon') return `Just reconstituted my ${c} 💧 keeping my protocol dialed in with Pepti Mart. ${SHARE_URL} #peptides`;
-  if(kind==='dose')  return `Dose logged ✅ ${c}${dose} — staying consistent 💪 tracked with Pepti Mart. ${SHARE_URL} #peptides`;
-  return `Tracking my peptide protocol with Pepti Mart 💉 ${SHARE_URL} #peptides`;
+  const link=productLink();
+  if(kind==='recon') return `Just reconstituted my ${c} 💧 dialing in my protocol with Pepti Mart. Grab it 👉 ${link} #peptides`;
+  if(kind==='dose')  return `Dose logged ✅ ${c}${dose} — staying consistent 💪 ${c} from Pepti Mart 👉 ${link} #peptides`;
+  return `Tracking my peptide protocol with Pepti Mart 💉 ${SHARE_URL}/catalog #peptides`;
 }
+function awardShare(){ addPoints(15); toast('+15 pts for sharing 🐦'); if(document.getElementById('v-rewards').classList.contains('active')) renderRewards(); }
 function shareToX(kind){
-  try{ window.open('https://twitter.com/intent/tweet?text='+encodeURIComponent(shareText(kind)),'_blank','noopener'); }
-  catch(e){}
-  addPoints(15);
-  toast('+15 pts for sharing 🐦');
+  const text=shareText(kind);
+  // Web Share API is the reliable way on mobile to hand the text to the X app/composer.
+  if(navigator.share){
+    navigator.share({text}).then(awardShare).catch(()=>{});  // no points if the user cancels
+  }else{
+    try{ window.open('https://twitter.com/intent/tweet?text='+encodeURIComponent(text),'_blank','noopener'); }catch(e){}
+    awardShare();
+  }
 }
 function toggleAutoShare(){
   autoShare=!autoShare;
@@ -1684,7 +1693,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v16';
+const APP_VERSION='v17';
 initNFC(); renderVial(); calcConc(); calcDose(); updatePtsBadge();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
