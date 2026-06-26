@@ -892,6 +892,7 @@ function renderNotes(c){
       <button class="btn ghost" id="importBtn">⬆ Import</button>
     </div>
     <input type="file" id="importFile" accept="application/json" style="display:none">
+    <p class="muted" style="font-size:11px;text-align:center;margin:14px 0 0">Grimoire ${APP_VERSION} · works offline</p>
   </div>`;
 
   $('#nt_features').addEventListener('change',e=>{ c.features=e.target.value; save(); });
@@ -966,9 +967,12 @@ document.addEventListener('click',e=>{
 });
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
-/* ---- service worker ---- */
+/* ---- service worker (auto-update on new version) ---- */
+const APP_VERSION='v2';
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+  let _reloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(reg=>{ if(reg.update) reg.update(); }).catch(()=>{}));
 }
 
 render();
