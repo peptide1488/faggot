@@ -367,6 +367,7 @@ let DB = load();
 let curId = localStorage.getItem(LS_CUR) || (DB[0] && DB[0].id) || null;
 let tab = 'bio';
 let wiz = null;   // { step } while the creation wizard is active
+let abilEdit = false;   // post-creation, reveal the ability-score editor on demand
 
 function load(){
   try{ const v = JSON.parse(localStorage.getItem(LS_KEY)); return Array.isArray(v)?v.map(ensureFields):[]; }
@@ -577,11 +578,12 @@ function render(){
 
 function renderHeader(){
   const sel = $('#charSelect');
-  if(!DB.length){ sel.style.display='none'; $('#hsub').textContent='D&D 5e character keeper'; return; }
+  const ver = (typeof APP_VERSION!=='undefined') ? ' · '+APP_VERSION : '';
+  if(!DB.length){ sel.style.display='none'; $('#hsub').textContent='D&D 5e character keeper'+ver; return; }
   sel.style.display='';
   sel.innerHTML = DB.map(c=>`<option value="${c.id}" ${c.id===curId?'selected':''}>${esc(c.name)}</option>`).join('');
   const c=cur();
-  $('#hsub').textContent = c ? `${esc(c.race||'')} ${esc(c.cls)} ${c.level}`.trim() : 'D&D 5e character keeper';
+  $('#hsub').textContent = (c ? `${esc(c.race||'')} ${esc(c.cls)} ${c.level}`.trim() : 'D&D 5e character keeper')+ver;
 }
 
 const TABDEF = [
@@ -828,15 +830,14 @@ function renderBio(c){
 /* ---------- ABILITIES & SKILLS ---------- */
 function abilCard(c, wizard){
   if(!wizard){
-    // Post-creation: no point-buy/array machinery — just the final scores (base editable).
+    // Post-creation: scores are locked (set at creation, change only via Level Up).
     return ABILITIES.map(([k,nm])=>{
       const base=Number(c.abilities[k]); const hasBase=!isNaN(base);
       const rb=raceBonus(c,k), as=(c.asiBonus&&c.asiBonus[k])||0, total=abil(c,k);
-      const extra=[rb?'+'+rb+' race':'', as?'+'+as+' ASI':''].filter(Boolean).join('  ');
+      const parts=[hasBase?base+' base':'', rb?'+'+rb+' race':'', as?'+'+as+' ASI':''].filter(Boolean).join('  ');
       return `<div class="abrow">
         <div class="nm">${k}</div>
-        <input type="number" id="ab_${k}" value="${hasBase?base:10}" min="1" max="30" style="width:62px" aria-label="${nm}">
-        <div class="rcl" style="width:auto;color:var(--gold);font-size:11px">${extra}</div>
+        <div class="muted" style="font-size:11px;flex:1">${parts}</div>
         <button class="tot val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(total)}" title="Roll ${nm} check">${total} <small style="color:var(--mut);font-weight:400">${sgn(mod(total))}</small></button>
       </div>`;
     }).join('');
@@ -880,8 +881,11 @@ function renderAbil(c){
   const pb = profBonus(c);
   app.innerHTML = `
   <div class="card">
-    <h2>Ability Scores</h2>
-    ${abilCard(c)}
+    <div class="row between" style="margin-bottom:8px">
+      <h2 style="margin:0">Ability Scores ${abilEdit?'<span class="muted" style="text-transform:none;font-size:11px">— editing</span>':''}</h2>
+      <button class="btn ghost sm" id="abilEditBtn">${abilEdit?'✓ Done':'✎ Edit'}</button>
+    </div>
+    ${abilEdit?abilCard(c,true):abilCard(c)}
   </div>
 
   <div class="card">
@@ -918,7 +922,8 @@ function renderAbil(c){
     </div>
   </div>`;
 
-  bindAbilHandlers(c);
+  $('#abilEditBtn').addEventListener('click',()=>{ abilEdit=!abilEdit; render(); });
+  if(abilEdit) bindAbilHandlers(c);
   bindSkillHandlers(c);
 }
 function bindAbilHandlers(c){
@@ -1372,7 +1377,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v7';
+const APP_VERSION='v8';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
