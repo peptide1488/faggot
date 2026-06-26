@@ -191,6 +191,17 @@
   .upd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
   .upd:last-child{border-bottom:none}
 
+  /* share prompt modal */
+  .modal{position:fixed;inset:0;background:rgba(5,8,14,.62);backdrop-filter:blur(3px);
+    display:none;align-items:flex-end;justify-content:center;z-index:60}
+  .modal.show{display:flex}
+  .modal .sheet{background:var(--panel);border:1px solid var(--line);border-radius:18px 18px 0 0;
+    width:100%;max-width:520px;padding:18px 16px calc(18px + env(safe-area-inset-bottom));animation:sheetup .25s ease}
+  @keyframes sheetup{from{transform:translateY(40px);opacity:.5}to{transform:none;opacity:1}}
+  .modal textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:11px;padding:12px;font:14px/1.45 inherit;resize:vertical;margin:10px 0 12px;min-height:96px}
+  .modal .btn{margin-bottom:8px}
+
   /* site footer */
   footer.site{text-align:center;padding:18px 16px 8px}
   footer.site a{color:var(--muted);text-decoration:none;font-size:12px;font-weight:600}
@@ -518,6 +529,17 @@
   <button data-v="v-plot" onclick="show('v-plot')"><span class="ico">📈</span>Plot</button>
 </nav>
 
+<div class="modal" id="shareModal">
+  <div class="sheet">
+    <h3 id="shareTitle" style="font-size:16px;margin-bottom:4px">Share &amp; earn ⭐</h3>
+    <p class="muted small">Post it to X to advertise &amp; bank <b>+15 points</b>. Edit it however you like.</p>
+    <textarea id="shareTextArea" rows="5"></textarea>
+    <button class="btn" onclick="postShareX()">🐦 Post to X · +15 pts</button>
+    <button class="btn sec" onclick="copyShareText()">Copy text</button>
+    <button class="btn ghost" onclick="closeShareModal()">Maybe later</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="serial.js"></script>
@@ -626,7 +648,7 @@ const TIERS=[
 ];
 let points  =(()=>{ try{ return +localStorage.getItem('pm_points')||0; }catch(e){ return 0; } })();
 let coupons =(()=>{ try{ return JSON.parse(localStorage.getItem('pm_coupons')||'[]'); }catch(e){ return []; } })();
-let autoShare=(()=>{ try{ return localStorage.getItem('pm_autoshare')==='1'; }catch(e){ return false; } })();
+let autoShare=(()=>{ try{ const v=localStorage.getItem('pm_autoshare'); return v===null ? true : v==='1'; }catch(e){ return true; } })();
 function updatePtsBadge(){ const e=document.getElementById('ptsVal'); if(e) e.textContent=points; }
 function savePoints(){ try{ localStorage.setItem('pm_points', points); }catch(e){} updatePtsBadge(); }
 function addPoints(n){ points=Math.max(0, points+n); savePoints(); }
@@ -643,16 +665,32 @@ function shareText(kind){
   return `Tracking my peptide protocol with Pepti Mart 💉 ${SHARE_URL}/catalog #peptides`;
 }
 function awardShare(){ addPoints(15); toast('+15 pts for sharing 🐦'); if(document.getElementById('v-rewards').classList.contains('active')) renderRewards(); }
-function shareToX(kind){
-  const text=shareText(kind);
-  // Web Share API is the reliable way on mobile to hand the text to the X app/composer.
-  if(navigator.share){
-    navigator.share({text}).then(awardShare).catch(()=>{});  // no points if the user cancels
-  }else{
-    try{ window.open('https://twitter.com/intent/tweet?text='+encodeURIComponent(text),'_blank','noopener'); }catch(e){}
-    awardShare();
-  }
+let shareKind='general';
+function shareModal(kind){
+  shareKind=kind||'general';
+  const ta=document.getElementById('shareTextArea'); if(ta) ta.value=shareText(shareKind);
+  const t=document.getElementById('shareTitle');
+  if(t) t.textContent = shareKind==='dose' ? 'Share your dose · +15 ⭐'
+                      : shareKind==='recon' ? 'Share your fresh mix · +15 ⭐'
+                      : 'Share & earn · +15 ⭐';
+  document.getElementById('shareModal').classList.add('show');
 }
+function closeShareModal(){ document.getElementById('shareModal').classList.remove('show'); }
+function postShareX(){
+  const text=document.getElementById('shareTextArea').value;
+  const url='https://x.com/intent/post?text='+encodeURIComponent(text);
+  let w=null; try{ w=window.open(url,'_blank','noopener'); }catch(e){}
+  if(!w){ try{ location.href=url; }catch(e){} }
+  awardShare();
+  closeShareModal();
+}
+function copyShareText(){
+  const text=document.getElementById('shareTextArea').value;
+  if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast('Copied — paste into X')).catch(()=>toast('Copy failed')); }
+  else toast('Copy not supported here');
+}
+// alias kept so existing buttons/flows open the prompt
+function shareToX(kind){ shareModal(kind); }
 function toggleAutoShare(){
   autoShare=!autoShare;
   try{ localStorage.setItem('pm_autoshare', autoShare?'1':'0'); }catch(e){}
@@ -1693,7 +1731,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v17';
+const APP_VERSION='v18';
 initNFC(); renderVial(); calcConc(); calcDose(); updatePtsBadge();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
