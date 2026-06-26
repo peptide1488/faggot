@@ -287,6 +287,9 @@ const CLASS_HITDIE = {
   Barbarian:12, Fighter:10, Paladin:10, Ranger:10,
   Artificer:8, Bard:8, Cleric:8, Druid:8, Monk:8, Rogue:8, Warlock:8, Sorcerer:6, Wizard:6
 };
+// Level a class chooses its subclass.
+const SUBCLASS_LEVEL = {Cleric:1, Sorcerer:1, Warlock:1, Druid:2, Wizard:2};
+function subclassLevel(c){ return SUBCLASS_LEVEL[c.cls]||3; }
 // Point-buy cost table (5e): scores 8–15.
 const PB_COST = {8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9};
 const STD_ARRAY = [15,14,13,12,10,8];
@@ -384,6 +387,22 @@ function maxSpellLevel(c){ // highest spell level the class can cast at this lev
   if(c.cls==='Paladin'||c.cls==='Ranger'||c.cls==='Artificer') return Math.min(5, Math.ceil(Math.max(1,lvl-1)/4)+1);
   if(c.cls==='Warlock') return Math.min(5, Math.ceil(lvl/2));
   return Math.min(9, Math.ceil(lvl/2)); // full casters
+}
+// Spell slots per character level (index = level). Inner array = slots for spell levels 1..n.
+const SLOTS_FULL=[[],[2],[3],[4,2],[4,3],[4,3,2],[4,3,3],[4,3,3,1],[4,3,3,2],[4,3,3,3,1],[4,3,3,3,2],[4,3,3,3,2,1],[4,3,3,3,2,1],[4,3,3,3,2,1,1],[4,3,3,3,2,1,1],[4,3,3,3,2,1,1,1],[4,3,3,3,2,1,1,1],[4,3,3,3,2,1,1,1,1],[4,3,3,3,3,1,1,1,1],[4,3,3,3,3,2,1,1,1],[4,3,3,3,3,2,2,1,1]];
+const SLOTS_HALF=[[],[],[2],[3],[3],[4,2],[4,2],[4,3],[4,3],[4,3,2],[4,3,2],[4,3,3],[4,3,3],[4,3,3,1],[4,3,3,1],[4,3,3,2],[4,3,3,2],[4,3,3,3,1],[4,3,3,3,1],[4,3,3,3,2],[4,3,3,3,2]];
+const SLOTS_ARTI=[[],[2],[2],[3],[3],[4,2],[4,2],[4,3],[4,3],[4,3,2],[4,3,2],[4,3,3],[4,3,3],[4,3,3,1],[4,3,3,1],[4,3,3,2],[4,3,3,2],[4,3,3,3,1],[4,3,3,3,1],[4,3,3,3,2],[4,3,3,3,2]];
+function warlockSlots(lvl){ return [ lvl>=17?4:lvl>=11?3:lvl>=2?2:1, lvl>=9?5:lvl>=7?4:lvl>=5?3:lvl>=3?2:1 ]; }
+function spellSlots(c){
+  const lvl=Math.max(1,Math.min(20,Number(c.level)||1));
+  const out={1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0};
+  if(c.cls==='Warlock'){ const w=warlockSlots(lvl); out[w[1]]=w[0]; return out; }
+  let table=null;
+  if(['Bard','Cleric','Druid','Sorcerer','Wizard'].includes(c.cls)) table=SLOTS_FULL;
+  else if(['Paladin','Ranger'].includes(c.cls)) table=SLOTS_HALF;
+  else if(c.cls==='Artificer') table=SLOTS_ARTI;
+  if(table) (table[lvl]||[]).forEach((n,i)=>{ out[i+1]=n; });
+  return out;
 }
 function spellLearnSelect(c, atLevel){
   const known=new Set(c.spells.map(s=>s.name.toLowerCase()));
@@ -662,6 +681,7 @@ const WIZ_BASE = [
   {key:'name',  title:'Name your character'},
   {key:'race',  title:'Choose a race'},
   {key:'class', title:'Choose a class'},
+  {key:'subclass', title:'Choose a subclass'},
   {key:'bg',    title:'Choose a background'},
   {key:'abil',  title:'Set ability scores'},
   {key:'skills',title:'Pick skill proficiencies'},
@@ -669,7 +689,11 @@ const WIZ_BASE = [
   {key:'spells',title:'Choose starting spells'},
   {key:'review',title:'Review & finish'}
 ];
-function wizSteps(c){ return WIZ_BASE.filter(s=> (s.key!=='feat' || grantsL1Feat(c)) && (s.key!=='spells' || isCaster(c)) ); }
+function wizSteps(c){ return WIZ_BASE.filter(s=>
+  (s.key!=='feat' || grantsL1Feat(c)) &&
+  (s.key!=='spells' || isCaster(c)) &&
+  (s.key!=='subclass' || (subclassLevel(c)===1 && (SUBCLASSES[c.cls]||[]).length>0))
+); }
 const CANTRIPS_KNOWN_L1={Bard:2,Cleric:3,Druid:2,Sorcerer:4,Warlock:2,Wizard:3,Artificer:2};
 function cantripLimit(c){ return CANTRIPS_KNOWN_L1[c.cls]||0; }
 function spell1Limit(c){
@@ -734,6 +758,7 @@ function renderWizard(c){
   if(def.key==='name') body=`<div class="field"><label>Character name</label><input id="wz_name" value="${esc(c.name)}" placeholder="e.g. Lúthien"></div><p class="muted" style="font-size:13px">You'll build a level 1 hero, then level up as you play.</p>`;
   else if(def.key==='race') body=`<div class="field"><label>Race / Species</label>${fieldSelect('wz_race', RACES, c.race, 'Custom race')}</div>${racePreview(c)}`;
   else if(def.key==='class') body=`<div class="field"><label>Class</label>${select('wz_cls', CLASSES, c.cls)}</div>${classPreview(c)}`;
+  else if(def.key==='subclass') body=`<div class="field"><label>${esc(c.cls)} subclass</label>${select('wz_sub', SUBCLASSES[c.cls]||['—'], c.subclass||(SUBCLASSES[c.cls]||['—'])[0])}</div><p class="muted" style="font-size:13px">Your ${esc(c.cls)} chooses its subclass at level 1.</p>`;
   else if(def.key==='bg') body=`<div class="field"><label>Background</label>${fieldSelect('wz_bg', BACKGROUNDS, c.background, 'Custom background')}</div><p class="muted" style="font-size:13px">Backgrounds give 2 skills and flavor.</p>`;
   else if(def.key==='abil') body=abilCard(c, true);
   else if(def.key==='skills') body=skillsPicker(c);
@@ -757,6 +782,7 @@ function renderWizard(c){
   if(def.key==='name') $('#wz_name').addEventListener('input',e=>{ c.name=e.target.value; renderHeader(); });
   if(def.key==='race') bindSelectCustom('wz_race','race');
   if(def.key==='class') $('#wz_cls').addEventListener('change',e=>{ c.cls=e.target.value; c.subclass=''; applyClassDefaults(c); save(); render(); });
+  if(def.key==='subclass') $('#wz_sub').addEventListener('change',e=>{ c.subclass=e.target.value; save(); });
   if(def.key==='bg') bindSelectCustom('wz_bg','background');
   if(def.key==='abil') bindAbilHandlers(c);
   if(def.key==='skills') bindSkillHandlers(c);
@@ -786,6 +812,7 @@ function wizNext(){
   const c=cur(), steps=wizSteps(c), def=steps[wiz.step];
   if(def.key==='name'){ c.name=($('#wz_name')?$('#wz_name').value:c.name)||''; if(!c.name.trim()){ flashBanner('Enter a name first'); return; } }
   if(def.key==='feat'){ const v=$('#wz_feat'); if(v) c.feats[0]={name:v.value}; }
+  if(def.key==='subclass'){ const v=$('#wz_sub'); if(v && !c.subclass) c.subclass=v.value; }
   save();
   if(wiz.step < steps.length-1){ wiz.step++; render(); return; }
   c.speed=defaultSpeed(c);
@@ -802,7 +829,7 @@ function levelUp(){
   const c=cur(); if(c.level>=20){ flashBanner('Already level 20'); return; }
   const nl=c.level+1;
   const isAsi=asiLevels(c).includes(nl);
-  const needsSub = nl>=3 && !c.subclass && (SUBCLASSES[c.cls]||[]).length>0;
+  const needsSub = nl>=subclassLevel(c) && !c.subclass && (SUBCLASSES[c.cls]||[]).length>0;
   const hd=CLASS_HITDIE[c.cls]||8, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
   let hpGain=null, asiMode='asi';
   $('#modalRoot').innerHTML=`
@@ -1274,14 +1301,15 @@ function renderSpells(c){
 
   <div class="card">
     <h2>Spell Slots <button class="btn ghost sm" id="restBtn" style="float:right">Long rest</button></h2>
-    ${[1,2,3,4,5,6,7,8,9].map(l=>{
-      const sl=c.slots[l]||{total:0,used:0};
+    ${(()=>{ const auto=spellSlots(c); const rows=[1,2,3,4,5,6,7,8,9].map(l=>{
+      const total=auto[l]; if(!total) return '';
+      const used=Math.min(total,(c.slots[l]&&c.slots[l].used)||0);
       return `<div class="slot">
-        <div class="lvl">Level ${l}</div>
-        <div class="pips">${slotPips(l,sl)}</div>
-        <div class="slotcfg"><input type="number" min="0" max="9" value="${sl.total}" data-slottotal="${l}" title="Total slots"></div>
+        <div class="lvl">${c.cls==='Warlock'?'Pact · L'+l:'Level '+l}</div>
+        <div class="pips">${slotPipsAuto(l,total,used)}</div>
+        <div class="muted" style="font-size:12px">${total-used}/${total}</div>
       </div>`;
-    }).join('')}
+    }).join(''); return rows || '<div class="empty">No spell slots at this level.</div>'; })()}
   </div>
 
   <div class="card">
@@ -1324,17 +1352,13 @@ function renderSpells(c){
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
   });
-  app.querySelectorAll('[data-slottotal]').forEach(el=>el.addEventListener('change',e=>{
-    const l=el.dataset.slottotal; const t=Math.max(0,Number(e.target.value)||0);
-    c.slots[l].total=t; if(c.slots[l].used>t) c.slots[l].used=t; save(); render();
-  }));
   app.querySelectorAll('[data-slotpip]').forEach(el=>el.addEventListener('click',()=>{
     const l=el.dataset.slotpip, n=Number(el.dataset.n);
-    const sl=c.slots[l];
-    const available = sl.total - sl.used;
-    // Tap a lit (available) slot to spend it; tap a dim (spent) slot to recover one.
-    if(n<=available) sl.used = Math.min(sl.total, sl.used+1);
-    else sl.used = Math.max(0, sl.used-1);
+    const total=spellSlots(c)[l]||0;
+    if(!c.slots[l]) c.slots[l]={total:0,used:0};
+    const used=Math.min(total, c.slots[l].used||0), available=total-used;
+    if(n<=available) c.slots[l].used = Math.min(total, used+1);   // spend
+    else c.slots[l].used = Math.max(0, used-1);                    // recover
     save(); render();
   }));
   $('#sp_pick').addEventListener('change',e=>{
@@ -1363,6 +1387,11 @@ function slotPips(l,sl){
   for(let i=1;i<=sl.total;i++){
     h+=`<button class="pip ${i<=sl.total-sl.used?'on':''}" data-slotpip="${l}" data-n="${i}" title="${i<=sl.total-sl.used?'available':'spent'}"></button>`;
   }
+  return h;
+}
+function slotPipsAuto(l,total,used){
+  let h=''; const avail=total-used;
+  for(let i=1;i<=total;i++) h+=`<button class="pip ${i<=avail?'on':''}" data-slotpip="${l}" data-n="${i}" title="${i<=avail?'available':'spent'}"></button>`;
   return h;
 }
 
@@ -1531,7 +1560,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v10';
+const APP_VERSION='v11';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
