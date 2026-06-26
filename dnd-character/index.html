@@ -212,7 +212,7 @@
   <div class="hrow">
     <svg class="d20" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(32 32)"><polygon points="0,-22 19,-11 19,11 0,22 -19,11 -19,-11" fill="#7c3aed" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-22 11,-7 0,3 -11,-7" fill="#a78bfa"/><polygon points="0,3 11,-7 19,11 0,22" fill="#6d28d9"/><polygon points="0,3 -11,-7 -19,11 0,22" fill="#5b21b6"/></g></svg>
     <div>
-      <div class="htitle serif">Grimoire</div>
+      <div class="htitle serif">Grimoire <span id="verBadge" style="font-family:system-ui;font-size:10px;color:var(--mut);font-weight:400;vertical-align:middle"></span></div>
       <div class="hsub" id="hsub">D&D 5e character keeper</div>
     </div>
     <div class="charpick">
@@ -1294,7 +1294,8 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v5';
+const APP_VERSION='v6';
+{ const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
