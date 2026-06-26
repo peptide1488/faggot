@@ -354,20 +354,27 @@ function defaultSpeed(c){ return RACE_SPEED[c.race]||30; }
 
 /* ---- spell list (curated SRD-ish; class letters A B C D P R S K W) ---- */
 const CLASS_LETTER = {Artificer:'A',Bard:'B',Cleric:'C',Druid:'D',Paladin:'P',Ranger:'R',Sorcerer:'S',Warlock:'K',Wizard:'W'};
+// entries: "Name:classes:school"  · schools A C D E V I N T (Evocation=V)
 const SPELL_SRC = {
-0:"Acid Splash:SWA|Chill Touch:SWK|Dancing Lights:BSW|Druidcraft:D|Eldritch Blast:K|Fire Bolt:SWA|Guidance:CDA|Light:BCSWA|Mage Hand:BSWKA|Mending:BCDSWA|Message:BSWA|Minor Illusion:BSWK|Poison Spray:DSWKA|Prestidigitation:BSWKA|Produce Flame:D|Ray of Frost:SWA|Resistance:CDA|Sacred Flame:C|Shillelagh:D|Shocking Grasp:SWA|Spare the Dying:CA|Thaumaturgy:C|Thorn Whip:D|True Strike:BSW|Vicious Mockery:B",
-1:"Alarm:RWA|Animal Friendship:BDR|Bane:BC|Bless:CP|Burning Hands:SW|Charm Person:BDSWK|Color Spray:SW|Command:CP|Comprehend Languages:BSWK|Create or Destroy Water:CD|Cure Wounds:BCDPRA|Detect Magic:BCDPRSWA|Disguise Self:BSWA|Divine Favor:P|Entangle:D|Expeditious Retreat:SWA|Faerie Fire:BD|False Life:SWA|Feather Fall:BSW|Find Familiar:W|Fog Cloud:DRSW|Goodberry:DR|Grease:WA|Guiding Bolt:C|Healing Word:BCD|Hellish Rebuke:K|Heroism:BP|Hex:K|Hunter's Mark:R|Identify:BWA|Inflict Wounds:C|Jump:DRSWA|Longstrider:BDRWA|Mage Armor:SW|Magic Missile:SW|Protection from Evil and Good:CPWK|Purify Food and Drink:CDP|Ray of Sickness:SW|Sanctuary:CA|Shield:SW|Shield of Faith:CP|Silent Image:BSW|Sleep:BSW|Speak with Animals:BDR|Tasha's Hideous Laughter:BW|Thunderwave:BDSW|Unseen Servant:BWK|Witch Bolt:SWK",
-2:"Aid:CPA|Alter Self:SWA|Animal Messenger:BDR|Barkskin:DR|Blindness/Deafness:BCSW|Blur:SWA|Calm Emotions:BC|Cloud of Daggers:BSWK|Continual Flame:CWA|Crown of Madness:BSWK|Darkness:SWK|Darkvision:DRSWA|Detect Thoughts:BSW|Enhance Ability:BCDSA|Enlarge/Reduce:SWA|Flaming Sphere:DSW|Gentle Repose:CW|Gust of Wind:DSW|Heat Metal:BDA|Hold Person:BCDSWK|Invisibility:BSWKA|Knock:BSW|Lesser Restoration:BCDPRA|Levitate:SWA|Locate Object:BCDPRW|Magic Weapon:PWA|Mirror Image:SWK|Misty Step:SWK|Moonbeam:D|Pass without Trace:DR|Prayer of Healing:C|Protection from Poison:CDPRA|Ray of Enfeeblement:WK|Rope Trick:WA|Scorching Ray:SW|See Invisibility:BSWA|Shatter:BSWK|Silence:BCR|Spider Climb:SWKA|Spike Growth:DR|Spiritual Weapon:C|Suggestion:BSWK|Web:SWA|Zone of Truth:BCP",
-3:"Animate Dead:CW|Beacon of Hope:C|Bestow Curse:BCWK|Blink:SW|Call Lightning:D|Clairvoyance:BCSW|Conjure Animals:DR|Counterspell:SWK|Create Food and Water:CP|Daylight:CDPRSW|Dispel Magic:BCDPSWKA|Fear:BSWK|Fireball:SW|Fly:SWKA|Gaseous Form:SWK|Haste:SWA|Hypnotic Pattern:BSWK|Lightning Bolt:SW|Magic Circle:CPWK|Major Image:BSWK|Mass Healing Word:C|Meld into Stone:CD|Nondetection:BRWA|Plant Growth:BDR|Protection from Energy:CDRSWA|Remove Curse:CPWK|Revivify:CPA|Sending:BCW|Sleet Storm:DSW|Slow:SW|Speak with Dead:BC|Spirit Guardians:C|Stinking Cloud:BSW|Tongues:BCSWK|Vampiric Touch:SWK|Water Breathing:DRSWA|Water Walk:CDRSA|Wind Wall:DR",
-4:"Arcane Eye:WA|Banishment:CPSWK|Blight:DSWK|Compulsion:B|Confusion:BDSWK|Conjure Woodland Beings:DR|Control Water:CDW|Death Ward:CP|Dimension Door:BSWK|Divination:C|Dominate Beast:DS|Fabricate:W|Freedom of Movement:BCDRA|Greater Invisibility:BSW|Guardian of Faith:C|Ice Storm:DSW|Locate Creature:BCDPRW|Phantasmal Killer:W|Polymorph:BDSW|Stone Shape:CDWA|Stoneskin:DRSW|Wall of Fire:DSWA",
-5:"Animate Objects:BSWA|Awaken:BD|Cloudkill:SW|Commune:C|Commune with Nature:DR|Cone of Cold:SW|Conjure Elemental:DW|Contact Other Plane:WK|Dispel Evil and Good:CP|Dominate Person:BSW|Dream:BWK|Flame Strike:CP|Geas:BCDPW|Greater Restoration:BCDA|Hallow:C|Hold Monster:BSWK|Insect Plague:CDS|Legend Lore:BCW|Mass Cure Wounds:BCD|Mislead:BW|Modify Memory:BW|Planar Binding:BCDWK|Raise Dead:BCP|Reincarnate:D|Scrying:BCDWK|Seeming:BSW|Telekinesis:SW|Teleportation Circle:BSWK|Tree Stride:DR|Wall of Force:W|Wall of Stone:DSWA",
-6:"Chain Lightning:SW|Circle of Death:SWK|Disintegrate:SW|Eyebite:BSWK|Find the Path:BCD|Globe of Invulnerability:SW|Harm:C|Heal:CD|Heroes' Feast:CD|Mass Suggestion:BSWK|Sunbeam:DSW|True Seeing:BCSWK|Wall of Ice:W|Word of Recall:C",
-7:"Conjure Celestial:C|Delayed Blast Fireball:SW|Etherealness:BCSWK|Finger of Death:SWK|Fire Storm:CDS|Forcecage:BWK|Plane Shift:CDSWK|Prismatic Spray:SW|Regenerate:BCD|Resurrection:BCP|Reverse Gravity:DSW|Teleport:BSW",
-8:"Animal Shapes:D|Antimagic Field:CW|Dominate Monster:BSWK|Earthquake:CDS|Feeblemind:BDSWK|Holy Aura:C|Maze:W|Mind Blank:BW|Power Word Stun:BSWK|Sunburst:DSW",
-9:"Astral Projection:CWK|Foresight:BDWK|Gate:CSW|Mass Heal:C|Meteor Swarm:SW|Power Word Kill:BSWK|Time Stop:SW|True Resurrection:CD|Wish:SW|Storm of Vengeance:D"
+0:"Acid Splash:SWA:C|Chill Touch:SWK:N|Dancing Lights:BSW:V|Druidcraft:D:T|Eldritch Blast:K:V|Fire Bolt:SWA:V|Guidance:CDA:D|Light:BCSWA:V|Mage Hand:BSWKA:C|Mending:BCDSWA:T|Message:BSWA:T|Minor Illusion:BSWK:I|Poison Spray:DSWKA:C|Prestidigitation:BSWKA:T|Produce Flame:D:C|Ray of Frost:SWA:V|Resistance:CDA:A|Sacred Flame:C:V|Shillelagh:D:T|Shocking Grasp:SWA:V|Spare the Dying:CA:N|Thaumaturgy:C:T|Thorn Whip:D:T|True Strike:BSW:D|Vicious Mockery:B:E",
+1:"Alarm:RWA:A|Animal Friendship:BDR:E|Bane:BC:E|Bless:CP:E|Burning Hands:SW:V|Charm Person:BDSWK:E|Color Spray:SW:I|Command:CP:E|Comprehend Languages:BSWK:D|Create or Destroy Water:CD:T|Cure Wounds:BCDPRA:V|Detect Magic:BCDPRSWA:D|Disguise Self:BSWA:I|Divine Favor:P:V|Entangle:D:C|Expeditious Retreat:SWA:T|Faerie Fire:BD:V|False Life:SWA:N|Feather Fall:BSW:T|Find Familiar:W:C|Fog Cloud:DRSW:C|Goodberry:DR:T|Grease:WA:C|Guiding Bolt:C:V|Healing Word:BCD:V|Hellish Rebuke:K:V|Heroism:BP:E|Hex:K:E|Hunter's Mark:R:D|Identify:BWA:D|Inflict Wounds:C:N|Jump:DRSWA:T|Longstrider:BDRWA:T|Mage Armor:SW:A|Magic Missile:SW:V|Protection from Evil and Good:CPWK:A|Purify Food and Drink:CDP:T|Ray of Sickness:SW:N|Sanctuary:CA:A|Shield:SW:A|Shield of Faith:CP:A|Silent Image:BSW:I|Sleep:BSW:E|Speak with Animals:BDR:D|Tasha's Hideous Laughter:BW:E|Thunderwave:BDSW:V|Unseen Servant:BWK:C|Witch Bolt:SWK:V",
+2:"Aid:CPA:A|Alter Self:SWA:T|Animal Messenger:BDR:E|Barkskin:DR:T|Blindness/Deafness:BCSW:N|Blur:SWA:I|Calm Emotions:BC:E|Cloud of Daggers:BSWK:C|Continual Flame:CWA:V|Crown of Madness:BSWK:E|Darkness:SWK:V|Darkvision:DRSWA:T|Detect Thoughts:BSW:D|Enhance Ability:BCDSA:T|Enlarge/Reduce:SWA:T|Flaming Sphere:DSW:C|Gentle Repose:CW:N|Gust of Wind:DSW:V|Heat Metal:BDA:T|Hold Person:BCDSWK:E|Invisibility:BSWKA:I|Knock:BSW:T|Lesser Restoration:BCDPRA:A|Levitate:SWA:T|Locate Object:BCDPRW:D|Magic Weapon:PWA:T|Mirror Image:SWK:I|Misty Step:SWK:C|Moonbeam:D:V|Pass without Trace:DR:A|Prayer of Healing:C:V|Protection from Poison:CDPRA:A|Ray of Enfeeblement:WK:N|Rope Trick:WA:T|Scorching Ray:SW:V|See Invisibility:BSWA:D|Shatter:BSWK:V|Silence:BCR:I|Spider Climb:SWKA:T|Spike Growth:DR:T|Spiritual Weapon:C:V|Suggestion:BSWK:E|Web:SWA:C|Zone of Truth:BCP:E",
+3:"Animate Dead:CW:N|Beacon of Hope:C:A|Bestow Curse:BCWK:N|Blink:SW:T|Call Lightning:D:C|Clairvoyance:BCSW:D|Conjure Animals:DR:C|Counterspell:SWK:A|Create Food and Water:CP:C|Daylight:CDPRSW:V|Dispel Magic:BCDPSWKA:A|Fear:BSWK:I|Fireball:SW:V|Fly:SWKA:T|Gaseous Form:SWK:T|Haste:SWA:T|Hypnotic Pattern:BSWK:I|Lightning Bolt:SW:V|Magic Circle:CPWK:A|Major Image:BSWK:I|Mass Healing Word:C:V|Meld into Stone:CD:T|Nondetection:BRWA:A|Plant Growth:BDR:T|Protection from Energy:CDRSWA:A|Remove Curse:CPWK:A|Revivify:CPA:N|Sending:BCW:V|Sleet Storm:DSW:C|Slow:SW:T|Speak with Dead:BC:N|Spirit Guardians:C:C|Stinking Cloud:BSW:C|Tongues:BCSWK:D|Vampiric Touch:SWK:N|Water Breathing:DRSWA:T|Water Walk:CDRSA:T|Wind Wall:DR:V",
+4:"Arcane Eye:WA:D|Banishment:CPSWK:A|Blight:DSWK:N|Compulsion:B:E|Confusion:BDSWK:E|Conjure Woodland Beings:DR:C|Control Water:CDW:T|Death Ward:CP:A|Dimension Door:BSWK:C|Divination:C:D|Dominate Beast:DS:E|Fabricate:W:T|Freedom of Movement:BCDRA:A|Greater Invisibility:BSW:I|Guardian of Faith:C:C|Ice Storm:DSW:V|Locate Creature:BCDPRW:D|Phantasmal Killer:W:I|Polymorph:BDSW:T|Stone Shape:CDWA:T|Stoneskin:DRSW:A|Wall of Fire:DSWA:V",
+5:"Animate Objects:BSWA:T|Awaken:BD:T|Cloudkill:SW:C|Commune:C:D|Commune with Nature:DR:D|Cone of Cold:SW:V|Conjure Elemental:DW:C|Contact Other Plane:WK:D|Dispel Evil and Good:CP:A|Dominate Person:BSW:E|Dream:BWK:I|Flame Strike:CP:V|Geas:BCDPW:E|Greater Restoration:BCDA:A|Hallow:C:E|Hold Monster:BSWK:E|Insect Plague:CDS:C|Legend Lore:BCW:D|Mass Cure Wounds:BCD:C|Mislead:BW:I|Modify Memory:BW:E|Planar Binding:BCDWK:A|Raise Dead:BCP:N|Reincarnate:D:T|Scrying:BCDWK:D|Seeming:BSW:I|Telekinesis:SW:T|Teleportation Circle:BSWK:C|Tree Stride:DR:C|Wall of Force:W:V|Wall of Stone:DSWA:V",
+6:"Chain Lightning:SW:V|Circle of Death:SWK:N|Disintegrate:SW:T|Eyebite:BSWK:N|Find the Path:BCD:D|Globe of Invulnerability:SW:A|Harm:C:N|Heal:CD:V|Heroes' Feast:CD:C|Mass Suggestion:BSWK:E|Sunbeam:DSW:V|True Seeing:BCSWK:D|Wall of Ice:W:V|Word of Recall:C:C",
+7:"Conjure Celestial:C:C|Delayed Blast Fireball:SW:V|Etherealness:BCSWK:T|Finger of Death:SWK:N|Fire Storm:CDS:V|Forcecage:BWK:V|Plane Shift:CDSWK:C|Prismatic Spray:SW:V|Regenerate:BCD:T|Resurrection:BCP:N|Reverse Gravity:DSW:T|Teleport:BSW:C",
+8:"Animal Shapes:D:T|Antimagic Field:CW:A|Dominate Monster:BSWK:E|Earthquake:CDS:V|Feeblemind:BDSWK:E|Holy Aura:C:A|Maze:W:C|Mind Blank:BW:A|Power Word Stun:BSWK:E|Sunburst:DSW:V",
+9:"Astral Projection:CWK:N|Foresight:BDWK:D|Gate:CSW:C|Mass Heal:C:C|Meteor Swarm:SW:V|Power Word Kill:BSWK:E|Time Stop:SW:T|True Resurrection:CD:N|Wish:SW:C|Storm of Vengeance:D:C"
 };
-const SPELLS = [];
-Object.keys(SPELL_SRC).forEach(lvl=>{ SPELL_SRC[lvl].split('|').forEach(e=>{ const i=e.lastIndexOf(':'); SPELLS.push({n:e.slice(0,i), l:Number(lvl), c:e.slice(i+1)}); }); });
+const SCHOOL_NAME={A:'Abjuration',C:'Conjuration',D:'Divination',E:'Enchantment',V:'Evocation',I:'Illusion',N:'Necromancy',T:'Transmutation'};
+const SCHOOL_ICON={A:'🛡️',C:'🌀',D:'🔮',E:'💖',V:'🔥',I:'🎭',N:'💀',T:'♻️'};
+const SPELLS=[], SPELL_BY_NAME={};
+Object.keys(SPELL_SRC).forEach(lvl=>{ SPELL_SRC[lvl].split('|').forEach(e=>{ const p=e.split(':'); const sp={n:p[0],l:Number(lvl),c:p[1],s:p[2]}; SPELLS.push(sp); SPELL_BY_NAME[p[0].toLowerCase()]=sp; }); });
+function spellMeta(name){ return SPELL_BY_NAME[String(name||'').toLowerCase()]||null; }
+function spellIcon(name){ const m=spellMeta(name); return m?SCHOOL_ICON[m.s]:'✨'; }
+function lvlLabel(l){ return l===0?'Cantrip':({1:'1st',2:'2nd',3:'3rd'}[l]||l+'th')+' level'; }
+function spellDesc(name, level){ const m=spellMeta(name); return (m?SCHOOL_NAME[m.s]+' · ':'')+lvlLabel(m?m.l:level); }
 function classSpells(c, maxLevel){
   const lt=CLASS_LETTER[c.cls]; if(!lt) return [];
   return SPELLS.filter(s=> s.c.includes(lt) && (maxLevel==null || s.l<=maxLevel));
@@ -384,7 +391,7 @@ function spellLearnSelect(c, atLevel){
   const opts=[0,1,2,3,4,5,6,7,8,9].filter(l=>l<=max).map(l=>{
     const list=classSpells(c).filter(s=>s.l===l && !known.has(s.n.toLowerCase()));
     if(!list.length) return '';
-    return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${esc(s.n)}</option>`).join('')+`</optgroup>`;
+    return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${SCHOOL_ICON[s.s]} ${esc(s.n)}</option>`).join('')+`</optgroup>`;
   }).join('');
   return `<select id="luSpell" style="flex:2"><option value="">— pick a spell —</option>${opts}</select>`;
 }
@@ -405,6 +412,7 @@ let curId = localStorage.getItem(LS_CUR) || (DB[0] && DB[0].id) || null;
 let tab = 'bio';
 let wiz = null;   // { step } while the creation wizard is active
 let abilEdit = false;   // post-creation, reveal the ability-score editor on demand
+let skillEdit = false;  // post-creation, reveal the skill/expertise editor on demand
 
 function load(){
   try{ const v = JSON.parse(localStorage.getItem(LS_KEY)); return Array.isArray(v)?v.map(ensureFields):[]; }
@@ -435,9 +443,10 @@ function newCharacter(name){
     spellAbility:'int', spells:[], slots,
     items:[], currency:{cp:0,sp:0,ep:0,gp:0,pp:0},
     conditions:{}, exhaustion:0, concentration:{active:false, spell:''},
-    features:'', notes:''
+    features:'', notes:'', log:[]
   };
 }
+function logChange(c, msg){ if(!c) return; c.log=c.log||[]; c.log.unshift({t:Date.now(), m:msg}); if(c.log.length>250) c.log.pop(); save(); }
 function ensureFields(c){
   if(!c.conditions) c.conditions={};
   if(c.exhaustion==null) c.exhaustion=0;
@@ -446,6 +455,7 @@ function ensureFields(c){
   if(!c.asiBonus) c.asiBonus={str:0,dex:0,con:0,int:0,wis:0,cha:0};
   if(!c.feats) c.feats=[];
   if(c.armor==null){ c.armor='none'; c.shield=!!c.shield; c.acOverride=(c.ac!=null?c.ac:''); }   // keep old AC as override
+  if(!c.log) c.log=[];
   return c;
 }
 function cur(){ return DB.find(c=>c.id===curId) || null; }
@@ -583,6 +593,7 @@ function spendHitDie(c){
   const res=rollNotation(note);
   c.hp.cur=Math.min(c.hp.max, c.hp.cur+Math.max(0,res.total));
   c.hitDice.used=(c.hitDice.used||0)+1;
+  logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
   render();
@@ -593,6 +604,8 @@ const $ = sel => document.querySelector(sel);
 const app = $('#app');
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function fmtLogTime(t){ const d=new Date(t), now=new Date();
+  return d.toDateString()===now.toDateString() ? d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}) : d.toLocaleDateString([], {month:'short',day:'numeric'}); }
 
 function render(){
   renderHeader();
@@ -657,12 +670,26 @@ const WIZ_BASE = [
   {key:'review',title:'Review & finish'}
 ];
 function wizSteps(c){ return WIZ_BASE.filter(s=> (s.key!=='feat' || grantsL1Feat(c)) && (s.key!=='spells' || isCaster(c)) ); }
+const CANTRIPS_KNOWN_L1={Bard:2,Cleric:3,Druid:2,Sorcerer:4,Warlock:2,Wizard:3,Artificer:2};
+function cantripLimit(c){ return CANTRIPS_KNOWN_L1[c.cls]||0; }
+function spell1Limit(c){
+  const known={Bard:4,Sorcerer:2,Warlock:2,Wizard:6};
+  if(known[c.cls]!=null) return known[c.cls];
+  if(c.cls==='Cleric'||c.cls==='Druid') return Math.max(1, mod(abil(c,'wis'))+1);
+  if(c.cls==='Artificer') return Math.max(1, mod(abil(c,'int'))+1);
+  return 0;
+}
+function wizPickedCount(c, lvl){ return c.spells.filter(s=>(s.level||0)===lvl).length; }
 function wizSpellPicker(c){
   const known=new Set(c.spells.map(s=>s.name.toLowerCase()));
-  return `<p class="muted" style="font-size:13px;margin-top:0">Pick starting cantrips and 1st-level spells for your ${esc(c.cls)}. Add more anytime on the Spells tab.</p>`+
-    [0,1].map(l=>{ const list=classSpells(c).filter(s=>s.l===l); if(!list.length) return '';
-      return `<div class="tag" style="display:inline-block;margin:12px 0 4px">${l===0?'Cantrips':'1st level'}</div>`+
-        list.map(s=>`<div class="listrow"><input type="checkbox" class="chk" data-wspell="${esc(s.n)}|${s.l}" ${known.has(s.n.toLowerCase())?'checked':''}><div class="nm">${esc(s.n)}</div></div>`).join('');
+  const caps={0:cantripLimit(c), 1:spell1Limit(c)};
+  return `<p class="muted" style="font-size:13px;margin-top:0">Pick your starting spells for ${esc(c.cls)}. You can adjust later on the Spells tab.</p>`+
+    [0,1].map(l=>{ const list=classSpells(c).filter(s=>s.l===l); if(!list.length || caps[l]===0) return '';
+      const used=wizPickedCount(c,l);
+      return `<div class="row between" style="margin:14px 0 4px"><div class="tag">${l===0?'Cantrips':'1st-level spells'}</div><div class="muted" style="font-size:12px">${used}/${caps[l]}</div></div>`+
+        list.map(s=>`<div class="listrow"><input type="checkbox" class="chk" data-wspell="${esc(s.n)}|${s.l}" ${known.has(s.n.toLowerCase())?'checked':''}>
+          <span style="font-size:16px;flex:none">${SCHOOL_ICON[s.s]}</span>
+          <div class="nm">${esc(s.n)} <span class="sub">${SCHOOL_NAME[s.s]}</span></div></div>`).join('');
     }).join('');
 }
 function racePreview(c){
@@ -735,10 +762,13 @@ function renderWizard(c){
   if(def.key==='skills') bindSkillHandlers(c);
   if(def.key==='feat') $('#wz_feat').addEventListener('change',e=>{ c.feats[0]={name:e.target.value}; save(); });
   if(def.key==='spells') app.querySelectorAll('[data-wspell]').forEach(el=>el.addEventListener('change',e=>{
-    const [n,l]=el.dataset.wspell.split('|');
-    if(e.target.checked){ if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())) c.spells.push({name:n,level:Number(l),prepared:false,notes:''}); }
-    else c.spells=c.spells.filter(s=>s.name.toLowerCase()!==n.toLowerCase());
-    c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
+    const [n,l]=el.dataset.wspell.split('|'); const lv=Number(l);
+    const cap = lv===0?cantripLimit(c):spell1Limit(c);
+    if(e.target.checked){
+      if(wizPickedCount(c,lv) >= cap){ e.target.checked=false; flashBanner((lv===0?'Cantrip':'Spell')+' limit reached ('+cap+')'); return; }
+      if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())) c.spells.push({name:n,level:lv,prepared:true,notes:''});
+    } else c.spells=c.spells.filter(s=>s.name.toLowerCase()!==n.toLowerCase());
+    c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save(); render();
   }));
   if(def.key==='review'){
     const set=(m)=>{ wiz.hpMode=m; wiz.hpValue = m==='roll' ? Math.max(1, rnd(CLASS_HITDIE[c.cls]||8)+mod(abil(c,'con'))) : autoHP(c); render(); };
@@ -761,6 +791,7 @@ function wizNext(){
   c.speed=defaultSpeed(c);
   const hp = wiz.hpValue!=null ? wiz.hpValue : (autoHP(c)||c.hp.max);
   c.hp.max=hp; c.hp.cur=hp;
+  logChange(c, 'Created — level 1 '+(c.race?c.race+' ':'')+c.cls+(c.background?' ('+c.background+')':''));
   wiz=null; tab='bio'; save(); render();
 }
 
@@ -819,15 +850,18 @@ function levelUp(){
     if(hpGain==null) hpGain=Math.max(1,avg+con);
     c.hp.max+=hpGain; c.hp.cur+=hpGain;
     if(needsSub){ const s=$('#luSub'); if(s) c.subclass=s.value; }
+    let asiNote='';
     if(isAsi){
       if(asiMode==='asi'){
         const k1=abilKeyByName($('#luA1').value), a2=$('#luA2').value;
         if(k1) c.asiBonus[k1]+= (a2==='—'?2:1);
         if(a2!=='—'){ const k2=abilKeyByName(a2); if(k2) c.asiBonus[k2]+=1; }
         clampAbil(c);
-      } else { c.feats.push({name:$('#luFeat').value}); }
+        asiNote=', ASI '+$('#luA1').value+(a2!=='—'?' & '+a2:'');
+      } else { const fn=$('#luFeat').value; c.feats.push({name:fn}); asiNote=', feat: '+fn; }
     }
     c.level=nl; const h=CLASS_HITDIE[c.cls]; if(h) c.hitDice.total=nl+'d'+h;
+    logChange(c, 'Leveled up to '+nl+' (+'+hpGain+' HP)'+(needsSub&&c.subclass?', subclass: '+c.subclass:'')+asiNote);
     $('#modalRoot').innerHTML=''; save(); render(); flashBanner('Welcome to level '+nl+'!');
   };
 }
@@ -888,7 +922,7 @@ function renderBio(c){
   $('#f_profOverride').addEventListener('change',e=>{ c.profOverride = e.target.value===''?'':Number(e.target.value); save(); render(); });
   $('#f_insp').addEventListener('change',e=>{ c.inspiration=e.target.checked; save(); });
   $('#levelUpBtn').addEventListener('click',levelUp);
-  $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_name').value.trim(); if(!v) return; c.feats.push({name:v}); save(); render(); });
+  $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_name').value.trim(); if(!v) return; c.feats.push({name:v}); logChange(c,'Gained feat: '+v); save(); render(); });
   app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
 }
@@ -968,12 +1002,21 @@ function renderAbil(c){
   </div>
 
   <div class="card">
-    <h2>Skills <span class="muted" style="text-transform:none;font-size:11px">— ${skillCount(c)}/${skillBudget(c)} chosen · tap ◇ for expertise</span></h2>
+    <div class="row between" style="margin-bottom:8px">
+      <h2 style="margin:0">Skills <span class="muted" style="text-transform:none;font-size:11px">— ${skillCount(c)}/${skillBudget(c)}${skillEdit?' · tap ◇ for expertise':''}</span></h2>
+      <button class="btn ghost sm" id="skillEditBtn">${skillEdit?'✓ Done':'✎ Edit'}</button>
+    </div>
     ${SKILLS.map(([key,nm,ab])=>{
-      const b = skillBonus(c,key,ab,true);
+      const b = skillBonus(c,key,ab,true), prof=!!c.skillProf[key], exp=!!c.skillExp[key];
+      if(skillEdit) return `<div class="listrow">
+        <input type="checkbox" class="chk" data-skill="${key}" ${prof?'checked':''}>
+        <button class="del" data-exp="${key}" title="Expertise" style="color:${exp?'var(--gold)':'var(--mut)'}">${exp?'◆':'◇'}</button>
+        <div class="nm">${nm} <span class="sub">(${ab})</span></div>
+        <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
+      </div>`;
       return `<div class="listrow">
-        <input type="checkbox" class="chk" data-skill="${key}" ${c.skillProf[key]?'checked':''}>
-        <button class="del" data-exp="${key}" title="Expertise" style="color:${c.skillExp[key]?'var(--gold)':'var(--mut)'}">${c.skillExp[key]?'◆':'◇'}</button>
+        <span class="profdot ${prof?'on':''}"></span>
+        <span style="width:14px;text-align:center;color:var(--gold)">${exp?'◆':''}</span>
         <div class="nm">${nm} <span class="sub">(${ab})</span></div>
         <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
       </div>`;
@@ -989,8 +1032,9 @@ function renderAbil(c){
   </div>`;
 
   $('#abilEditBtn').addEventListener('click',()=>{ abilEdit=!abilEdit; render(); });
+  $('#skillEditBtn').addEventListener('click',()=>{ skillEdit=!skillEdit; render(); });
   if(abilEdit) bindAbilHandlers(c);
-  bindSkillHandlers(c);
+  if(skillEdit) bindSkillHandlers(c);
 }
 function bindAbilHandlers(c){
   ABILITIES.forEach(([k])=>{
@@ -1079,7 +1123,8 @@ function renderCombat(c){
       <div class="listrow"><div class="nm">Successes</div><div class="pips" id="deathSucc">${pips(3,c.death.succ,'succ')}</div></div>
       <div class="listrow"><div class="nm">Failures</div><div class="pips" id="deathFail">${pips(3,c.death.fail,'fail')}</div></div>
     </div>
-    <button class="btn ghost block" id="spendHd" style="margin-top:12px">☾ Spend a hit die to heal${hd?` · ${hdLeft}/${hd.count} left`:''}</button>
+    <button class="btn ghost block" id="spendHd" style="margin-top:12px">☾ Short rest: roll a Hit Die to heal${hd?` · ${hdLeft}/${hd.count} left`:''}</button>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">On a short rest you can spend Hit Dice — roll the die + your CON to recover HP. You regain half on a long rest.</p>
   </div>
 
   <div class="card">
@@ -1167,7 +1212,7 @@ function renderCombat(c){
   $('#spendHd').addEventListener('click',()=>spendHitDie(c));
   app.querySelectorAll('[data-cond]').forEach(el=>el.addEventListener('click',()=>{
     const k=el.dataset.cond;
-    if(c.conditions[k]) delete c.conditions[k]; else c.conditions[k]=true;
+    if(c.conditions[k]){ delete c.conditions[k]; logChange(c,'Cleared condition: '+k); } else { c.conditions[k]=true; logChange(c,'Gained condition: '+k); }
     save(); render();
   }));
   $('#exhUp').addEventListener('click',()=>{ c.exhaustion=Math.min(6,(c.exhaustion||0)+1); save(); render(); });
@@ -1190,8 +1235,10 @@ function applyHp(c,delta){
     let dmg=-delta;
     if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
     c.hp.cur=Math.max(0,c.hp.cur-dmg);
+    logChange(c,'Took '+(-delta)+' damage → '+c.hp.cur+' HP');
   }else{
     c.hp.cur=Math.min(c.hp.max,c.hp.cur+delta);
+    logChange(c,'Healed '+delta+' → '+c.hp.cur+' HP');
   }
   save(); render();
 }
@@ -1202,6 +1249,7 @@ function addSpellTo(c, name, level){
   if(c.spells.some(s=>s.name.toLowerCase()===name.toLowerCase())){ flashBanner(name+' is already known'); return; }
   c.spells.push({name, level:Number(level)||0, prepared:false, notes:''});
   c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
+  logChange(c, 'Learned '+name+' ('+lvlLabel(Number(level)||0)+')');
   save(); render();
 }
 function renderSpells(c){
@@ -1241,7 +1289,7 @@ function renderSpells(c){
     <div class="addrow">
       <select id="sp_pick" style="flex:2">
         <option value="">— add a ${esc(c.cls)} spell —</option>
-        ${[0,1,2,3,4,5,6,7,8,9].map(l=>{ const list=classSpells(c).filter(s=>s.l===l); if(!list.length) return ''; return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${esc(s.n)}</option>`).join('')+`</optgroup>`; }).join('')}
+        ${[0,1,2,3,4,5,6,7,8,9].map(l=>{ const list=classSpells(c).filter(s=>s.l===l); if(!list.length) return ''; return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${SCHOOL_ICON[s.s]} ${esc(s.n)}</option>`).join('')+`</optgroup>`; }).join('')}
         <option value="__custom__">+ Custom spell…</option>
       </select>
       <button class="btn sm" id="addSpell">Add</button>
@@ -1258,7 +1306,8 @@ function renderSpells(c){
           byLvl[l].map(({s,i})=>`
           <div class="spell">
             <input type="checkbox" class="chk" data-prep="${i}" ${s.prepared?'checked':''} title="Prepared">
-            <div class="nm"><b>${esc(s.name)}</b>${s.notes?`<small>${esc(s.notes)}</small>`:''}</div>
+            <span style="font-size:18px;flex:none" title="${spellMeta(s.name)?SCHOOL_NAME[spellMeta(s.name).s]:''}">${spellIcon(s.name)}</span>
+            <div class="nm"><b>${esc(s.name)}</b><small>${spellDesc(s.name, s.level)}${s.notes?' · '+esc(s.notes):''}</small></div>
             <button class="del" data-delspell="${i}">✕</button>
           </div>`).join('')+`</div>`;
       }).join('') : '<div class="empty">No spells yet. Add cantrips and spells above.</div>'}
@@ -1271,6 +1320,7 @@ function renderSpells(c){
     const hd=parseHitDice(c);                 // long rest: regain half your hit dice
     if(hd) c.hitDice.used=Math.max(0,(c.hitDice.used||0)-Math.max(1,Math.floor(hd.count/2)));
     c.exhaustion=Math.max(0,(c.exhaustion||0)-1);  // a long rest removes 1 exhaustion
+    logChange(c, 'Long rest — HP, slots & hit dice restored');
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
   });
@@ -1371,6 +1421,13 @@ function renderNotes(c){
     <textarea id="nt_notes" style="min-height:200px" placeholder="Allies, quests, backstory, anything…">${esc(c.notes)}</textarea>
   </div>
   <div class="card">
+    <div class="row between" style="margin-bottom:8px">
+      <h2 style="margin:0">Change Log ${(c.log&&c.log.length)?`<span class="muted" style="text-transform:none;font-size:11px">— ${c.log.length}</span>`:''}</h2>
+      ${(c.log&&c.log.length)?'<button class="btn ghost sm" id="clearLog">Clear</button>':''}
+    </div>
+    ${(c.log&&c.log.length)? c.log.slice(0,80).map(e=>`<div class="listrow"><div class="nm" style="font-size:13px">${esc(e.m)}</div><div class="sub" style="white-space:nowrap">${fmtLogTime(e.t)}</div></div>`).join('') : '<div class="empty">Nothing logged yet. Level-ups, spells, feats, damage, rests and conditions will appear here.</div>'}
+  </div>
+  <div class="card">
     <h2>Backup</h2>
     <p class="muted" style="font-size:13px;margin-top:0">Export all characters to a file, or import a backup.</p>
     <div class="row2">
@@ -1383,6 +1440,7 @@ function renderNotes(c){
 
   $('#nt_features').addEventListener('change',e=>{ c.features=e.target.value; save(); });
   $('#nt_notes').addEventListener('change',e=>{ c.notes=e.target.value; save(); });
+  { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
   $('#importFile').addEventListener('change',importData);
@@ -1473,7 +1531,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v9';
+const APP_VERSION='v10';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
