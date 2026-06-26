@@ -532,7 +532,7 @@
 <div class="modal" id="shareModal">
   <div class="sheet">
     <h3 id="shareTitle" style="font-size:16px;margin-bottom:4px">Share &amp; earn ⭐</h3>
-    <p class="muted small">Post it to X to advertise &amp; bank <b>+15 points</b>. Edit it however you like.</p>
+    <p class="muted small">Post it to X to advertise &amp; bank <b>+15 points</b>. In the menu, tap the <b>X</b> app — your post is also copied as a backup.</p>
     <textarea id="shareTextArea" rows="5"></textarea>
     <button class="btn" onclick="postShareX()">🐦 Post to X · +15 pts</button>
     <button class="btn sec" onclick="copyShareText()">Copy text</button>
@@ -678,22 +678,14 @@ function shareModal(kind){
 function closeShareModal(){ document.getElementById('shareModal').classList.remove('show'); }
 function postShareX(){
   const text=document.getElementById('shareTextArea').value;
-  const enc=encodeURIComponent(text);
-  const webUrl='https://x.com/intent/post?text='+enc;
   awardShare();
+  // Always copy first as a guaranteed backup (X strips text from its links).
+  if(navigator.clipboard) navigator.clipboard.writeText(text).catch(()=>{});
   closeShareModal();
-  // Android: fire an explicit SEND intent to the X app so the composer opens pre-filled
-  // (X ignores text in its twitter:// / intent/tweet links, but honors EXTRA_TEXT).
-  if(/Android/i.test(navigator.userAgent)){
-    const intentUrl='intent:#Intent;action=android.intent.action.SEND;type=text/plain;'
-      +'S.android.intent.extra.TEXT='+enc+';'
-      +'package=com.twitter.android;'
-      +'S.browser_fallback_url='+encodeURIComponent(webUrl)+';end';
-    try{ window.location.href=intentUrl; return; }catch(e){}
-  }
-  // iOS / other: the OS share sheet reliably hands text to the X app
+  // The OS share menu is the only reliable way to hand text to the installed X app.
   if(navigator.share){ navigator.share({text}).catch(()=>{}); return; }
-  try{ window.open(webUrl,'_blank','noopener'); }catch(e){}
+  // Desktop / no share API: open the web composer.
+  try{ window.open('https://x.com/intent/post?text='+encodeURIComponent(text),'_blank','noopener'); }catch(e){}
 }
 function copyShareText(){
   const text=document.getElementById('shareTextArea').value;
@@ -1744,7 +1736,7 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v21';
+const APP_VERSION='v22';
 initNFC(); renderVial(); calcConc(); calcDose(); updatePtsBadge();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
