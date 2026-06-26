@@ -24,7 +24,7 @@
   body{
     background:var(--bg); color:var(--txt);
     font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
-    padding-bottom:calc(96px + env(safe-area-inset-bottom)); max-width:520px; margin:0 auto;
+    padding-bottom:calc(120px + env(safe-area-inset-bottom)); max-width:520px; margin:0 auto;
     position:relative; min-height:100%;
   }
   h1,h2,h3{margin:0; font-weight:650; letter-spacing:-.01em}
@@ -42,7 +42,7 @@
     display:grid;place-items:center;font-weight:800;font-size:15px;color:#06121f}
   header .sub{font-size:11.5px}
 
-  .view{display:none; padding:16px 16px 8px}
+  .view{display:none; padding:16px 16px 24px}
   .view.active{display:block; animation:fade .25s ease}
   @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
@@ -184,6 +184,17 @@
   .fdoor .frost{position:absolute; inset:0; border-radius:18px;
     background:radial-gradient(circle at 32% 28%, rgba(255,255,255,.07), transparent 62%)}
   @keyframes fdooropen{0%{transform:perspective(900px) rotateY(0deg)}100%{transform:perspective(900px) rotateY(-115deg); opacity:0}}
+
+  /* scheduled dose marker on calendar */
+  .calday.sched{box-shadow:inset 0 0 0 1.6px rgba(255,180,84,.75)}
+  .calday.sel.sched{box-shadow:inset 0 0 0 1.6px #06121f}
+  .upd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+  .upd:last-child{border-bottom:none}
+
+  /* site footer */
+  footer.site{text-align:center;padding:18px 16px 8px}
+  footer.site a{color:var(--muted);text-decoration:none;font-size:12px;font-weight:600}
+  footer.site a:active{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -344,7 +355,33 @@
     <div class="kv"><span class="k">Doses per vial</span><span class="v mono" id="d_count">—</span></div>
     <div class="kv"><span class="k">Per 0.01 mL tick</span><span class="v mono" id="d_tick">—</span></div>
 
-    <button class="btn" id="d_finish" style="margin-top:16px" onclick="finishSetup()">Finish &amp; save vial</button>
+    <div class="divider"></div>
+    <div class="steplabel">Dosing schedule</div>
+    <div class="field">
+      <label>How often do you dose?</label>
+      <select id="d_freq" onchange="onFreqChange()">
+        <option value="0">No schedule</option>
+        <option value="1">Daily</option>
+        <option value="2">Every 2 days</option>
+        <option value="3">Every 3 days</option>
+        <option value="3.5">Twice weekly</option>
+        <option value="7" selected>Weekly</option>
+        <option value="14">Every 2 weeks</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="field" id="d_freqCustomWrap" style="display:none">
+        <label>Every N days</label>
+        <input id="d_freqCustom" type="number" inputmode="numeric" min="1" value="5">
+      </div>
+      <div class="field">
+        <label>First dose date</label>
+        <input id="d_start" type="date">
+      </div>
+    </div>
+
+    <button class="btn" id="d_finish" style="margin-top:6px" onclick="finishSetup()">Finish &amp; save vial</button>
     <button class="btn sec" style="margin-top:10px" onclick="show('v-log')">📅 Go to dose calendar</button>
     <button class="btn ghost" style="margin-top:10px" onclick="show('v-vial')">← Back to vial</button>
   </div>
@@ -451,12 +488,20 @@
     </div>
     <div class="caldow"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
     <div class="calgrid" id="calGrid"></div>
+    <div class="small muted" style="margin-top:12px;display:flex;gap:16px;justify-content:center">
+      <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent2);vertical-align:middle;margin-right:5px"></span>logged</span>
+      <span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;box-shadow:inset 0 0 0 1.6px rgba(255,180,84,.75);vertical-align:middle;margin-right:5px"></span>scheduled</span>
+    </div>
   </div>
+
+  <div class="card" id="upcomingCard" style="display:none"></div>
 
   <div class="card" id="logList"></div>
 
   <button class="btn ghost" onclick="show('v-vial')">← Back to vial</button>
 </section>
+
+<footer class="site"><a href="https://peptimart.xyz" target="_blank" rel="noopener">Pepti Mart · peptimart.xyz ↗</a></footer>
 
 <!-- ===================== NAV ===================== -->
 <nav>
@@ -479,7 +524,8 @@ function freshVial(){
     orderNo:null, vialNo:null,
     origin:'Pepti Mart · Lot R24-118', purity:'99.2% (HPLC)',
     verified:false, reconstituted:false,
-    bacMl:null, reconDate:null, dose:null, bud:28
+    bacMl:null, reconDate:null, dose:null, bud:28,
+    freqDays:null, scheduleStart:null
   };
 }
 let vial=freshVial();
@@ -511,7 +557,7 @@ function show(id){
   if(id==='v-vials') renderVials();
   if(id==='v-vial') renderVial();
   if(id==='v-recon'){ updateUnitLabels(); calcConc(); }
-  if(id==='v-dose'){ updateUnitLabels(); calcDose(); }
+  if(id==='v-dose'){ updateUnitLabels(); calcDose(); syncDoseSchedule(); }
   if(id==='v-log'){ updateUnitLabels(); renderLog(); }
 }
 let toastT;
@@ -931,12 +977,61 @@ function calcDose(){
   document.getElementById('d_count').textContent = (has? Math.floor(mg/dose):'—')+(has?' doses':'');
   document.getElementById('d_tick').textContent = c>0? (c*0.01).toFixed(2)+' '+u : '—';
 }
+function onFreqChange(){
+  document.getElementById('d_freqCustomWrap').style.display =
+    document.getElementById('d_freq').value==='custom' ? 'block' : 'none';
+}
+function syncDoseSchedule(){
+  const fsel=document.getElementById('d_freq');
+  const presets=['0','1','2','3','3.5','7','14'];
+  if(vial.freqDays>0){
+    if(presets.includes(String(vial.freqDays))){ fsel.value=String(vial.freqDays); }
+    else { fsel.value='custom'; document.getElementById('d_freqCustom').value=vial.freqDays; }
+  }
+  const ds=document.getElementById('d_start');
+  if(!ds.value) ds.value = vial.scheduleStart || vial.reconDate || new Date().toISOString().slice(0,10);
+  onFreqChange();
+}
+function readFreq(){
+  const v=document.getElementById('d_freq').value;
+  return v==='custom' ? (+document.getElementById('d_freqCustom').value||0) : (+v||0);
+}
 function finishSetup(){
   vial.dose=+document.getElementById('d_dose').value||null;
+  vial.freqDays=readFreq();
+  vial.scheduleStart = vial.freqDays>0 ? (document.getElementById('d_start').value || new Date().toISOString().slice(0,10)) : null;
   saveCurrentVial();
   SFX('success');
-  toast('Vial saved to registry ✓');
+  toast(vial.freqDays>0 ? 'Saved · schedule set ✓' : 'Vial saved to registry ✓');
   show('v-vial');
+}
+
+// ---------- dose scheduling ----------
+function scheduleOccurrences(v, opts){
+  opts=opts||{};
+  if(!v || !(v.freqDays>0) || !v.scheduleStart) return [];
+  const day=864e5;
+  const start=new Date(v.scheduleStart+'T12:00:00').getTime();
+  const today=new Date(new Date().toISOString().slice(0,10)+'T12:00:00').getTime();
+  const end = v.reconstituted ? new Date(expiryInfo(v).date+'T12:00:00').getTime()+day : start+365*day;
+  const max=opts.max||120, out=[];
+  for(let k=0;k<600 && out.length<max;k++){
+    const t=start+Math.round(k*v.freqDays)*day;
+    if(t>end) break;
+    if(opts.fromToday && t<today) continue;
+    out.push(new Date(t).toISOString().slice(0,10));
+  }
+  return out;
+}
+function fmtFreq(d){ return d===1?'day':d===7?'week':d===14?'2 weeks':d===3.5?'half week':d+' days'; }
+function nextDose(v){
+  if(!(v.freqDays>0)) return null;
+  const today=new Date().toISOString().slice(0,10);
+  const logged=new Set(doseLog.filter(d=>d.vialId===v.id).map(d=>d.date));
+  const occ=scheduleOccurrences(v,{fromToday:true,max:60}).filter(ds=>!logged.has(ds));
+  if(!occ.length) return null;
+  const daysAway=Math.round((new Date(occ[0]+'T12:00:00')-new Date(today+'T12:00:00'))/864e5);
+  return {date:occ[0], daysAway, dueToday:daysAway<=0};
 }
 function logDose(){
   const mg=+document.getElementById('d_mg').value||0,
@@ -1121,7 +1216,17 @@ function renderVial(){
   const volBar = vial.reconstituted ? `
       <div class="expbar" style="margin-top:12px"><i style="width:${volPct}%;background:var(--accent)"></i></div>
       <div class="small muted" style="margin-top:4px">${volLeft.toFixed(2)} mL of ${vial.bacMl.toFixed(2)} mL remaining</div>` : '';
-  const sched = doseSchedule(entries);
+  // schedule line: prefer the explicit dosing schedule, else infer from logged dates
+  const nd = nextDose(vial);
+  let schedHTML='';
+  if(nd){
+    schedHTML = nd.dueToday
+      ? `<div class="small" style="margin-top:10px;color:var(--warn);font-weight:700">💉 Dose due ${nd.daysAway<0?Math.abs(nd.daysAway)+'d overdue':'today'} · tap “Log a dose”</div>`
+      : `<div class="small" style="margin-top:10px;color:var(--muted)">Next dose ${nd.daysAway===1?'tomorrow':'in '+nd.daysAway+'d'} · every ${fmtFreq(vial.freqDays)}</div>`;
+  }else{
+    const sched = doseSchedule(entries);
+    if(sched) schedHTML=`<div class="small" style="margin-top:10px;color:${sched.due?'var(--warn)':'var(--muted)'}">${sched.text}</div>`;
+  }
   const dash = `
     <div class="card">
       <div class="row" style="gap:14px;align-items:center">
@@ -1133,7 +1238,7 @@ function renderVial(){
             <div class="stat"><div class="n mono">${mgLeft.toFixed(mgLeft<10?1:0)}<span style="font-size:12px"> ${vial.unit||'mg'}</span></div><div class="l">Peptide left</div></div>
           </div>
           ${volBar}
-          ${sched?`<div class="small" style="margin-top:10px;color:${sched.due?'var(--warn)':'var(--muted)'}">${sched.text}</div>`:''}
+          ${schedHTML}
         </div>
       </div>
     </div>`;
@@ -1233,12 +1338,13 @@ function renderCalendar(){
   const first=new Date(calY,calM,1).getDay();
   const days=new Date(calY,calM+1,0).getDate();
   const today=new Date().toISOString().slice(0,10);
+  const schedSet=new Set(scheduleOccurrences(vial,{max:300}));
   let html='';
   for(let i=0;i<first;i++) html+='<div></div>';
   for(let d=1;d<=days;d++){
     const ds=`${calY}-${String(calM+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const has=doseLog.some(x=>x.date===ds);
-    let cls='calday'; if(ds===today)cls+=' today'; if(ds===calSel)cls+=' sel';
+    let cls='calday'; if(ds===today)cls+=' today'; if(ds===calSel)cls+=' sel'; if(schedSet.has(ds))cls+=' sched';
     html+=`<div class="${cls}" onclick="calSelect('${ds}')">${d}${has?'<span class="d"></span>':''}</div>`;
   }
   document.getElementById('calGrid').innerHTML=html;
@@ -1291,7 +1397,45 @@ function renderLogList(){
 }
 function renderLog(){
   const di=document.getElementById('log_date'); if(di && !di.value) di.value=calSel;
-  renderCalendar(); logVolPreview(); renderLogList();
+  renderCalendar(); logVolPreview(); renderUpcoming(); renderLogList();
+}
+function renderUpcoming(){
+  const el=document.getElementById('upcomingCard'); if(!el) return;
+  const occ=scheduleOccurrences(vial,{fromToday:true,max:8});
+  if(!(vial.freqDays>0) || !occ.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  const logged=new Set(doseLog.filter(d=>d.vialId===vial.id).map(d=>d.date));
+  const today=new Date().toISOString().slice(0,10);
+  const remindOn=(()=>{ try{return localStorage.getItem('pm_remind')==='1' && ('Notification'in window) && Notification.permission==='granted';}catch(e){return false;} })();
+  const rows=occ.map(ds=>{
+    const done=logged.has(ds);
+    const d=Math.round((new Date(ds+'T12:00:00')-new Date(today+'T12:00:00'))/864e5);
+    const when = d<=0?'Due now':d===1?'Tomorrow':'in '+d+'d';
+    const col = done?'var(--good)':d<=0?'var(--warn)':'var(--muted)';
+    return `<div class="upd"><span>${fmtDate(ds)}</span><span class="mono" style="color:${col}">${done?'logged ✓':when}</span></div>`;
+  }).join('');
+  el.innerHTML=`<div class="row between" style="margin-bottom:8px">
+      <h3 style="font-size:14px">Upcoming doses · every ${fmtFreq(vial.freqDays)}</h3>
+      <button class="btn sec" style="width:auto;padding:6px 10px;font-size:12px" onclick="enableReminders()">${remindOn?'🔔 On':'🔔 Remind me'}</button>
+    </div>${rows}`;
+}
+function enableReminders(){
+  if(!('Notification' in window)){ toast('Notifications not supported on this device'); return; }
+  if(Notification.permission==='granted'){ try{localStorage.setItem('pm_remind','1');}catch(e){} toast('Reminders on'); renderUpcoming(); return; }
+  Notification.requestPermission().then(p=>{
+    if(p==='granted'){ try{localStorage.setItem('pm_remind','1');}catch(e){} toast('Reminders on · you’ll be nudged when a dose is due'); checkDueReminder(true); }
+    else toast('Notifications blocked in browser settings');
+    renderUpcoming();
+  });
+}
+function checkDueReminder(force){
+  let remind=false; try{ remind=localStorage.getItem('pm_remind')==='1'; }catch(e){}
+  if((!remind && !force) || !('Notification'in window) || Notification.permission!=='granted') return;
+  const due=Object.values(vialStore).filter(v=>v.verified).filter(v=>{ const n=nextDose(v); return n && n.dueToday; });
+  if(due.length){
+    const names=due.map(v=>v.name).slice(0,3).join(', ');
+    try{ new Notification('💉 Dose due today', {body:names+(due.length>3?' +more':'')+' — open Pepti Mart to log it', icon:'icon.svg'}); }catch(e){}
+  }
 }
 
 // ---------- PK model (Bateman / 1-compartment) ----------
@@ -1449,10 +1593,11 @@ function drawPK(){
 }
 
 // init
-const APP_VERSION='v14';
+const APP_VERSION='v15';
 initNFC(); renderVial(); calcConc(); calcDose();
 const av=document.getElementById('appVer'); if(av) av.textContent=APP_VERSION;
 const sb=document.getElementById('soundBtn'); if(sb) sb.textContent=soundOn?'🔊':'🔇';
+checkDueReminder();   // nudge if a scheduled dose is due today
 // pick up where we left off if a vial is already registered
 if(vial.verified){ document.getElementById('syncpill').textContent='● '+vial.compound; }
 window.addEventListener('resize',()=>{ if(document.getElementById('v-plot').classList.contains('active')) drawPK(); });
