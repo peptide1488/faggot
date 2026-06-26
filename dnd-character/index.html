@@ -190,6 +190,11 @@
   .chip.on{background:#3b1b22;border-color:#7f1d1d;color:#fecaca}
   .stepper{display:flex;align-items:center;gap:10px}
   .stepper button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;width:34px;height:34px;font-size:18px}
+  .stepper button:disabled{opacity:.35}
+  .seg{display:flex;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:4px;margin-bottom:12px}
+  .seg button{flex:1;background:none;border:0;color:var(--mut);padding:8px;border-radius:7px;font-size:13px;font-weight:600}
+  .seg button.on{background:var(--accent2);color:#f5f3ff}
+  .pbinfo{font-size:13px;color:var(--mut);margin-bottom:10px}
 </style>
 </head>
 <body>
@@ -242,6 +247,44 @@ const SKILLS = [
 const CLASSES = ['Artificer','Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin','Ranger','Rogue','Sorcerer','Warlock','Wizard','Other'];
 const ALIGN = ['—','LG','NG','CG','LN','TN','CN','LE','NE','CE'];
 const CONDITIONS = ['Blinded','Charmed','Deafened','Frightened','Grappled','Incapacitated','Invisible','Paralyzed','Petrified','Poisoned','Prone','Restrained','Stunned','Unconscious'];
+const RACES = ['Aarakocra','Aasimar','Bugbear','Centaur','Changeling','Dragonborn','Dwarf','Elf','Fairy','Firbolg','Genasi','Githyanki','Githzerai','Gnome','Goblin','Goliath','Half-Elf','Half-Orc','Halfling','Harengon','Hobgoblin','Human','Kalashtar','Kenku','Kobold','Leonin','Lizardfolk','Loxodon','Minotaur','Orc','Owlin','Satyr','Shifter','Simic Hybrid','Tabaxi','Tiefling','Tortle','Triton','Vedalken','Warforged','Yuan-Ti'];
+const BACKGROUNDS = ['Acolyte','Anthropologist','Archaeologist','Charlatan','City Watch','Clan Crafter','Cloistered Scholar','Courtier','Criminal','Entertainer','Faction Agent','Far Traveler','Folk Hero','Gladiator','Guild Artisan','Haunted One','Hermit','Knight','Mercenary Veteran','Noble','Outlander','Pirate','Sage','Sailor','Soldier','Spy','Urchin'];
+const SUBCLASSES = {
+  Artificer:['Alchemist','Armorer','Artillerist','Battle Smith'],
+  Barbarian:['Path of the Berserker','Path of the Totem Warrior','Ancestral Guardian','Storm Herald','Zealot','Path of the Beast','Wild Magic','Battlerager'],
+  Bard:['College of Lore','College of Valor','Glamour','Swords','Whispers','Eloquence','Creation','Spirits'],
+  Cleric:['Knowledge','Life','Light','Nature','Tempest','Trickery','War','Death','Forge','Grave','Order','Peace','Twilight','Arcana'],
+  Druid:['Circle of the Land','Circle of the Moon','Dreams','Shepherd','Spores','Stars','Wildfire'],
+  Fighter:['Champion','Battle Master','Eldritch Knight','Arcane Archer','Cavalier','Samurai','Psi Warrior','Rune Knight','Echo Knight','Purple Dragon Knight'],
+  Monk:['Open Hand','Shadow','Four Elements','Drunken Master','Kensei','Sun Soul','Mercy','Astral Self','Long Death','Ascendant Dragon'],
+  Paladin:['Devotion','Ancients','Vengeance','Conquest','Crown','Glory','Redemption','Watchers','Oathbreaker'],
+  Ranger:['Hunter','Beast Master','Gloom Stalker','Horizon Walker','Monster Slayer','Fey Wanderer','Swarmkeeper','Drakewarden'],
+  Rogue:['Thief','Assassin','Arcane Trickster','Inquisitive','Mastermind','Scout','Swashbuckler','Phantom','Soulknife'],
+  Sorcerer:['Draconic Bloodline','Wild Magic','Divine Soul','Shadow Magic','Storm Sorcery','Aberrant Mind','Clockwork Soul','Lunar Sorcery'],
+  Warlock:['The Archfey','The Fiend','The Great Old One','The Celestial','The Hexblade','The Fathomless','The Genie','The Undead','The Undying'],
+  Wizard:['Abjuration','Conjuration','Divination','Enchantment','Evocation','Illusion','Necromancy','Transmutation','Bladesinging','War Magic','Chronurgy','Graviturgy','Order of Scribes'],
+  Other:[]
+};
+const CLASS_SAVES = {
+  Artificer:['con','int'], Barbarian:['str','con'], Bard:['dex','cha'], Cleric:['wis','cha'],
+  Druid:['int','wis'], Fighter:['str','con'], Monk:['str','dex'], Paladin:['wis','cha'],
+  Ranger:['str','dex'], Rogue:['dex','int'], Sorcerer:['con','cha'], Warlock:['wis','cha'], Wizard:['int','wis']
+};
+const CLASS_HITDIE = {
+  Barbarian:12, Fighter:10, Paladin:10, Ranger:10,
+  Artificer:8, Bard:8, Cleric:8, Druid:8, Monk:8, Rogue:8, Warlock:8, Sorcerer:6, Wizard:6
+};
+// Point-buy cost table (5e): scores 8–15.
+const PB_COST = {8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9};
+const STD_ARRAY = [15,14,13,12,10,8];
+function pbCost(v){ return PB_COST[Math.max(8,Math.min(15,Number(v)||8))]||0; }
+function pbUsed(c){ return ABILITIES.reduce((s,[k])=>s+pbCost(c.abilities[k]),0); }
+function applyClassDefaults(c){
+  const sv=CLASS_SAVES[c.cls];
+  if(sv){ c.saveProf={str:false,dex:false,con:false,int:false,wis:false,cha:false}; sv.forEach(s=>c.saveProf[s]=true); }
+  const hd=CLASS_HITDIE[c.cls];
+  if(hd) c.hitDice.total=(Number(c.level)||1)+'d'+hd;
+}
 
 /* ---- data ---- */
 let DB = load();
@@ -263,8 +306,9 @@ function newCharacter(name){
     name: name || 'New Adventurer',
     race:'', cls:'Fighter', subclass:'', level:1, background:'', alignment:'—', xp:0,
     inspiration:false,
-    abilities:{str:10,dex:10,con:10,int:10,wis:10,cha:10},
-    saveProf:{str:false,dex:false,con:false,int:false,wis:false,cha:false},
+    abilMethod:'pointbuy',
+    abilities:{str:8,dex:8,con:8,int:8,wis:8,cha:8},
+    saveProf:{str:true,dex:false,con:true,int:false,wis:false,cha:false},
     skillProf:{}, skillExp:{},
     ac:10, speed:30, initMisc:0, profOverride:'',
     hp:{max:8,cur:8,temp:0},
@@ -281,6 +325,7 @@ function ensureFields(c){
   if(!c.conditions) c.conditions={};
   if(c.exhaustion==null) c.exhaustion=0;
   if(!c.concentration) c.concentration={active:false, spell:''};
+  if(!c.abilMethod) c.abilMethod='manual';   // keep existing characters' scores as-is
   return c;
 }
 function cur(){ return DB.find(c=>c.id===curId) || null; }
@@ -482,12 +527,12 @@ function renderBio(c){
     <div class="grid">
       <div><label>Character name</label><input id="f_name" value="${esc(c.name)}"></div>
       <div class="g2 grid">
-        <div><label>Race / Species</label><input id="f_race" value="${esc(c.race)}" placeholder="e.g. Half-Elf"></div>
-        <div><label>Background</label><input id="f_background" value="${esc(c.background)}" placeholder="e.g. Sage"></div>
+        <div><label>Race / Species</label>${fieldSelect('f_race', RACES, c.race, 'Custom race')}</div>
+        <div><label>Background</label>${fieldSelect('f_background', BACKGROUNDS, c.background, 'Custom background')}</div>
       </div>
       <div class="g3 grid">
         <div><label>Class</label>${select('f_cls', CLASSES, c.cls)}</div>
-        <div><label>Subclass</label><input id="f_subclass" value="${esc(c.subclass)}" placeholder="optional"></div>
+        <div><label>Subclass</label>${fieldSelect('f_subclass', SUBCLASSES[c.cls]||[], c.subclass, 'Custom subclass')}</div>
         <div><label>Level</label><input id="f_level" type="number" min="1" max="20" value="${c.level}"></div>
       </div>
       <div class="g3 grid">
@@ -515,8 +560,11 @@ function renderBio(c){
     <button class="btn bad block" id="deleteChar">Delete this character</button>
   </div>`;
 
-  bind('f_name','name'); bind('f_race','race'); bind('f_background','background');
-  bind('f_cls','cls'); bind('f_subclass','subclass'); bindNum('f_level','level');
+  bind('f_name','name');
+  bindSelectCustom('f_race','race'); bindSelectCustom('f_background','background');
+  $('#f_cls').addEventListener('change',e=>{ c.cls=e.target.value; c.subclass=''; applyClassDefaults(c); save(); render(); });
+  bindSelectCustom('f_subclass','subclass');
+  $('#f_level').addEventListener('change',e=>{ c.level=Math.max(1,Math.min(20,Number(e.target.value)||1)); const hd=CLASS_HITDIE[c.cls]; if(hd) c.hitDice.total=c.level+'d'+hd; save(); render(); });
   bind('f_alignment','alignment'); bindNum('f_xp','xp');
   $('#f_profOverride').addEventListener('change',e=>{ c.profOverride = e.target.value===''?'':Number(e.target.value); save(); render(); });
   $('#f_insp').addEventListener('change',e=>{ c.inspiration=e.target.checked; save(); });
@@ -524,23 +572,59 @@ function renderBio(c){
 }
 
 /* ---------- ABILITIES & SKILLS ---------- */
+function abilCard(c){
+  const method=c.abilMethod||'manual';
+  const seg=`<div class="seg">${[['pointbuy','Point Buy'],['array','Std Array'],['manual','Manual']]
+    .map(([k,l])=>`<button class="${method===k?'on':''}" data-abmethod="${k}">${l}</button>`).join('')}</div>`;
+  let body='';
+  if(method==='pointbuy'){
+    const used=pbUsed(c);
+    body=`<div class="pbinfo">Points: <b style="color:${used>27?'var(--bad)':'var(--good)'}">${used}</b> / 27 ${used>27?'· over budget':''}</div>`+
+      ABILITIES.map(([k,nm])=>{
+        const v=Number(c.abilities[k])||8;
+        const canUp = v<15 && (used - pbCost(v) + pbCost(v+1)) <= 27;
+        return `<div class="listrow">
+          <div class="nm">${nm}</div>
+          <div class="stepper">
+            <button data-pb="${k}" data-d="-1" ${v<=8?'disabled':''}>−</button>
+            <div class="val" style="min-width:26px;text-align:center">${v}</div>
+            <button data-pb="${k}" data-d="1" ${canUp?'':'disabled'}>＋</button>
+          </div>
+          <button class="val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(v)}">${sgn(mod(v))}</button>
+        </div>`;
+      }).join('');
+  } else if(method==='array'){
+    body=`<div class="muted" style="font-size:12px;margin-bottom:8px">Assign 15, 14, 13, 12, 10, 8 — each once.</div>`+
+      ABILITIES.map(([k,nm])=>{
+        const assigned = STD_ARRAY.includes(Number(c.abilities[k]));
+        const taken = ABILITIES.filter(([k2])=>k2!==k).map(([k2])=>Number(c.abilities[k2]));
+        const opts = ['—',...STD_ARRAY].map(v=>{
+          if(v==='—') return `<option value="—" ${assigned?'':'selected'}>—</option>`;
+          const dis = (taken.includes(v) && Number(c.abilities[k])!==v) ? 'disabled':'';
+          return `<option value="${v}" ${Number(c.abilities[k])===v?'selected':''} ${dis}>${v}</option>`;
+        }).join('');
+        return `<div class="listrow"><div class="nm">${nm}</div>
+          <select data-arr="${k}" style="width:auto">${opts}</select>
+          <button class="val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(c.abilities[k])}">${sgn(mod(c.abilities[k]))}</button></div>`;
+      }).join('');
+  } else {
+    body=`<div class="abis">${ABILITIES.map(([k,nm])=>`
+      <div class="abi"><div class="nm">${k}</div>
+      <button class="mod rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(c.abilities[k])}">${sgn(mod(c.abilities[k]))}</button>
+      <input type="number" id="ab_${k}" value="${c.abilities[k]}" min="1" max="30" aria-label="${nm}"></div>`).join('')}</div>`;
+  }
+  return seg+body;
+}
 function renderAbil(c){
   const pb = profBonus(c);
   app.innerHTML = `
   <div class="card">
     <h2>Ability Scores</h2>
-    <div class="abis">
-      ${ABILITIES.map(([k,nm])=>`
-        <div class="abi">
-          <div class="nm">${k}</div>
-          <button class="mod rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(c.abilities[k])}" title="Roll ${nm} check">${sgn(mod(c.abilities[k]))}</button>
-          <input type="number" id="ab_${k}" value="${c.abilities[k]}" min="1" max="30" aria-label="${nm}">
-        </div>`).join('')}
-    </div>
+    ${abilCard(c)}
   </div>
 
   <div class="card">
-    <h2>Saving Throws</h2>
+    <h2>Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— set by your class</span></h2>
     ${ABILITIES.map(([k,nm])=>{
       const b = mod(c.abilities[k]) + (c.saveProf[k]?pb:0);
       return `<div class="listrow">
@@ -573,10 +657,26 @@ function renderAbil(c){
   </div>`;
 
   ABILITIES.forEach(([k])=>{
-    $('#ab_'+k).addEventListener('change',e=>{
-      c.abilities[k]=Number(e.target.value)||10; save(); render();
-    });
+    const inp=$('#ab_'+k);   // only present in Manual mode
+    if(inp) inp.addEventListener('change',e=>{ c.abilities[k]=Math.max(1,Math.min(30,Number(e.target.value)||10)); save(); render(); });
   });
+  app.querySelectorAll('[data-abmethod]').forEach(el=>el.addEventListener('click',()=>{
+    const m=el.dataset.abmethod; if(m===(c.abilMethod||'manual')) return;
+    if(m==='pointbuy'){ ABILITIES.forEach(([k])=>{ c.abilities[k]=Math.max(8,Math.min(15,Number(c.abilities[k])||8)); }); }
+    else if(m==='array'){ ABILITIES.forEach(([k])=>c.abilities[k]=null); }
+    else { ABILITIES.forEach(([k])=>{ if(c.abilities[k]==null) c.abilities[k]=10; }); }
+    c.abilMethod=m; save(); render();
+  }));
+  app.querySelectorAll('[data-pb]').forEach(el=>el.addEventListener('click',()=>{
+    const k=el.dataset.pb, d=Number(el.dataset.d), v=Number(c.abilities[k])||8, nv=v+d;
+    if(nv<8||nv>15) return;
+    if(d>0 && (pbUsed(c)-pbCost(v)+pbCost(nv))>27) return;
+    c.abilities[k]=nv; save(); render();
+  }));
+  app.querySelectorAll('[data-arr]').forEach(el=>el.addEventListener('change',e=>{
+    c.abilities[el.dataset.arr] = e.target.value==='—' ? null : Number(e.target.value);
+    save(); render();
+  }));
   app.querySelectorAll('[data-save]').forEach(el=>el.addEventListener('change',e=>{
     c.saveProf[e.target.dataset.save]=e.target.checked; save(); render();
   }));
@@ -912,6 +1012,26 @@ function bind(id, field){
 function bindNum(id, field){
   $('#'+id).addEventListener('change',e=>{ cur()[field]=Number(e.target.value)||0; save(); render(); });
 }
+// A constrained dropdown with a "Custom…" escape hatch for homebrew.
+function fieldSelect(id, opts, val, ph){
+  const isCustom = val && !opts.includes(val);
+  const options = ['—', ...opts, 'Custom…'].map(o=>{
+    const selected = (o===val) || (o==='Custom…' && isCustom) || (o==='—' && !val);
+    return `<option ${selected?'selected':''}>${esc(o)}</option>`;
+  }).join('');
+  return `<select id="${id}_sel">${options}</select>`+
+    `<input id="${id}_cust" value="${esc(isCustom?val:'')}" placeholder="${esc(ph||'Custom')}" style="margin-top:8px;${isCustom?'':'display:none'}">`;
+}
+function bindSelectCustom(id, field){
+  const sel=$('#'+id+'_sel'), cust=$('#'+id+'_cust');
+  sel.addEventListener('change',()=>{
+    if(sel.value==='Custom…'){ cust.style.display=''; cust.focus(); cur()[field]=cust.value||''; }
+    else { cust.style.display='none'; cur()[field]= sel.value==='—'?'':sel.value; }
+    save(); renderHeader();
+  });
+  cust.addEventListener('input',()=>{ cur()[field]=cust.value; });
+  cust.addEventListener('change',()=>{ cur()[field]=cust.value; save(); renderHeader(); });
+}
 
 /* ---- character ops ---- */
 function deleteCharacter(c){
@@ -968,7 +1088,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v2';
+const APP_VERSION='v3';
 if('serviceWorker' in navigator){
   let _reloaded=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
