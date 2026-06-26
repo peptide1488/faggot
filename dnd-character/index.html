@@ -205,12 +205,16 @@
   .wzprog{display:flex;gap:5px;margin-bottom:12px}
   .wzprog span{flex:1;height:5px;border-radius:3px;background:var(--panel2)}
   .wzprog span.on{background:var(--accent)}
+  .pfp{width:76px;height:76px;border-radius:50%;flex:none;background:var(--panel2) center/cover no-repeat;
+    border:2px solid var(--line);display:grid;place-items:center;font-size:30px;color:var(--mut)}
+  .hpfp{width:30px;height:30px;border-radius:50%;flex:none;background:center/cover no-repeat;border:1px solid var(--line)}
 </style>
 </head>
 <body>
 <header>
   <div class="hrow">
-    <svg class="d20" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(32 32)"><polygon points="0,-22 19,-11 19,11 0,22 -19,11 -19,-11" fill="#7c3aed" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-22 11,-7 0,3 -11,-7" fill="#a78bfa"/><polygon points="0,3 11,-7 19,11 0,22" fill="#6d28d9"/><polygon points="0,3 -11,-7 -19,11 0,22" fill="#5b21b6"/></g></svg>
+    <svg class="d20" id="hd20" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(32 32)"><polygon points="0,-22 19,-11 19,11 0,22 -19,11 -19,-11" fill="#7c3aed" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-22 11,-7 0,3 -11,-7" fill="#a78bfa"/><polygon points="0,3 11,-7 19,11 0,22" fill="#6d28d9"/><polygon points="0,3 -11,-7 -19,11 0,22" fill="#5b21b6"/></g></svg>
+    <div class="hpfp" id="hpfp" style="display:none"></div>
     <div>
       <div class="htitle serif">Grimoire <span id="verBadge" style="font-family:system-ui;font-size:10px;color:var(--mut);font-weight:400;vertical-align:middle"></span></div>
       <div class="hsub" id="hsub">D&D 5e character keeper</div>
@@ -327,7 +331,73 @@ function asiLevels(c){
   if(c.cls==='Rogue') return [4,8,10,12,16,19];
   return base;
 }
-const FEATS = ['Alert','Athlete','Actor','Charger','Crossbow Expert','Defensive Duelist','Dual Wielder','Dungeon Delver','Durable','Elemental Adept','Fey Touched','Grappler','Great Weapon Master','Gunner','Healer','Heavily Armored','Heavy Armor Master','Inspiring Leader','Keen Mind','Lightly Armored','Lucky','Mage Slayer','Magic Initiate','Martial Adept','Medium Armor Master','Mobile','Moderately Armored','Mounted Combatant','Observant','Polearm Master','Resilient','Ritual Caster','Savage Attacker','Sentinel','Shadow Touched','Sharpshooter','Shield Master','Skill Expert','Skilled','Skulker','Spell Sniper','Tavern Brawler','Telekinetic','Telepathic','Tough','War Caster','Weapon Master'];
+const FEAT_DESC = {
+'Alert':'+5 initiative; you can\'t be surprised while conscious; attackers don\'t gain advantage from being unseen.',
+'Athlete':'+1 STR or DEX; stand from prone using 5 ft; climb at full speed; running long/high jump after only 5 ft.',
+'Actor':'+1 CHA; advantage on Deception/Performance to pass as someone else; mimic speech and sounds you\'ve heard.',
+'Charger':'After you Dash, use a bonus action to make a melee attack (+5 damage) or shove (10 ft).',
+'Crossbow Expert':'Ignore loading; no disadvantage firing in melee; bonus-action hand-crossbow shot after an attack.',
+'Defensive Duelist':'With a finesse weapon, use a reaction to add your proficiency bonus to AC vs one melee attack.',
+'Dual Wielder':'+1 AC while dual-wielding; two-weapon fighting with non-light weapons; draw/stow two weapons at once.',
+'Dungeon Delver':'Advantage to detect traps; search at normal pace; resistance to trap damage.',
+'Durable':'+1 CON; when you spend a Hit Die to heal, regain at least twice your CON modifier.',
+'Elemental Adept':'Spells ignore resistance to one damage type; treat 1s on those damage dice as 2s.',
+'Fey Touched':'+1 INT/WIS/CHA; learn Misty Step + a 1st-level enchant/divination; cast each once/day for free.',
+'Grappler':'Advantage on attacks vs creatures you grapple; you can pin a grappled creature.',
+'Great Weapon Master':'Bonus attack on a crit or kill; take −5 to hit for +10 damage with heavy weapons.',
+'Gunner':'+1 DEX; ignore firearm loading; no disadvantage firing in melee.',
+'Healer':'Use a healer\'s kit to stabilize and heal 1 HP, or restore 1d6+4 + creature\'s hit dice once per rest.',
+'Heavily Armored':'+1 STR; gain proficiency with heavy armor.',
+'Heavy Armor Master':'+1 STR; reduce nonmagical bludgeoning/piercing/slashing damage by 3 in heavy armor.',
+'Inspiring Leader':'Spend 10 min to give up to 6 allies temp HP equal to your level + CHA modifier.',
+'Keen Mind':'+1 INT; always know which way is north and hours until sunrise/set; recall anything from the past month.',
+'Lightly Armored':'+1 STR or DEX; gain proficiency with light armor.',
+'Lucky':'3 luck points/day: reroll an attack, ability check, save, or an attack made against you.',
+'Mage Slayer':'Reaction attack when a creature within 5 ft casts; advantage on saves vs their spells; spoil concentration.',
+'Magic Initiate':'Learn 2 cantrips and a 1st-level spell from one class; cast the 1st-level spell once/day for free.',
+'Martial Adept':'Learn two Battle Master maneuvers and gain one superiority die (d6).',
+'Medium Armor Master':'No stealth disadvantage in medium armor; add up to +3 DEX (instead of +2) to AC.',
+'Mobile':'+10 ft speed; Dash ignores difficult terrain; a melee target you attack can\'t make opportunity attacks vs you.',
+'Moderately Armored':'+1 STR or DEX; proficiency with medium armor and shields.',
+'Mounted Combatant':'Advantage vs unmounted creatures smaller than your mount; redirect attacks to yourself; mount dodges area effects.',
+'Observant':'+1 INT or WIS; read lips; +5 to passive Perception and Investigation.',
+'Polearm Master':'Bonus-action butt-end attack (1d4); opportunity attack when creatures enter your reach (with polearms).',
+'Resilient':'+1 to one ability and gain proficiency in that ability\'s saving throws.',
+'Ritual Caster':'Learn and cast ritual spells from a chosen class\'s ritual book.',
+'Savage Attacker':'Once per turn, reroll your melee weapon\'s damage dice and use either total.',
+'Sentinel':'Opportunity attacks reduce a target\'s speed to 0; hit creatures that attack your allies; ignore Disengage.',
+'Shadow Touched':'+1 INT/WIS/CHA; learn Invisibility + a 1st-level illusion/necromancy; cast each once/day for free.',
+'Sharpshooter':'No long-range disadvantage; ignore half/three-quarters cover; −5 to hit for +10 damage with ranged weapons.',
+'Shield Master':'Bonus-action shove with your shield; add shield to DEX saves vs effects targeting only you; reaction to take no damage.',
+'Skill Expert':'+1 to one ability; gain one skill proficiency; gain expertise in one skill.',
+'Skilled':'Gain proficiency in any three skills or tools.',
+'Skulker':'Hide when lightly obscured; missing a ranged attack doesn\'t reveal you; no disadvantage in dim light.',
+'Spell Sniper':'Double the range of attack-roll spells; ignore cover; learn one attack cantrip.',
+'Tavern Brawler':'+1 STR or CON; proficient with improvised weapons; unarmed strike deals 1d4; bonus-action grapple after a hit.',
+'Telekinetic':'+1 INT/WIS/CHA; learn Mage Hand (invisible, no components); bonus-action telekinetic shove 5 ft.',
+'Telepathic':'+1 INT/WIS/CHA; speak telepathically to any creature within 60 ft; cast Detect Thoughts once/day for free.',
+'Tough':'Your hit point maximum increases by 2 per character level.',
+'War Caster':'Advantage on concentration saves; cast spells with hands full; cast a spell as an opportunity attack.',
+'Weapon Master':'+1 STR or DEX; gain proficiency with four weapons of your choice.'
+};
+const FEATS = Object.keys(FEAT_DESC);
+const CLASS_FROM_LETTER={A:'Artificer',B:'Bard',C:'Cleric',D:'Druid',P:'Paladin',R:'Ranger',S:'Sorcerer',K:'Warlock',W:'Wizard'};
+function spellClassNames(name){ const m=spellMeta(name); return m? m.c.split('').map(l=>CLASS_FROM_LETTER[l]).filter(Boolean).join(', ') : ''; }
+function showInfo(title, sub, body){
+  $('#modalRoot').innerHTML=`<div class="modal" id="infoModal"><div class="sheet"><div class="grip"></div>
+    <h2 style="margin-bottom:2px">${esc(title)}</h2>${sub?`<p class="muted" style="font-size:13px;margin:0 0 12px">${esc(sub)}</p>`:''}
+    <div style="font-size:14px;line-height:1.55">${body}</div>
+    <button class="btn ghost block" style="margin-top:16px" id="infoClose">Close</button></div></div>`;
+  $('#infoClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#infoModal').onclick=e=>{ if(e.target.id==='infoModal') $('#modalRoot').innerHTML=''; };
+}
+function spellInfo(name){
+  const m=spellMeta(name);
+  if(!m){ showInfo(name,'Custom spell','No reference info — add details in the spell\'s notes.'); return; }
+  showInfo(m.n+' '+SCHOOL_ICON[m.s], SCHOOL_NAME[m.s]+' · '+lvlLabel(m.l),
+    '<b>Classes:</b> '+spellClassNames(name)+'.<br><span class="muted" style="font-size:12px">Full casting time / range / description aren\'t bundled offline — check your Player\'s Handbook.</span>');
+}
+function featInfo(name){ showInfo(name,'Feat', esc(FEAT_DESC[name]||'No summary available for this feat.')); }
 // AC from armor (5e armor table). dexCap: how much DEX adds. base = armor AC.
 const ARMOR = [
   {key:'none',       name:'Unarmored',       base:10, dexCap:99},
@@ -475,7 +545,26 @@ function ensureFields(c){
   if(!c.feats) c.feats=[];
   if(c.armor==null){ c.armor='none'; c.shield=!!c.shield; c.acOverride=(c.ac!=null?c.ac:''); }   // keep old AC as override
   if(!c.log) c.log=[];
+  if(c.portrait===undefined) c.portrait='';
   return c;
+}
+function setPortrait(file){
+  if(!file){ return; }
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const img=new Image();
+    img.onload=()=>{
+      const size=256, cv=document.createElement('canvas');
+      const s=Math.min(img.width,img.height), sx=(img.width-s)/2, sy=(img.height-s)/2;
+      cv.width=size; cv.height=size;
+      cv.getContext('2d').drawImage(img, sx,sy,s,s, 0,0,size,size);
+      try{ const c=cur(); c.portrait=cv.toDataURL('image/jpeg',0.82); logChange(c,'Set character portrait'); save(); render(); }
+      catch(e){ flashBanner('Could not save image'); }
+    };
+    img.onerror=()=>flashBanner('Not a valid image');
+    img.src=reader.result;
+  };
+  reader.readAsDataURL(file);
 }
 function cur(){ return DB.find(c=>c.id===curId) || null; }
 
@@ -653,6 +742,9 @@ function renderHeader(){
   sel.innerHTML = DB.map(c=>`<option value="${c.id}" ${c.id===curId?'selected':''}>${esc(c.name)}</option>`).join('');
   const c=cur();
   $('#hsub').textContent = (c ? `${esc(c.race||'')} ${esc(c.cls)} ${c.level}`.trim() : 'D&D 5e character keeper')+ver;
+  const hp=$('#hpfp'), d20=$('#hd20');
+  if(c && c.portrait){ hp.style.backgroundImage='url('+c.portrait+')'; hp.style.display=''; d20.style.display='none'; }
+  else { hp.style.display='none'; d20.style.display=''; }
 }
 
 const TABDEF = [
@@ -898,6 +990,14 @@ function renderBio(c){
   app.innerHTML = `
   <div class="card">
     <h2>Identity</h2>
+    <div class="row" style="gap:14px;align-items:center;margin-bottom:14px">
+      <div class="pfp" id="pfp" style="${c.portrait?`background-image:url('${c.portrait}')`:''}">${c.portrait?'':'🧙'}</div>
+      <div>
+        <button class="btn ghost sm" id="pfpBtn">${c.portrait?'Change photo':'＋ Upload photo'}</button>
+        ${c.portrait?'<button class="btn ghost sm" id="pfpDel" style="margin-top:6px;color:var(--bad)">Remove</button>':''}
+        <input type="file" id="pfpFile" accept="image/*" style="display:none">
+      </div>
+    </div>
     <div class="grid">
       <div><label>Character name</label><input id="f_name" value="${esc(c.name)}"></div>
       <div class="g2 grid">
@@ -920,6 +1020,10 @@ function renderBio(c){
       <h2 style="margin:0;color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px">Level ${c.level} ${esc(c.cls)}${c.subclass?` · ${esc(c.subclass)}`:''}</h2>
       <button class="btn sm" id="levelUpBtn" ${c.level>=20?'disabled style="opacity:.4"':''}>⬆ Level Up</button>
     </div>
+    <div class="abis" style="margin-bottom:12px">
+      ${ABILITIES.map(([k,nm])=>`<button class="abi rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(abil(c,k))}" title="Roll ${nm}" style="text-align:center">
+        <div class="nm">${k}</div><div class="mod">${abil(c,k)}</div><div class="sub">${sgn(mod(abil(c,k)))}</div></button>`).join('')}
+    </div>
     <div class="tiles">
       <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
       <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</div></div>
@@ -932,8 +1036,19 @@ function renderBio(c){
   </div>
 
   <div class="card">
+    <h2>Class &amp; Race</h2>
+    ${c.race?`<div class="listrow"><div class="nm">Race</div><div class="val" style="font-weight:500">${esc(c.race)}${RACE_ASI[c.race]?' · '+Object.entries(RACE_ASI[c.race]).map(([k,v])=>k.toUpperCase()+'+'+v).join(', '):''}</div></div>`:''}
+    <div class="listrow"><div class="nm">Class</div><div class="val" style="font-weight:500">${esc(c.cls)}${c.subclass?' · '+esc(c.subclass):''}</div></div>
+    <div class="listrow"><div class="nm">Hit die</div><div class="val">d${CLASS_HITDIE[c.cls]||'—'}</div></div>
+    <div class="listrow"><div class="nm">Saving throws</div><div class="val">${(CLASS_SAVES[c.cls]||[]).map(s=>s.toUpperCase()).join(', ')||'—'}</div></div>
+    ${isCaster(c)?`<div class="listrow"><div class="nm">Spellcasting</div><div class="val">${(ABILITIES.find(a=>a[0]===c.spellAbility)||['','—'])[1]}</div></div>`:''}
+    ${c.feats.length?`<div class="listrow"><div class="nm">Feats</div><div class="val" style="font-weight:500">${c.feats.map(f=>esc(f.name||f)).join(', ')}</div></div>`:''}
+    <p class="muted" style="font-size:11.5px;margin:10px 0 0">Detailed feature text (Rage, Sneak Attack, racial traits…) lives in your Player's Handbook — jot the ones you use in Notes → Features &amp; Traits.</p>
+  </div>
+
+  <div class="card">
     <h2>Feats ${c.feats.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${c.feats.length}</span>`:''}</h2>
-    <div>${c.feats.length? c.feats.map((f,i)=>`<div class="spell"><div class="nm"><b>${esc(f.name||f)}</b>${f.note?`<small>${esc(f.note)}</small>`:''}</div><button class="del" data-delfeat="${i}">✕</button></div>`).join('') : '<div class="empty">None yet — gained at ASI levels (4, 8, 12…) when you level up.</div>'}</div>
+    <div>${c.feats.length? c.feats.map((f,i)=>`<div class="spell"><div class="nm"><b>${esc(f.name||f)}</b>${FEAT_DESC[f.name||f]?`<small>${esc(FEAT_DESC[f.name||f])}</small>`:(f.note?`<small>${esc(f.note)}</small>`:'')}</div><button class="del" data-featinfo="${esc(f.name||f)}" title="Info">ⓘ</button><button class="del" data-delfeat="${i}">✕</button></div>`).join('') : '<div class="empty">None yet — gained at ASI levels (4, 8, 12…) when you level up.</div>'}</div>
     <div class="addrow"><input id="feat_name" placeholder="Add a feat manually"><button class="btn sm" id="addFeat">Add</button></div>
   </div>
 
@@ -949,6 +1064,9 @@ function renderBio(c){
   $('#f_profOverride').addEventListener('change',e=>{ c.profOverride = e.target.value===''?'':Number(e.target.value); save(); render(); });
   $('#f_insp').addEventListener('change',e=>{ c.inspiration=e.target.checked; save(); });
   $('#levelUpBtn').addEventListener('click',levelUp);
+  $('#pfpBtn').addEventListener('click',()=>$('#pfpFile').click());
+  $('#pfpFile').addEventListener('change',e=>{ if(e.target.files[0]) setPortrait(e.target.files[0]); });
+  { const d=$('#pfpDel'); if(d) d.addEventListener('click',()=>{ c.portrait=''; save(); render(); }); }
   $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_name').value.trim(); if(!v) return; c.feats.push({name:v}); logChange(c,'Gained feat: '+v); save(); render(); });
   app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
@@ -1336,6 +1454,7 @@ function renderSpells(c){
             <input type="checkbox" class="chk" data-prep="${i}" ${s.prepared?'checked':''} title="Prepared">
             <span style="font-size:18px;flex:none" title="${spellMeta(s.name)?SCHOOL_NAME[spellMeta(s.name).s]:''}">${spellIcon(s.name)}</span>
             <div class="nm"><b>${esc(s.name)}</b><small>${spellDesc(s.name, s.level)}${s.notes?' · '+esc(s.notes):''}</small></div>
+            <button class="del" data-spellinfo="${esc(s.name)}" title="Info">ⓘ</button>
             <button class="del" data-delspell="${i}">✕</button>
           </div>`).join('')+`</div>`;
       }).join('') : '<div class="empty">No spells yet. Add cantrips and spells above.</div>'}
@@ -1552,6 +1671,8 @@ document.addEventListener('click',e=>{
   if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal'); return; }
   const rd=e.target.closest('[data-rolldmg]');
   if(rd){ rollDmg(rd.dataset.label, rd.dataset.notation); return; }
+  const si=e.target.closest('[data-spellinfo]'); if(si){ spellInfo(si.dataset.spellinfo); return; }
+  const fi=e.target.closest('[data-featinfo]'); if(fi){ featInfo(fi.dataset.featinfo); return; }
   if(e.target.closest('#diceFab')){ openDiceTray(); return; }
   const t=e.target.closest('[data-tab]');
   if(t){ tab=t.dataset.tab; render(); }
@@ -1560,7 +1681,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v11';
+const APP_VERSION='v12';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
