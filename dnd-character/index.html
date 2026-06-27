@@ -339,6 +339,30 @@ Kenku:[['Mimicry','Copy sounds and voices.'],['Expert Forgery','Duplicate writin
 Aarakocra:[['Flight','50 ft fly (no heavy armor).'],['Talons','Natural claw attack.']],
 'Yuan-Ti':[['Magic Resistance','Advantage on saves vs magic.'],['Poison Immunity','Immune to poison & poisoned.'],['Innate Spellcasting','Know a few innate spells.']]
 };
+const FIGHTING_STYLES = {
+  Fighter:['Archery','Defense','Dueling','Great Weapon Fighting','Protection','Two-Weapon Fighting'],
+  Paladin:['Defense','Dueling','Great Weapon Fighting','Protection'],
+  Ranger:['Archery','Defense','Dueling','Two-Weapon Fighting']
+};
+const FIGHTING_STYLE_LEVEL = {Fighter:1, Paladin:2, Ranger:2};
+const DRAGON_ANCESTRY = ['Black (acid)','Blue (lightning)','Brass (fire)','Bronze (lightning)','Copper (acid)','Gold (fire)','Green (poison)','Red (fire)','Silver (cold)','White (cold)'];
+function expertiseTotal(c){ const l=Number(c.level)||1; if(c.cls==='Rogue') return 2+(l>=6?2:0); if(c.cls==='Bard') return (l>=3?2:0)+(l>=10?2:0); return 0; }
+function expertiseOwed(c){ return Math.max(0, expertiseTotal(c) - SKILLS.filter(([k])=>c.skillExp[k]).length); }
+function pendingChoiceSpecs(c){
+  const specs=[];
+  if(c.race==='Half-Elf' && !c.raceDone){ specs.push({t:'ability',n:2,options:['str','dex','con','int','wis'],label:'Half-Elf · +1 to two abilities',_race:1}); specs.push({t:'skill',n:2,label:'Half-Elf · two skill proficiencies',_race:1}); }
+  if(c.race==='Human (Variant)' && !c.raceDone){ specs.push({t:'ability',n:2,label:'Variant Human · +1 to two abilities',_race:1}); specs.push({t:'skill',n:1,label:'Variant Human · one skill proficiency',_race:1}); }
+  if(c.race==='Dragonborn' && !c.dragon){ specs.push({t:'ancestry'}); }
+  if(!c.fightingStyle){ const fl=FIGHTING_STYLE_LEVEL[c.cls]; if(fl && (Number(c.level)||1)>=fl) specs.push({t:'fightingStyle',cls:c.cls}); }
+  const eo=expertiseOwed(c); if(eo>0) specs.push({t:'expertise',n:eo,label:'Expertise · choose '+eo+' proficient skill'+(eo>1?'s':'')});
+  return specs;
+}
+function resolveChoices(c){
+  const specs=pendingChoiceSpecs(c);
+  if(!specs.length) return false;
+  promptChoices('Make your character choices', specs, c, ()=>{ if(specs.some(s=>s._race)) c.raceDone=true; });
+  return true;
+}
 const SUBCLASSES = {
   Artificer:['Alchemist','Armorer','Artillerist','Battle Smith'],
   Barbarian:['Path of the Berserker','Path of the Totem Warrior','Ancestral Guardian','Storm Herald','Zealot','Path of the Beast','Wild Magic','Battlerager'],
@@ -496,13 +520,15 @@ const FEAT_GRANTS = {
 };
 function abilSelect(id, opts){ return `<select id="${id}" class="ch-ab">`+(opts||['str','dex','con','int','wis','cha']).map(k=>`<option value="${k}">${k.toUpperCase()}</option>`).join('')+`</select>`; }
 function choiceControl(sp, i, c){
-  const lab=(t)=>`<label>${t}</label>`;
+  const lab=(t)=>`<label>${sp.label||t}</label>`;
   if(sp.t==='ability') return `<div class="field">${lab('Increase '+sp.n+' ability'+(sp.n>1?' (each +1)':' by +1'))}${[...Array(sp.n)].map((_,j)=>abilSelect('csp_'+i+'_'+j, sp.options)).join(' ')}</div>`;
   if(sp.t==='resilient') return `<div class="field">${lab('+1 to one ability & gain its save proficiency')}${abilSelect('csp_'+i+'_0')}</div>`;
   if(sp.t==='skill'){ return `<div class="field">${lab('Choose '+sp.n+' skill proficienc'+(sp.n>1?'ies':'y'))}<div class="cklist">${SKILLS.map(([k,nm])=>c.skillProf[k]?'':`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join('')}</div></div>`; }
   if(sp.t==='expertise'){ const prof=SKILLS.filter(([k])=>c.skillProf[k]&&!c.skillExp[k]); return `<div class="field">${lab('Choose '+sp.n+' skill for expertise')}<div class="cklist">${prof.length?prof.map(([k,nm])=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join(''):'<span class="muted small">Gain skill proficiencies first.</span>'}</div></div>`; }
   if(sp.t==='spellChoice'){ const known=new Set(c.spells.map(s=>s.name.toLowerCase())); let list=SPELLS.filter(s=>s.l===sp.lvl && !known.has(s.n.toLowerCase())); if(sp.schools) list=list.filter(s=>sp.schools.includes(s.s)); if(!sp.any){ const lt=CLASS_LETTER[c.cls]; if(lt) list=list.filter(s=>s.c.includes(lt)); }
     return `<div class="field">${lab('Choose '+sp.n+' '+lvlLabel(sp.lvl).toLowerCase()+' spell'+(sp.n>1?'s':''))}<div class="cklist">${list.map(s=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${esc(s.n)}|${s.l}"> ${SCHOOL_ICON[s.s]} ${esc(s.n)}</label>`).join('')}</div></div>`; }
+  if(sp.t==='ancestry') return `<div class="field">${lab('Draconic ancestry (breath weapon & resistance)')}<select id="csp_${i}_anc">${DRAGON_ANCESTRY.map(a=>`<option>${a}</option>`).join('')}</select></div>`;
+  if(sp.t==='fightingStyle') return `<div class="field">${lab('Fighting Style')}<select id="csp_${i}_fs">${(FIGHTING_STYLES[sp.cls]||[]).map(f=>`<option>${f}</option>`).join('')}</select></div>`;
   return '';
 }
 function applyChoices(specs, c){
@@ -517,17 +543,19 @@ function applyChoices(specs, c){
     else if(sp.t==='skill'){ document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>c.skillProf[el.value]=true); }
     else if(sp.t==='expertise'){ document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>c.skillExp[el.value]=true); }
     else if(sp.t==='spellChoice'){ document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>{ const [n,l]=el.value.split('|'); if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())) c.spells.push({name:n,level:Number(l),prepared:false,notes:''}); }); c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); }
+    else if(sp.t==='ancestry'){ const el=document.getElementById('csp_'+i+'_anc'); if(el) c.dragon=el.value; }
+    else if(sp.t==='fightingStyle'){ const el=document.getElementById('csp_'+i+'_fs'); if(el) c.fightingStyle=el.value; }
   });
   return true;
 }
-function promptChoices(title, specs, c){
+function promptChoices(title, specs, c, onApply){
   $('#modalRoot').innerHTML=`<div class="modal" id="chModal"><div class="sheet"><div class="grip"></div>
     <h2>${esc(title)}</h2>${specs.map((sp,i)=>choiceControl(sp,i,c)).join('')}
     <button class="btn block" id="chApply" style="margin-top:8px">Apply</button></div></div>`;
-  $('#chApply').onclick=()=>{ if(applyChoices(specs,c)){ $('#modalRoot').innerHTML=''; save(); render(); } };
+  $('#chApply').onclick=()=>{ if(applyChoices(specs,c)){ if(onApply) onApply(); $('#modalRoot').innerHTML=''; save(); render(); } };
 }
-function applyFeat(c, name){
-  if(c.feats.some(f=>(f.name||f)===name)){ flashBanner('You already have '+name); return; }
+function applyFeat(c, name, then){
+  if(c.feats.some(f=>(f.name||f)===name)){ flashBanner('You already have '+name); if(then) then(); return; }
   c.feats.push({name}); logChange(c,'Gained feat: '+name);
   const grants=FEAT_GRANTS[name]||[];
   grants.forEach(g=>{
@@ -536,8 +564,8 @@ function applyFeat(c, name){
   });
   clampAbil(c); save();
   const inputs=grants.filter(g=>['ability','skill','expertise','resilient','spellChoice'].includes(g.t));
-  if(inputs.length) promptChoices(name+' — make your choices', inputs, c);
-  else render();
+  if(inputs.length) promptChoices(name+' — make your choices', inputs, c, then);
+  else { render(); if(then) then(); }
 }
 // AC from armor (5e armor table). dexCap: how much DEX adds. base = armor AC.
 const ARMOR = [
@@ -1068,7 +1096,8 @@ function wizNext(){
   logChange(c, 'Created — level 1 '+(c.race?c.race+' ':'')+c.cls+(c.background?' ('+c.background+')':''));
   const fc=wiz.featChoice;
   wiz=null; tab='bio'; save(); render();
-  if(fc && fc!=='(no feat)') applyFeat(c, fc);   // adds the starting feat and prompts its choices
+  if(fc && fc!=='(no feat)') applyFeat(c, fc, ()=>resolveChoices(c));   // feat first, then class/race choices
+  else resolveChoices(c);   // Fighting Style, Expertise, Half-Elf/Variant/Dragonborn picks
 }
 
 /* ---------- LEVEL UP ---------- */
@@ -1145,13 +1174,21 @@ function levelUp(){
     c.level=nl; const h=CLASS_HITDIE[c.cls]; if(h) c.hitDice.total=nl+'d'+h;
     logChange(c, 'Leveled up to '+nl+' (+'+hpGain+' HP)'+(needsSub&&c.subclass?', subclass: '+c.subclass:'')+asiNote);
     $('#modalRoot').innerHTML=''; save(); render(); flashBanner('Welcome to level '+nl+'!');
-    if(pendingFeat) applyFeat(c, pendingFeat);   // adds the feat and prompts for its choices
+    if(pendingFeat) applyFeat(c, pendingFeat, ()=>resolveChoices(c));   // feat first, then any new class/race choices (e.g. L6 Expertise)
+    else resolveChoices(c);   // new Fighting Style / Expertise unlocked by this level
   };
 }
 
 /* ---------- BIO ---------- */
 function renderBio(c){
+  const pend=pendingChoiceSpecs(c);
   app.innerHTML = `
+  ${pend.length?`<div class="card" style="border:1px solid var(--accent);background:rgba(180,140,255,.08)">
+    <h2 style="margin-top:0">⚑ Choices to make</h2>
+    <p class="muted" style="margin:4px 0 10px">Your race, class or level grants picks you haven't made yet:</p>
+    <ul style="margin:0 0 12px 18px;padding:0">${pend.map(s=>`<li>${esc(s.label||({ancestry:'Draconic ancestry',fightingStyle:'Fighting Style',expertise:'Expertise',skill:'Skill proficiencies',ability:'Ability score increases'}[s.t]||'Choice'))}</li>`).join('')}</ul>
+    <button class="btn block" id="resolveChoices">Make these choices</button>
+  </div>`:''}
   <div class="card">
     <h2>Identity</h2>
     <div class="row" style="gap:14px;align-items:center;margin-bottom:14px">
@@ -1206,6 +1243,8 @@ function renderBio(c){
     <div class="listrow"><div class="nm">Hit die</div><div class="val">d${CLASS_HITDIE[c.cls]||'—'}</div></div>
     <div class="listrow"><div class="nm">Saving throws</div><div class="val">${(CLASS_SAVES[c.cls]||[]).map(s=>s.toUpperCase()).join(', ')||'—'}</div></div>
     ${isCaster(c)?`<div class="listrow"><div class="nm">Spellcasting</div><div class="val">${(ABILITIES.find(a=>a[0]===c.spellAbility)||['','—'])[1]}</div></div>`:''}
+    ${c.fightingStyle?`<div class="listrow"><div class="nm">Fighting Style</div><div class="val" style="font-weight:500">${esc(c.fightingStyle)}</div></div>`:''}
+    ${c.dragon?`<div class="listrow"><div class="nm">Draconic Ancestry</div><div class="val" style="font-weight:500">${esc(c.dragon)}</div></div>`:''}
     ${c.feats.length?`<div class="listrow"><div class="nm">Feats</div><div class="val" style="font-weight:500">${c.feats.map(f=>esc(f.name||f)).join(', ')}</div></div>`:''}
   </div>
 
@@ -1243,6 +1282,7 @@ function renderBio(c){
   $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_pick').value; if(!v) return; applyFeat(c, v); });
   app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
+  { const r=$('#resolveChoices'); if(r) r.addEventListener('click',()=>resolveChoices(c)); }
 }
 
 /* ---------- ABILITIES & SKILLS ---------- */
@@ -1862,7 +1902,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v18';
+const APP_VERSION='v19';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
