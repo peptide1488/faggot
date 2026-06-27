@@ -1684,6 +1684,8 @@ function renderNotes(c){
       <button class="btn ghost" id="importBtn">⬆ Import</button>
     </div>
     <input type="file" id="importFile" accept="application/json" style="display:none">
+    <div class="divider" style="height:1px;background:var(--line);margin:14px 0"></div>
+    <button class="btn bad block" id="resetAllBtn">Reset app — delete ALL data</button>
     <p class="muted" style="font-size:11px;text-align:center;margin:14px 0 0">Grimoire ${APP_VERSION} · works offline</p>
   </div>`;
 
@@ -1692,6 +1694,11 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
+  $('#resetAllBtn').addEventListener('click',()=>{
+    if(!confirm('Delete ALL characters and reset the app on this device? This cannot be undone. (Consider Export first.)')) return;
+    try{ localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_CUR); }catch(e){}
+    DB=[]; curId=null; wiz=null; tab='bio'; render();
+  });
   $('#importFile').addEventListener('change',importData);
 }
 
@@ -1783,7 +1790,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v15';
+const APP_VERSION='v16';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
