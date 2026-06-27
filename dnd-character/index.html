@@ -420,7 +420,8 @@ const RACE_ASI = {
   'Warforged':{con:2},'Yuan-Ti':{cha:2,int:1}
 };
 function raceBonus(c,k){ return ((RACE_ASI[c.race]||{})[k])||0; }
-function abil(c,k){ const b=Number(c.abilities[k]); return (isNaN(b)?0:b) + raceBonus(c,k) + ((c.asiBonus&&c.asiBonus[k])||0); }   // final score
+function abilBase(c,k){ const b=Number(c.abilities[k]); return (isNaN(b)?0:b) + raceBonus(c,k) + ((c.asiBonus&&c.asiBonus[k])||0); }
+function abil(c,k){ return abilBase(c,k) + effBonus(c,k); }   // final score incl. active-effect buffs
 // Levels that grant an Ability Score Improvement / feat (class-dependent).
 function asiLevels(c){
   const base=[4,8,12,16,19];
@@ -526,7 +527,7 @@ function choiceControl(sp, i, c){
   if(sp.t==='skill'){ return `<div class="field">${lab('Choose '+sp.n+' skill proficienc'+(sp.n>1?'ies':'y'))}<div class="cklist">${SKILLS.map(([k,nm])=>c.skillProf[k]?'':`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join('')}</div></div>`; }
   if(sp.t==='expertise'){ const prof=SKILLS.filter(([k])=>c.skillProf[k]&&!c.skillExp[k]); return `<div class="field">${lab('Choose '+sp.n+' skill for expertise')}<div class="cklist">${prof.length?prof.map(([k,nm])=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join(''):'<span class="muted small">Gain skill proficiencies first.</span>'}</div></div>`; }
   if(sp.t==='spellChoice'){ const known=new Set(c.spells.map(s=>s.name.toLowerCase())); let list=SPELLS.filter(s=>s.l===sp.lvl && !known.has(s.n.toLowerCase())); if(sp.schools) list=list.filter(s=>sp.schools.includes(s.s)); if(!sp.any){ const lt=CLASS_LETTER[c.cls]; if(lt) list=list.filter(s=>s.c.includes(lt)); }
-    return `<div class="field">${lab('Choose '+sp.n+' '+lvlLabel(sp.lvl).toLowerCase()+' spell'+(sp.n>1?'s':''))}<div class="cklist">${list.map(s=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${esc(s.n)}|${s.l}"> ${SCHOOL_ICON[s.s]} ${esc(s.n)}</label>`).join('')}</div></div>`; }
+    return `<div class="field">${lab('Choose '+sp.n+' '+lvlLabel(sp.lvl).toLowerCase()+' spell'+(sp.n>1?'s':''))}<div class="cklist">${list.map(s=>`<label class="listrow" style="cursor:pointer;padding:5px 0;align-items:flex-start"><input type="checkbox" class="chk" data-csp="${i}" value="${esc(s.n)}|${s.l}"> <span style="flex:none">${SCHOOL_ICON[s.s]}</span> <span class="nm" style="margin-left:6px">${esc(s.n)}${SPELL_DESC[s.n]?`<small>${esc(SPELL_DESC[s.n])}</small>`:''}</span></label>`).join('')}</div></div>`; }
   if(sp.t==='ancestry') return `<div class="field">${lab('Draconic ancestry (breath weapon & resistance)')}<select id="csp_${i}_anc">${DRAGON_ANCESTRY.map(a=>`<option>${a}</option>`).join('')}</select></div>`;
   if(sp.t==='fightingStyle') return `<div class="field">${lab('Fighting Style')}<select id="csp_${i}_fs">${(FIGHTING_STYLES[sp.cls]||[]).map(f=>`<option>${f}</option>`).join('')}</select></div>`;
   return '';
@@ -585,9 +586,9 @@ const ARMOR = [
 ];
 function armorDef(key){ return ARMOR.find(a=>a.key===key)||ARMOR[0]; }
 function computeAC(c){
-  if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride);
+  if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + effBonus(c,'ac');
   const a=armorDef(c.armor||'none');
-  return a.base + Math.min(mod(abil(c,'dex')), a.dexCap) + (c.shield?2:0);
+  return a.base + Math.min(mod(abil(c,'dex')), a.dexCap) + (c.shield?2:0) + effBonus(c,'ac');
 }
 // Base walking speed by race (most are 30; small races 25; a few faster).
 const RACE_SPEED = {'Dwarf':25,'Halfling':25,'Gnome':25,'Kobold':30,'Tortle':30,'Aarakocra':25,'Centaur':40,'Minotaur':40,'Elf':30};
@@ -630,6 +631,111 @@ const SPELL_DESC={
 'Astral Projection':'Project yourself and others to the Astral Plane.','Foresight':'Advantage on everything; can\'t be surprised.','Gate':'Open a portal to another plane.','Mass Heal':'Distribute 700 HP of healing.','Meteor Swarm':'Meteors deal 20d6 fire + 20d6 bludgeoning.','Power Word Kill':'Slay a creature with 100 HP or fewer.','Time Stop':'Take several turns while time is frozen.','True Resurrection':'Revive the long-dead, fully restored.','Wish':'Duplicate any 8th-level spell or alter reality.','Storm of Vengeance':'A vast storm rains damage and effects.'
 };
 function spellSummary(name){ return SPELL_DESC[name]||''; }
+
+/* ---- ACTIVE EFFECTS: "cast" a spell, track duration/concentration, apply temp bonuses ---- */
+// rounds: duration in 6-second rounds (10 min = 100, 1 hr = 600, 8 hr = 4800). conc: needs concentration.
+// mods: flat numbers added to live stats — ac, speed, str/dex/con/int/wis/cha, tempHp. speedMul: multiply speed.
+const SPELL_EFFECTS = {
+  'Shield':{rounds:1, mods:{ac:5}, note:'+5 AC until the start of your next turn.'},
+  'Shield of Faith':{rounds:100, conc:true, mods:{ac:2}},
+  'Barkskin':{rounds:600, conc:true, note:'Your AC can’t be lower than 16.'},
+  'Mage Armor':{rounds:4800, note:'Base AC becomes 13 + your DEX while unarmored.'},
+  'Blur':{rounds:10, conc:true, note:'Attackers have disadvantage against you.'},
+  'Mirror Image':{rounds:10, note:'Three illusory duplicates misdirect attacks.'},
+  'Stoneskin':{rounds:600, conc:true, note:'Resistance to nonmagical bludgeoning/piercing/slashing.'},
+  'Haste':{rounds:10, conc:true, mods:{ac:2, speedMul:2}, note:'Extra action each turn; double speed; +2 AC.'},
+  'Longstrider':{rounds:600, mods:{speed:10}},
+  'Expeditious Retreat':{rounds:100, conc:true, note:'Dash as a bonus action each turn.'},
+  'Fly':{rounds:100, conc:true, note:'You gain a 60-ft flying speed.'},
+  'Spider Climb':{rounds:600, conc:true, note:'Climb on walls and ceilings; climb speed = walking speed.'},
+  'Enhance Ability':{rounds:600, conc:true, note:'Advantage on one ability’s checks (+ extras by choice).'},
+  'Enlarge/Reduce':{rounds:10, conc:true, note:'Enlarge: +1d4 weapon damage, advantage on STR. Reduce: −1d4, disadvantage on STR.'},
+  'Bless':{rounds:10, conc:true, note:'+1d4 to your attack rolls and saving throws.'},
+  'Bane':{rounds:10, conc:true, note:'−1d4 to affected creatures’ attacks and saves.'},
+  'Heroism':{rounds:10, conc:true, mods:{tempHp:0}, note:'Immune to fear; gain temp HP = spell mod each turn.'},
+  'Divine Favor':{rounds:10, conc:true, note:'Your weapon hits deal +1d4 radiant.'},
+  "Hunter's Mark":{rounds:10, conc:true, note:'+1d6 damage to the marked target; track between targets.'},
+  'Hex':{rounds:10, conc:true, note:'+1d6 necrotic to the hexed target; it has disadvantage on one ability.'},
+  'False Life':{rounds:600, mods:{tempHp:5}, note:'Gain 1d4+4 temporary HP (≈5).'},
+  'Aid':{rounds:480, mods:{tempHp:5}, note:'HP maximum and current HP +5 for up to three creatures.'},
+  'Heroes\' Feast':{rounds:600, note:'+2d10 HP max, immune to poison & fright, advantage on WIS saves (24h).'},
+  'Foresight':{rounds:4800, note:'Advantage on attacks, checks and saves; you can’t be surprised.'},
+  'Death Ward':{rounds:4800, note:'The first time you’d drop to 0 HP, you drop to 1 instead.'},
+  'Pass without Trace':{rounds:600, conc:true, note:'+10 to your group’s Stealth; can’t be tracked.'},
+  'Greater Invisibility':{rounds:10, conc:true, note:'You’re invisible even when you attack or cast.'},
+  'Invisibility':{rounds:600, conc:true, note:'Invisible until you attack or cast a spell.'},
+  'Darkvision':{rounds:4800, note:'Gain 60-ft darkvision.'},
+  'Protection from Energy':{rounds:600, conc:true, note:'Resistance to one chosen damage type.'},
+  'Freedom of Movement':{rounds:600, note:'Ignore difficult terrain; immune to restrain/paralyze on movement.'}
+};
+function effBonus(c, key){ let n=0; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods[key]) n+=e.mods[key]; }); return n; }
+function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods.speedMul) m*=e.mods.speedMul; }); return m; }
+function effSpeed(c){ return Math.round((Number(c.speed||0)+effBonus(c,'speed'))*effSpeedMul(c)); }
+function modSummary(mods){ if(!mods) return ''; const parts=[];
+  if(mods.ac) parts.push(sgn(mods.ac)+' AC');
+  if(mods.speed) parts.push(sgn(mods.speed)+' ft');
+  if(mods.speedMul) parts.push('×'+mods.speedMul+' speed');
+  ['str','dex','con','int','wis','cha'].forEach(k=>{ if(mods[k]) parts.push(sgn(mods[k])+' '+k.toUpperCase()); });
+  if(mods.tempHp) parts.push(sgn(mods.tempHp)+' temp HP');
+  return parts.join(' · ');
+}
+function fmtDuration(r){ if(r==null) return 'until removed'; if(r<=0) return 'expired'; if(r>=600) return (r/600).toFixed(r%600?1:0)+' hr'; if(r>=10) return (r/10).toFixed(r%10?1:0)+' min'; return r+' rd'; }
+function hasConcentration(c){ return (c.effects||[]).find(e=>e.conc); }
+function addEffect(c, name, tmpl){
+  tmpl=tmpl||SPELL_EFFECTS[name]||{};
+  if(tmpl.conc){ // one concentration spell at a time — drop the old one
+    const old=hasConcentration(c);
+    if(old){ c.effects=c.effects.filter(e=>!e.conc); logChange(c,'Lost concentration on '+old.name); }
+    c.concentration={active:true, spell:name};
+  }
+  c.effects.push({ id:Date.now()+'-'+Math.random().toString(36).slice(2,6), name, source:name,
+    rounds:(tmpl.rounds!=null?tmpl.rounds:null), conc:!!tmpl.conc,
+    mods:Object.assign({},tmpl.mods||{}), note:tmpl.note||SPELL_DESC[name]||'' });
+  if(tmpl.mods && tmpl.mods.tempHp){ c.hp.temp=Math.max(Number(c.hp.temp)||0, tmpl.mods.tempHp); } // temp HP takes the higher, doesn't stack
+}
+function endEffect(c, id){
+  const e=(c.effects||[]).find(x=>x.id===id); if(!e) return;
+  c.effects=c.effects.filter(x=>x.id!==id);
+  if(e.conc && c.concentration && c.concentration.spell===e.name) c.concentration={active:false,spell:''};
+  logChange(c,'Ended '+e.name); save(); render();
+}
+function advanceRound(c){
+  let expired=[];
+  (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds-=1; if(e.rounds<=0) expired.push(e); } });
+  c.effects=(c.effects||[]).filter(e=>e.rounds==null || e.rounds>0);
+  expired.forEach(e=>{ if(e.conc && c.concentration && c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
+  if(expired.length) logChange(c,'Expired: '+expired.map(e=>e.name).join(', '));
+  save(); render();
+  flashBanner(expired.length?('Round advanced — expired: '+expired.map(e=>e.name).join(', ')):'Round advanced');
+}
+function castSpell(c, name, level){
+  level=Number(level)||0;
+  // spend a slot of that level if you have one available (cantrips are free)
+  if(level>0){ const total=spellSlots(c)[level]||0; if(total){ if(!c.slots[level]) c.slots[level]={total:0,used:0};
+      const used=Math.min(total,c.slots[level].used||0);
+      if(used<total){ c.slots[level].used=used+1; } else { flashBanner('No level '+level+' slots left — cast anyway'); }
+  } }
+  const tmpl=SPELL_EFFECTS[name];
+  if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')); }
+  else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')); }
+}
+function effectsCard(c){
+  const fx=c.effects||[];
+  return `<div class="card">
+    <h2>Active Effects ${fx.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${fx.length} active</span>`:''}
+      ${fx.some(e=>e.rounds!=null)?`<button class="btn ghost sm" id="advRound" style="float:right">▶ Advance round</button>`:''}</h2>
+    ${fx.length? fx.map(e=>`<div class="spell">
+        <span style="font-size:18px;flex:none">${spellIcon(e.name)}</span>
+        <div class="nm"><b>${esc(e.name)}</b><small>${[e.conc?'🧠 Concentration':'', fmtDuration(e.rounds), modSummary(e.mods)].filter(Boolean).join(' · ')}${e.note?'<br>'+esc(e.note):''}</small></div>
+        <button class="del" data-endfx="${e.id}" title="End effect">✕</button>
+      </div>`).join('')
+      : '<div class="empty">No active effects. Cast a buff from the Spells tab to track it here.</div>'}
+  </div>`;
+}
+function bindEffectsCard(c){
+  const ar=$('#advRound'); if(ar) ar.addEventListener('click',()=>advanceRound(c));
+  app.querySelectorAll('[data-endfx]').forEach(el=>el.addEventListener('click',()=>endEffect(c, el.dataset.endfx)));
+}
 function classSpells(c, maxLevel){
   const lt=CLASS_LETTER[c.cls]; if(!lt) return [];
   return SPELLS.filter(s=> s.c.includes(lt) && (maxLevel==null || s.l<=maxLevel));
@@ -729,6 +835,7 @@ function ensureFields(c){
   if(c.armor==null){ c.armor='none'; c.shield=!!c.shield; c.acOverride=(c.ac!=null?c.ac:''); }   // keep old AC as override
   if(!c.log) c.log=[];
   if(c.portrait===undefined) c.portrait='';
+  if(!c.effects) c.effects=[];
   return c;
 }
 function setPortrait(file){
@@ -987,7 +1094,7 @@ function wizSpellPicker(c){
       return `<div class="row between" style="margin:14px 0 4px"><div class="tag">${l===0?'Cantrips':'1st-level spells'}</div><div class="muted" style="font-size:12px">${used}/${caps[l]}</div></div>`+
         list.map(s=>`<div class="listrow"><input type="checkbox" class="chk" data-wspell="${esc(s.n)}|${s.l}" ${known.has(s.n.toLowerCase())?'checked':''}>
           <span style="font-size:16px;flex:none">${SCHOOL_ICON[s.s]}</span>
-          <div class="nm">${esc(s.n)} <span class="sub">${SCHOOL_NAME[s.s]}</span></div>
+          <div class="nm">${esc(s.n)} <span class="sub">${SCHOOL_NAME[s.s]}</span>${SPELL_DESC[s.n]?`<small>${esc(SPELL_DESC[s.n])}</small>`:''}</div>
           <button class="del" data-spellinfo="${esc(s.n)}" title="Info">ⓘ</button></div>`).join('');
     }).join('');
 }
@@ -1126,6 +1233,7 @@ function levelUp(){
         <div id="luBody"></div></div>`:''}
      ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— up to ${learnCap} this level</span></h2>
         <div class="addrow">${spellLearnSelect(c, nl)}<button class="btn sm" id="luLearn">Add</button></div>
+        <div class="muted" id="luSpellDesc" style="font-size:12px;margin-top:6px;line-height:1.5"></div>
         <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px"></div></div>`:''}
      <button class="btn block" id="luApply">Apply level ${nl}</button>
    </div></div>`;
@@ -1144,6 +1252,7 @@ function levelUp(){
     }
   }
   if(isAsi){ luBody(); $('#luSeg').querySelectorAll('[data-asi]').forEach(b=>b.onclick=()=>{ asiMode=b.dataset.asi; $('#luSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); luBody(); }); }
+  { const ls=$('#luSpell'); if(ls) ls.addEventListener('change',e=>{ const n=(e.target.value||'').split('|')[0]; const d=$('#luSpellDesc'); if(d) d.textContent=n?(SPELL_DESC[n]||'No reference summary.'):''; }); }
   { const lb=$('#luLearn'); if(lb) lb.onclick=()=>{
     if(learnedThisLevel>=learnCap){ $('#luLearnMsg').textContent='Reached this level’s limit ('+learnCap+'). Add more on the Spells tab.'; return; }
     const sel=$('#luSpell'); if(!sel||!sel.value) return;
@@ -1222,15 +1331,16 @@ function renderBio(c){
       <button class="btn sm" id="levelUpBtn" ${c.level>=20?'disabled style="opacity:.4"':''}>⬆ Level Up</button>
     </div>
     <div class="abis" style="margin-bottom:12px">
-      ${ABILITIES.map(([k,nm])=>`<button class="abi rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(abil(c,k))}" title="Roll ${nm}" style="text-align:center">
-        <div class="nm">${k}</div><div class="mod">${abil(c,k)}</div><div class="sub">${sgn(mod(abil(c,k)))}</div></button>`).join('')}
+      ${ABILITIES.map(([k,nm])=>{ const eb=effBonus(c,k); return `<button class="abi rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(abil(c,k))}" title="Roll ${nm}${eb?' (incl. '+sgn(eb)+' from effects)':''}" style="text-align:center${eb?';box-shadow:inset 0 0 0 1px var(--accent)':''}">
+        <div class="nm">${k}${eb?' ▲':''}</div><div class="mod">${abil(c,k)}</div><div class="sub">${sgn(mod(abil(c,k)))}</div></button>`; }).join('')}
     </div>
     <div class="tiles">
       <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
       <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</div></div>
-      <div class="tile"><div class="lab">Armor Class</div><div class="big">${computeAC(c)}</div></div>
-      <div class="tile"><div class="lab">Speed</div><div class="big">${c.speed}</div></div>
+      <div class="tile" ${effBonus(c,'ac')?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Armor Class${effBonus(c,'ac')?' ▲':''}</div><div class="big">${computeAC(c)}</div></div>
+      <div class="tile" ${(effBonus(c,'speed')||effSpeedMul(c)!==1)?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''}</div><div class="big">${effSpeed(c)}</div></div>
     </div>
+    ${(c.effects&&c.effects.length)?`<div class="addrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">${c.effects.map(e=>`<span class="pill" title="${esc(e.note||'')}">${spellIcon(e.name)} ${esc(e.name)}${e.mods&&modSummary(e.mods)?' · '+modSummary(e.mods):''} · ${fmtDuration(e.rounds)}</span>`).join('')}</div>`:''}
     <div class="addrow" style="margin-top:12px">
       <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="f_insp" ${c.inspiration?'checked':''}> Inspiration</label>
     </div>
@@ -1465,7 +1575,7 @@ function renderCombat(c){
       <div class="tile"><div class="lab">Armor Class</div><div class="big">${computeAC(c)}</div></div>
       <div class="tile"><div class="lab">Initiative</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${mod(abil(c,"dex"))+Number(c.initMisc||0)}" title="Roll initiative">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</button></div>
       ${isCaster(c)?`<div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(abil(c,c.spellAbility))}</div></div>
-      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>`:`<div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div><div class="tile"><div class="lab">Speed</div><div class="big">${c.speed}</div></div>`}
+      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>`:`<div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div><div class="tile"><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''}</div><div class="big">${effSpeed(c)}</div></div>`}
     </div>
   </div>
 
@@ -1502,9 +1612,11 @@ function renderCombat(c){
 
   <div class="card">
     <h2>Concentration</h2>
-    <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="concOn" ${c.concentration.active?'checked':''}> Concentrating</label>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="concOn" ${c.concentration.active?'checked':''}> Concentrating${c.concentration.active&&c.concentration.spell?' on '+esc(c.concentration.spell):''}</label>
     <div style="margin-top:10px"><input id="concSpell" value="${esc(c.concentration.spell||'')}" placeholder="On which spell?" ${c.concentration.active?'':'disabled style="opacity:.5"'}></div>
   </div>
+
+  ${effectsCard(c)}
 
   <div class="card">
     <h2>Attacks & Weapons</h2>
@@ -1575,8 +1687,9 @@ function renderCombat(c){
   }));
   $('#exhUp').addEventListener('click',()=>{ c.exhaustion=Math.min(6,(c.exhaustion||0)+1); save(); render(); });
   $('#exhDown').addEventListener('click',()=>{ c.exhaustion=Math.max(0,(c.exhaustion||0)-1); save(); render(); });
-  $('#concOn').addEventListener('change',e=>{ c.concentration.active=e.target.checked; if(!e.target.checked) c.concentration.spell=''; save(); render(); });
+  $('#concOn').addEventListener('change',e=>{ c.concentration.active=e.target.checked; if(!e.target.checked){ c.concentration.spell=''; c.effects=(c.effects||[]).filter(x=>!x.conc); } save(); render(); });
   $('#concSpell').addEventListener('change',e=>{ c.concentration.spell=e.target.value; save(); });
+  bindEffectsCard(c);
 }
 function pips(max,val,kind){
   let h='';
@@ -1643,8 +1756,10 @@ function renderSpells(c){
     }).join(''); return rows || '<div class="empty">No spell slots at this level.</div>'; })()}
   </div>
 
+  ${effectsCard(c)}
+
   <div class="card">
-    <h2>Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ✓ = prepared</span></h2>
+    <h2>Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ✓ = prepared · ⚡ = cast</span></h2>
     <div class="addrow">
       <select id="sp_pick" style="flex:2">
         <option value="">— add a ${esc(c.cls)} spell —</option>
@@ -1653,6 +1768,7 @@ function renderSpells(c){
       </select>
       <button class="btn sm" id="addSpell">Add</button>
     </div>
+    <div class="muted" id="spPickDesc" style="font-size:12px;margin:2px 0 0;line-height:1.5"></div>
     <div class="addrow" id="customSpellRow" style="display:none">
       <input id="sp_name" placeholder="Custom spell name">
       ${select('sp_level', ['Cantrip','1','2','3','4','5','6','7','8','9'], 'Cantrip')}
@@ -1666,7 +1782,8 @@ function renderSpells(c){
           <div class="spell">
             <input type="checkbox" class="chk" data-prep="${i}" ${s.prepared?'checked':''} title="Prepared">
             <span style="font-size:18px;flex:none" title="${spellMeta(s.name)?SCHOOL_NAME[spellMeta(s.name).s]:''}">${spellIcon(s.name)}</span>
-            <div class="nm"><b>${esc(s.name)}</b><small>${spellDesc(s.name, s.level)}${s.notes?' · '+esc(s.notes):''}</small></div>
+            <div class="nm"><b>${esc(s.name)}</b>${SPELL_DESC[s.name]?`<small>${esc(SPELL_DESC[s.name])}</small>`:''}<small style="opacity:.7">${spellDesc(s.name, s.level)}${SPELL_EFFECTS[s.name]?' · ⏱ trackable':''}${s.notes?' · '+esc(s.notes):''}</small></div>
+            <button class="del" data-cast="${esc(s.name)}|${s.level||0}" title="Cast — spend a slot${SPELL_EFFECTS[s.name]?' & track its effect':''}" style="color:var(--accent)">⚡</button>
             <button class="del" data-spellinfo="${esc(s.name)}" title="Info">ⓘ</button>
             <button class="del" data-delspell="${i}">✕</button>
           </div>`).join('')+`</div>`;
@@ -1695,6 +1812,8 @@ function renderSpells(c){
   }));
   $('#sp_pick').addEventListener('change',e=>{
     $('#customSpellRow').style.display = e.target.value==='__custom__' ? 'flex' : 'none';
+    const n=(e.target.value||'').split('|')[0]; const d=$('#spPickDesc');
+    if(d) d.textContent=(n && n!=='__custom__')?(SPELL_DESC[n]||'No reference summary.'):'';
   });
   $('#addSpell').addEventListener('click',()=>{
     const v=$('#sp_pick').value;
@@ -1711,6 +1830,10 @@ function renderSpells(c){
   app.querySelectorAll('[data-delspell]').forEach(el=>el.addEventListener('click',()=>{
     c.spells.splice(Number(el.dataset.delspell),1); save(); render();
   }));
+  app.querySelectorAll('[data-cast]').forEach(el=>el.addEventListener('click',()=>{
+    const [n,l]=el.dataset.cast.split('|'); castSpell(c, n, Number(l));
+  }));
+  bindEffectsCard(c);
 }
 function slotPips(l,sl){
   if(!sl.total) return '<span class="muted" style="font-size:12px">—</span>';
@@ -1902,7 +2025,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v19';
+const APP_VERSION='v20';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
