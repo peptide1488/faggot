@@ -205,6 +205,7 @@
   .wzprog{display:flex;gap:5px;margin-bottom:12px}
   .wzprog span{flex:1;height:5px;border-radius:3px;background:var(--panel2)}
   .wzprog span.on{background:var(--accent)}
+  .cklist{max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px}
   .pfp{width:76px;height:76px;border-radius:50%;flex:none;background:var(--panel2) center/cover no-repeat;
     border:2px solid var(--line);display:grid;place-items:center;font-size:30px;color:var(--mut)}
   .hpfp{width:30px;height:30px;border-radius:50%;flex:none;background:center/cover no-repeat;border:1px solid var(--line)}
@@ -471,6 +472,73 @@ function spellInfo(name){
     (sum?`<p style="margin:0 0 10px">${esc(sum)}</p>`:'')+'<b>Classes:</b> '+spellClassNames(name)+'.');
 }
 function featInfo(name){ showInfo(name,'Feat', esc(FEAT_DESC[name]||'No summary available for this feat.')); }
+// What a feat makes you choose. types: ability, fixed, skill, expertise, resilient, autospell, spellChoice
+const FEAT_GRANTS = {
+'Skilled':[{t:'skill',n:3}],
+'Skill Expert':[{t:'ability',n:1},{t:'skill',n:1},{t:'expertise',n:1}],
+'Resilient':[{t:'resilient'}],
+'Athlete':[{t:'ability',n:1,options:['str','dex']}],
+'Lightly Armored':[{t:'ability',n:1,options:['str','dex']}],
+'Moderately Armored':[{t:'ability',n:1,options:['str','dex']}],
+'Weapon Master':[{t:'ability',n:1,options:['str','dex']}],
+'Tavern Brawler':[{t:'ability',n:1,options:['str','con']}],
+'Observant':[{t:'ability',n:1,options:['int','wis']}],
+'Actor':[{t:'fixed',k:'cha'}],
+'Durable':[{t:'fixed',k:'con'}],
+'Heavily Armored':[{t:'fixed',k:'str'}],
+'Heavy Armor Master':[{t:'fixed',k:'str'}],
+'Keen Mind':[{t:'fixed',k:'int'}],
+'Fey Touched':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Misty Step']},{t:'spellChoice',lvl:1,schools:['E','D'],n:1}],
+'Shadow Touched':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Invisibility']},{t:'spellChoice',lvl:1,schools:['I','N'],n:1}],
+'Telekinetic':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Mage Hand']}],
+'Telepathic':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Detect Thoughts']}],
+'Magic Initiate':[{t:'spellChoice',lvl:0,n:2,any:true},{t:'spellChoice',lvl:1,n:1,any:true}]
+};
+function abilSelect(id, opts){ return `<select id="${id}" class="ch-ab">`+(opts||['str','dex','con','int','wis','cha']).map(k=>`<option value="${k}">${k.toUpperCase()}</option>`).join('')+`</select>`; }
+function choiceControl(sp, i, c){
+  const lab=(t)=>`<label>${t}</label>`;
+  if(sp.t==='ability') return `<div class="field">${lab('Increase '+sp.n+' ability'+(sp.n>1?' (each +1)':' by +1'))}${[...Array(sp.n)].map((_,j)=>abilSelect('csp_'+i+'_'+j, sp.options)).join(' ')}</div>`;
+  if(sp.t==='resilient') return `<div class="field">${lab('+1 to one ability & gain its save proficiency')}${abilSelect('csp_'+i+'_0')}</div>`;
+  if(sp.t==='skill'){ return `<div class="field">${lab('Choose '+sp.n+' skill proficienc'+(sp.n>1?'ies':'y'))}<div class="cklist">${SKILLS.map(([k,nm])=>c.skillProf[k]?'':`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join('')}</div></div>`; }
+  if(sp.t==='expertise'){ const prof=SKILLS.filter(([k])=>c.skillProf[k]&&!c.skillExp[k]); return `<div class="field">${lab('Choose '+sp.n+' skill for expertise')}<div class="cklist">${prof.length?prof.map(([k,nm])=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join(''):'<span class="muted small">Gain skill proficiencies first.</span>'}</div></div>`; }
+  if(sp.t==='spellChoice'){ const known=new Set(c.spells.map(s=>s.name.toLowerCase())); let list=SPELLS.filter(s=>s.l===sp.lvl && !known.has(s.n.toLowerCase())); if(sp.schools) list=list.filter(s=>sp.schools.includes(s.s)); if(!sp.any){ const lt=CLASS_LETTER[c.cls]; if(lt) list=list.filter(s=>s.c.includes(lt)); }
+    return `<div class="field">${lab('Choose '+sp.n+' '+lvlLabel(sp.lvl).toLowerCase()+' spell'+(sp.n>1?'s':''))}<div class="cklist">${list.map(s=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${esc(s.n)}|${s.l}"> ${SCHOOL_ICON[s.s]} ${esc(s.n)}</label>`).join('')}</div></div>`; }
+  return '';
+}
+function applyChoices(specs, c){
+  // validate counts first
+  for(let i=0;i<specs.length;i++){ const sp=specs[i];
+    if(sp.t==='skill'||sp.t==='expertise'||sp.t==='spellChoice'){ const got=document.querySelectorAll('[data-csp="'+i+'"]:checked').length; if(got!==sp.n){ flashBanner('Pick exactly '+sp.n+' for one of the choices'); return false; } }
+    if(sp.t==='ability' && sp.n>1){ const vals=[...document.querySelectorAll('#csp_'+i+'_0, #csp_'+i+'_1')].map(s=>s.value); if(new Set(vals).size!==vals.length){ flashBanner('Choose two different abilities'); return false; } }
+  }
+  specs.forEach((sp,i)=>{
+    if(sp.t==='ability'){ [...Array(sp.n)].forEach((_,j)=>{ const el=document.getElementById('csp_'+i+'_'+j); if(el) c.asiBonus[el.value]=(c.asiBonus[el.value]||0)+1; }); clampAbil(c); }
+    else if(sp.t==='resilient'){ const el=document.getElementById('csp_'+i+'_0'); if(el){ c.asiBonus[el.value]=(c.asiBonus[el.value]||0)+1; c.saveProf[el.value]=true; clampAbil(c); } }
+    else if(sp.t==='skill'){ document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>c.skillProf[el.value]=true); }
+    else if(sp.t==='expertise'){ document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>c.skillExp[el.value]=true); }
+    else if(sp.t==='spellChoice'){ document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>{ const [n,l]=el.value.split('|'); if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())) c.spells.push({name:n,level:Number(l),prepared:false,notes:''}); }); c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); }
+  });
+  return true;
+}
+function promptChoices(title, specs, c){
+  $('#modalRoot').innerHTML=`<div class="modal" id="chModal"><div class="sheet"><div class="grip"></div>
+    <h2>${esc(title)}</h2>${specs.map((sp,i)=>choiceControl(sp,i,c)).join('')}
+    <button class="btn block" id="chApply" style="margin-top:8px">Apply</button></div></div>`;
+  $('#chApply').onclick=()=>{ if(applyChoices(specs,c)){ $('#modalRoot').innerHTML=''; save(); render(); } };
+}
+function applyFeat(c, name){
+  if(c.feats.some(f=>(f.name||f)===name)){ flashBanner('You already have '+name); return; }
+  c.feats.push({name}); logChange(c,'Gained feat: '+name);
+  const grants=FEAT_GRANTS[name]||[];
+  grants.forEach(g=>{
+    if(g.t==='fixed') c.asiBonus[g.k]=(c.asiBonus[g.k]||0)+1;
+    else if(g.t==='autospell') g.spells.forEach(sp=>{ if(!c.spells.some(s=>s.name.toLowerCase()===sp.toLowerCase())){ const m=spellMeta(sp); c.spells.push({name:sp,level:m?m.l:0,prepared:false,notes:'(from '+name+')'}); } });
+  });
+  clampAbil(c); save();
+  const inputs=grants.filter(g=>['ability','skill','expertise','resilient','spellChoice'].includes(g.t));
+  if(inputs.length) promptChoices(name+' — make your choices', inputs, c);
+  else render();
+}
 // AC from armor (5e armor table). dexCap: how much DEX adds. base = armor AC.
 const ARMOR = [
   {key:'none',       name:'Unarmored',       base:10, dexCap:99},
@@ -922,7 +990,7 @@ function reviewBlock(c){
     <div class="listrow"><div class="nm">Class</div><div class="val">${esc(c.cls)} 1</div></div>
     <div class="listrow"><div class="nm">Background</div><div class="val">${esc(c.background||'—')}</div></div>
     <div class="listrow"><div class="nm">Scores</div><div class="val" style="font-size:13px">${ABILITIES.map(([k])=>k.toUpperCase()+' '+abil(c,k)).join(' · ')}</div></div>
-    ${c.feats.length?`<div class="listrow"><div class="nm">Feat</div><div class="val">${esc(c.feats[0].name||c.feats[0])}</div></div>`:''}
+    ${(wiz.featChoice&&wiz.featChoice!=='(no feat)')?`<div class="listrow"><div class="nm">Feat</div><div class="val">${esc(wiz.featChoice)}</div></div>`:''}
     <div class="listrow"><div class="nm">Starting HP</div><div class="val">${wiz.hpValue}</div></div>
     <div class="seg" style="margin-top:10px"><button class="${wiz.hpMode==='max'?'on':''}" id="wzHpMax">Max — ${autoHP(c)}</button><button class="${wiz.hpMode==='roll'?'on':''}" id="wzHpRoll">Roll d${hd}+CON</button></div>
     <p class="muted" style="font-size:13px;margin-top:12px">Finish to open the full sheet — you can change anything later.</p>`;
@@ -940,7 +1008,7 @@ function renderWizard(c){
   else if(def.key==='bg') body=`<div class="field"><label>Background</label>${fieldSelect('wz_bg', BACKGROUNDS, c.background, 'Custom background')}</div>${BG_INFO[c.background]?`<div class="pill" style="margin-top:8px;display:block;line-height:1.5"><b>Skills:</b> ${BG_INFO[c.background].s}<br><b>Feature:</b> ${esc(BG_INFO[c.background].f)}</div>`:'<p class="muted" style="font-size:13px">Backgrounds give 2 skill proficiencies and a feature.</p>'}`;
   else if(def.key==='abil') body=abilCard(c, true);
   else if(def.key==='skills') body=skillsPicker(c);
-  else if(def.key==='feat'){ const cur0=(c.feats[0]&&c.feats[0].name)||(grantsL1Feat(c)?FEATS[0]:'(no feat)'); body=`<div class="field"><label>Starting feat ${grantsL1Feat(c)?'· Variant Human':'(optional)'}</label>${select('wz_feat', ['(no feat)',...FEATS], cur0)}</div><div class="muted" id="wzFeatDesc" style="font-size:13px;line-height:1.5">${FEAT_DESC[cur0]||(grantsL1Feat(c)?'Variant Human grants one feat at level 1.':'Most level-1 characters have no feat — pick one only if your DM allows it.')}</div>`; }
+  else if(def.key==='feat'){ const cur0=wiz.featChoice||(grantsL1Feat(c)?FEATS[0]:'(no feat)'); body=`<div class="field"><label>Starting feat ${grantsL1Feat(c)?'· Variant Human':'(optional)'}</label>${select('wz_feat', ['(no feat)',...FEATS], cur0)}</div><div class="muted" id="wzFeatDesc" style="font-size:13px;line-height:1.5">${FEAT_DESC[cur0]||(grantsL1Feat(c)?'Variant Human grants one feat at level 1.':'Most level-1 characters have no feat — pick one only if your DM allows it.')}</div><p class="muted" style="font-size:12px;margin-top:8px">If the feat grants choices (skills, a spell, etc.) you'll be asked to pick them after finishing.</p>`; }
   else if(def.key==='spells') body=wizSpellPicker(c);
   else body=reviewBlock(c);
   const isLast = step===steps.length-1;
@@ -964,7 +1032,7 @@ function renderWizard(c){
   if(def.key==='bg') bindSelectCustom('wz_bg','background');
   if(def.key==='abil') bindAbilHandlers(c);
   if(def.key==='skills') bindSkillHandlers(c);
-  if(def.key==='feat') $('#wz_feat').addEventListener('change',e=>{ const v=e.target.value; if(v==='(no feat)'){ if(c.feats[0]) c.feats.shift(); } else { if(c.feats[0]) c.feats[0]={name:v}; else c.feats.unshift({name:v}); } const d=$('#wzFeatDesc'); if(d) d.textContent=FEAT_DESC[v]||''; save(); });
+  if(def.key==='feat') $('#wz_feat').addEventListener('change',e=>{ wiz.featChoice=e.target.value; const d=$('#wzFeatDesc'); if(d) d.textContent=FEAT_DESC[e.target.value]||''; });
   if(def.key==='spells') app.querySelectorAll('[data-wspell]').forEach(el=>el.addEventListener('change',e=>{
     const [n,l]=el.dataset.wspell.split('|'); const lv=Number(l);
     const cap = lv===0?cantripLimit(c):spell1Limit(c);
@@ -989,7 +1057,7 @@ function renderWizard(c){
 function wizNext(){
   const c=cur(), steps=wizSteps(c), def=steps[wiz.step];
   if(def.key==='name'){ c.name=($('#wz_name')?$('#wz_name').value:c.name)||''; if(!c.name.trim()){ flashBanner('Enter a name first'); return; } }
-  if(def.key==='feat'){ const v=$('#wz_feat'); if(v && v.value!=='(no feat)' && !c.feats[0]) c.feats.unshift({name:v.value}); }
+  if(def.key==='feat'){ const v=$('#wz_feat'); if(v) wiz.featChoice=v.value; }
   if(def.key==='subclass'){ const v=$('#wz_sub'); if(v && !c.subclass) c.subclass=v.value; }
   save();
   if(wiz.step < steps.length-1){ wiz.step++; render(); return; }
@@ -997,7 +1065,9 @@ function wizNext(){
   const hp = wiz.hpValue!=null ? wiz.hpValue : (autoHP(c)||c.hp.max);
   c.hp.max=hp; c.hp.cur=hp;
   logChange(c, 'Created — level 1 '+(c.race?c.race+' ':'')+c.cls+(c.background?' ('+c.background+')':''));
+  const fc=wiz.featChoice;
   wiz=null; tab='bio'; save(); render();
+  if(fc && fc!=='(no feat)') applyFeat(c, fc);   // adds the starting feat and prompts its choices
 }
 
 /* ---------- LEVEL UP ---------- */
@@ -1010,7 +1080,7 @@ function levelUp(){
   const needsSub = nl>=subclassLevel(c) && !c.subclass && (SUBCLASSES[c.cls]||[]).length>0;
   const hd=CLASS_HITDIE[c.cls]||8, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
   const learnCap = ({Wizard:2,Bard:1,Sorcerer:1,Warlock:1,Ranger:1})[c.cls] ?? 2;
-  let hpGain=null, asiMode='asi', learnedThisLevel=0;
+  let hpGain=null, asiMode='asi', learnedThisLevel=0, pendingFeat=null;
   $('#modalRoot').innerHTML=`
    <div class="modal" id="luModal"><div class="sheet">
      <div class="grip"></div>
@@ -1069,11 +1139,12 @@ function levelUp(){
         if(a2!=='—'){ const k2=abilKeyByName(a2); if(k2) c.asiBonus[k2]+=1; }
         clampAbil(c);
         asiNote=', ASI '+$('#luA1').value+(a2!=='—'?' & '+a2:'');
-      } else { const fn=$('#luFeat').value; c.feats.push({name:fn}); asiNote=', feat: '+fn; }
+      } else { pendingFeat=$('#luFeat').value; asiNote=', feat: '+pendingFeat; }
     }
     c.level=nl; const h=CLASS_HITDIE[c.cls]; if(h) c.hitDice.total=nl+'d'+h;
     logChange(c, 'Leveled up to '+nl+' (+'+hpGain+' HP)'+(needsSub&&c.subclass?', subclass: '+c.subclass:'')+asiNote);
     $('#modalRoot').innerHTML=''; save(); render(); flashBanner('Welcome to level '+nl+'!');
+    if(pendingFeat) applyFeat(c, pendingFeat);   // adds the feat and prompts for its choices
   };
 }
 
@@ -1168,7 +1239,7 @@ function renderBio(c){
   $('#pfpFile').addEventListener('change',e=>{ if(e.target.files[0]) setPortrait(e.target.files[0]); });
   { const d=$('#pfpDel'); if(d) d.addEventListener('click',()=>{ c.portrait=''; save(); render(); }); }
   $('#feat_pick').addEventListener('change',e=>{ $('#featPickDesc').textContent=FEAT_DESC[e.target.value]||''; });
-  $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_pick').value; if(!v) return; if(c.feats.some(f=>(f.name||f)===v)){ flashBanner('Already have '+v); return; } c.feats.push({name:v}); logChange(c,'Gained feat: '+v); save(); render(); });
+  $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_pick').value; if(!v) return; applyFeat(c, v); });
   app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
 }
@@ -1790,7 +1861,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v16';
+const APP_VERSION='v17';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
