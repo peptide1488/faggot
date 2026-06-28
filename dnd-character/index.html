@@ -458,6 +458,109 @@ _default:["............","...oooo.....","..oLLLLo....",".oLLLLLLo...",".oLkkkkLo
 };
 function classEmblem(cls, px){ const g=CLASS_PIX[cls]; return g?`<span class="emblem">${pixelArt(g,px)}</span>`:''; }
 function raceEmblem(race, px){ const g=RACE_PIX[race]||RACE_PIX._default; return `<span class="emblem">${pixelArt(g,px)}</span>`; }
+
+/* ---- equipment sprites (reuse class weapons + new gear) ---- */
+const ITEM_PIX={
+  spear:["......o.....",".....oso....","....ossso...",".....oso....",".....owo....",".....owo....",".....owo....",".....owo....",".....owo....",".....owo....",".....owo....",".....oo....."],
+  armor:["..o....o....",".oossssoo...",".osssssso...",".osssssso...",".osssssso...",".odddddo....",".osssssso...",".osssssso...","..osssso....","...oooo.....","............","............"],
+  potion:["....oo......","....oo......","...o..o.....","..o....o....",".o.rrrr.o...",".orrrrrro...",".orrrrrro...",".orrrrrro...","..orrrro....","...oooo.....","............","............"],
+  ring:["....oo......","...occo.....","..oggggo....",".oggggggo...",".og....go...",".og....go...",".oggggggo...","..oggggo....","...oooo.....","............","............","............"],
+  helm:["...oooo.....","..osssso....",".osssssso...",".osssssso...",".oxxxxxxo...",".osssssso...","..osssso....","...oooo.....","............","............","............","............"],
+  gear:["....oo......","...o..o.....","..oooooo....",".oLLLLLLo...",".oLLLLLLo...",".oLLLLLLo...",".oLLLLLLo...","..oLLLLo....","...oooo.....","............","............","............"]
+};
+function itemSprite(key){ return ITEM_PIX[key] || (key==='sword'&&CLASS_PIX.Fighter) || (key==='dagger'&&CLASS_PIX.Rogue) || (key==='axe'&&CLASS_PIX.Barbarian) || (key==='bow'&&CLASS_PIX.Ranger) || (key==='shield'&&CLASS_PIX.Paladin) || (key==='mace'&&CLASS_PIX.Cleric) || (key==='staff'&&CLASS_PIX.Wizard) || ITEM_PIX.gear; }
+function itemEmblem(key, px){ return `<span class="emblem">${pixelArt(itemSprite(key), px||6)}</span>`; }
+function weaponIconKey(name){ const n=(name||'').toLowerCase();
+  if(/dagger/.test(n)) return 'dagger'; if(/axe/.test(n)) return 'axe';
+  if(/bow|sling/.test(n)) return 'bow'; if(/staff|quarterstaff/.test(n)) return 'staff';
+  if(/spear|pike|glaive|trident|halberd|lance/.test(n)) return 'spear';
+  if(/hammer|maul|club|mace|morningstar|flail/.test(n)) return 'mace';
+  if(/sword|scimitar|rapier|blade/.test(n)) return 'sword';
+  return 'sword'; }
+function itemIconKey(it){ if(!it) return 'gear';
+  if(it.kind==='armor') return 'armor'; if(it.kind==='shield') return 'shield';
+  if(it.kind==='weapon') return weaponIconKey(it.name);
+  const n=(it.name||'').toLowerCase();
+  if(/potion|elixir|oil|flask/.test(n)) return 'potion'; if(/ring/.test(n)) return 'ring';
+  if(/helm|hat|circlet|crown|cap/.test(n)) return 'helm'; if(/wand|rod|staff/.test(n)) return 'staff';
+  return 'gear'; }
+
+/* ---- weapon catalog ---- */
+const WEAPONS=[
+  {n:'Dagger',cat:'Simple',type:'melee',dmg:'1d4',dt:'piercing',rng:'5 ft (thrown 20/60)',props:'finesse, light, thrown'},
+  {n:'Club',cat:'Simple',type:'melee',dmg:'1d4',dt:'bludgeoning',rng:'5 ft',props:'light'},
+  {n:'Mace',cat:'Simple',type:'melee',dmg:'1d6',dt:'bludgeoning',rng:'5 ft',props:'—'},
+  {n:'Quarterstaff',cat:'Simple',type:'melee',dmg:'1d6',dt:'bludgeoning',rng:'5 ft',props:'versatile (1d8)',vers:'1d8'},
+  {n:'Spear',cat:'Simple',type:'melee',dmg:'1d6',dt:'piercing',rng:'5 ft (thrown 20/60)',props:'thrown, versatile (1d8)',vers:'1d8'},
+  {n:'Handaxe',cat:'Simple',type:'melee',dmg:'1d6',dt:'slashing',rng:'5 ft (thrown 20/60)',props:'light, thrown'},
+  {n:'Light Crossbow',cat:'Simple',type:'ranged',dmg:'1d8',dt:'piercing',rng:'80/320',props:'ammunition, loading, two-handed',ammo:'bolts'},
+  {n:'Shortbow',cat:'Simple',type:'ranged',dmg:'1d6',dt:'piercing',rng:'80/320',props:'ammunition, two-handed',ammo:'arrows'},
+  {n:'Longsword',cat:'Martial',type:'melee',dmg:'1d8',dt:'slashing',rng:'5 ft',props:'versatile (1d10)',vers:'1d10'},
+  {n:'Shortsword',cat:'Martial',type:'melee',dmg:'1d6',dt:'piercing',rng:'5 ft',props:'finesse, light'},
+  {n:'Rapier',cat:'Martial',type:'melee',dmg:'1d8',dt:'piercing',rng:'5 ft',props:'finesse'},
+  {n:'Scimitar',cat:'Martial',type:'melee',dmg:'1d6',dt:'slashing',rng:'5 ft',props:'finesse, light'},
+  {n:'Greatsword',cat:'Martial',type:'melee',dmg:'2d6',dt:'slashing',rng:'5 ft',props:'heavy, two-handed'},
+  {n:'Greataxe',cat:'Martial',type:'melee',dmg:'1d12',dt:'slashing',rng:'5 ft',props:'heavy, two-handed'},
+  {n:'Battleaxe',cat:'Martial',type:'melee',dmg:'1d8',dt:'slashing',rng:'5 ft',props:'versatile (1d10)',vers:'1d10'},
+  {n:'Warhammer',cat:'Martial',type:'melee',dmg:'1d8',dt:'bludgeoning',rng:'5 ft',props:'versatile (1d10)',vers:'1d10'},
+  {n:'Maul',cat:'Martial',type:'melee',dmg:'2d6',dt:'bludgeoning',rng:'5 ft',props:'heavy, two-handed'},
+  {n:'Glaive',cat:'Martial',type:'melee',dmg:'1d10',dt:'slashing',rng:'10 ft (reach)',props:'heavy, reach, two-handed'},
+  {n:'Longbow',cat:'Martial',type:'ranged',dmg:'1d8',dt:'piercing',rng:'150/600',props:'ammunition, heavy, two-handed',ammo:'arrows'},
+  {n:'Hand Crossbow',cat:'Martial',type:'ranged',dmg:'1d6',dt:'piercing',rng:'30/120',props:'ammunition, light, loading',ammo:'bolts'},
+  {n:'Whip',cat:'Martial',type:'melee',dmg:'1d4',dt:'slashing',rng:'10 ft (reach)',props:'finesse, reach'}
+];
+function weaponByName(n){ return WEAPONS.find(w=>w.n===n); }
+// Concentration spells among our list (lowercased).
+const CONC_SPELLS=new Set(['true strike','bane','bless','detect magic','divine favor','entangle','faerie fire','fog cloud','hex',"hunter's mark",'protection from evil and good',"tasha's hideous laughter",'witch bolt','heroism','shield of faith','silent image','expeditious retreat','alter self','barkskin','blur','calm emotions','cloud of daggers','crown of madness','darkness','detect thoughts','enhance ability','enlarge/reduce','flaming sphere','gust of wind','heat metal','hold person','invisibility','levitate','locate object','magic weapon','moonbeam','pass without trace','ray of enfeeblement','silence','spider climb','spike growth','suggestion','web','beacon of hope','bestow curse','call lightning','clairvoyance','conjure animals','fear','fly','gaseous form','haste','hypnotic pattern','major image','protection from energy','sleet storm','slow','spirit guardians','stinking cloud','vampiric touch','wind wall','arcane eye','banishment','compulsion','confusion','conjure woodland beings','control water','dominate beast','greater invisibility','locate creature','phantasmal killer','polymorph','stoneskin','wall of fire','animate objects','cloudkill','conjure elemental','dispel evil and good','dominate person','hold monster','insect plague','mislead','modify memory','scrying','telekinesis','tree stride','wall of force','wall of stone','eyebite','find the path','globe of invulnerability','sunbeam','wall of ice','conjure celestial','delayed blast fireball','reverse gravity','animal shapes','antimagic field','dominate monster','earthquake','holy aura','maze','gate','storm of vengeance']);
+function isConcentration(name){ return CONC_SPELLS.has((name||'').toLowerCase()); }
+// Extra attacks from class/level (number ON TOP of the first attack).
+function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
+  if(cls==='Fighter') return l>=20?3:l>=11?2:l>=5?1:0;
+  if(['Barbarian','Paladin','Ranger','Monk'].includes(cls)) return l>=5?1:0;
+  return 0; }
+function gearBonus(c,key){ let n=0; (c.items||[]).forEach(it=>{ if(it.equipped&&it.mods&&it.mods[key]) n+=Number(it.mods[key])||0; }); return n; }
+function equippedWeapons(c){ const out=[]; (c.items||[]).forEach((it,i)=>{ if(it.kind==='weapon'&&it.equipped) out.push({it,i}); }); return out; }
+function weaponAbil(c,w){ if(w.type==='ranged') return 'dex'; if(/finesse/.test(w.props||'')) return mod(abil(c,'dex'))>=mod(abil(c,'str'))?'dex':'str'; return 'str'; }
+function setEquipped(c, idx, on){
+  const it=c.items[idx]; if(!it) return; it.equipped=on;
+  if(it.kind==='armor'){ if(on){ c.items.forEach((x,j)=>{ if(j!==idx&&x.kind==='armor') x.equipped=false; }); c.armor=it.armorKey||'none'; c.acOverride=''; } else if(c.armor===(it.armorKey||'none')) c.armor='none'; }
+  if(it.kind==='shield'){ c.shield=(c.items||[]).some(x=>x.kind==='shield'&&x.equipped); }
+  logChange(c, (on?'Equipped ':'Unequipped ')+it.name); save(); render();
+}
+function openAttack(c){
+  const ws=equippedWeapons(c), atks=extraAttacks(c)+1, A=k=>k.toUpperCase();
+  let cards='';
+  ws.forEach(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',props:'',rng:'5 ft',type:'melee',cat:''};
+    const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), th=abm+profBonus(c);
+    const dnote=w.dmg+(abm?sgn(abm):''), vnote=w.vers?(w.vers+(abm?sgn(abm):'')):null;
+    cards+=`<div class="card" style="margin:0 0 10px">
+      <div class="row" style="gap:8px;align-items:center"><span style="flex:none">${itemEmblem(weaponIconKey(it.name),5)}</span><div class="nm"><b>${esc(it.name)}</b><small>${w.cat?w.cat+' ':''}${w.type} · ${esc(w.props||'—')}</small></div></div>
+      <div class="addrow" style="gap:6px;flex-wrap:wrap;margin:8px 0"><span class="pill">🗡️ ${atks} attack${atks>1?'s':''}/action</span><span class="pill">📏 ${esc(w.rng||'5 ft')}</span>${w.ammo?`<span class="pill">🏹 ${w.ammo}</span>`:''}<span class="pill">Uses ${A(ab)} (${sgn(abm)})</span></div>
+      <div class="listrow"><div class="nm">To hit <span class="sub">${sgn(th)}</span></div><input type="number" class="atkin" data-kind="hit" data-bonus="${th}" data-label="${esc(it.name)} attack" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(it.name)} attack" data-bonus="${th}" title="Auto-roll">🎲 ${sgn(th)}</button></div>
+      <div class="listrow"><div class="nm">Damage <span class="sub">${esc(dnote)} ${esc(w.dt||'')}</span></div><input type="number" class="atkin" data-kind="dmg" data-label="${esc(it.name)} damage" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(it.name)} damage" data-notation="${esc(dnote)}" title="Auto-roll">🎲 ${esc(w.dmg)}</button></div>
+      ${vnote?`<div class="listrow"><div class="nm">Two-handed <span class="sub">${esc(vnote)}</span></div><button class="val rollbtn" data-rolldmg data-label="${esc(it.name)} damage (2H)" data-notation="${esc(vnote)}">🎲 ${w.vers}</button></div>`:''}
+      <p class="muted" style="font-size:11.5px;margin:6px 0 0">No save — compare your attack roll to the target's AC; on a hit, deal the damage.</p>
+    </div>`;
+  });
+  (c.attacks||[]).forEach((a)=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
+    cards+=`<div class="card" style="margin:0 0 10px"><div class="nm"><b>${esc(a.name)}</b>${a.damage?`<small>${esc(a.damage)}</small>`:''}</div>
+      <div class="listrow"><div class="nm">To hit</div><input type="number" class="atkin" data-kind="hit" data-bonus="${bn}" data-label="${esc(a.name)} attack" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(a.name)} attack" data-bonus="${bn}">🎲 ${sgn(bn)}</button></div>
+      ${a.damage?`<div class="listrow"><div class="nm">Damage</div><input type="number" class="atkin" data-kind="dmg" data-label="${esc(a.name)} damage" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(a.name)} damage" data-notation="${esc(a.damage)}">🎲 ${esc(a.damage)}</button></div>`:''}
+    </div>`;
+  });
+  $('#modalRoot').innerHTML=`<div class="modal" id="atkModal"><div class="sheet"><div class="grip"></div>
+    <h2>⚔ Attack</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 10px">You can make <b>${atks}</b> attack${atks>1?'s':''} with one Attack action${extraAttacks(c)?' (Extra Attack)':''}. Tap 🎲 to auto-roll or type your own.</p>
+    ${(ws.length||(c.attacks||[]).length)?cards:'<div class="empty">No weapons equipped and no attacks added. Add & equip a weapon on the Items tab.</div>'}
+    <button class="btn ghost block" id="atkClose" style="margin-top:6px">Close</button>
+  </div></div>`;
+  $('#atkClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#atkModal').onclick=e=>{ if(e.target.id==='atkModal') $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('#atkModal .atkin').forEach(el=>el.addEventListener('change',()=>{ const v=Number(el.value); if(el.value===''||isNaN(v)) return;
+    if(el.dataset.kind==='hit'){ const b=Number(el.dataset.bonus)||0; pushRoll({label:el.dataset.label+' (manual)', total:v+b, detail:'d20 ('+v+') '+sgn(b), crit:v===20?'crit':v===1?'fumble':null, kind:'check'}); }
+    else pushRoll({label:el.dataset.label+' (manual)', total:v, detail:'entered', kind:'dmg'});
+    el.value=''; }));
+}
 function expertiseTotal(c){ const l=Number(c.level)||1; if(c.cls==='Rogue') return 2+(l>=6?2:0); if(c.cls==='Bard') return (l>=3?2:0)+(l>=10?2:0); return 0; }
 function expertiseOwed(c){ return Math.max(0, expertiseTotal(c) - SKILLS.filter(([k])=>c.skillExp[k]).length); }
 function pendingChoiceSpecs(c){
@@ -533,7 +636,7 @@ const RACE_ASI = {
 };
 function raceBonus(c,k){ return ((RACE_ASI[c.race]||{})[k])||0; }
 function abilBase(c,k){ const b=Number(c.abilities[k]); return (isNaN(b)?0:b) + raceBonus(c,k) + ((c.asiBonus&&c.asiBonus[k])||0); }
-function abil(c,k){ return abilBase(c,k) + effBonus(c,k); }   // final score incl. active-effect buffs
+function abil(c,k){ return abilBase(c,k) + effBonus(c,k) + gearBonus(c,k); }   // final score incl. active-effect + equipment buffs
 // Levels that grant an Ability Score Improvement / feat (class-dependent).
 function asiLevels(c){
   const base=[4,8,12,16,19];
@@ -698,9 +801,9 @@ const ARMOR = [
 ];
 function armorDef(key){ return ARMOR.find(a=>a.key===key)||ARMOR[0]; }
 function computeAC(c){
-  if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + effBonus(c,'ac');
+  if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + effBonus(c,'ac') + gearBonus(c,'ac');
   const a=armorDef(c.armor||'none');
-  return a.base + Math.min(mod(abil(c,'dex')), a.dexCap) + (c.shield?2:0) + effBonus(c,'ac');
+  return a.base + Math.min(mod(abil(c,'dex')), a.dexCap) + (c.shield?2:0) + effBonus(c,'ac') + gearBonus(c,'ac');
 }
 // Base walking speed by race (most are 30; small races 25; a few faster).
 const RACE_SPEED = {'Dwarf':25,'Halfling':25,'Gnome':25,'Kobold':30,'Tortle':30,'Aarakocra':25,'Centaur':40,'Minotaur':40,'Elf':30};
@@ -782,7 +885,7 @@ const SPELL_EFFECTS = {
 };
 function effBonus(c, key){ let n=0; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods[key]) n+=e.mods[key]; }); return n; }
 function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods.speedMul) m*=e.mods.speedMul; }); return m; }
-function effSpeed(c){ return Math.round((Number(c.speed||0)+effBonus(c,'speed'))*effSpeedMul(c)); }
+function effSpeed(c){ return Math.round((Number(c.speed||0)+effBonus(c,'speed')+gearBonus(c,'speed'))*effSpeedMul(c)); }
 function modSummary(mods){ if(!mods) return ''; const parts=[];
   if(mods.ac) parts.push(sgn(mods.ac)+' AC');
   if(mods.speed) parts.push(sgn(mods.speed)+' ft');
@@ -835,10 +938,14 @@ function castSpell(c, name, level){
 // Heuristically read mechanics out of a spell's one-line summary (attack? save? damage/heal dice?).
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 function parseSpellMechanics(name){
-  const eff=SPELL_EFFECTS[name];
-  const out={attack:false, save:null, dmg:null, dtype:'', heal:null, conc:!!(eff&&eff.conc), buff:!!eff};
+  const eff=SPELL_EFFECTS[name], d=SPELL_DESC[name]||'';
+  const out={attack:false, save:null, dmg:null, dtype:'', heal:null, buff:!!eff,
+    conc:isConcentration(name)||!!(eff&&eff.conc), range:'', duration:''};
+  if(/\btouch\b/i.test(d)) out.range='Touch';
+  else { const r=d.match(/within (\d+)\s*ft/i); if(r) out.range=r[1]+' ft'; }
+  if(eff&&eff.rounds!=null) out.duration=fmtDuration(eff.rounds);
+  else if(out.conc) out.duration='Concentration';
   if(eff) return out;   // self/ally buff — its dice (e.g. Bless +1d4) are described in the effect note
-  const d=SPELL_DESC[name]||'';
   const sv=d.match(/\b(Str|Dex|Con|Int|Wis|Cha)\s+save/i); if(sv) out.save=sv[1].toLowerCase();
   const dm=d.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s*([a-z]+)?/i);
   if(dm){ const dice=dm[1].replace(/\s+/g,''); const word=(dm[2]||'').toLowerCase();
@@ -856,7 +963,13 @@ function castModal(c, name, baseLevel){
   const eff=SPELL_EFFECTS[name];
   $('#modalRoot').innerHTML=`<div class="modal" id="castModal"><div class="sheet"><div class="grip"></div>
     <h2>${meta?spellIcon(name):'✨'} ${esc(name)}</h2>
-    <p class="muted" style="font-size:12px;margin:0 0 10px">${meta?SCHOOL_NAME[meta.s]+' · '+lvlLabel(meta.l):'Spell'}${m.conc?' · 🧠 concentration':''} · Spell DC ${dc}</p>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">${meta?SCHOOL_NAME[meta.s]+' · '+lvlLabel(meta.l):'Spell'} · Spell DC ${dc}</p>
+    <div class="addrow" style="gap:6px;flex-wrap:wrap;margin:0 0 10px">
+      ${m.range?`<span class="pill">📏 Range: ${m.range}</span>`:''}
+      ${m.duration?`<span class="pill">⏱ ${m.duration}</span>`:''}
+      ${m.conc?`<span class="pill">🧠 Concentration</span>`:''}
+      ${baseLevel>0?`<span class="pill">${lvlLabel(baseLevel)}</span>`:`<span class="pill">Cantrip</span>`}
+    </div>
     ${SPELL_DESC[name]?`<p style="margin:0 0 12px">${esc(SPELL_DESC[name])}</p>`:''}
     ${(m.attack||m.dmg||m.heal)?`<div class="card" style="margin:0 0 10px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🎲 You roll — tap 🎲 to auto-roll, or type your own</div>
       ${m.attack?`<div class="listrow"><div class="nm">Spell attack <span class="sub">${sgn(atkB)} to hit</span></div><input type="number" id="mAtk" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(name)} attack" data-bonus="${atkB}" title="Auto-roll">🎲 ${sgn(atkB)}</button></div>`:''}
@@ -1035,6 +1148,7 @@ function ensureFields(c){
   if(!c.log) c.log=[];
   if(c.portrait===undefined) c.portrait='';
   if(!c.effects) c.effects=[];
+  if(Array.isArray(c.items)) c.items.forEach(it=>{ if(it && !it.kind) it.kind='gear'; });
   return c;
 }
 function setPortrait(file){
@@ -1105,6 +1219,7 @@ function pushRoll(r){
   lastRoll=r;
   showRollBanner(r);
   renderDiceLog();
+  if(r.kind==='check'||r.kind==='dmg'){ const c=cur(); if(c){ const det=String(r.detail||'').replace(/<[^>]+>/g,''); logChange(c, '🎲 '+r.label+' = '+r.total+(det?' ['+det+']':'')+(r.crit==='crit'?' — CRIT!':r.crit==='fumble'?' — nat 1':'')); } }
 }
 function showRollBanner(r){
   const el=$('#rollBanner');
@@ -1286,6 +1401,7 @@ function abilScoreLines(c,k){
   L.push({l:'Base score', v:isNaN(base)?10:base, raw:true});
   const rb=raceBonus(c,k); if(rb) L.push({l:'Racial bonus · '+(c.race||'race'), v:rb});
   const as=(c.asiBonus&&c.asiBonus[k])||0; if(as) L.push({l:'ASI & feat increases', v:as});
+  const gb=gearBonus(c,k); if(gb) L.push({l:'Equipment', v:gb});
   const eb=effBonus(c,k); if(eb) L.push({l:'Active spell effects', v:eb});
   return L;
 }
@@ -1299,8 +1415,8 @@ function statBreakdown(c, spec){
   else if(t==='ac'){ title='Armor Class';
     if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)){ lines=[{l:'Custom AC', v:Number(c.acOverride), raw:true}]; }
     else { const ar=armorDef(c.armor||'none'); lines=[{l:'Armor base · '+ar.name, v:ar.base, raw:true}]; const dx=Math.min(mod(abil(c,'dex')), ar.dexCap); if(ar.dexCap>0) lines.push({l:'DEX'+(ar.dexCap<99?' (max +'+ar.dexCap+')':''), v:dx}); if(c.shield) lines.push({l:'Shield', v:2}); }
-    const eb=effBonus(c,'ac'); if(eb) lines.push({l:'Active spell effects', v:eb}); total=computeAC(c); raw=true; }
-  else if(t==='speed'){ title='Speed'; lines=[{l:'Base · '+(c.race||'walking'), v:Number(c.speed||0), raw:true}]; const eb=effBonus(c,'speed'); if(eb) lines.push({l:'Active effects', v:eb}); const ml=effSpeedMul(c); if(ml!==1) lines.push({l:'Effect multiplier', v:'×'+ml, raw:true}); total=effSpeed(c); raw=true; }
+    const gba=gearBonus(c,'ac'); if(gba) lines.push({l:'Equipment', v:gba}); const eb=effBonus(c,'ac'); if(eb) lines.push({l:'Active spell effects', v:eb}); total=computeAC(c); raw=true; }
+  else if(t==='speed'){ title='Speed'; lines=[{l:'Base · '+(c.race||'walking'), v:Number(c.speed||0), raw:true}]; const gbs=gearBonus(c,'speed'); if(gbs) lines.push({l:'Equipment', v:gbs}); const eb=effBonus(c,'speed'); if(eb) lines.push({l:'Active effects', v:eb}); const ml=effSpeedMul(c); if(ml!==1) lines.push({l:'Effect multiplier', v:'×'+ml, raw:true}); total=effSpeed(c); raw=true; }
   else if(t==='prof'){ title='Proficiency Bonus'; if(c.profOverride!=='' && c.profOverride!=null && !isNaN(c.profOverride)){ lines=[{l:'Custom override', v:Number(c.profOverride)}]; } else { lines=[{l:'From level '+(c.level||1), v:profBonus(c)}]; } total=profBonus(c); }
   else if(t==='spelldc'){ title='Spell Save DC'; lines=[{l:'Base', v:8, raw:true},{l:'Proficiency', v:pb},{l:A(c.spellAbility)+' modifier', v:mod(abil(c,c.spellAbility))}]; total=8+pb+mod(abil(c,c.spellAbility)); raw=true; }
   else if(t==='spellatk'){ title='Spell Attack'; lines=[{l:'Proficiency', v:pb},{l:A(c.spellAbility)+' modifier', v:mod(abil(c,c.spellAbility))}]; total=pb+mod(abil(c,c.spellAbility)); }
@@ -2020,19 +2136,37 @@ function renderCombat(c){
     <h2>Concentration</h2>
     <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="concOn" ${c.concentration.active?'checked':''}> Concentrating${c.concentration.active&&c.concentration.spell?' on '+esc(c.concentration.spell):''}</label>
     <div style="margin-top:10px">${(()=>{
-      const cur=c.concentration.spell||'';
-      const names=c.spells.map(s=>s.name);
-      if(cur && !names.includes(cur)) names.unshift(cur);
-      if(!names.length) return `<input id="concSpell" value="${esc(cur)}" placeholder="On which spell?" ${c.concentration.active?'':'disabled style="opacity:.5"'}>`;
-      return `<select id="concSpell" ${c.concentration.active?'':'disabled style="opacity:.5"'}><option value="">— choose a spell —</option>${names.map(n=>`<option ${n===cur?'selected':''}>${esc(n)}</option>`).join('')}</select>`;
+      const sel=c.concentration.spell||'';
+      const names=c.spells.map(s=>s.name).filter(n=>isConcentration(n));
+      if(sel && !names.includes(sel)) names.unshift(sel);
+      if(!names.length) return `<input id="concSpell" value="${esc(sel)}" placeholder="No concentration spells known — type one" ${c.concentration.active?'':'disabled style="opacity:.5"'}>`;
+      return `<select id="concSpell" ${c.concentration.active?'':'disabled style="opacity:.5"'}><option value="">— choose a concentration spell —</option>${names.map(n=>`<option ${n===sel?'selected':''}>${esc(n)}</option>`).join('')}</select>`;
     })()}</div>
   </div>
 
   ${effectsCard(c)}
 
   <div class="card">
-    <h2>Attacks & Weapons</h2>
+    <h2>Action Economy</h2>
+    <div class="tiles">
+      <div class="tile"><div class="lab">Attacks / action</div><div class="big">${extraAttacks(c)+1}</div></div>
+      <div class="tile"><div class="lab">Action</div><div class="big">1</div></div>
+      <div class="tile"><div class="lab">Bonus action</div><div class="big">1</div></div>
+      <div class="tile"><div class="lab">Reaction</div><div class="big">1</div></div>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin:10px 0 0">Plus your move (up to ${effSpeed(c)} ft). ${extraAttacks(c)?'Extra Attack lets you attack '+(extraAttacks(c)+1)+'× when you take the Attack action.':'One attack per Attack action at this level.'}</p>
+  </div>
+
+  <div class="card">
+    <h2>Attacks & Weapons <button class="btn sm" id="attackBtn" style="float:right">⚔ Attack</button></h2>
     <div id="attackList">
+      ${equippedWeapons(c).map(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), th=abm+profBonus(c); const dn=w.dmg+(abm?sgn(abm):'');
+        return `<div class="spell">
+          <span style="flex:none">${itemEmblem(weaponIconKey(it.name),4)}</span>
+          <div class="nm"><b>${esc(it.name)}</b><small>${esc(dn)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}</small></div>
+          <button class="rollbtn" data-rollcheck data-label="${esc(it.name)} attack" data-bonus="${th}" title="Attack roll">🎯 ${sgn(th)}</button>
+          <button class="rollbtn" data-rolldmg data-label="${esc(it.name)} damage" data-notation="${esc(dn)}" title="Roll ${esc(dn)}">⚔</button>
+        </div>`; }).join('')}
       ${c.attacks.length?c.attacks.map((a,i)=>{
         const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
         return `<div class="spell">
@@ -2040,7 +2174,8 @@ function renderCombat(c){
           <button class="rollbtn" data-rollcheck data-label="${esc(a.name)} attack" data-bonus="${bn}" title="Attack roll">🎯 ${esc(a.bonus||'+0')}</button>
           ${a.damage?`<button class="rollbtn" data-rolldmg data-label="${esc(a.name)} damage" data-notation="${esc(a.damage)}" title="Roll ${esc(a.damage)}">⚔</button>`:''}
           <button class="del" data-delatk="${i}">✕</button>
-        </div>`;}).join(''):'<div class="empty">No attacks yet.</div>'}
+        </div>`;}).join(''):''}
+      ${(!equippedWeapons(c).length && !c.attacks.length)?'<div class="empty">No weapons equipped. Add & equip weapons on the Items tab, or add a manual attack below.</div>':''}
     </div>
     <div class="addrow">
       <input id="atk_name" placeholder="Name">
@@ -2082,6 +2217,7 @@ function renderCombat(c){
     c.death[field] = (c.death[field]===n)?n-1:n; save(); render();
   }));
 
+  { const ab=$('#attackBtn'); if(ab) ab.addEventListener('click',()=>openAttack(c)); }
   $('#addAtk').addEventListener('click',()=>{
     const name=$('#atk_name').value.trim(); if(!name) return;
     c.attacks.push({name, bonus:$('#atk_bonus').value.trim(), damage:$('#atk_dmg').value.trim()});
@@ -2275,14 +2411,51 @@ function renderItems(c){
   </div>
 
   <div class="card">
-    <h2>${chev('items')}Inventory ${c.items.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${c.items.length}</span>`:''}</h2>
+    <h2>${chev('equip')}Equipment <span class="muted" style="text-transform:none;font-size:11px">— equipped gear changes your stats</span></h2>
+    ${collapsed.equip?'<div class="collapsed-note">hidden — tap ▸ to expand</div>':(()=>{
+      const eq=c.items.map((it,i)=>({it,i})).filter(o=>o.it.kind&&o.it.kind!=='gear');
+      if(!eq.length) return '<div class="empty">No weapons or armor yet. Add some below.</div>';
+      return eq.map(({it,i})=>{ const w=it.kind==='weapon'?(weaponByName(it.name)||{}):null;
+        const stats = it.kind==='weapon'?((w.dmg||'')+' '+(w.dt||'')+' · '+(w.rng||'5 ft'))
+          : it.kind==='armor'?('AC '+(armorDef(it.armorKey).base)+(armorDef(it.armorKey).dexCap<99?' + DEX≤'+armorDef(it.armorKey).dexCap:' + DEX'))
+          : it.kind==='shield'?'+2 AC'
+          : (modSummary(it.mods)||esc(it.notes||''));
+        return `<div class="spell" ${it.equipped?'style="box-shadow:inset 0 0 0 1px var(--accent);border-radius:8px"':''}>
+          <span style="flex:none">${itemEmblem(itemIconKey(it),4)}</span>
+          <div class="nm"><b>${esc(it.name)}${it.equipped?' <span class="sub" style="color:var(--accent)">✓ equipped</span>':''}</b><small>${esc(stats)}</small></div>
+          <button class="btn ghost sm" data-equip="${i}">${it.equipped?'Unequip':'Equip'}</button>
+          <button class="del" data-delitem="${i}">✕</button>
+        </div>`; }).join('');
+    })()}
+    <div class="addrow">
+      <select id="eq_pick" style="flex:2">
+        <option value="">— add equipment —</option>
+        <optgroup label="Weapons (Simple)">${WEAPONS.filter(w=>w.cat==='Simple').map(w=>`<option value="w|${esc(w.n)}">${esc(w.n)} (${w.dmg} ${w.dt})</option>`).join('')}</optgroup>
+        <optgroup label="Weapons (Martial)">${WEAPONS.filter(w=>w.cat==='Martial').map(w=>`<option value="w|${esc(w.n)}">${esc(w.n)} (${w.dmg} ${w.dt})</option>`).join('')}</optgroup>
+        <optgroup label="Armor">${ARMOR.filter(a=>a.key!=='none').map(a=>`<option value="a|${a.key}">${esc(a.name)} (AC ${a.base})</option>`).join('')}</optgroup>
+        <optgroup label="Shield"><option value="s|Shield">Shield (+2 AC)</option></optgroup>
+      </select>
+      <button class="btn sm" id="eqAdd">Add</button>
+    </div>
+    <div class="addrow">
+      <input id="eqw_name" placeholder="Custom magic item (e.g. Ring of Protection)">
+      <input id="eqw_ac" type="number" placeholder="+AC" style="max-width:64px">
+      <button class="btn sm" id="eqwAdd">Add</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>${chev('items')}Inventory ${(()=>{const g=c.items.filter(it=>!it.kind||it.kind==='gear');return g.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${g.length}</span>`:'';})()}</h2>
     <div id="itemList">
-      ${collapsed.items?'<div class="collapsed-note">'+c.items.length+' items hidden — tap ▸ to expand</div>':c.items.length?c.items.map((it,i)=>`
+      ${(()=>{ const g=c.items.map((it,i)=>({it,i})).filter(o=>!o.it.kind||o.it.kind==='gear');
+        if(collapsed.items) return '<div class="collapsed-note">'+g.length+' items hidden — tap ▸ to expand</div>';
+        if(!g.length) return '<div class="empty">No items yet.</div>';
+        return g.map(({it,i})=>`
         <div class="spell">
           <div class="nm"><b>${esc(it.name)}</b>${it.notes?`<small>${esc(it.notes)}</small>`:''}</div>
           <span class="tag">×${it.qty||1}</span>
           <button class="del" data-delitem="${i}">✕</button>
-        </div>`).join(''):'<div class="empty">No items yet.</div>'}
+        </div>`).join(''); })()}
     </div>
     <div class="addrow">
       <input id="it_name" placeholder="Item">
@@ -2297,11 +2470,28 @@ function renderItems(c){
   }));
   $('#addItem').addEventListener('click',()=>{
     const name=$('#it_name').value.trim(); if(!name) return;
-    c.items.push({name, qty:Number($('#it_qty').value)||1, notes:$('#it_notes').value.trim()});
+    c.items.push({name, qty:Number($('#it_qty').value)||1, notes:$('#it_notes').value.trim(), kind:'gear'});
     save(); render();
   });
+  $('#eqAdd').addEventListener('click',()=>{
+    const v=$('#eq_pick').value; if(!v) return; const [t,key]=v.split('|');
+    if(t==='w'){ const w=weaponByName(key); if(w) c.items.push({name:w.n, kind:'weapon', qty:1, equipped:false}); }
+    else if(t==='a'){ const a=armorDef(key); c.items.push({name:a.name, kind:'armor', armorKey:key, qty:1, equipped:false}); }
+    else if(t==='s'){ c.items.push({name:'Shield', kind:'shield', qty:1, equipped:false}); }
+    save(); render();
+  });
+  $('#eqwAdd').addEventListener('click',()=>{
+    const name=$('#eqw_name').value.trim(); if(!name) return; const ac=Number($('#eqw_ac').value)||0;
+    c.items.push({name, kind:'wondrous', qty:1, equipped:false, mods: ac?{ac}:{}});
+    save(); render();
+  });
+  app.querySelectorAll('[data-equip]').forEach(el=>el.addEventListener('click',()=>{
+    const i=Number(el.dataset.equip); setEquipped(c, i, !c.items[i].equipped);
+  }));
   app.querySelectorAll('[data-delitem]').forEach(el=>el.addEventListener('click',()=>{
-    c.items.splice(Number(el.dataset.delitem),1); save(); render();
+    const i=Number(el.dataset.delitem); const it=c.items[i];
+    if(it && it.equipped){ setEquipped(c, i, false); }
+    c.items.splice(i,1); save(); render();
   }));
 }
 
@@ -2562,7 +2752,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v29';
+const APP_VERSION='v30';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
