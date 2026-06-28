@@ -821,18 +821,53 @@ function effectsCard(c){
   const fx=c.effects||[];
   return `<div class="card">
     <h2>Active Effects ${fx.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${fx.length} active</span>`:''}
-      ${fx.some(e=>e.rounds!=null)?`<button class="btn ghost sm" id="advRound" style="float:right">▶ Advance round</button>`:''}</h2>
+      <span style="float:right;display:inline-flex;gap:6px">
+        ${fx.some(e=>e.rounds!=null)?`<button class="btn ghost sm" id="advRound">▶ Advance round</button>`:''}
+        <button class="btn ghost sm" id="fxOpen">＋ Add</button>
+      </span></h2>
     ${fx.length? fx.map(e=>`<div class="spell">
         <span style="font-size:18px;flex:none">${spellIcon(e.name)}</span>
         <div class="nm"><b>${esc(e.name)}</b><small>${[e.conc?'🧠 Concentration':'', fmtDuration(e.rounds), modSummary(e.mods)].filter(Boolean).join(' · ')}${e.note?'<br>'+esc(e.note):''}</small></div>
         <button class="del" data-endfx="${e.id}" title="End effect">✕</button>
       </div>`).join('')
-      : '<div class="empty">No active effects. Cast a buff from the Spells tab to track it here.</div>'}
+      : '<div class="empty">No active effects. Tap ＋ Add to track a buff (e.g. an ally\'s Haste), or cast one from the Spells tab.</div>'}
   </div>`;
 }
 function bindEffectsCard(c){
   const ar=$('#advRound'); if(ar) ar.addEventListener('click',()=>advanceRound(c));
+  const ax=$('#fxOpen'); if(ax) ax.addEventListener('click',openEffectPicker);
   app.querySelectorAll('[data-endfx]').forEach(el=>el.addEventListener('click',()=>endEffect(c, el.dataset.endfx)));
+}
+function openEffectPicker(){
+  const c=cur(); if(!c) return;
+  const all=Array.from(new Set([...Object.keys(SPELL_EFFECTS), ...SPELLS.map(s=>s.n)])).sort((a,b)=>a.localeCompare(b));
+  $('#modalRoot').innerHTML=`<div class="modal" id="fxModal"><div class="sheet"><div class="grip"></div>
+    <h2>Add an effect</h2>
+    <p class="muted" style="font-size:13px;margin:0 0 10px">Track a buff cast on you (e.g. an ally's Haste), or anything custom. Spells with known effects auto-apply their bonuses to your stats.</p>
+    <input id="fxSearch" placeholder="Search all spells & effects…" autocomplete="off">
+    <div class="addrow" style="margin-top:8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">Duration</span>
+      <select id="fxDur" style="flex:1"><option value="">Until removed</option><option value="1">1 round</option><option value="10">1 minute</option><option value="100">10 minutes</option><option value="600">1 hour</option></select></div>
+    <div class="cklist" id="fxResults" style="max-height:46vh;margin-top:10px"></div>
+    <div class="addrow" style="margin-top:10px"><input id="fxCustom" placeholder="…or type a custom effect"><button class="btn sm" id="fxAddCustom">Add</button></div>
+    <button class="btn ghost block" id="fxClose" style="margin-top:12px">Close</button>
+  </div></div>`;
+  const add=(name)=>{ const tmpl=SPELL_EFFECTS[name]; const dv=$('#fxDur').value;
+    if(tmpl) addEffect(c, name, tmpl);
+    else addEffect(c, name, {rounds: dv===''?null:Number(dv), note:SPELL_DESC[name]||''});
+    logChange(c,'Added effect: '+name); save(); $('#modalRoot').innerHTML=''; render(); flashBanner('Added '+name); };
+  const draw=()=>{ const q=($('#fxSearch').value||'').toLowerCase();
+    const list=all.filter(n=>n.toLowerCase().includes(q)).slice(0,80);
+    $('#fxResults').innerHTML = list.length? list.map(n=>{ const t=SPELL_EFFECTS[n], meta=spellMeta(n);
+      const sub=t?((modSummary(t.mods)||t.note||'tracked')+(t.conc?' · concentration':'')):(SPELL_DESC[n]||'tracked effect');
+      return `<div class="listrow" style="padding:6px 0"><span style="flex:none">${meta?spellIcon(n):'✨'}</span><div class="nm" style="margin-left:6px"><b>${esc(n)}</b>${t?'<span class="tag" style="margin-left:6px">auto-stats</span>':''}<small>${esc(sub)}</small></div><button class="btn sm" data-fxadd="${esc(n)}">Add</button></div>`;
+    }).join('') : '<div class="empty">No matches — type it in the custom box below.</div>';
+    $('#fxResults').querySelectorAll('[data-fxadd]').forEach(b=>b.addEventListener('click',()=>add(b.dataset.fxadd)));
+  };
+  $('#fxSearch').addEventListener('input',draw);
+  $('#fxAddCustom').onclick=()=>{ const v=$('#fxCustom').value.trim(); if(v) add(v); };
+  $('#fxClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#fxModal').onclick=e=>{ if(e.target.id==='fxModal') $('#modalRoot').innerHTML=''; };
+  draw();
 }
 function classSpells(c, maxLevel){
   const lt=CLASS_LETTER[c.cls]; if(!lt) return [];
@@ -1818,7 +1853,13 @@ function renderCombat(c){
   <div class="card">
     <h2>Concentration</h2>
     <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="concOn" ${c.concentration.active?'checked':''}> Concentrating${c.concentration.active&&c.concentration.spell?' on '+esc(c.concentration.spell):''}</label>
-    <div style="margin-top:10px"><input id="concSpell" value="${esc(c.concentration.spell||'')}" placeholder="On which spell?" ${c.concentration.active?'':'disabled style="opacity:.5"'}></div>
+    <div style="margin-top:10px">${(()=>{
+      const cur=c.concentration.spell||'';
+      const names=c.spells.map(s=>s.name);
+      if(cur && !names.includes(cur)) names.unshift(cur);
+      if(!names.length) return `<input id="concSpell" value="${esc(cur)}" placeholder="On which spell?" ${c.concentration.active?'':'disabled style="opacity:.5"'}>`;
+      return `<select id="concSpell" ${c.concentration.active?'':'disabled style="opacity:.5"'}><option value="">— choose a spell —</option>${names.map(n=>`<option ${n===cur?'selected':''}>${esc(n)}</option>`).join('')}</select>`;
+    })()}</div>
   </div>
 
   ${effectsCard(c)}
@@ -2346,7 +2387,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v26';
+const APP_VERSION='v27';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
