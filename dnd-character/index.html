@@ -873,6 +873,9 @@ function spellLearnSelect(c, atLevel){
 // Skill proficiencies granted: class count + 2 (background).
 const CLASS_SKILLS_N = {Bard:3, Ranger:3, Rogue:4};
 function featSkillBonus(c){ let n=0; (c.feats||[]).forEach(f=>{ (FEAT_GRANTS[f.name||f]||[]).forEach(g=>{ if(g.t==='skill') n+=g.n; }); }); return n; }
+function hasFeat(c,name){ return (c.feats||[]).some(f=>(f.name||f)===name); }
+function featInitBonus(c){ return hasFeat(c,'Alert')?5:0; }   // Alert: +5 to initiative
+function initiative(c){ return mod(abil(c,'dex'))+Number(c.initMisc||0)+featInitBonus(c); }
 function skillBudget(c){ return (CLASS_SKILLS_N[c.cls]||2) + 2 + featSkillBonus(c); }
 function skillCount(c){ return SKILLS.filter(([k])=>c.skillProf[k]).length; }
 // Average HP for the class/level: max die at L1, then per-level average, all + CON each level.
@@ -1443,7 +1446,7 @@ function renderBio(c){
     </div>
     <div class="tiles">
       <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
-      <div class="tile"><div class="lab">Initiative</div><div class="big">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</div></div>
+      <div class="tile" ${featInitBonus(c)?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Initiative${featInitBonus(c)?' ▲':''}</div><div class="big">${sgn(initiative(c))}</div></div>
       <div class="tile" ${effBonus(c,'ac')?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Armor Class${effBonus(c,'ac')?' ▲':''}</div><div class="big">${computeAC(c)}</div></div>
       <div class="tile" ${(effBonus(c,'speed')||effSpeedMul(c)!==1)?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''}</div><div class="big">${effSpeed(c)}</div></div>
     </div>
@@ -1684,7 +1687,7 @@ function renderCombat(c){
     <div class="g3 grid" style="margin-top:8px"><div></div><div></div><div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div></div>
     <div class="tiles" style="margin-top:12px">
       <div class="tile"><div class="lab">Armor Class</div><div class="big">${computeAC(c)}</div></div>
-      <div class="tile"><div class="lab">Initiative</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${mod(abil(c,"dex"))+Number(c.initMisc||0)}" title="Roll initiative">${sgn(mod(abil(c,"dex"))+Number(c.initMisc||0))}</button></div>
+      <div class="tile"><div class="lab">Initiative${featInitBonus(c)?' ▲':''}</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${initiative(c)}" title="Roll initiative${featInitBonus(c)?' (incl. +5 Alert)':''}">${sgn(initiative(c))}</button></div>
       ${isCaster(c)?`<div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(abil(c,c.spellAbility))}</div></div>
       <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>`:`<div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div><div class="tile"><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''}</div><div class="big">${effSpeed(c)}</div></div>`}
     </div>
@@ -2165,7 +2168,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v22';
+const APP_VERSION='v23';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
