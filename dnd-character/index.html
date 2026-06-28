@@ -3,26 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0f17">
+<meta name="theme-color" content="#3b5320">
 <title>Grimoire — D&D 5e Character Keeper</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon.svg">
 <link rel="apple-touch-icon" href="./icon.svg">
 <style>
   :root{
-    --bg:#0b0f17; --panel:#121826; --panel2:#0f1623; --line:#243049;
-    --ink:#e7ecf5; --mut:#93a0bb; --accent:#a78bfa; --accent2:#7c3aed;
-    --good:#34d399; --bad:#f87171; --gold:#f5c451;
+    --bg:#e7d8b8; --panel:#f4ecd6; --panel2:#e6d6b4; --line:#c1a877;
+    --ink:#3a2c1a; --mut:#7b6847; --accent:#4d6a2c; --accent2:#3b5320;
+    --good:#3f7d36; --bad:#9c3b2c; --gold:#a9791a;
     --r:14px; --sp:14px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
   body{
-    background:var(--bg); color:var(--ink);
+    background:
+      radial-gradient(120% 80% at 15% 0%, rgba(255,250,235,.55), transparent 60%),
+      radial-gradient(100% 70% at 85% 100%, rgba(120,90,40,.10), transparent 55%),
+      repeating-linear-gradient(135deg, rgba(120,90,40,.025) 0 2px, transparent 2px 5px),
+      var(--bg);
+    color:var(--ink);
     font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     -webkit-text-size-adjust:100%;
     padding-bottom:calc(72px + env(safe-area-inset-bottom));
   }
+  ::selection{background:rgba(77,106,44,.28)}
   .serif{font-family:Georgia,"Times New Roman",serif}
   h1,h2,h3{margin:0}
   button{font:inherit;color:inherit;cursor:pointer}
@@ -33,8 +39,9 @@
   a{color:var(--accent)}
 
   header{
-    position:sticky;top:0;z-index:20;background:rgba(11,15,23,.92);backdrop-filter:blur(8px);
-    border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    position:sticky;top:0;z-index:20;background:linear-gradient(rgba(244,236,214,.95),rgba(231,216,184,.92));backdrop-filter:blur(8px);
+    border-bottom:2px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    box-shadow:0 2px 10px rgba(90,67,30,.10);
   }
   .hrow{display:flex;align-items:center;gap:10px}
   .hrow .d20{width:30px;height:30px;flex:none}
@@ -82,9 +89,11 @@
   .hp{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center}
   .hpbtns{display:flex;gap:8px;margin-top:10px}
   .hpbtns input{flex:1}
-  .btn{background:var(--accent2);border:1px solid var(--accent);border-radius:10px;padding:9px 12px;font-weight:600;text-align:center}
-  .btn.ghost{background:var(--panel2);border-color:var(--line);color:var(--ink);font-weight:500}
-  .btn.bad{background:#3b1b22;border-color:#7f1d1d;color:#fecaca}
+  .btn{background:linear-gradient(180deg,var(--accent),var(--accent2));border:1px solid var(--accent2);border-radius:10px;padding:9px 12px;font-weight:600;text-align:center;color:#f6efda;box-shadow:0 1px 0 rgba(255,255,255,.15) inset, 0 2px 6px rgba(60,84,32,.25);transition:transform .08s ease, filter .15s ease, box-shadow .15s ease}
+  .btn:hover{filter:brightness(1.06)}
+  .btn:active{transform:translateY(1px) scale(.985)}
+  .btn.ghost{background:var(--panel2);border-color:var(--line);color:var(--ink);font-weight:500;box-shadow:none}
+  .btn.bad{background:#e8cabb;border-color:#9c3b2c;color:#6e251a}
   .btn.sm{padding:6px 10px;font-size:13px}
   .btn.block{width:100%}
 
@@ -120,9 +129,10 @@
   /* bottom nav */
   nav.tabs{
     position:fixed;left:0;right:0;bottom:0;z-index:30;
-    background:rgba(11,15,23,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line);
+    background:linear-gradient(rgba(231,216,184,.97),rgba(238,226,198,.98));backdrop-filter:blur(10px);border-top:2px solid var(--line);
     display:grid;grid-template-columns:repeat(6,1fr);
     padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+    box-shadow:0 -2px 10px rgba(90,67,30,.10);
   }
   nav.tabs button{background:none;border:0;color:var(--mut);font-size:10.5px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;border-radius:10px}
   nav.tabs button .ic{font-size:18px;line-height:1}
@@ -138,7 +148,7 @@
   .welcome p{color:var(--mut);max-width:380px;margin:0 auto 20px}
 
   /* modal */
-  .modal{position:fixed;inset:0;z-index:50;background:rgba(4,7,13,.7);display:flex;align-items:flex-end;justify-content:center;padding:0}
+  .modal{position:fixed;inset:0;z-index:50;background:rgba(40,28,12,.55);display:flex;align-items:flex-end;justify-content:center;padding:0;animation:fadein .18s ease}
   .modal .sheet{background:var(--panel);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:760px;max-height:90vh;overflow:auto;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
   @media(min-width:560px){.modal{align-items:center;padding:16px}.modal .sheet{border-radius:18px}}
   .modal h2{font-size:16px;color:var(--ink);text-transform:none;letter-spacing:0;margin-bottom:14px}
@@ -152,10 +162,12 @@
 
   /* dice FAB */
   .dicefab{position:fixed;right:14px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:35;
-    width:54px;height:54px;border-radius:50%;border:1px solid var(--accent);
-    background:linear-gradient(160deg,var(--accent2),#5b21b6);color:#f5f3ff;font-size:24px;
-    box-shadow:0 8px 22px rgba(124,58,237,.45);display:flex;align-items:center;justify-content:center}
-  .dicefab:active{transform:scale(.94)}
+    width:54px;height:54px;border-radius:50%;border:1px solid var(--accent2);
+    background:linear-gradient(160deg,#5a7d34,#3b5320);color:#f6efda;font-size:24px;
+    box-shadow:0 8px 22px rgba(60,84,32,.45);display:flex;align-items:center;justify-content:center;
+    animation:fabfloat 3.2s ease-in-out infinite}
+  .dicefab:hover{animation-play-state:paused;filter:brightness(1.08)}
+  .dicefab:active{transform:scale(.92) rotate(-12deg)}
 
   /* roll result banner */
   .rollbanner{position:fixed;left:50%;transform:translateX(-50%) translateY(20px);
@@ -187,13 +199,13 @@
   /* condition chips */
   .chips{display:flex;flex-wrap:wrap;gap:7px}
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:6px 11px;font-size:13px}
-  .chip.on{background:#3b1b22;border-color:#7f1d1d;color:#fecaca}
+  .chip.on{background:#e8cabb;border-color:#9c3b2c;color:#6e251a}
   .stepper{display:flex;align-items:center;gap:10px}
   .stepper button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;width:34px;height:34px;font-size:18px}
   .stepper button:disabled{opacity:.35}
   .seg{display:flex;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:4px;margin-bottom:12px}
   .seg button{flex:1;background:none;border:0;color:var(--mut);padding:8px;border-radius:7px;font-size:13px;font-weight:600}
-  .seg button.on{background:var(--accent2);color:#f5f3ff}
+  .seg button.on{background:var(--accent2);color:#f6efda}
   .pbinfo{font-size:13px;color:var(--mut);margin-bottom:10px}
   .abrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
   .abrow:last-child{border-bottom:0}
@@ -209,12 +221,47 @@
   .pfp{width:76px;height:76px;border-radius:50%;flex:none;background:var(--panel2) center/cover no-repeat;
     border:2px solid var(--line);display:grid;place-items:center;font-size:30px;color:var(--mut)}
   .hpfp{width:30px;height:30px;border-radius:50%;flex:none;background:center/cover no-repeat;border:1px solid var(--line)}
+
+  /* ---- D&D parchment polish: cards look like aged paper ---- */
+  .card{background:linear-gradient(180deg,var(--panel),#efe6cd);box-shadow:0 1px 0 rgba(255,255,255,.4) inset, 0 3px 10px rgba(90,67,30,.10);transition:box-shadow .2s ease, transform .2s ease}
+  .card h2{font-family:Georgia,"Times New Roman",serif}
+  @media(hover:hover){.card:hover{box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 6px 18px rgba(90,67,30,.16)}}
+  .htitle{color:var(--accent2);text-shadow:0 1px 0 rgba(255,255,255,.4)}
+  .tile,.abi,.pill,.chip,.pip,.tag,.rollbtn,.iconbtn,.diebtn,.profdot,.seg button,.stepper button{transition:transform .12s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease}
+  .iconbtn:active{transform:scale(.92)}
+  .abi:active,.tile:active{transform:scale(.97)}
+  .pip:active{transform:scale(.8)}
+  .pip.on{animation:pop .18s ease}
+  .chip.on{animation:pop .18s ease}
+  nav.tabs button{transition:color .15s ease, transform .12s ease}
+  nav.tabs button:active{transform:scale(.9)}
+  nav.tabs button.on .ic{animation:pop .22s ease}
+
+  /* ---- animations ---- */
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  @keyframes pop{0%{transform:scale(.7)}60%{transform:scale(1.18)}100%{transform:scale(1)}}
+  @keyframes fabfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes pixin{from{opacity:0;transform:translateY(3px) scale(.9)}to{opacity:1;transform:none}}
+  .spin{animation:spin .6s ease}
+
+  /* ---- pixel-art sprites ---- */
+  .pix{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+  .emblem{display:inline-grid;place-items:center;border-radius:12px;flex:none;
+    background:radial-gradient(circle at 50% 35%, #f6efd9, #e3d2ac);
+    border:2px solid var(--line);box-shadow:0 2px 6px rgba(90,67,30,.18), 0 0 0 1px rgba(255,255,255,.3) inset;
+    padding:6px;animation:pixin .25s ease}
+  .emblem .pix{filter:drop-shadow(0 1px 0 rgba(90,67,30,.25))}
+  @media(hover:hover){.emblem:hover{transform:translateY(-2px) rotate(-1deg)}}
+  .emblem{transition:transform .15s ease}
+  .emrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .emrow .emcap{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;text-align:center;margin-top:4px}
 </style>
 </head>
 <body>
 <header>
   <div class="hrow">
-    <svg class="d20" id="hd20" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(32 32)"><polygon points="0,-22 19,-11 19,11 0,22 -19,11 -19,-11" fill="#7c3aed" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-22 11,-7 0,3 -11,-7" fill="#a78bfa"/><polygon points="0,3 11,-7 19,11 0,22" fill="#6d28d9"/><polygon points="0,3 -11,-7 -19,11 0,22" fill="#5b21b6"/></g></svg>
+    <svg class="d20" id="hd20" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(32 32)"><polygon points="0,-22 19,-11 19,11 0,22 -19,11 -19,-11" fill="#4d6a2c" stroke="#d6e3ba" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-22 11,-7 0,3 -11,-7" fill="#6f9442"/><polygon points="0,3 11,-7 19,11 0,22" fill="#3b5320"/><polygon points="0,3 -11,-7 -19,11 0,22" fill="#2c3f18"/></g></svg>
     <div class="hpfp" id="hpfp" style="display:none"></div>
     <div>
       <div class="htitle serif">Grimoire <span id="verBadge" style="font-family:system-ui;font-size:10px;color:var(--mut);font-weight:400;vertical-align:middle"></span></div>
@@ -347,6 +394,56 @@ const FIGHTING_STYLES = {
 };
 const FIGHTING_STYLE_LEVEL = {Fighter:1, Paladin:2, Ranger:2};
 const DRAGON_ANCESTRY = ['Black (acid)','Blue (lightning)','Brass (fire)','Bronze (lightning)','Copper (acid)','Gold (fire)','Green (poison)','Red (fire)','Silver (cold)','White (cold)'];
+
+/* ---- pixel-art sprites for classes & races (hand-drawn 12×12, my own art) ---- */
+const PIX_PAL = {
+  o:'#2a1e10', x:'#1a130a',
+  s:'#cfd3da', d:'#9097a2',
+  g:'#caa022', G:'#8a6712',
+  w:'#7a4a24', W:'#a06a36', l:'#6b4322', L:'#8a5a2c',
+  r:'#a8392c', b:'#3a5fa0', p:'#6e3f96', n:'#4f7a33', N:'#34571f',
+  f:'#e08a2b', F:'#f4c542', y:'#e6d39a', k:'#d9a06b', K:'#b97c4a',
+  e:'#efeadb', c:'#56b6c6', m:'#b5489a'
+};
+function pixelArt(grid, px){
+  px=px||6; const w=grid[0].length, h=grid.length; let r='';
+  for(let y=0;y<h;y++){ const row=grid[y]; for(let X=0;X<w;X++){ const col=PIX_PAL[row[X]]; if(col) r+=`<rect x="${X}" y="${y}" width="1.05" height="1.05" fill="${col}"/>`; } }
+  return `<svg class="pix" viewBox="0 0 ${w} ${h}" width="${w*px}" height="${h*px}" shape-rendering="crispEdges" aria-hidden="true">${r}</svg>`;
+}
+const CLASS_PIX = {
+Fighter:["....oo......","...osso.....","...osso.....","...osso.....","...osso.....","...osso.....",".oogggggoo..","...owwo.....","...owwo.....","...oggo.....","....oo......","............"],
+Rogue:[".....oo.....","....osso....","....osso....","....osso....","..oogggoo...","....owo.....","....owo.....","....ooo.....","............","............","............","............"],
+Barbarian:["...ooo......","..osssoo....",".osssssso...",".osssssso...","..ossssso...","...oowWo....",".....oWo....",".....oWo....",".....oWo....",".....oWo....",".....ooo....","............"],
+Paladin:[".oooooooooo.",".osssssssso.",".osssggssso.",".osggggggso.",".osssggssso.",".osssggssso.",".osssggssso.","..ossggsso..","...osggso...","....oggo....",".....oo.....","............"],
+Ranger:["..o.........",".oWo........","oWo.o.......","oW...oo.....","oW.....oo...","oW.ooooooooo","oW.....oo...","oW...oo.....","oWo.o.......",".oWo........","..o.........","............"],
+Wizard:[".....o......","....ooo.....","....obo.....","...obbbo....","...obFbo....","..obbbbbo...",".obbbbbbbo..","obbbbbbbbbo.","oggggggggggo",".oooooooooo.","............","............"],
+Sorcerer:[".....o......","....ofo.....","....ofo.....","...offfo....","...ofFfo....","..offfffo...","..ofFFFfo...",".offFFFffo..",".offFFFffo..","..offfffo...","...oooo.....","............"],
+Warlock:["............","............","...oooooo...",".ooeeeeeeoo.","oeeppppppeeo","oeeppxxppeeo","oeeppppppeeo",".ooeeeeeeoo.","...oooooo...","............","............","............"],
+Cleric:[".....oo.....","....oggo....","....oggo....","....oggo....",".ooooggoooo.",".oggggggggo.",".oggggggggo.",".ooooggoooo.","....oggo....","....oggo....","....oggo....",".....oo....."],
+Druid:[".....oo.....","....onno....","...onnno....","..onnnno....","..onNnno....",".onnNnno....",".onnNnno....","..onNno.....","...oNo......","...oNo......","...oNo......","............"],
+Monk:["............","..oooooo....",".okkkkkko...",".okkkkkko...",".okkkkkko...",".okkkkkko...","..okkkko....",".orrrrrro...","..oooooo....","............","............","............"],
+Bard:["........oo..",".......owo..","......owo...",".....owo....","...oooo.....","..owwwwo....",".owwwowwo...",".owwwwwwo...",".owwwwwwo...","..owwwwo....","...oooo.....","............"],
+Artificer:["...o.oo.o...","..oddddddo..",".oddddddddo.","oddddddddddo","oddddggddddo","oddddggddddo","oddddddddddo",".oddddddddo.","..oddddddo..","...o.oo.o...","............","............"]
+};
+const RACE_PIX = {
+Human:["............","...oooo.....","..owwwwo....",".owkkkkwo...",".okkkkkko...",".okxkkxko...",".okkkkkko...",".okkkkkko...","..okkkko....","...oooo.....","............","............"],
+Elf:["............","...oooo.....","..oyyyyo....",".oykkkkyo...","ookkkkkkoo..",".okxkkxko...",".okkkkkko...",".okkkkkko...","..okkkko....","...oooo.....","............","............"],
+"Half-Elf":["............","...oooo.....","..owwwwo....",".owkkkkwo...","ookkkkkko...",".okxkkxko...",".okkkkkko...",".okkkkkko...","..okkkko....","...oooo.....","............","............"],
+Dwarf:["..oooooo....",".osssssso...",".oskkkkso...",".okkkkkko...",".okxkkxko...",".okkkkkko...",".owwwwwwo...",".owwwwwwo...",".owwwwwwo...","..owwwwo....","...oooo.....","............"],
+Halfling:["............","...wwww.....","..wwwwww....",".wwkkkkww...",".okkkkkko...",".okxkkxko...",".okkkkkko...","..okkkko....","...oooo.....","............","............","............"],
+Gnome:[".....o......","....ooo.....","...obbbo....","..obbbbbo...",".oooooooo...","..okkkko....","..okxkxko...",".okkkkkko...","..okkkko....","...oooo.....","............","............"],
+Dragonborn:["............","..onnnno....",".onnnnnno...","onxnnnnxno..","onnnnnnnno..","onnnnnnnnoo.","..onnnnnnno.","...onnnno...","....oooo....","............","............","............"],
+Tiefling:["..o....o....","..oo..oo....","...oooo.....","..orrrro....",".orrrrrro...",".orxrrxro...",".orrrrrro...",".orrrrrro...","..orrrro....","...oooo.....","............","............"],
+"Half-Orc":["............","...oooo.....","..onnnno....",".onnnnnno...",".onxnnxno...",".onnnnnno...",".oneennno...",".onnnnnno...","..oe..eo....","...oooo.....","............","............"],
+Orc:["............","..oooooo....",".onnnnnno...","oonnnnnnoo..",".oxnnnnxo...",".onnnnnno...",".oneennno...",".onnnnnno...","..oe..eo....","...oooo.....","............","............"],
+Goblin:["............","o..oooo..o..","oo.onno.oo..",".onnnnnno...",".onxnnxno...",".onnnnnno...","..onnnno....","..oe..eo....","...oooo.....","............","............","............"],
+Tabaxi:["..o....o....","..oo..oo....",".ollllllo...",".olxllxlo...",".olllllllo..",".olloollo...",".ollllllo...","..ollllo....","...oooo.....","............","............","............"],
+Aasimar:["....gggg....",".gg....gg...","...oooo.....","..oyyyyo....",".oykkkkyo...",".okxkkxko...",".okkkkkko...",".okkkkkko...","..okkkko....","...oooo.....","............","............"],
+Tortle:["............","...oooo.....","..onnnno....",".onnnnnno...","oNnnnnnnNo..","oNnnnnnnNo..","oNnnnnnnNo..",".onnnnnno...","..o.oo.o....","............","............","............"],
+_default:["............","...oooo.....","..oLLLLo....",".oLLLLLLo...",".oLkkkkLo...",".oLkxxkLo...",".oLkkkkLo...",".oLLLLLLo...","..oLLLLo....","...oooo.....","............","............"]
+};
+function classEmblem(cls, px){ const g=CLASS_PIX[cls]; return g?`<span class="emblem">${pixelArt(g,px)}</span>`:''; }
+function raceEmblem(race, px){ const g=RACE_PIX[race]||RACE_PIX._default; return `<span class="emblem">${pixelArt(g,px)}</span>`; }
 function expertiseTotal(c){ const l=Number(c.level)||1; if(c.cls==='Rogue') return 2+(l>=6?2:0); if(c.cls==='Bard') return (l>=3?2:0)+(l>=10?2:0); return 0; }
 function expertiseOwed(c){ return Math.max(0, expertiseTotal(c) - SKILLS.filter(([k])=>c.skillExp[k]).length); }
 function pendingChoiceSpecs(c){
@@ -1052,10 +1149,16 @@ function renderWelcome(){
   app.className='fade'; void app.offsetWidth;
   app.innerHTML = `
     <div class="welcome">
-      <svg class="d20big" viewBox="0 0 64 64"><g transform="translate(32 32)"><polygon points="0,-26 22,-13 22,13 0,26 -22,13 -22,-13" fill="#7c3aed" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-26 13,-8 0,4 -13,-8" fill="#a78bfa"/><polygon points="0,4 13,-8 22,13 0,26" fill="#6d28d9"/><polygon points="0,4 -13,-8 -22,13 0,26" fill="#5b21b6"/><text x="0" y="3" text-anchor="middle" font-family="Georgia,serif" font-size="15" font-weight="bold" fill="#f5f3ff">20</text></g></svg>
+      <svg class="d20big" viewBox="0 0 64 64"><g transform="translate(32 32)"><polygon points="0,-26 22,-13 22,13 0,26 -22,13 -22,-13" fill="#4d6a2c" stroke="#d6e3ba" stroke-width="1.5" stroke-linejoin="round"/><polygon points="0,-26 13,-8 0,4 -13,-8" fill="#6f9442"/><polygon points="0,4 13,-8 22,13 0,26" fill="#3b5320"/><polygon points="0,4 -13,-8 -22,13 0,26" fill="#2c3f18"/><text x="0" y="3" text-anchor="middle" font-family="Georgia,serif" font-size="15" font-weight="bold" fill="#f6efda">20</text></g></svg>
       <h1 class="serif">Welcome, adventurer</h1>
       <p>Create a character to track abilities, skills, hit points, spell slots, inventory and more. Everything is saved on this device and works offline.</p>
       <button class="btn block" id="welcomeNew" style="max-width:280px;margin:0 auto">Create a character</button>
+      <div class="emrow" style="justify-content:center;margin-top:26px;gap:10px">
+        ${['Fighter','Wizard','Cleric','Rogue','Ranger'].map(cl=>`<span class="emblem">${pixelArt(CLASS_PIX[cl],6)}</span>`).join('')}
+      </div>
+      <div class="emrow" style="justify-content:center;margin-top:10px;gap:10px">
+        ${['Dwarf','Elf','Dragonborn','Tiefling','Halfling'].map(rc=>`<span class="emblem">${pixelArt(RACE_PIX[rc],6)}</span>`).join('')}
+      </div>
     </div>`;
 }
 
@@ -1100,13 +1203,16 @@ function wizSpellPicker(c){
     }).join('');
 }
 function racePreview(c){
+  if(!c.race) return '';
   const a=RACE_ASI[c.race];
-  if(!a) return c.race?`<p class="muted" style="font-size:13px;margin-top:8px">Homebrew race — no automatic ability bonuses.</p>`:'';
-  return `<div class="pill" style="margin-top:8px">Ability bonus: ${Object.entries(a).map(([k,v])=>k.toUpperCase()+' +'+v).join(', ')}</div>`;
+  const art=`<div style="text-align:center;margin:6px 0 12px">${raceEmblem(c.race,9)}<div class="emcap">${esc(c.race)}</div></div>`;
+  if(!a) return art+`<p class="muted" style="font-size:13px;margin-top:8px">Homebrew race — no automatic ability bonuses.</p>`;
+  return art+`<div class="pill" style="margin-top:8px">Ability bonus: ${Object.entries(a).map(([k,v])=>k.toUpperCase()+' +'+v).join(', ')}</div>`;
 }
 function classPreview(c){
   const sv=CLASS_SAVES[c.cls], hd=CLASS_HITDIE[c.cls]; if(!sv) return '';
-  return `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+  const art=`<div style="text-align:center;margin:6px 0 12px">${classEmblem(c.cls,9)}<div class="emcap">${esc(c.cls)}</div></div>`;
+  return art+`<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
     <span class="pill">Hit die d${hd}</span>
     <span class="pill">Saves: ${sv.map(s=>s.toUpperCase()).join(' & ')}</span>
     <span class="pill">${(CLASS_SKILLS_N[c.cls]||2)} class skills</span></div>`;
@@ -1349,6 +1455,10 @@ function renderBio(c){
 
   <div class="card">
     <h2>Class &amp; Race</h2>
+    <div class="emrow" style="justify-content:center;margin-bottom:12px">
+      <div style="text-align:center">${classEmblem(c.cls,8)}<div class="emcap">${esc(c.cls)}</div></div>
+      ${c.race?`<div style="text-align:center">${raceEmblem(c.race,8)}<div class="emcap">${esc(c.race)}</div></div>`:''}
+    </div>
     ${c.race?`<div class="listrow"><div class="nm">Race</div><div class="val" style="font-weight:500">${esc(c.race)}${RACE_ASI[c.race]?' · '+Object.entries(RACE_ASI[c.race]).map(([k,v])=>k.toUpperCase()+'+'+v).join(', '):''}</div></div>`:''}
     <div class="listrow"><div class="nm">Class</div><div class="val" style="font-weight:500">${esc(c.cls)}${c.subclass?' · '+esc(c.subclass):''}</div></div>
     <div class="listrow"><div class="nm">Hit die</div><div class="val">d${CLASS_HITDIE[c.cls]||'—'}</div></div>
@@ -2055,7 +2165,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v21';
+const APP_VERSION='v22';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
