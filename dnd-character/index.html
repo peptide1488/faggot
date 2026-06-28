@@ -817,6 +817,49 @@ function castSpell(c, name, level){
   if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')); }
   else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')); }
 }
+// Heuristically read mechanics out of a spell's one-line summary (attack? save? damage/heal dice?).
+const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
+function parseSpellMechanics(name){
+  const eff=SPELL_EFFECTS[name];
+  const out={attack:false, save:null, dmg:null, dtype:'', heal:null, conc:!!(eff&&eff.conc), buff:!!eff};
+  if(eff) return out;   // self/ally buff — its dice (e.g. Bless +1d4) are described in the effect note
+  const d=SPELL_DESC[name]||'';
+  const sv=d.match(/\b(Str|Dex|Con|Int|Wis|Cha)\s+save/i); if(sv) out.save=sv[1].toLowerCase();
+  const dm=d.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s*([a-z]+)?/i);
+  if(dm){ const dice=dm[1].replace(/\s+/g,''); const word=(dm[2]||'').toLowerCase();
+    if(/\b(heal|heals|restore|restores|regain|temporary)\b/i.test(d)) out.heal=dice; else out.dmg=dice;
+    if(DMG_TYPES.includes(word)) out.dtype=word; }
+  if(!out.save && !out.heal && /\b(ranged|melee|spell attack|attack roll|beam|ray|rays|bolt)\b/i.test(d)) out.attack=true;
+  return out;
+}
+function castModal(c, name, baseLevel){
+  baseLevel=Number(baseLevel)||0;
+  const meta=spellMeta(name), m=parseSpellMechanics(name), A=abilFullName;
+  const dc=8+profBonus(c)+mod(abil(c,c.spellAbility)), atkB=profBonus(c)+mod(abil(c,c.spellAbility));
+  const slots=spellSlots(c); let lvlOpts='';
+  if(baseLevel>0){ for(let l=baseLevel;l<=9;l++){ const tot=slots[l]||0; if(tot){ const used=Math.min(tot,(c.slots[l]&&c.slots[l].used)||0), avail=tot-used; lvlOpts+=`<option value="${l}" ${avail<=0?'disabled':''}>Level ${l} — ${avail}/${tot} left</option>`; } } }
+  const eff=SPELL_EFFECTS[name];
+  $('#modalRoot').innerHTML=`<div class="modal" id="castModal"><div class="sheet"><div class="grip"></div>
+    <h2>${meta?spellIcon(name):'✨'} ${esc(name)}</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 10px">${meta?SCHOOL_NAME[meta.s]+' · '+lvlLabel(meta.l):'Spell'}${m.conc?' · 🧠 concentration':''} · Spell DC ${dc}</p>
+    ${SPELL_DESC[name]?`<p style="margin:0 0 12px">${esc(SPELL_DESC[name])}</p>`:''}
+    ${(m.attack||m.dmg||m.heal)?`<div class="card" style="margin:0 0 10px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🎲 You roll</div>
+      ${m.attack?`<div class="listrow"><div class="nm">Spell attack roll</div><button class="val rollbtn" data-rollcheck data-label="${esc(name)} attack" data-bonus="${atkB}">${sgn(atkB)}</button></div>`:''}
+      ${m.dmg?`<div class="listrow"><div class="nm">Damage${m.dtype?' · '+m.dtype:''}</div><button class="val rollbtn" data-rolldmg data-label="${esc(name)} damage" data-notation="${m.dmg}">⚔ ${m.dmg}</button></div>`:''}
+      ${m.heal?`<div class="listrow"><div class="nm">Healing</div><button class="val rollbtn" data-rolldmg data-label="${esc(name)} healing" data-notation="${m.heal}">✚ ${m.heal}</button></div>`:''}
+    </div>`:''}
+    ${m.save?`<div class="card" style="margin:0 0 10px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🛡️ Target rolls</div>
+      <div class="listrow"><div class="nm">${A(m.save)} saving throw</div><div class="val">vs DC ${dc}</div></div></div>`:''}
+    ${eff?`<div class="card" style="margin:0 0 10px;background:rgba(77,106,44,.10)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">✨ Applied to you on cast</div>
+      <div class="nm"><b>${esc(name)}</b><small>${[modSummary(eff.mods), fmtDuration(eff.rounds), eff.conc?'concentration':''].filter(Boolean).join(' · ')||'tracked'}</small></div></div>`:''}
+    ${baseLevel>0 ? (lvlOpts?`<div class="addrow" style="align-items:center"><span class="muted" style="font-size:12px;flex:none">Cast using</span><select id="castLvl" style="flex:1">${lvlOpts}</select></div>`:`<p class="muted" style="font-size:12px;margin:0">No spell slots available — cast to track it anyway.</p>`) : `<p class="muted" style="font-size:12px;margin:0">Cantrip — no slot needed.</p>`}
+    <button class="btn block" id="castGo" style="margin-top:12px">⚡ Cast${m.conc?' & concentrate':''}${eff?' (apply effect)':''}</button>
+    <button class="btn ghost block" id="castClose" style="margin-top:10px">Close</button>
+  </div></div>`;
+  $('#castModal').onclick=e=>{ if(e.target.id==='castModal') $('#modalRoot').innerHTML=''; };
+  $('#castClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#castGo').onclick=()=>{ const lv=$('#castLvl'); const useLvl=lv?Number(lv.value):baseLevel; $('#modalRoot').innerHTML=''; castSpell(c, name, useLvl); };
+}
 function effectsCard(c){
   const fx=c.effects||[];
   return `<div class="card">
@@ -2077,7 +2120,7 @@ function renderSpells(c){
     c.spells.splice(Number(el.dataset.delspell),1); save(); render();
   }));
   app.querySelectorAll('[data-cast]').forEach(el=>el.addEventListener('click',()=>{
-    const [n,l]=el.dataset.cast.split('|'); castSpell(c, n, Number(l));
+    const [n,l]=el.dataset.cast.split('|'); castModal(c, n, Number(l));
   }));
   bindEffectsCard(c);
 }
@@ -2387,7 +2430,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v27';
+const APP_VERSION='v28';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
