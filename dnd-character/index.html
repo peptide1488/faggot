@@ -510,6 +510,19 @@ const WEAPONS=[
   {n:'Whip',cat:'Martial',type:'melee',dmg:'1d4',dt:'slashing',rng:'10 ft (reach)',props:'finesse, reach'}
 ];
 function weaponByName(n){ return WEAPONS.find(w=>w.n===n); }
+// Class weapon proficiencies (simplified to the catalog).
+const WEAP_PROF_FULL=['Barbarian','Fighter','Paladin','Ranger'];           // all simple + martial
+const WEAP_MARTIAL_EXTRA={ Bard:['Hand Crossbow','Longsword','Rapier','Shortsword'], Rogue:['Hand Crossbow','Longsword','Rapier','Shortsword'], Monk:['Shortsword'] };
+const WIZ_SORC_OK=['Dagger','Quarterstaff','Light Crossbow'];               // Wizard & Sorcerer limited list
+function weaponProficient(c,w){
+  if(!w) return true; const cls=c.cls;
+  if(WEAP_PROF_FULL.includes(cls)) return true;
+  if(cls==='Wizard'||cls==='Sorcerer') return WIZ_SORC_OK.includes(w.n);
+  if(cls==='Other'||!cls) return true;                                     // homebrew — don't penalise
+  if(w.cat==='Simple') return true;                                        // Cleric/Druid/Monk/Warlock/Artificer/Bard/Rogue have all simple
+  const ex=WEAP_MARTIAL_EXTRA[cls]; return !!(ex && ex.includes(w.n));
+}
+function weaponToHit(c,w){ const ab=weaponAbil(c,w); return mod(abil(c,ab)) + (weaponProficient(c,w)?profBonus(c):0); }
 // Concentration spells among our list (lowercased).
 const CONC_SPELLS=new Set(['true strike','bane','bless','detect magic','divine favor','entangle','faerie fire','fog cloud','hex',"hunter's mark",'protection from evil and good',"tasha's hideous laughter",'witch bolt','heroism','shield of faith','silent image','expeditious retreat','alter self','barkskin','blur','calm emotions','cloud of daggers','crown of madness','darkness','detect thoughts','enhance ability','enlarge/reduce','flaming sphere','gust of wind','heat metal','hold person','invisibility','levitate','locate object','magic weapon','moonbeam','pass without trace','ray of enfeeblement','silence','spider climb','spike growth','suggestion','web','beacon of hope','bestow curse','call lightning','clairvoyance','conjure animals','fear','fly','gaseous form','haste','hypnotic pattern','major image','protection from energy','sleet storm','slow','spirit guardians','stinking cloud','vampiric touch','wind wall','arcane eye','banishment','compulsion','confusion','conjure woodland beings','control water','dominate beast','greater invisibility','locate creature','phantasmal killer','polymorph','stoneskin','wall of fire','animate objects','cloudkill','conjure elemental','dispel evil and good','dominate person','hold monster','insect plague','mislead','modify memory','scrying','telekinesis','tree stride','wall of force','wall of stone','eyebite','find the path','globe of invulnerability','sunbeam','wall of ice','conjure celestial','delayed blast fireball','reverse gravity','animal shapes','antimagic field','dominate monster','earthquake','holy aura','maze','gate','storm of vengeance']);
 function isConcentration(name){ return CONC_SPELLS.has((name||'').toLowerCase()); }
@@ -520,6 +533,7 @@ function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
   return 0; }
 function gearBonus(c,key){ let n=0; (c.items||[]).forEach(it=>{ if(it.equipped&&it.mods&&it.mods[key]) n+=Number(it.mods[key])||0; }); return n; }
 function equippedWeapons(c){ const out=[]; (c.items||[]).forEach((it,i)=>{ if(it.kind==='weapon'&&it.equipped) out.push({it,i}); }); return out; }
+function weaponItems(c){ const out=[]; (c.items||[]).forEach((it,i)=>{ if(it.kind==='weapon') out.push({it,i}); }); return out; }
 function weaponAbil(c,w){ if(w.type==='ranged') return 'dex'; if(/finesse/.test(w.props||'')) return mod(abil(c,'dex'))>=mod(abil(c,'str'))?'dex':'str'; return 'str'; }
 function setEquipped(c, idx, on){
   const it=c.items[idx]; if(!it) return; it.equipped=on;
@@ -527,15 +541,47 @@ function setEquipped(c, idx, on){
   if(it.kind==='shield'){ c.shield=(c.items||[]).some(x=>x.kind==='shield'&&x.equipped); }
   logChange(c, (on?'Equipped ':'Unequipped ')+it.name); save(); render();
 }
+/* ---- battle mode: initiative, rounds, action tracking ---- */
+function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle={round:1, init:ini, action:false, bonus:false, reaction:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c)}; logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
+function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
+function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c);
+  let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
+  exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
+  logChange(c,'▶ Round '+b.round+' — turn reset'+(exp.length?'; expired: '+exp.map(e=>e.name).join(', '):'')); save(); render(); flashBanner('Round '+b.round); }
+function battleCard(c){
+  if(!c.battle) return `<div class="card"><button class="btn block" id="startBattle">⚔ Enter Battle Mode</button>
+    <p class="muted" style="font-size:11.5px;text-align:center;margin:8px 0 0">Rolls initiative and tracks your turn: actions, attacks left, movement and round count.</p></div>`;
+  const b=c.battle, atk=extraAttacks(c)+1;
+  return `<div class="card" style="border:2px solid var(--accent);box-shadow:0 0 0 3px rgba(77,106,44,.12)">
+    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Battle · Round ${b.round}</h2><button class="btn ghost sm" id="endBattle" style="color:var(--bad)">✖ End</button></div>
+    <div class="tiles" style="margin-top:10px">
+      <div class="tile"><div class="lab">Initiative</div><div class="big">${b.init}</div></div>
+      <div class="tile"><div class="lab">Attacks left</div><div class="big">${b.attacksLeft}/${atk}</div></div>
+      <div class="tile"><div class="lab">Move left</div><div class="big">${b.move}</div></div>
+      <div class="tile"><div class="lab">Round</div><div class="big">${b.round}</div></div>
+    </div>
+    <div class="chips" style="margin-top:10px">
+      <button class="chip ${b.action?'on':''}" data-bt="action">${b.action?'✓ ':''}Action</button>
+      <button class="chip ${b.bonus?'on':''}" data-bt="bonus">${b.bonus?'✓ ':''}Bonus action</button>
+      <button class="chip ${b.reaction?'on':''}" data-bt="reaction">${b.reaction?'✓ ':''}Reaction</button>
+    </div>
+    <div class="addrow" style="margin-top:10px">
+      <button class="btn ghost sm" data-bt="atkminus">– attack used</button>
+      <button class="btn ghost sm" data-bt="move5">– 5 ft</button>
+      <button class="btn ghost sm" data-bt="move10">– 10 ft</button>
+    </div>
+    <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
+  </div>`;
+}
 function openAttack(c){
-  const ws=equippedWeapons(c), atks=extraAttacks(c)+1, A=k=>k.toUpperCase();
+  const ws=weaponItems(c), atks=extraAttacks(c)+1, A=k=>k.toUpperCase();
   let cards='';
   ws.forEach(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',props:'',rng:'5 ft',type:'melee',cat:''};
-    const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), th=abm+profBonus(c);
+    const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), prof=weaponProficient(c,w), th=weaponToHit(c,w);
     const dnote=w.dmg+(abm?sgn(abm):''), vnote=w.vers?(w.vers+(abm?sgn(abm):'')):null;
     cards+=`<div class="card" style="margin:0 0 10px">
       <div class="row" style="gap:8px;align-items:center"><span style="flex:none">${itemEmblem(weaponIconKey(it.name),5)}</span><div class="nm"><b>${esc(it.name)}</b><small>${w.cat?w.cat+' ':''}${w.type} · ${esc(w.props||'—')}</small></div></div>
-      <div class="addrow" style="gap:6px;flex-wrap:wrap;margin:8px 0"><span class="pill">🗡️ ${atks} attack${atks>1?'s':''}/action</span><span class="pill">📏 ${esc(w.rng||'5 ft')}</span>${w.ammo?`<span class="pill">🏹 ${w.ammo}</span>`:''}<span class="pill">Uses ${A(ab)} (${sgn(abm)})</span></div>
+      <div class="addrow" style="gap:6px;flex-wrap:wrap;margin:8px 0"><span class="pill">🗡️ ${atks} attack${atks>1?'s':''}/action</span><span class="pill">📏 ${esc(w.rng||'5 ft')}</span>${w.ammo?`<span class="pill">🏹 ${w.ammo}</span>`:''}<span class="pill">Uses ${A(ab)} (${sgn(abm)})</span><span class="pill" style="${prof?'':'color:var(--bad)'}">${prof?'✓ Proficient (+'+profBonus(c)+')':'✗ Not proficient'}</span></div>
       <div class="listrow"><div class="nm">To hit <span class="sub">${sgn(th)}</span></div><input type="number" class="atkin" data-kind="hit" data-bonus="${th}" data-label="${esc(it.name)} attack" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(it.name)} attack" data-bonus="${th}" title="Auto-roll">🎲 ${sgn(th)}</button></div>
       <div class="listrow"><div class="nm">Damage <span class="sub">${esc(dnote)} ${esc(w.dt||'')}</span></div><input type="number" class="atkin" data-kind="dmg" data-label="${esc(it.name)} damage" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(it.name)} damage" data-notation="${esc(dnote)}" title="Auto-roll">🎲 ${esc(w.dmg)}</button></div>
       ${vnote?`<div class="listrow"><div class="nm">Two-handed <span class="sub">${esc(vnote)}</span></div><button class="val rollbtn" data-rolldmg data-label="${esc(it.name)} damage (2H)" data-notation="${esc(vnote)}">🎲 ${w.vers}</button></div>`:''}
@@ -2066,6 +2112,7 @@ function bindSkillHandlers(c){
 function renderCombat(c){
   const hd=parseHitDice(c); const hdLeft=hd?Math.max(0,hd.count-(c.hitDice.used||0)):0;
   app.innerHTML = `
+  ${battleCard(c)}
   <div class="card">
     <h2>Hit Points</h2>
     <div class="hp">
@@ -2160,11 +2207,11 @@ function renderCombat(c){
   <div class="card">
     <h2>Attacks & Weapons <button class="btn sm" id="attackBtn" style="float:right">⚔ Attack</button></h2>
     <div id="attackList">
-      ${equippedWeapons(c).map(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), th=abm+profBonus(c); const dn=w.dmg+(abm?sgn(abm):'');
+      ${weaponItems(c).map(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:'',cat:''}; const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), prof=weaponProficient(c,w), th=weaponToHit(c,w); const dn=w.dmg+(abm?sgn(abm):'');
         return `<div class="spell">
           <span style="flex:none">${itemEmblem(weaponIconKey(it.name),4)}</span>
-          <div class="nm"><b>${esc(it.name)}</b><small>${esc(dn)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}</small></div>
-          <button class="rollbtn" data-rollcheck data-label="${esc(it.name)} attack" data-bonus="${th}" title="Attack roll">🎯 ${sgn(th)}</button>
+          <div class="nm"><b>${esc(it.name)}${it.equipped?' <span class="sub" style="color:var(--accent)">✓</span>':''}</b><small>${esc(dn)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}${prof?'':' · <span style="color:var(--bad)">not proficient</span>'}</small></div>
+          <button class="rollbtn" data-rollcheck data-label="${esc(it.name)} attack" data-bonus="${th}" title="Attack roll${prof?'':' (no proficiency bonus)'}">🎯 ${sgn(th)}</button>
           <button class="rollbtn" data-rolldmg data-label="${esc(it.name)} damage" data-notation="${esc(dn)}" title="Roll ${esc(dn)}">⚔</button>
         </div>`; }).join('')}
       ${c.attacks.length?c.attacks.map((a,i)=>{
@@ -2175,7 +2222,7 @@ function renderCombat(c){
           ${a.damage?`<button class="rollbtn" data-rolldmg data-label="${esc(a.name)} damage" data-notation="${esc(a.damage)}" title="Roll ${esc(a.damage)}">⚔</button>`:''}
           <button class="del" data-delatk="${i}">✕</button>
         </div>`;}).join(''):''}
-      ${(!equippedWeapons(c).length && !c.attacks.length)?'<div class="empty">No weapons equipped. Add & equip weapons on the Items tab, or add a manual attack below.</div>':''}
+      ${(!weaponItems(c).length && !c.attacks.length)?'<div class="empty">No weapons yet. Add them on the Items tab, or add a manual attack below.</div>':''}
     </div>
     <div class="addrow">
       <input id="atk_name" placeholder="Name">
@@ -2218,6 +2265,15 @@ function renderCombat(c){
   }));
 
   { const ab=$('#attackBtn'); if(ab) ab.addEventListener('click',()=>openAttack(c)); }
+  { const sb=$('#startBattle'); if(sb) sb.addEventListener('click',()=>startBattle(c)); }
+  { const eb=$('#endBattle'); if(eb) eb.addEventListener('click',()=>endBattle(c)); }
+  { const nt=$('#nextTurn'); if(nt) nt.addEventListener('click',()=>battleNextTurn(c)); }
+  app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
+    if(k==='action'||k==='bonus'||k==='reaction') b[k]=!b[k];
+    else if(k==='atkminus') b.attacksLeft=Math.max(0,b.attacksLeft-1);
+    else if(k==='move5') b.move=Math.max(0,b.move-5);
+    else if(k==='move10') b.move=Math.max(0,b.move-10);
+    save(); render(); }));
   $('#addAtk').addEventListener('click',()=>{
     const name=$('#atk_name').value.trim(); if(!name) return;
     c.attacks.push({name, bonus:$('#atk_bonus').value.trim(), damage:$('#atk_dmg').value.trim()});
@@ -2735,7 +2791,9 @@ document.addEventListener('click',e=>{
   const bdEl=e.target.closest('[data-bd]');
   if(bdEl){ const c=cur(); if(c) showBreakdown(c, bdEl.dataset.bd); return; }
   const rc=e.target.closest('[data-rollcheck]');
-  if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal'); return; }
+  if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal');
+    const cc=cur(); if(cc&&cc.battle&&/attack/i.test(rc.dataset.label||'')){ cc.battle.attacksLeft=Math.max(0,cc.battle.attacksLeft-1); cc.battle.action=true; save(); render(); }
+    return; }
   const rd=e.target.closest('[data-rolldmg]');
   if(rd){ rollDmg(rd.dataset.label, rd.dataset.notation); return; }
   const si=e.target.closest('[data-spellinfo]'); if(si){ spellInfo(si.dataset.spellinfo); return; }
@@ -2752,7 +2810,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v30';
+const APP_VERSION='v31';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
