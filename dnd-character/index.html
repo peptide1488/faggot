@@ -172,7 +172,7 @@
 
   /* roll result banner */
   .rollbanner{position:fixed;left:50%;transform:translateX(-50%) translateY(20px);
-    bottom:calc(80px + env(safe-area-inset-bottom));z-index:40;width:calc(100% - 24px);max-width:440px;
+    bottom:calc(80px + env(safe-area-inset-bottom));z-index:60;width:calc(100% - 24px);max-width:440px;
     background:var(--panel);border:1px solid var(--accent);border-radius:14px;
     padding:10px 12px;box-shadow:0 10px 34px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.22s}
   .rollbanner.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
@@ -811,6 +811,13 @@ function pbUsed(c){ return ABILITIES.reduce((s,[k])=>s+pbCost(c.abilities[k]),0)
 // Spellcasting ability by class (non-casters have none).
 const CLASS_SPELL_ABILITY = {Bard:'cha',Paladin:'cha',Sorcerer:'cha',Warlock:'cha',Cleric:'wis',Druid:'wis',Ranger:'wis',Wizard:'int',Artificer:'int'};
 function isCaster(c){ return !!CLASS_SPELL_ABILITY[c.cls]; }
+// Prepared-spell tracking (preparation casters choose a limited number each day).
+function isPrepCaster(c){ return ['Cleric','Druid','Wizard','Artificer','Paladin'].includes(c.cls); }
+function preparedMax(c){ const l=Number(c.level)||1, m=mod(abil(c,c.spellAbility));
+  if(['Wizard','Cleric','Druid'].includes(c.cls)) return Math.max(1, m+l);
+  if(['Paladin','Artificer'].includes(c.cls)) return Math.max(1, m+Math.floor(l/2));
+  return null; }
+function preparedCount(c){ return (c.spells||[]).filter(s=>s.prepared && (s.level||0)>0).length; }
 function applyClassDefaults(c){
   const sv=CLASS_SAVES[c.cls];
   if(sv){ c.saveProf={str:false,dex:false,con:false,int:false,wis:false,cha:false}; sv.forEach(s=>c.saveProf[s]=true); }
@@ -2283,17 +2290,19 @@ function renderCombat(c){
 
   <div class="card">
     <h2>Defenses</h2>
+    ${(()=>{ const arm=(c.items||[]).find(it=>it.equipped&&it.kind==='armor'); const shields=(c.items||[]).filter(it=>it.equipped&&it.kind==='shield');
+      const armName = arm? arm.name : (c.armor&&c.armor!=='none'? armorDef(c.armor).name+' (set manually)' : 'Unarmored');
+      return `<div class="listrow"><div class="nm"><b>Armor</b><small>${esc(armName)}${shields.length?' + Shield':''}</small></div><div class="val">AC ${computeAC(c)}</div></div>
+      <p class="muted" style="font-size:11.5px;margin:6px 0 10px">🛡️ Worn armor & shields come from what you <b>equip on the Items tab</b> — your AC updates automatically. ${(c.acOverride!==''&&c.acOverride!=null)?'A custom AC override is active below.':''}</p>`; })()}
     <div class="g2 grid">
-      <div><label>Armor</label><select id="cb_armor">${ARMOR.map(a=>`<option value="${a.key}" ${(c.armor||'none')===a.key?'selected':''}>${a.name} (${a.base}${a.dexCap>=99?'+DEX':a.dexCap>0?'+DEX≤'+a.dexCap:''})</option>`).join('')}<option value="custom" ${c.acOverride!==''&&c.acOverride!=null?'selected':''}>Custom AC…</option></select></div>
       <div><label>Speed (ft)</label><select id="cb_speed">${[25,30,35,40,50].map(s=>`<option ${Number(c.speed)===s?'selected':''}>${s}</option>`).join('')}<option value="custom" ${[25,30,35,40,50].includes(Number(c.speed))?'':'selected'}>Custom…</option></select></div>
+      <div><label>Custom AC (override, optional)</label><input type="number" id="cb_acover" value="${c.acOverride}" placeholder="leave blank to use armor"></div>
     </div>
     <div class="g2 grid" style="margin-top:10px">
-      <div id="acCustWrap" style="${(c.acOverride!==''&&c.acOverride!=null)?'':'display:none'}"><label>Custom AC</label><input type="number" id="cb_acover" value="${c.acOverride}" placeholder="e.g. 17"></div>
       <div id="spdCustWrap" style="${[25,30,35,40,50].includes(Number(c.speed))?'display:none':''}"><label>Custom speed</label><input type="number" id="cb_spdcust" value="${c.speed}"></div>
+      <div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div>
     </div>
-    <label class="pill" style="cursor:pointer;margin-top:12px;${(c.acOverride!==''&&c.acOverride!=null)?'opacity:.5':''}"><input type="checkbox" class="chk" id="cb_shield" ${c.shield?'checked':''} ${(c.acOverride!==''&&c.acOverride!=null)?'disabled':''}> Shield (+2 AC)</label>
-    ${(()=>{ const eq=(c.items||[]).filter(it=>it.equipped&&(it.kind==='armor'||it.kind==='shield'||(it.mods&&it.mods.ac))); return eq.length?`<p class="muted" style="font-size:11.5px;margin:8px 0 0">🛡️ Equipped: ${eq.map(it=>esc(it.name)).join(', ')} — AC auto-updates from the Items tab.</p>`:''; })()}
-    <div class="g3 grid" style="margin-top:8px"><div></div><div></div><div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div></div>
+    <label class="pill" style="cursor:pointer;margin-top:12px"><input type="checkbox" class="chk" id="cb_shield" ${c.shield?'checked':''}> Shield (+2 AC)</label>
     <div class="tiles" style="margin-top:12px">
       <div class="tile"><div class="lab">Armor Class ${bd('ac')}</div><div class="big">${computeAC(c)}</div></div>
       <div class="tile"><div class="lab">Initiative${featInitBonus(c)?' ▲':''} ${bd('init')}</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${initiative(c)}" title="Roll initiative${featInitBonus(c)?' (incl. +5 Alert)':''}">${sgn(initiative(c))}</button></div>
@@ -2388,11 +2397,6 @@ function renderCombat(c){
   $('#hpmax').addEventListener('change',e=>{ c.hp.max=Number(e.target.value)||0; save(); });
   const ahp=$('#autoHp'); if(ahp) ahp.addEventListener('click',()=>{ const v=autoHP(c); if(v){ c.hp.max=v; c.hp.cur=v; save(); render(); } });
   $('#hptemp').addEventListener('change',e=>{ c.hp.temp=Number(e.target.value)||0; save(); render(); });
-  $('#cb_armor').addEventListener('change',e=>{
-    if(e.target.value==='custom'){ if(c.acOverride===''||c.acOverride==null) c.acOverride=computeAC(c); }
-    else { c.armor=e.target.value; c.acOverride=''; }
-    save(); render();
-  });
   { const ov=$('#cb_acover'); if(ov) ov.addEventListener('change',e=>{ c.acOverride=e.target.value===''?'':Number(e.target.value); save(); render(); }); }
   $('#cb_shield').addEventListener('change',e=>{ c.shield=e.target.checked; save(); render(); });
   $('#cb_speed').addEventListener('change',e=>{
@@ -2524,7 +2528,8 @@ function renderSpells(c){
   ${effectsCard(c)}
 
   <div class="card">
-    <h2>${chev('spellbook')}Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ✓ = prepared · ⚡ = cast</span></h2>
+    <h2>${chev('spellbook')}Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ${isPrepCaster(c)?`Prepared ${preparedCount(c)}/${preparedMax(c)}`:'✓ = prepared'} · ⚡ = cast</span></h2>
+    ${isPrepCaster(c)?`<p class="muted" style="font-size:11.5px;margin:0 0 6px">Tick ✓ to prepare a spell. You can prepare about <b>${preparedMax(c)}</b> (spell mod + ${c.cls==='Paladin'||c.cls==='Artificer'?'½ ':''}level)${preparedCount(c)>preparedMax(c)?' — <span style="color:var(--bad)">over your limit</span>':''}.</p>`:''}
     <div class="addrow">
       <select id="sp_pick" style="flex:2">
         <option value="">— add a ${esc(c.cls)} spell —</option>
@@ -2590,7 +2595,7 @@ function renderSpells(c){
     const lv=$('#sp_level').value; addSpellTo(c, name, lv==='Cantrip'?0:Number(lv));
   });
   app.querySelectorAll('[data-prep]').forEach(el=>el.addEventListener('change',e=>{
-    c.spells[Number(el.dataset.prep)].prepared=e.target.checked; save();
+    c.spells[Number(el.dataset.prep)].prepared=e.target.checked; save(); render();
   }));
   app.querySelectorAll('[data-delspell]').forEach(el=>el.addEventListener('click',()=>{
     c.spells.splice(Number(el.dataset.delspell),1); save(); render();
@@ -2979,7 +2984,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v33';
+const APP_VERSION='v34';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
