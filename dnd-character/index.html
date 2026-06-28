@@ -130,7 +130,7 @@
   nav.tabs{
     position:fixed;left:0;right:0;bottom:0;z-index:30;
     background:linear-gradient(rgba(231,216,184,.97),rgba(238,226,198,.98));backdrop-filter:blur(10px);border-top:2px solid var(--line);
-    display:grid;grid-template-columns:repeat(6,1fr);
+    display:grid;grid-template-columns:repeat(5,1fr);
     padding:6px 4px calc(6px + env(safe-area-inset-bottom));
     box-shadow:0 -2px 10px rgba(90,67,30,.10);
   }
@@ -888,7 +888,7 @@ function autoHP(c){
 /* ---- data ---- */
 let DB = load();
 let curId = localStorage.getItem(LS_CUR) || (DB[0] && DB[0].id) || null;
-let tab = 'bio';
+let tab = 'char';
 let wiz = null;   // { step } while the creation wizard is active
 let abilEdit = false;   // post-creation, reveal the ability-score editor on demand
 let skillEdit = false;  // post-creation, reveal the skill/expertise editor on demand
@@ -1078,6 +1078,42 @@ function skillBonus(c, key, ab, exp){
   if(exp && c.skillExp[key]) b += pb;
   return b;
 }
+/* ---- stat breakdowns: tap ⓘ on any stat to see where the number comes from ---- */
+function abilFullName(k){ return (ABILITIES.find(x=>x[0]===k)||['',k])[1]; }
+function abilScoreLines(c,k){
+  const L=[]; const base=Number(c.abilities[k]);
+  L.push({l:'Base score', v:isNaN(base)?10:base, raw:true});
+  const rb=raceBonus(c,k); if(rb) L.push({l:'Racial bonus · '+(c.race||'race'), v:rb});
+  const as=(c.asiBonus&&c.asiBonus[k])||0; if(as) L.push({l:'ASI & feat increases', v:as});
+  const eb=effBonus(c,k); if(eb) L.push({l:'Active spell effects', v:eb});
+  return L;
+}
+function statBreakdown(c, spec){
+  const A=abilFullName, pb=profBonus(c), parts=spec.split(':'), t=parts[0], a=parts[1], b=parts[2];
+  let title='', lines=[], total=0, raw=false, note='';
+  if(t==='abil'){ title=A(a)+' Score'; lines=abilScoreLines(c,a); total=abil(c,a); raw=true; note='Ability modifier '+sgn(mod(total)); }
+  else if(t==='save'){ title=A(a)+' Saving Throw'; lines=[{l:A(a)+' modifier', v:mod(abil(c,a))}]; if(c.saveProf[a]) lines.push({l:'Proficiency · '+(c.cls||'class'), v:pb}); total=mod(abil(c,a))+(c.saveProf[a]?pb:0); }
+  else if(t==='skill'){ const nm=(SKILLS.find(s=>s[0]===a)||['',a])[1]; title=nm+' Skill'; lines=[{l:A(b)+' modifier', v:mod(abil(c,b))}]; if(c.skillProf[a]) lines.push({l:'Proficiency', v:pb}); if(c.skillExp[a]) lines.push({l:'Expertise (double prof.)', v:pb}); total=skillBonus(c,a,b,true); }
+  else if(t==='init'){ title='Initiative'; lines=[{l:'DEX modifier', v:mod(abil(c,'dex'))}]; if(Number(c.initMisc)) lines.push({l:'Misc bonus', v:Number(c.initMisc)}); if(featInitBonus(c)) lines.push({l:'Alert feat', v:5}); total=initiative(c); }
+  else if(t==='ac'){ title='Armor Class';
+    if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)){ lines=[{l:'Custom AC', v:Number(c.acOverride), raw:true}]; }
+    else { const ar=armorDef(c.armor||'none'); lines=[{l:'Armor base · '+ar.name, v:ar.base, raw:true}]; const dx=Math.min(mod(abil(c,'dex')), ar.dexCap); if(ar.dexCap>0) lines.push({l:'DEX'+(ar.dexCap<99?' (max +'+ar.dexCap+')':''), v:dx}); if(c.shield) lines.push({l:'Shield', v:2}); }
+    const eb=effBonus(c,'ac'); if(eb) lines.push({l:'Active spell effects', v:eb}); total=computeAC(c); raw=true; }
+  else if(t==='speed'){ title='Speed'; lines=[{l:'Base · '+(c.race||'walking'), v:Number(c.speed||0), raw:true}]; const eb=effBonus(c,'speed'); if(eb) lines.push({l:'Active effects', v:eb}); const ml=effSpeedMul(c); if(ml!==1) lines.push({l:'Effect multiplier', v:'×'+ml, raw:true}); total=effSpeed(c); raw=true; }
+  else if(t==='prof'){ title='Proficiency Bonus'; if(c.profOverride!=='' && c.profOverride!=null && !isNaN(c.profOverride)){ lines=[{l:'Custom override', v:Number(c.profOverride)}]; } else { lines=[{l:'From level '+(c.level||1), v:profBonus(c)}]; } total=profBonus(c); }
+  else if(t==='spelldc'){ title='Spell Save DC'; lines=[{l:'Base', v:8, raw:true},{l:'Proficiency', v:pb},{l:A(c.spellAbility)+' modifier', v:mod(abil(c,c.spellAbility))}]; total=8+pb+mod(abil(c,c.spellAbility)); raw=true; }
+  else if(t==='spellatk'){ title='Spell Attack'; lines=[{l:'Proficiency', v:pb},{l:A(c.spellAbility)+' modifier', v:mod(abil(c,c.spellAbility))}]; total=pb+mod(abil(c,c.spellAbility)); }
+  else if(t==='passive'){ const nm=(SKILLS.find(s=>s[0]===a)||['',a])[1]; title='Passive '+nm; lines=[{l:'Base', v:10, raw:true},{l:A(b)+' modifier', v:mod(abil(c,b))}]; if(c.skillProf[a]) lines.push({l:'Proficiency', v:pb}); if(c.skillExp[a]) lines.push({l:'Expertise', v:pb}); total=10+skillBonus(c,a,b,true); raw=true; }
+  return {title, lines, total, raw, note};
+}
+function showBreakdown(c, spec){
+  const r=statBreakdown(c, spec);
+  const fmt=(v,rw)=> (typeof v==='number') ? (rw?v:sgn(v)) : v;
+  const body=r.lines.map(L=>`<div class="listrow"><div class="nm">${esc(L.l)}</div><div class="val">${fmt(L.v,L.raw)}</div></div>`).join('')
+    +`<div class="listrow" style="border-top:2px solid var(--line)"><div class="nm"><b>Total</b></div><div class="val"><b style="color:var(--accent)">${r.raw?r.total:sgn(r.total)}</b></div></div>`;
+  showInfo(r.title, r.note||'Where this number comes from', body);
+}
+function bd(spec){ return `<button class="del bdbtn" data-bd="${spec}" title="How is this calculated?" style="font-size:13px;padding:0 4px">ⓘ</button>`; }
 function parseHitDice(c){
   const m = String((c.hitDice&&c.hitDice.total)||'').match(/(\d+)\s*d\s*(\d+)/i);
   return m ? {count:Number(m[1]), sides:Number(m[2])} : null;
@@ -1117,8 +1153,7 @@ function render(){
   if(!c){ renderWelcome(); return; }
   app.className='fade';
   void app.offsetWidth;
-  if(tab==='bio') renderBio(c);
-  else if(tab==='abil') renderAbil(c);
+  if(tab==='bio'||tab==='abil'||tab==='char') renderSheet(c);
   else if(tab==='combat') renderCombat(c);
   else if(tab==='spells') renderSpells(c);
   else if(tab==='items') renderItems(c);
@@ -1139,7 +1174,7 @@ function renderHeader(){
 }
 
 const TABDEF = [
-  ['bio','Bio','🪪'],['abil','Stats','🎲'],['combat','Combat','⚔️'],
+  ['char','Sheet','🪪'],['combat','Combat','⚔️'],
   ['spells','Spells','✨'],['items','Items','🎒'],['notes','Notes','📜']
 ];
 function renderTabs(){
@@ -1156,6 +1191,7 @@ function renderWelcome(){
       <h1 class="serif">Welcome, adventurer</h1>
       <p>Create a character to track abilities, skills, hit points, spell slots, inventory and more. Everything is saved on this device and works offline.</p>
       <button class="btn block" id="welcomeNew" style="max-width:280px;margin:0 auto">Create a character</button>
+      <button class="btn ghost block" id="welcomeRandom" style="max-width:280px;margin:10px auto 0">🎲 Surprise me — random hero</button>
       <div class="emrow" style="justify-content:center;margin-top:26px;gap:10px">
         ${['Fighter','Wizard','Cleric','Rogue','Ranger'].map(cl=>`<span class="emblem">${pixelArt(CLASS_PIX[cl],6)}</span>`).join('')}
       </div>
@@ -1312,7 +1348,7 @@ function wizNext(){
   c.hp.max=hp; c.hp.cur=hp;
   logChange(c, 'Created — level 1 '+(c.race?c.race+' ':'')+c.cls+(c.background?' ('+c.background+')':''));
   const fc=wiz.featChoice;
-  wiz=null; tab='bio'; save(); render();
+  wiz=null; tab='char'; save(); render();
   if(fc && fc!=='(no feat)') applyFeat(c, fc, ()=>resolveChoices(c));   // feat first, then class/race choices
   else resolveChoices(c);   // Fighting Style, Expertise, Half-Elf/Variant/Dragonborn picks
 }
@@ -1399,7 +1435,7 @@ function levelUp(){
 }
 
 /* ---------- BIO ---------- */
-function renderBio(c){
+function renderSheet(c){
   const pend=pendingChoiceSpecs(c);
   app.innerHTML = `
   ${pend.length?`<div class="card" style="border:1px solid var(--accent);background:rgba(180,140,255,.08)">
@@ -1440,19 +1476,68 @@ function renderBio(c){
       <h2 style="margin:0;color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px">Level ${c.level} ${esc(c.cls)}${c.subclass?` · ${esc(c.subclass)}`:''}</h2>
       <button class="btn sm" id="levelUpBtn" ${c.level>=20?'disabled style="opacity:.4"':''}>⬆ Level Up</button>
     </div>
-    <div class="abis" style="margin-bottom:12px">
-      ${ABILITIES.map(([k,nm])=>{ const eb=effBonus(c,k); return `<button class="abi rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(abil(c,k))}" title="Roll ${nm}${eb?' (incl. '+sgn(eb)+' from effects)':''}" style="text-align:center${eb?';box-shadow:inset 0 0 0 1px var(--accent)':''}">
-        <div class="nm">${k}${eb?' ▲':''}</div><div class="mod">${abil(c,k)}</div><div class="sub">${sgn(mod(abil(c,k)))}</div></button>`; }).join('')}
-    </div>
     <div class="tiles">
-      <div class="tile"><div class="lab">Proficiency</div><div class="big">${sgn(profBonus(c))}</div></div>
-      <div class="tile" ${featInitBonus(c)?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Initiative${featInitBonus(c)?' ▲':''}</div><div class="big">${sgn(initiative(c))}</div></div>
-      <div class="tile" ${effBonus(c,'ac')?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Armor Class${effBonus(c,'ac')?' ▲':''}</div><div class="big">${computeAC(c)}</div></div>
-      <div class="tile" ${(effBonus(c,'speed')||effSpeedMul(c)!==1)?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''}</div><div class="big">${effSpeed(c)}</div></div>
+      <div class="tile"><div class="lab">Proficiency ${bd('prof')}</div><div class="big">${sgn(profBonus(c))}</div></div>
+      <div class="tile" ${featInitBonus(c)?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Initiative${featInitBonus(c)?' ▲':''} ${bd('init')}</div><div class="big">${sgn(initiative(c))}</div></div>
+      <div class="tile" ${effBonus(c,'ac')?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Armor Class${effBonus(c,'ac')?' ▲':''} ${bd('ac')}</div><div class="big">${computeAC(c)}</div></div>
+      <div class="tile" ${(effBonus(c,'speed')||effSpeedMul(c)!==1)?'style="box-shadow:inset 0 0 0 1px var(--accent)"':''}><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''} ${bd('speed')}</div><div class="big">${effSpeed(c)}</div></div>
     </div>
     ${(c.effects&&c.effects.length)?`<div class="addrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">${c.effects.map(e=>`<span class="pill" title="${esc(e.note||'')}">${spellIcon(e.name)} ${esc(e.name)}${e.mods&&modSummary(e.mods)?' · '+modSummary(e.mods):''} · ${fmtDuration(e.rounds)}</span>`).join('')}</div>`:''}
     <div class="addrow" style="margin-top:12px">
       <label class="pill" style="cursor:pointer"><input type="checkbox" class="chk" id="f_insp" ${c.inspiration?'checked':''}> Inspiration</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row between" style="margin-bottom:8px">
+      <h2 style="margin:0">Ability Scores ${abilEdit?'<span class="muted" style="text-transform:none;font-size:11px">— editing</span>':''}</h2>
+      <button class="btn ghost sm" id="abilEditBtn">${abilEdit?'✓ Done':'✎ Edit'}</button>
+    </div>
+    ${abilEdit?abilCard(c,true):abilCard(c)}
+  </div>
+
+  <div class="card">
+    <h2>Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— ● = proficient (from ${esc(c.cls)})</span></h2>
+    ${ABILITIES.map(([k,nm])=>{
+      const prof=!!c.saveProf[k];
+      const b = mod(abil(c,k)) + (prof?profBonus(c):0);
+      return `<div class="listrow">
+        <span class="profdot ${prof?'on':''}"></span>
+        <div class="nm">${nm}</div>
+        ${bd('save:'+k)}
+        <button class="val rollbtn" data-rollcheck data-label="${nm} save" data-bonus="${b}" title="Roll ${nm} save">${sgn(b)}</button>
+      </div>`;
+    }).join('')}
+  </div>
+
+  <div class="card">
+    <div class="row between" style="margin-bottom:8px">
+      <h2 style="margin:0">Skills <span class="muted" style="text-transform:none;font-size:11px">— ${skillCount(c)}/${skillBudget(c)}${skillEdit?' · tap ◇ for expertise':''}</span></h2>
+      <button class="btn ghost sm" id="skillEditBtn">${skillEdit?'✓ Done':'✎ Edit'}</button>
+    </div>
+    ${SKILLS.map(([key,nm,ab])=>{
+      const b = skillBonus(c,key,ab,true), prof=!!c.skillProf[key], exp=!!c.skillExp[key];
+      if(skillEdit) return `<div class="listrow">
+        <input type="checkbox" class="chk" data-skill="${key}" ${prof?'checked':''}>
+        <button class="del" data-exp="${key}" title="Expertise" style="color:${exp?'var(--gold)':'var(--mut)'}">${exp?'◆':'◇'}</button>
+        <div class="nm">${nm} <span class="sub">(${ab})</span></div>
+        <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
+      </div>`;
+      return `<div class="listrow">
+        <span class="profdot ${prof?'on':''}"></span>
+        <span style="width:14px;text-align:center;color:var(--gold)">${exp?'◆':''}</span>
+        <div class="nm">${nm} <span class="sub">(${ab})</span></div>
+        ${bd('skill:'+key+':'+ab)}
+        <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
+      </div>`;
+    }).join('')}
+  </div>
+
+  <div class="card">
+    <h2>Passive Senses</h2>
+    <div class="tiles">
+      <div class="tile"><div class="lab">Passive Perception ${bd('passive:perception:wis')}</div><div class="big">${10+skillBonus(c,'perception','wis',true)}</div></div>
+      <div class="tile"><div class="lab">Passive Investigation ${bd('passive:investigation:int')}</div><div class="big">${10+skillBonus(c,'investigation','int',true)}</div></div>
     </div>
   </div>
 
@@ -1507,6 +1592,10 @@ function renderBio(c){
   app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
   $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
   { const r=$('#resolveChoices'); if(r) r.addEventListener('click',()=>resolveChoices(c)); }
+  $('#abilEditBtn').addEventListener('click',()=>{ abilEdit=!abilEdit; render(); });
+  $('#skillEditBtn').addEventListener('click',()=>{ skillEdit=!skillEdit; render(); });
+  if(abilEdit) bindAbilHandlers(c);
+  if(skillEdit) bindSkillHandlers(c);
 }
 
 /* ---------- ABILITIES & SKILLS ---------- */
@@ -1520,6 +1609,7 @@ function abilCard(c, wizard){
       return `<div class="abrow">
         <div class="nm">${k}</div>
         <div class="muted" style="font-size:11px;flex:1">${parts}</div>
+        ${bd('abil:'+k)}
         <button class="tot val rollbtn" data-rollcheck data-label="${nm} check" data-bonus="${mod(total)}" title="Roll ${nm} check">${total} <small style="color:var(--mut);font-weight:400">${sgn(mod(total))}</small></button>
       </div>`;
     }).join('');
@@ -1686,10 +1776,10 @@ function renderCombat(c){
     <label class="pill" style="cursor:pointer;margin-top:12px;${(c.acOverride!==''&&c.acOverride!=null)?'opacity:.5':''}"><input type="checkbox" class="chk" id="cb_shield" ${c.shield?'checked':''} ${(c.acOverride!==''&&c.acOverride!=null)?'disabled':''}> Shield (+2 AC)</label>
     <div class="g3 grid" style="margin-top:8px"><div></div><div></div><div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div></div>
     <div class="tiles" style="margin-top:12px">
-      <div class="tile"><div class="lab">Armor Class</div><div class="big">${computeAC(c)}</div></div>
-      <div class="tile"><div class="lab">Initiative${featInitBonus(c)?' ▲':''}</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${initiative(c)}" title="Roll initiative${featInitBonus(c)?' (incl. +5 Alert)':''}">${sgn(initiative(c))}</button></div>
-      ${isCaster(c)?`<div class="tile"><div class="lab">Spell DC</div><div class="big">${8+profBonus(c)+mod(abil(c,c.spellAbility))}</div></div>
-      <div class="tile"><div class="lab">Spell Atk</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>`:`<div class="tile"><div class="lab">Prof.</div><div class="big">${sgn(profBonus(c))}</div></div><div class="tile"><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''}</div><div class="big">${effSpeed(c)}</div></div>`}
+      <div class="tile"><div class="lab">Armor Class ${bd('ac')}</div><div class="big">${computeAC(c)}</div></div>
+      <div class="tile"><div class="lab">Initiative${featInitBonus(c)?' ▲':''} ${bd('init')}</div><button class="big rollbtn" data-rollcheck data-label="Initiative" data-bonus="${initiative(c)}" title="Roll initiative${featInitBonus(c)?' (incl. +5 Alert)':''}">${sgn(initiative(c))}</button></div>
+      ${isCaster(c)?`<div class="tile"><div class="lab">Spell DC ${bd('spelldc')}</div><div class="big">${8+profBonus(c)+mod(abil(c,c.spellAbility))}</div></div>
+      <div class="tile"><div class="lab">Spell Atk ${bd('spellatk')}</div><div class="big">${sgn(profBonus(c)+mod(abil(c,c.spellAbility)))}</div></div>`:`<div class="tile"><div class="lab">Prof. ${bd('prof')}</div><div class="big">${sgn(profBonus(c))}</div></div><div class="tile"><div class="lab">Speed${(effBonus(c,'speed')||effSpeedMul(c)!==1)?' ▲':''} ${bd('speed')}</div><div class="big">${effSpeed(c)}</div></div>`}
     </div>
   </div>
 
@@ -1852,8 +1942,8 @@ function renderSpells(c){
     <h2>Spellcasting</h2>
     <div class="g3 grid">
       <div class="tile"><div class="lab">Ability${isCaster(c)?' · from class':''}</div><div class="big" style="font-size:18px">${spellAbilName}</div></div>
-      <div class="tile"><div class="lab">Spell save DC</div><div class="big">${dc}</div></div>
-      <div class="tile"><div class="lab">Spell attack</div><div class="big">${sgn(atk)}</div></div>
+      <div class="tile"><div class="lab">Spell save DC ${bd('spelldc')}</div><div class="big">${dc}</div></div>
+      <div class="tile"><div class="lab">Spell attack ${bd('spellatk')}</div><div class="big">${sgn(atk)}</div></div>
     </div>
   </div>
 
@@ -2088,8 +2178,90 @@ function deleteCharacter(c){
 function createCharacterFlow(){
   const c=newCharacter();
   DB.push(c); curId=c.id; localStorage.setItem(LS_CUR,curId);
-  wiz={step:0}; tab='bio'; save(); render();
+  wiz={step:0}; tab='char'; save(); render();
   setTimeout(()=>{ const n=$('#wz_name'); if(n){ n.focus(); n.select(); } },60);
+}
+
+/* ---------- RANDOM CHARACTER GENERATOR ---------- */
+function rndPick(a){ return a[Math.floor(Math.random()*a.length)]; }
+function shuffle(a){ return a.slice().sort(()=>Math.random()-0.5); }
+function spriteDataURL(grid, scale){           // rasterize a 12×12 sprite into a portrait dataURL
+  scale=scale||22; const w=grid[0].length, h=grid.length;
+  const cv=document.createElement('canvas'); cv.width=w*scale; cv.height=h*scale;
+  const x=cv.getContext('2d');
+  x.fillStyle='#e3d2ac'; x.fillRect(0,0,cv.width,cv.height);
+  x.fillStyle='#f0e4c6'; x.beginPath(); x.arc(cv.width/2, cv.height*0.42, cv.width*0.46, 0, Math.PI*2); x.fill();
+  for(let yy=0;yy<h;yy++) for(let xx=0;xx<w;xx++){ const col=PIX_PAL[grid[yy][xx]]; if(col){ x.fillStyle=col; x.fillRect(xx*scale, yy*scale, scale, scale); } }
+  return cv.toDataURL('image/png');
+}
+const RND_CLASS = { melee:['Fighter','Barbarian','Paladin'], ranged:['Ranger','Fighter'], sneaky:['Rogue','Bard','Monk'], caster:['Wizard','Sorcerer','Warlock','Druid'], support:['Cleric','Bard','Druid','Paladin'] };
+const RND_RACE  = { common:['Human','Human (Variant)','Half-Elf'], fae:['Elf','Gnome','Fairy','Half-Elf'], stout:['Dwarf','Halfling','Goliath'], fierce:['Half-Orc','Orc','Dragonborn','Goblin','Tiefling'], exotic:['Tabaxi','Aasimar','Tortle','Genasi','Kenku'] };
+const RND_VIBE_RACE = { heroic:['Human','Dwarf','Aasimar'], dark:['Tiefling','Human (Variant)'], wild:['Half-Orc','Goblin','Tabaxi'], clever:['Gnome','Elf'], charming:['Half-Elf','Aasimar'] };
+const RND_BG = { Fighter:['Soldier','Noble','Folk Hero'], Barbarian:['Outlander','Folk Hero'], Paladin:['Noble','Acolyte','Soldier'], Ranger:['Outlander','Folk Hero'], Rogue:['Criminal','Charlatan','Urchin'], Bard:['Entertainer','Charlatan','Noble'], Monk:['Hermit','Acolyte'], Wizard:['Sage','Hermit'], Sorcerer:['Hermit','Noble'], Warlock:['Charlatan','Hermit'], Druid:['Hermit','Outlander'], Cleric:['Acolyte','Hermit'], Artificer:['Guild Artisan','Sage'] };
+const RND_PRIO = {
+  Fighter:['str','con','dex','wis','cha','int'], Barbarian:['str','con','dex','wis','cha','int'], Paladin:['str','cha','con','wis','dex','int'],
+  Ranger:['dex','wis','con','str','cha','int'], Rogue:['dex','con','wis','cha','int','str'], Monk:['dex','wis','con','str','cha','int'],
+  Bard:['cha','dex','con','wis','int','str'], Wizard:['int','con','dex','wis','cha','str'], Sorcerer:['cha','con','dex','wis','int','str'],
+  Warlock:['cha','con','dex','wis','int','str'], Druid:['wis','con','dex','int','cha','str'], Cleric:['wis','con','str','dex','cha','int'], Artificer:['int','con','dex','wis','cha','str']
+};
+const RND_FEATS_SIMPLE=['Tough','Alert','Lucky','Mobile','Savage Attacker','Durable','Athlete'];
+const NAME_HARD=['Bron','Gar','Thok','Dur','Grim','Kaz','Ulf','Mor','Rok','Hren','Bal','Dra'];
+const NAME_SOFT=['Ael','Lia','Syl','Mira','Eli','Thes','Yara','Fen','Lor','Ny','Cael','Ari'];
+const NAME_END =['ar','on','eth','wyn','ius','ra','din','gar','iel','os','ana','eth'];
+function randName(race){ const soft=['Elf','Half-Elf','Fairy','Gnome','Aasimar','Tabaxi'].includes(race); return rndPick(soft?NAME_SOFT:NAME_HARD)+rndPick(NAME_END); }
+let rndAns={style:'melee',heritage:'common',vibe:'heroic'};
+function openRandomBuilder(){ rndAns={style:'melee',heritage:'common',vibe:'heroic'}; renderRandomBuilder(); }
+function renderRandomBuilder(){
+  const Q=(key,label,opts)=>`<div class="field"><label>${label}</label><div class="seg" style="flex-wrap:wrap;gap:6px;background:none;border:0;padding:0">${opts.map(([v,l])=>`<button class="${rndAns[key]===v?'on':''}" data-rq="${key}" data-rv="${v}" style="flex:1 0 30%;background:${rndAns[key]===v?'var(--accent2)':'var(--panel2)'};border:1px solid var(--line);color:${rndAns[key]===v?'#f6efda':'var(--ink)'}">${l}</button>`).join('')}</div></div>`;
+  $('#modalRoot').innerHTML=`<div class="modal" id="rndModal"><div class="sheet"><div class="grip"></div>
+    <h2>🎲 Random Hero Forge</h2>
+    <p class="muted" style="font-size:13px;margin:0 0 14px">Answer three questions and we'll roll up a complete level-1 character — abilities, skills, spells and a pixel portrait.</p>
+    ${Q('style','How do you like to fight?',[['melee','⚔️ Up close'],['ranged','🏹 At range'],['sneaky','🗡️ Sneaky'],['caster','✨ Spells'],['support','✚ Support']])}
+    ${Q('heritage','What heritage calls to you?',[['common','🧑 Common'],['fae','🧝 Fae'],['stout','🪓 Stout'],['fierce','👹 Fierce'],['exotic','🐾 Exotic']])}
+    ${Q('vibe','Pick a vibe',[['heroic','🛡️ Heroic'],['dark','🌑 Mysterious'],['wild','🍃 Wild'],['clever','📚 Clever'],['charming','🎭 Charming']])}
+    <button class="btn block" id="rndForge" style="margin-top:6px">⚒ Forge my hero</button>
+    <button class="btn ghost block" id="rndClose" style="margin-top:10px">Cancel</button>
+  </div></div>`;
+  $('#rndModal').onclick=e=>{ if(e.target.id==='rndModal') $('#modalRoot').innerHTML=''; };
+  $('#rndClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('[data-rq]').forEach(b=>b.addEventListener('click',()=>{ rndAns[b.dataset.rq]=b.dataset.rv; renderRandomBuilder(); }));
+  $('#rndForge').onclick=()=>{ $('#modalRoot').innerHTML=''; forgeRandom(rndAns); };
+}
+function forgeRandom(ans){
+  const c=newCharacter();
+  c.cls=rndPick(RND_CLASS[ans.style]||['Fighter']);
+  let pool=(RND_RACE[ans.heritage]||RND_RACE.common).concat(RND_VIBE_RACE[ans.vibe]||[]).filter(r=>RACES.includes(r));
+  c.race=rndPick(pool);
+  c.background=rndPick(RND_BG[c.cls]||['Folk Hero']);
+  c.level=1; c.abilMethod='array';
+  applyClassDefaults(c);
+  const prio=RND_PRIO[c.cls]||['str','con','dex','wis','cha','int'];
+  prio.forEach((k,i)=>{ c.abilities[k]=STD_ARRAY[i]; });
+  if((SUBCLASSES[c.cls]||[]).length && subclassLevel(c)<=1) c.subclass=rndPick(SUBCLASSES[c.cls]);
+  // skills: prefer class-ability skills, fill up to budget
+  const classAbils=new Set(prio.slice(0,3));
+  const pref=shuffle(SKILLS.filter(s=>classAbils.has(s[2]))), rest=shuffle(SKILLS.filter(s=>!classAbils.has(s[2])));
+  c.skillProf={}; [...pref,...rest].slice(0, skillBudget(c)).forEach(s=>c.skillProf[s[0]]=true);
+  // resolve race/class choices so the sheet is complete (no "choices to make")
+  if(c.race==='Half-Elf' || c.race==='Human (Variant)'){ prio.filter(k=>k!=='cha').slice(0,2).forEach(k=>c.asiBonus[k]=(c.asiBonus[k]||0)+1); c.raceDone=true; }
+  if(c.race==='Dragonborn') c.dragon=rndPick(DRAGON_ANCESTRY);
+  if(FIGHTING_STYLE_LEVEL[c.cls] && FIGHTING_STYLE_LEVEL[c.cls]<=1) c.fightingStyle=rndPick(FIGHTING_STYLES[c.cls]);
+  if(c.race==='Human (Variant)') c.feats=[{name:rndPick(RND_FEATS_SIMPLE)}];
+  const eo=expertiseOwed(c); if(eo>0) SKILLS.filter(s=>c.skillProf[s[0]]).slice(0,eo).forEach(s=>c.skillExp[s[0]]=true);
+  // spells
+  if(isCaster(c)){ c.spells=[];
+    shuffle(classSpells(c).filter(s=>s.l===0)).slice(0,cantripLimit(c)).forEach(s=>c.spells.push({name:s.n,level:0,prepared:false,notes:''}));
+    shuffle(classSpells(c).filter(s=>s.l===1)).slice(0,spell1Limit(c)).forEach(s=>c.spells.push({name:s.n,level:1,prepared:false,notes:''}));
+    c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
+  }
+  c.speed=defaultSpeed(c);
+  const hp=autoHP(c)||c.hp.max; c.hp.max=hp; c.hp.cur=hp;
+  c.name=randName(c.race);
+  try{ c.portrait=spriteDataURL(RACE_PIX[c.race]||RACE_PIX._default, 22); }catch(e){}
+  c.log=[]; logChange(c,'Forged by the Random Hero generator');
+  DB.push(c); curId=c.id; localStorage.setItem(LS_CUR,curId);
+  wiz=null; tab='char'; save(); render();
+  flashBanner('Forged '+c.name+' — '+c.race+' '+c.cls+'!');
 }
 
 /* ---- backup ---- */
@@ -2104,7 +2276,7 @@ function resetAllData(){
   if(!confirm('Delete ALL characters and reset the app on this device? This cannot be undone. (Consider Export first.)')) return;
   if(!confirm('Are you absolutely sure? Every character will be permanently erased.')) return;
   try{ localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_CUR); }catch(e){}
-  DB=[]; curId=null; wiz=null; tab='bio';
+  DB=[]; curId=null; wiz=null; tab='char';
   $('#modalRoot').innerHTML=''; render();
   flashBanner('All data reset');
 }
@@ -2114,6 +2286,7 @@ function openAppMenu(){
     <h2>App &amp; Data</h2>
     <p class="muted" style="font-size:13px;margin:0 0 14px">${DB.length} character${DB.length===1?'':'s'} saved on this device · Grimoire ${APP_VERSION}</p>
     <button class="btn block" id="mnNew" style="margin-bottom:10px">＋ New character</button>
+    <button class="btn ghost block" id="mnRandom" style="margin-bottom:10px">🎲 Random hero</button>
     <div class="row2">
       <button class="btn ghost" id="mnExport">⬇ Export backup</button>
       <button class="btn ghost" id="mnImport">⬆ Import backup</button>
@@ -2127,6 +2300,7 @@ function openAppMenu(){
   $('#menuModal').onclick=e=>{ if(e.target.id==='menuModal') close(); };
   $('#mnClose').onclick=close;
   $('#mnNew').onclick=()=>{ close(); createCharacterFlow(); };
+  $('#mnRandom').onclick=()=>{ close(); openRandomBuilder(); };
   $('#mnExport').onclick=exportData;
   $('#mnImport').onclick=()=>$('#mnImportFile').click();
   $('#mnImportFile').addEventListener('change',e=>{ importData(e); close(); });
@@ -2152,6 +2326,8 @@ function importData(e){
 
 /* ---- wiring ---- */
 document.addEventListener('click',e=>{
+  const bdEl=e.target.closest('[data-bd]');
+  if(bdEl){ const c=cur(); if(c) showBreakdown(c, bdEl.dataset.bd); return; }
   const rc=e.target.closest('[data-rollcheck]');
   if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal'); return; }
   const rd=e.target.closest('[data-rolldmg]');
@@ -2163,12 +2339,13 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-tab]');
   if(t){ tab=t.dataset.tab; render(); }
   if(e.target.id==='welcomeNew'||e.target.id==='newChar') createCharacterFlow();
+  if(e.target.id==='welcomeRandom') openRandomBuilder();
   if(e.target.id==='appMenu') openAppMenu();
 });
-$('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
+$('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v23';
+const APP_VERSION='v24';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
