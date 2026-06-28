@@ -2237,7 +2237,7 @@ function forgeRandom(ans){
   applyClassDefaults(c);
   const prio=RND_PRIO[c.cls]||['str','con','dex','wis','cha','int'];
   prio.forEach((k,i)=>{ c.abilities[k]=STD_ARRAY[i]; });
-  if((SUBCLASSES[c.cls]||[]).length && subclassLevel(c)<=1) c.subclass=rndPick(SUBCLASSES[c.cls]);
+  if((SUBCLASSES[c.cls]||[]).length) c.subclass=rndPick(SUBCLASSES[c.cls]);   // always give a subclass for a complete hero
   // skills: prefer class-ability skills, fill up to budget
   const classAbils=new Set(prio.slice(0,3));
   const pref=shuffle(SKILLS.filter(s=>classAbils.has(s[2]))), rest=shuffle(SKILLS.filter(s=>!classAbils.has(s[2])));
@@ -2345,7 +2345,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v24';
+const APP_VERSION='v25';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
