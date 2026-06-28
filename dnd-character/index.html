@@ -510,6 +510,57 @@ const WEAPONS=[
   {n:'Whip',cat:'Martial',type:'melee',dmg:'1d4',dt:'slashing',rng:'10 ft (reach)',props:'finesse, reach'}
 ];
 function weaponByName(n){ return WEAPONS.find(w=>w.n===n); }
+/* ---- equipment economy: starting gold, shop, essentials ---- */
+const CLASS_GOLD={Barbarian:50,Bard:125,Cleric:125,Druid:50,Fighter:125,Monk:12,Paladin:125,Ranger:125,Rogue:100,Sorcerer:75,Warlock:100,Wizard:100,Artificer:100,Other:60};
+const WEAPON_COST={Dagger:2,Club:1,Mace:5,Quarterstaff:1,Spear:1,Handaxe:5,'Light Crossbow':25,Shortbow:25,Longsword:15,Shortsword:10,Rapier:25,Scimitar:25,Greatsword:50,Greataxe:30,Battleaxe:10,Warhammer:15,Maul:10,Glaive:20,Longbow:50,'Hand Crossbow':75,Whip:2};
+const ARMOR_COST={padded:5,leather:10,studded:45,hide:10,chainshirt:50,scale:50,breastplate:400,halfplate:750,ringmail:30,chainmail:75,splint:200,plate:1500};
+const ADV_GEAR=[
+  {n:'Healer\'s Kit',cost:5},{n:'Potion of Healing',cost:50},{n:'Thieves\' Tools',cost:25},{n:'Lantern, Hooded',cost:5},
+  {n:'Oil (flask)',cost:1},{n:'Rope (50 ft)',cost:1},{n:'Grappling Hook',cost:2},{n:'Crowbar',cost:2},{n:'Spellbook',cost:50},
+  {n:'Component Pouch',cost:25},{n:'Holy Symbol',cost:5},{n:'Caltrops',cost:1},{n:'Hunting Trap',cost:5},{n:'Climber\'s Kit',cost:25},
+  {n:'Backpack',cost:2},{n:'Bedroll',cost:1},{n:'Rations (1 day)',cost:1},{n:'Waterskin',cost:1},{n:'Torch',cost:1},{n:'Tinderbox',cost:1},{n:'Mess kit',cost:1}
+];
+const ESSENTIALS=[['Backpack',1],['Bedroll',1],['Rations (1 day)',5],['Waterskin',1],['Rope (50 ft)',1],['Torch',5],['Tinderbox',1],['Mess kit',1]];
+const FORGE_GEAR={
+  Fighter:{w:'Longsword',a:'chainmail',shield:true}, Barbarian:{w:'Greataxe'}, Paladin:{w:'Longsword',a:'chainmail',shield:true},
+  Ranger:{w:'Longbow',w2:'Shortsword',a:'leather'}, Rogue:{w:'Shortsword',w2:'Shortbow',a:'leather'}, Monk:{w:'Quarterstaff'},
+  Cleric:{w:'Mace',a:'scale',shield:true}, Druid:{w:'Quarterstaff',a:'leather'}, Wizard:{w:'Quarterstaff'}, Sorcerer:{w:'Dagger'},
+  Warlock:{w:'Light Crossbow',a:'leather'}, Bard:{w:'Rapier',a:'leather'}, Artificer:{w:'Light Crossbow',a:'studded'}
+};
+function totalCoins(c){ const q=c.currency||{}; return (q.cp||0)+(q.sp||0)+(q.ep||0)+(q.gp||0)+(q.pp||0); }
+function grantStartingGold(c){ if(totalCoins(c)===0) c.currency.gp=CLASS_GOLD[c.cls]||60; }
+function addGearItem(c, name){ const ex=(c.items||[]).find(it=>it.name===name && (it.kind==='gear'||!it.kind)); if(ex) ex.qty=(ex.qty||1)+1; else c.items.push({name, qty:1, kind:'gear'}); }
+function addEssentials(c){ ESSENTIALS.forEach(([n,q])=>{ for(let k=0;k<q;k++) addGearItem(c,n); }); }
+function forgeEquip(c){ const g=FORGE_GEAR[c.cls]; if(!g) return;
+  if(g.w) c.items.push({name:g.w,kind:'weapon',qty:1,equipped:true});
+  if(g.w2) c.items.push({name:g.w2,kind:'weapon',qty:1,equipped:true});
+  if(g.a){ const a=armorDef(g.a); c.items.push({name:a.name,kind:'armor',armorKey:g.a,qty:1,equipped:true}); c.armor=g.a; c.acOverride=''; }
+  if(g.shield){ c.items.push({name:'Shield',kind:'shield',qty:1,equipped:true}); c.shield=true; }
+}
+function buyEquip(c, spec){
+  const [t,key]=spec.split('|'); let cost=0, add=null;
+  if(t==='w'){ cost=WEAPON_COST[key]||0; add=()=>c.items.push({name:key,kind:'weapon',qty:1,equipped:false}); }
+  else if(t==='a'){ cost=ARMOR_COST[key]||0; const a=armorDef(key); add=()=>c.items.push({name:a.name,kind:'armor',armorKey:key,qty:1,equipped:false}); }
+  else if(t==='s'){ cost=10; add=()=>c.items.push({name:'Shield',kind:'shield',qty:1,equipped:false}); }
+  else if(t==='g'){ const g=ADV_GEAR.find(x=>x.n===key); cost=g?g.cost:0; add=()=>addGearItem(c,key); }
+  if((c.currency.gp||0) < cost){ flashBanner('Not enough gold ('+cost+' gp)'); return; }
+  c.currency.gp=(c.currency.gp||0)-cost; add(); logChange(c,'Bought '+key+' ('+cost+' gp)'); save(); openShop(c);
+}
+function openShop(c){
+  const W=k=>`<div class="spell"><span style="flex:none">${itemEmblem(weaponIconKey(k),4)}</span><div class="nm"><b>${esc(k)}</b><small>${(weaponByName(k)||{}).dmg||''} ${(weaponByName(k)||{}).dt||''} · ${WEAPON_COST[k]||0} gp</small></div><button class="btn sm" data-buy="w|${esc(k)}" ${(c.currency.gp||0)<(WEAPON_COST[k]||0)?'disabled style=opacity:.4':''}>Buy</button></div>`;
+  const A=key=>{ const a=armorDef(key); return `<div class="spell"><span style="flex:none">${itemEmblem('armor',4)}</span><div class="nm"><b>${esc(a.name)}</b><small>AC ${a.base}${a.dexCap<99?'+DEX≤'+a.dexCap:'+DEX'} · ${ARMOR_COST[key]||0} gp</small></div><button class="btn sm" data-buy="a|${key}" ${(c.currency.gp||0)<(ARMOR_COST[key]||0)?'disabled style=opacity:.4':''}>Buy</button></div>`; };
+  const G=g=>`<div class="spell"><span style="flex:none">${itemEmblem(itemIconKey({name:g.n,kind:'gear'}),4)}</span><div class="nm"><b>${esc(g.n)}</b><small>${g.cost} gp</small></div><button class="btn sm" data-buy="g|${esc(g.n)}" ${(c.currency.gp||0)<g.cost?'disabled style=opacity:.4':''}>Buy</button></div>`;
+  $('#modalRoot').innerHTML=`<div class="modal" id="shopModal"><div class="sheet"><div class="grip"></div>
+    <h2>🛒 Shop <span class="muted" style="font-size:12px;text-transform:none;float:right">💰 ${c.currency.gp||0} gp</span></h2>
+    <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px">Weapons</div>${WEAPONS.map(w=>W(w.n)).join('')}
+    <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px">Armor & Shields</div>${ARMOR.filter(a=>a.key!=='none').map(a=>A(a.key)).join('')}<div class="spell"><span style="flex:none">${itemEmblem('shield',4)}</span><div class="nm"><b>Shield</b><small>+2 AC · 10 gp</small></div><button class="btn sm" data-buy="s|Shield" ${(c.currency.gp||0)<10?'disabled style=opacity:.4':''}>Buy</button></div>
+    <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px">Adventuring Gear</div>${ADV_GEAR.map(G).join('')}
+    <button class="btn ghost block" id="shopClose" style="margin-top:12px">Done</button>
+  </div></div>`;
+  $('#shopClose').onclick=()=>{ $('#modalRoot').innerHTML=''; render(); };
+  $('#shopModal').onclick=e=>{ if(e.target.id==='shopModal'){ $('#modalRoot').innerHTML=''; render(); } };
+  document.querySelectorAll('#shopModal [data-buy]').forEach(b=>b.addEventListener('click',()=>buyEquip(c, b.dataset.buy)));
+}
 // Class weapon proficiencies (simplified to the catalog).
 const WEAP_PROF_FULL=['Barbarian','Fighter','Paladin','Ranger'];           // all simple + martial
 const WEAP_MARTIAL_EXTRA={ Bard:['Hand Crossbow','Longsword','Rapier','Shortsword'], Rogue:['Hand Crossbow','Longsword','Rapier','Shortsword'], Monk:['Shortsword'] };
@@ -523,6 +574,7 @@ function weaponProficient(c,w){
   const ex=WEAP_MARTIAL_EXTRA[cls]; return !!(ex && ex.includes(w.n));
 }
 function weaponToHit(c,w){ const ab=weaponAbil(c,w); return mod(abil(c,ab)) + (weaponProficient(c,w)?profBonus(c):0); }
+function weaponDmgBonus(c,w){ const ab=weaponAbil(c,w); let b=mod(abil(c,ab)); if(isRaging(c)&&w.type==='melee'&&ab==='str') b+=rageDamage(c); return b; }
 // Concentration spells among our list (lowercased).
 const CONC_SPELLS=new Set(['true strike','bane','bless','detect magic','divine favor','entangle','faerie fire','fog cloud','hex',"hunter's mark",'protection from evil and good',"tasha's hideous laughter",'witch bolt','heroism','shield of faith','silent image','expeditious retreat','alter self','barkskin','blur','calm emotions','cloud of daggers','crown of madness','darkness','detect thoughts','enhance ability','enlarge/reduce','flaming sphere','gust of wind','heat metal','hold person','invisibility','levitate','locate object','magic weapon','moonbeam','pass without trace','ray of enfeeblement','silence','spider climb','spike growth','suggestion','web','beacon of hope','bestow curse','call lightning','clairvoyance','conjure animals','fear','fly','gaseous form','haste','hypnotic pattern','major image','protection from energy','sleet storm','slow','spirit guardians','stinking cloud','vampiric touch','wind wall','arcane eye','banishment','compulsion','confusion','conjure woodland beings','control water','dominate beast','greater invisibility','locate creature','phantasmal killer','polymorph','stoneskin','wall of fire','animate objects','cloudkill','conjure elemental','dispel evil and good','dominate person','hold monster','insect plague','mislead','modify memory','scrying','telekinesis','tree stride','wall of force','wall of stone','eyebite','find the path','globe of invulnerability','sunbeam','wall of ice','conjure celestial','delayed blast fireball','reverse gravity','animal shapes','antimagic field','dominate monster','earthquake','holy aura','maze','gate','storm of vengeance']);
 function isConcentration(name){ return CONC_SPELLS.has((name||'').toLowerCase()); }
@@ -539,7 +591,8 @@ function setEquipped(c, idx, on){
   const it=c.items[idx]; if(!it) return; it.equipped=on;
   if(it.kind==='armor'){ if(on){ c.items.forEach((x,j)=>{ if(j!==idx&&x.kind==='armor') x.equipped=false; }); c.armor=it.armorKey||'none'; c.acOverride=''; } else if(c.armor===(it.armorKey||'none')) c.armor='none'; }
   if(it.kind==='shield'){ c.shield=(c.items||[]).some(x=>x.kind==='shield'&&x.equipped); }
-  logChange(c, (on?'Equipped ':'Unequipped ')+it.name); save(); render();
+  logChange(c, (on?'Equipped ':'Unequipped ')+it.name+' (AC '+computeAC(c)+')'); save(); render();
+  if(it.kind==='armor'||it.kind==='shield'||(it.mods&&it.mods.ac)) flashBanner((on?'Equipped ':'Unequipped ')+it.name+' — AC now '+computeAC(c));
 }
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle={round:1, init:ini, action:false, bonus:false, reaction:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c)}; logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
@@ -553,12 +606,19 @@ function battleCard(c){
     <p class="muted" style="font-size:11.5px;text-align:center;margin:8px 0 0">Rolls initiative and tracks your turn: actions, attacks left, movement and round count.</p></div>`;
   const b=c.battle, atk=extraAttacks(c)+1;
   return `<div class="card" style="border:2px solid var(--accent);box-shadow:0 0 0 3px rgba(77,106,44,.12)">
-    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Battle · Round ${b.round}</h2><button class="btn ghost sm" id="endBattle" style="color:var(--bad)">✖ End</button></div>
-    <div class="tiles" style="margin-top:10px">
+    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Battle Mode</h2><button class="btn ghost sm" id="endBattle" style="color:var(--bad)">✖ End</button></div>
+    <div class="listrow" style="margin-top:8px;border:0">
+      <div class="nm" style="font-weight:600">Round counter</div>
+      <div class="stepper">
+        <button data-bt="roundDown" ${b.round<=1?'disabled':''}>−</button>
+        <div class="val" style="min-width:64px;font-family:Georgia,serif;font-size:22px;font-weight:700;color:var(--accent)">${b.round}</div>
+        <button data-bt="roundUp">＋</button>
+      </div>
+    </div>
+    <div class="tiles" style="margin-top:8px">
       <div class="tile"><div class="lab">Initiative</div><div class="big">${b.init}</div></div>
       <div class="tile"><div class="lab">Attacks left</div><div class="big">${b.attacksLeft}/${atk}</div></div>
       <div class="tile"><div class="lab">Move left</div><div class="big">${b.move}</div></div>
-      <div class="tile"><div class="lab">Round</div><div class="big">${b.round}</div></div>
     </div>
     <div class="chips" style="margin-top:10px">
       <button class="chip ${b.action?'on':''}" data-bt="action">${b.action?'✓ ':''}Action</button>
@@ -566,17 +626,42 @@ function battleCard(c){
       <button class="chip ${b.reaction?'on':''}" data-bt="reaction">${b.reaction?'✓ ':''}Reaction</button>
     </div>
     <div class="addrow" style="margin-top:10px">
-      <button class="btn ghost sm" data-bt="atkminus">– attack used</button>
-      <button class="btn ghost sm" data-bt="move5">– 5 ft</button>
-      <button class="btn ghost sm" data-bt="move10">– 10 ft</button>
+      <button class="btn ghost sm" data-bt="atkminus" style="flex:1">– attack used</button>
+      <button class="btn sm" id="moveBtn" style="flex:1">🥾 Move</button>
+      <button class="btn ghost sm" data-bt="dash" style="flex:1">🏃 Dash</button>
     </div>
     <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px">Quick menu</div>
     <div class="addrow">
       <button class="btn sm" id="bqAttack" style="flex:1">⚔ Attacks</button>
       ${(isCaster(c)||c.spells.length)?`<button class="btn sm" id="bqSpells" style="flex:1">✨ Spells</button>`:''}
+      ${c.cls==='Barbarian'?`<button class="btn sm" id="rageBtn" style="flex:1;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
     </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
   </div>`;
+}
+function isRaging(c){ return (c.effects||[]).some(e=>e.name==='Rage'); }
+function rageDamage(c){ const l=Number(c.level)||1; return l>=16?4:l>=9?3:2; }
+function toggleRage(c){
+  if(isRaging(c)){ c.effects=(c.effects||[]).filter(e=>e.name!=='Rage'); logChange(c,'Rage ended'); save(); render(); return; }
+  addEffect(c,'Rage',{rounds:100, note:'Advantage on STR checks & saves · +'+rageDamage(c)+' melee (STR) damage · resistance to bludgeoning/piercing/slashing.'});
+  sfx('damage'); logChange(c,'🪓 RAGE! +'+rageDamage(c)+' melee damage, resistance to b/p/s'); save(); render(); flashBanner('🪓 RAGE!');
+}
+function openMove(c){
+  if(!c.battle) return; const b=c.battle;
+  $('#modalRoot').innerHTML=`<div class="modal" id="mvModal"><div class="sheet"><div class="grip"></div>
+    <h2>🥾 Move</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Movement left: <b>${b.move} ft</b> · speed ${effSpeed(c)} ft.</p>
+    <div class="addrow"><input id="mvDist" type="number" placeholder="distance (ft)" inputmode="numeric"><select id="mvType"><option>Walk</option><option>Fly</option><option>Swim</option><option>Climb</option><option>Crawl (×2)</option><option>Difficult terrain (×2)</option></select></div>
+    <div class="addrow" style="margin-top:6px;flex-wrap:wrap">${[5,10,15,20,30].map(n=>`<button class="btn ghost sm" data-mvq="${n}">${n} ft</button>`).join('')}</div>
+    <button class="btn block" id="mvGo" style="margin-top:10px">Move</button>
+    <button class="btn ghost block" id="mvClose" style="margin-top:8px">Close</button>
+  </div></div>`;
+  const doMove=(dist)=>{ if(!(dist>0)) return; const type=$('#mvType').value, mult=/×2/.test(type)?2:1, cost=dist*mult;
+    b.move=Math.max(0,b.move-cost); b.moveUsed=(b.moveUsed||0)+dist; logChange(c,'🥾 Moved '+dist+' ft ('+type.replace(' (×2)','')+')'+(mult>1?' = '+cost+' ft used':'')); save(); $('#modalRoot').innerHTML=''; render(); };
+  $('#mvGo').onclick=()=>doMove(Number($('#mvDist').value));
+  document.querySelectorAll('#mvModal [data-mvq]').forEach(q=>q.addEventListener('click',()=>doMove(Number(q.dataset.mvq))));
+  $('#mvClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#mvModal').onclick=e=>{ if(e.target.id==='mvModal') $('#modalRoot').innerHTML=''; };
 }
 function openQuickSpells(c){
   const list=c.spells.slice().sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
@@ -647,13 +732,13 @@ function attackFlow(c, atk){
   }
   draw();
 }
-function weaponAflowAttrs(c, it){ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',vers:''}; const abm=mod(abil(c,weaponAbil(c,w))); const dn=w.dmg+(abm?sgn(abm):''); const vn=w.vers?(w.vers+(abm?sgn(abm):'')):''; return `data-aflow data-aname="${esc(it.name)}" data-ahit="${weaponToHit(c,w)}" data-admg="${esc(dn)}" data-adt="${esc(w.dt||'')}" data-avers="${esc(vn)}"`; }
+function weaponAflowAttrs(c, it){ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',vers:''}; const b=weaponDmgBonus(c,w); const dn=w.dmg+(b?sgn(b):''); const vn=w.vers?(w.vers+(b?sgn(b):'')):''; return `data-aflow data-aname="${esc(it.name)}" data-ahit="${weaponToHit(c,w)}" data-admg="${esc(dn)}" data-adt="${esc(w.dt||'')}" data-avers="${esc(vn)}"`; }
 function openAttack(c){
   const ws=weaponItems(c), atks=extraAttacks(c)+1, A=k=>k.toUpperCase();
   let cards='';
   ws.forEach(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',props:'',rng:'5 ft',type:'melee',cat:''};
     const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), prof=weaponProficient(c,w), th=weaponToHit(c,w);
-    const dnote=w.dmg+(abm?sgn(abm):'');
+    const dnote=w.dmg+(weaponDmgBonus(c,w)?sgn(weaponDmgBonus(c,w)):'');
     cards+=`<div class="card" style="margin:0 0 10px">
       <div class="row" style="gap:8px;align-items:center"><span style="flex:none">${itemEmblem(weaponIconKey(it.name),5)}</span><div class="nm"><b>${esc(it.name)}</b><small>${esc(dnote)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}</small></div></div>
       <div class="addrow" style="gap:6px;flex-wrap:wrap;margin:8px 0"><span class="pill">🗡️ ${atks}/action</span><span class="pill">📏 ${esc(w.rng||'5 ft')}</span>${w.ammo?`<span class="pill">🏹 ${w.ammo}</span>`:''}<span class="pill">${A(ab)} ${sgn(abm)}</span><span class="pill" style="${prof?'':'color:var(--bad)'}">${prof?'✓ Proficient':'✗ Not proficient'}</span></div>
@@ -1776,7 +1861,8 @@ function wizNext(){
   c.speed=defaultSpeed(c);
   const hp = wiz.hpValue!=null ? wiz.hpValue : (autoHP(c)||c.hp.max);
   c.hp.max=hp; c.hp.cur=hp;
-  logChange(c, 'Created — level 1 '+(c.race?c.race+' ':'')+c.cls+(c.background?' ('+c.background+')':''));
+  grantStartingGold(c); addEssentials(c);
+  logChange(c, 'Created — level 1 '+(c.race?c.race+' ':'')+c.cls+(c.background?' ('+c.background+')':'')+' · '+(c.currency.gp||0)+' gp + adventurer\'s pack');
   const fc=wiz.featChoice;
   wiz=null; tab='char'; save(); render();
   if(fc && fc!=='(no feat)') applyFeat(c, fc, ()=>resolveChoices(c));   // feat first, then class/race choices
@@ -2206,6 +2292,7 @@ function renderCombat(c){
       <div id="spdCustWrap" style="${[25,30,35,40,50].includes(Number(c.speed))?'display:none':''}"><label>Custom speed</label><input type="number" id="cb_spdcust" value="${c.speed}"></div>
     </div>
     <label class="pill" style="cursor:pointer;margin-top:12px;${(c.acOverride!==''&&c.acOverride!=null)?'opacity:.5':''}"><input type="checkbox" class="chk" id="cb_shield" ${c.shield?'checked':''} ${(c.acOverride!==''&&c.acOverride!=null)?'disabled':''}> Shield (+2 AC)</label>
+    ${(()=>{ const eq=(c.items||[]).filter(it=>it.equipped&&(it.kind==='armor'||it.kind==='shield'||(it.mods&&it.mods.ac))); return eq.length?`<p class="muted" style="font-size:11.5px;margin:8px 0 0">🛡️ Equipped: ${eq.map(it=>esc(it.name)).join(', ')} — AC auto-updates from the Items tab.</p>`:''; })()}
     <div class="g3 grid" style="margin-top:8px"><div></div><div></div><div><label>Initiative misc</label><input type="number" id="cb_init" value="${c.initMisc}"></div></div>
     <div class="tiles" style="margin-top:12px">
       <div class="tile"><div class="lab">Armor Class ${bd('ac')}</div><div class="big">${computeAC(c)}</div></div>
@@ -2269,12 +2356,13 @@ function renderCombat(c){
       <div class="tile"><div class="lab">Reaction</div><div class="big">1</div></div>
     </div>
     <p class="muted" style="font-size:11.5px;margin:10px 0 0">Plus your move (up to ${effSpeed(c)} ft). ${extraAttacks(c)?'Extra Attack lets you attack '+(extraAttacks(c)+1)+'× when you take the Attack action.':'One attack per Attack action at this level.'}</p>
+    ${c.cls==='Barbarian'?`<button class="btn block" id="rageBtn2" style="margin-top:10px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging — +'+rageDamage(c)+' melee, resist b/p/s (tap to end)':'Enter Rage'}</button>`:''}
   </div>
 
   <div class="card">
     <h2>Attacks & Weapons <button class="btn sm" id="attackBtn" style="float:right">⚔ Attack</button></h2>
     <div id="attackList">
-      ${weaponItems(c).map(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:'',cat:''}; const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), prof=weaponProficient(c,w), th=weaponToHit(c,w); const dn=w.dmg+(abm?sgn(abm):'');
+      ${weaponItems(c).map(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:'',cat:''}; const ab=weaponAbil(c,w), prof=weaponProficient(c,w), th=weaponToHit(c,w); const db=weaponDmgBonus(c,w), dn=w.dmg+(db?sgn(db):'');
         return `<div class="spell">
           <span style="flex:none">${itemEmblem(weaponIconKey(it.name),4)}</span>
           <div class="nm"><b>${esc(it.name)}${it.equipped?' <span class="sub" style="color:var(--accent)">✓</span>':''}</b><small>${sgn(th)} to hit · ${esc(dn)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}${prof?'':' · <span style="color:var(--bad)">not proficient</span>'}</small></div>
@@ -2335,11 +2423,17 @@ function renderCombat(c){
   { const nt=$('#nextTurn'); if(nt) nt.addEventListener('click',()=>battleNextTurn(c)); }
   { const qa=$('#bqAttack'); if(qa) qa.addEventListener('click',()=>openAttack(c)); }
   { const qs=$('#bqSpells'); if(qs) qs.addEventListener('click',()=>openQuickSpells(c)); }
+  { const mb=$('#moveBtn'); if(mb) mb.addEventListener('click',()=>openMove(c)); }
+  { const rb=$('#rageBtn'); if(rb) rb.addEventListener('click',()=>toggleRage(c)); }
+  { const rb2=$('#rageBtn2'); if(rb2) rb2.addEventListener('click',()=>toggleRage(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'||k==='bonus'||k==='reaction') b[k]=!b[k];
     else if(k==='atkminus') b.attacksLeft=Math.max(0,b.attacksLeft-1);
     else if(k==='move5') b.move=Math.max(0,b.move-5);
     else if(k==='move10') b.move=Math.max(0,b.move-10);
+    else if(k==='roundUp') b.round++;
+    else if(k==='roundDown') b.round=Math.max(1,b.round-1);
+    else if(k==='dash'){ b.move+=effSpeed(c); b.action=true; logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
     save(); render(); }));
   $('#addAtk').addEventListener('click',()=>{
     const name=$('#atk_name').value.trim(); if(!name) return;
@@ -2531,6 +2625,10 @@ function renderItems(c){
         <div><div class="lab">${k.toUpperCase()}</div><input type="number" id="cur_${k}" value="${c.currency[k]}" min="0"></div>
       `).join('')}
     </div>
+    <div class="row2" style="margin-top:12px">
+      <button class="btn" id="shopBtn">🛒 Shop</button>
+      <button class="btn ghost" id="packBtn">🎒 Adventurer's pack</button>
+    </div>
   </div>
 
   <div class="card">
@@ -2591,6 +2689,8 @@ function renderItems(c){
   ['cp','sp','ep','gp','pp'].forEach(k=>$('#cur_'+k).addEventListener('change',e=>{
     c.currency[k]=Number(e.target.value)||0; save();
   }));
+  $('#shopBtn').addEventListener('click',()=>openShop(c));
+  $('#packBtn').addEventListener('click',()=>{ addEssentials(c); logChange(c,'Added adventurer pack'); save(); render(); flashBanner('Added adventurer pack'); });
   $('#addItem').addEventListener('click',()=>{
     const name=$('#it_name').value.trim(); if(!name) return;
     c.items.push({name, qty:Number($('#it_qty').value)||1, notes:$('#it_notes').value.trim(), kind:'gear'});
@@ -2775,11 +2875,12 @@ function forgeRandom(ans){
     shuffle(classSpells(c).filter(s=>s.l===1)).slice(0,spell1Limit(c)).forEach(s=>c.spells.push({name:s.n,level:1,prepared:false,notes:''}));
     c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
   }
+  grantStartingGold(c); forgeEquip(c); addEssentials(c);
   c.speed=defaultSpeed(c);
   const hp=autoHP(c)||c.hp.max; c.hp.max=hp; c.hp.cur=hp;
   c.name=randName(c.race);
   try{ c.portrait=spriteDataURL(RACE_PIX[c.race]||RACE_PIX._default, 22); }catch(e){}
-  c.log=[]; logChange(c,'Forged by the Random Hero generator');
+  c.log=[]; logChange(c,'Forged by the Random Hero generator — '+(c.currency.gp||0)+' gp, gear equipped');
   DB.push(c); curId=c.id; localStorage.setItem(LS_CUR,curId);
   wiz=null; tab='char'; save(); render();
   flashBanner('Forged '+c.name+' — '+c.race+' '+c.cls+'!');
@@ -2878,7 +2979,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v32';
+const APP_VERSION='v33';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
