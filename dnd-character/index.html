@@ -1539,6 +1539,7 @@ function renderSheet(c){
       <div class="tile"><div class="lab">Passive Perception ${bd('passive:perception:wis')}</div><div class="big">${10+skillBonus(c,'perception','wis',true)}</div></div>
       <div class="tile"><div class="lab">Passive Investigation ${bd('passive:investigation:int')}</div><div class="big">${10+skillBonus(c,'investigation','int',true)}</div></div>
     </div>
+    <p class="muted" style="font-size:11.5px;margin:10px 0 0">Not a skill — it's your Perception/Investigation used <b>without rolling</b>. 5e uses a fixed <b>10</b> in place of the d20, then adds your skill bonus. The DM compares it to a hidden creature's Stealth: ≤ your passive = you notice it automatically.</p>
   </div>
 
   <div class="card">
@@ -2246,7 +2247,7 @@ function forgeRandom(ans){
   if(c.race==='Half-Elf' || c.race==='Human (Variant)'){ prio.filter(k=>k!=='cha').slice(0,2).forEach(k=>c.asiBonus[k]=(c.asiBonus[k]||0)+1); c.raceDone=true; }
   if(c.race==='Dragonborn') c.dragon=rndPick(DRAGON_ANCESTRY);
   if(FIGHTING_STYLE_LEVEL[c.cls] && FIGHTING_STYLE_LEVEL[c.cls]<=1) c.fightingStyle=rndPick(FIGHTING_STYLES[c.cls]);
-  if(c.race==='Human (Variant)') c.feats=[{name:rndPick(RND_FEATS_SIMPLE)}];
+  c.feats=[{name:rndPick(RND_FEATS_SIMPLE)}];   // always give a starting feat for a complete hero
   const eo=expertiseOwed(c); if(eo>0) SKILLS.filter(s=>c.skillProf[s[0]]).slice(0,eo).forEach(s=>c.skillExp[s[0]]=true);
   // spells
   if(isCaster(c)){ c.spells=[];
@@ -2345,7 +2346,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v25';
+const APP_VERSION='v26';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
