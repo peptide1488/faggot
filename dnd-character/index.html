@@ -48,8 +48,9 @@
   .htitle{font-weight:700;font-size:17px;letter-spacing:.02em}
   .hsub{font-size:12px;color:var(--mut)}
   .charpick{margin-left:auto;display:flex;gap:8px;align-items:center}
-  .charpick select{width:auto;max-width:46vw;padding:7px 9px}
-  .iconbtn{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 10px;line-height:1}
+  .charpick{gap:6px}
+  .charpick select{width:auto;max-width:32vw;padding:7px 8px}
+  .iconbtn{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 9px;line-height:1}
 
   main{padding:14px;max-width:760px;margin:0 auto}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin:0 0 14px}
@@ -256,6 +257,18 @@
   .emblem{transition:transform .15s ease}
   .emrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .emrow .emcap{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;text-align:center;margin-top:4px}
+
+  /* collapsible card headers */
+  .chev{background:none;border:0;color:var(--mut);font-size:13px;padding:2px 6px;transition:transform .15s ease}
+  .collapsed-note{color:var(--mut);font-size:12px;padding:6px 0 2px}
+
+  /* cast spell animation overlay */
+  .castfx{position:fixed;inset:0;z-index:60;pointer-events:none;display:grid;place-items:center}
+  .castfx .glow{position:absolute;width:42vmax;height:42vmax;border-radius:50%;
+    background:radial-gradient(circle, rgba(169,121,26,.45), rgba(77,106,44,.25) 40%, transparent 65%);animation:castglow .8s ease-out forwards}
+  .castfx .ic{font-size:90px;filter:drop-shadow(0 4px 10px rgba(0,0,0,.3));animation:casticon .8s cubic-bezier(.2,1.4,.4,1) forwards}
+  @keyframes castglow{0%{transform:scale(.3);opacity:0}30%{opacity:1}100%{transform:scale(1.5);opacity:0}}
+  @keyframes casticon{0%{transform:scale(.3) rotate(-14deg);opacity:0}40%{transform:scale(1.15) rotate(0);opacity:1}100%{transform:scale(1.7) translateY(-10px);opacity:0}}
 </style>
 </head>
 <body>
@@ -269,6 +282,7 @@
     </div>
     <div class="charpick">
       <select id="charSelect" title="Switch character"></select>
+      <button class="iconbtn" id="appSearch" title="Search stats &amp; rules">🔍</button>
       <button class="iconbtn" id="newChar" title="New character">＋</button>
       <button class="iconbtn" id="appMenu" title="App menu &amp; data">⚙</button>
     </div>
@@ -814,6 +828,7 @@ function castSpell(c, name, level){
       if(used<total){ c.slots[level].used=used+1; } else { flashBanner('No level '+level+' slots left — cast anyway'); }
   } }
   const tmpl=SPELL_EFFECTS[name];
+  sfx('cast'); castFx(name);
   if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')); }
   else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')); }
 }
@@ -843,13 +858,14 @@ function castModal(c, name, baseLevel){
     <h2>${meta?spellIcon(name):'✨'} ${esc(name)}</h2>
     <p class="muted" style="font-size:12px;margin:0 0 10px">${meta?SCHOOL_NAME[meta.s]+' · '+lvlLabel(meta.l):'Spell'}${m.conc?' · 🧠 concentration':''} · Spell DC ${dc}</p>
     ${SPELL_DESC[name]?`<p style="margin:0 0 12px">${esc(SPELL_DESC[name])}</p>`:''}
-    ${(m.attack||m.dmg||m.heal)?`<div class="card" style="margin:0 0 10px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🎲 You roll</div>
-      ${m.attack?`<div class="listrow"><div class="nm">Spell attack roll</div><button class="val rollbtn" data-rollcheck data-label="${esc(name)} attack" data-bonus="${atkB}">${sgn(atkB)}</button></div>`:''}
-      ${m.dmg?`<div class="listrow"><div class="nm">Damage${m.dtype?' · '+m.dtype:''}</div><button class="val rollbtn" data-rolldmg data-label="${esc(name)} damage" data-notation="${m.dmg}">⚔ ${m.dmg}</button></div>`:''}
-      ${m.heal?`<div class="listrow"><div class="nm">Healing</div><button class="val rollbtn" data-rolldmg data-label="${esc(name)} healing" data-notation="${m.heal}">✚ ${m.heal}</button></div>`:''}
+    ${(m.attack||m.dmg||m.heal)?`<div class="card" style="margin:0 0 10px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🎲 You roll — tap 🎲 to auto-roll, or type your own</div>
+      ${m.attack?`<div class="listrow"><div class="nm">Spell attack <span class="sub">${sgn(atkB)} to hit</span></div><input type="number" id="mAtk" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(name)} attack" data-bonus="${atkB}" title="Auto-roll">🎲 ${sgn(atkB)}</button></div>`:''}
+      ${m.dmg?`<div class="listrow"><div class="nm">Damage${m.dtype?' · '+m.dtype:''} <span class="sub">${m.dmg}</span></div><input type="number" id="mDmg" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(name)} damage" data-notation="${m.dmg}" title="Auto-roll">🎲 ${m.dmg}</button></div>`:''}
+      ${m.heal?`<div class="listrow"><div class="nm">Healing <span class="sub">${m.heal}</span></div><input type="number" id="mHeal" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(name)} healing" data-notation="${m.heal}" title="Auto-roll">🎲 ${m.heal}</button></div>`:''}
     </div>`:''}
-    ${m.save?`<div class="card" style="margin:0 0 10px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🛡️ Target rolls</div>
-      <div class="listrow"><div class="nm">${A(m.save)} saving throw</div><div class="val">vs DC ${dc}</div></div></div>`:''}
+    ${m.save?`<div class="card" style="margin:0 0 10px;background:rgba(156,59,44,.08)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🛡️ Each target rolls a save</div>
+      <div class="listrow"><div class="nm"><b>${A(m.save)} saving throw</b></div><div class="val">vs DC ${dc}</div></div>
+      <p class="muted" style="font-size:11.5px;margin:6px 0 0">Targets that fail are affected; check the description for half-damage-on-success.</p></div>`:(m.attack?`<p class="muted" style="font-size:11.5px;margin:0 0 10px">No save — you make the attack roll above; on a hit, deal the damage.</p>`:'')}
     ${eff?`<div class="card" style="margin:0 0 10px;background:rgba(77,106,44,.10)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">✨ Applied to you on cast</div>
       <div class="nm"><b>${esc(name)}</b><small>${[modSummary(eff.mods), fmtDuration(eff.rounds), eff.conc?'concentration':''].filter(Boolean).join(' · ')||'tracked'}</small></div></div>`:''}
     ${baseLevel>0 ? (lvlOpts?`<div class="addrow" style="align-items:center"><span class="muted" style="font-size:12px;flex:none">Cast using</span><select id="castLvl" style="flex:1">${lvlOpts}</select></div>`:`<p class="muted" style="font-size:12px;margin:0">No spell slots available — cast to track it anyway.</p>`) : `<p class="muted" style="font-size:12px;margin:0">Cantrip — no slot needed.</p>`}
@@ -859,6 +875,10 @@ function castModal(c, name, baseLevel){
   $('#castModal').onclick=e=>{ if(e.target.id==='castModal') $('#modalRoot').innerHTML=''; };
   $('#castClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#castGo').onclick=()=>{ const lv=$('#castLvl'); const useLvl=lv?Number(lv.value):baseLevel; $('#modalRoot').innerHTML=''; castSpell(c, name, useLvl); };
+  const manual=(id,make)=>{ const el=$('#'+id); if(el) el.addEventListener('change',()=>{ const v=Number(el.value); if(el.value!=='' && !isNaN(v)){ pushRoll(make(v)); el.value=''; } }); };
+  manual('mAtk', v=>({label:name+' attack (manual)', total:v+atkB, detail:'d20 ('+v+') '+sgn(atkB), crit:v===20?'crit':v===1?'fumble':null, kind:'check'}));
+  manual('mDmg', v=>({label:name+' damage (manual)', total:v, detail:'entered', kind:'dmg'}));
+  manual('mHeal', v=>({label:name+' healing (manual)', total:v, detail:'entered', kind:'dmg'}));
 }
 function effectsCard(c){
   const fx=c.effects||[];
@@ -1142,6 +1162,109 @@ function renderDiceLog(){
     : '<div class="empty">No rolls yet. Tap a skill, save, attack, or a die.</div>';
 }
 
+/* ---- sound effects (Web Audio synth — no files, fully offline) ---- */
+let _ac=null, soundOn=(localStorage.getItem('grimoire.sound')!=='off');
+function audioCtx(){ if(!_ac){ try{ _ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } } if(_ac && _ac.state==='suspended') _ac.resume(); return _ac; }
+function tone(freq,dur,type,vol,when){ const a=audioCtx(); if(!a) return; const t=a.currentTime+(when||0);
+  const o=a.createOscillator(), g=a.createGain(); o.type=type||'sine'; o.frequency.setValueAtTime(freq,t);
+  g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol||0.18,t+0.012); g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t+dur+0.03); }
+function sfx(kind){ if(!soundOn) return; switch(kind){
+  case 'click': tone(430,0.05,'triangle',0.10); break;
+  case 'tab': tone(540,0.06,'triangle',0.10); break;
+  case 'toggle': tone(360,0.05,'square',0.07); break;
+  case 'roll': tone(280,0.05,'sawtooth',0.09); tone(620,0.08,'sawtooth',0.07,0.05); break;
+  case 'cast': tone(330,0.12,'sine',0.16); tone(495,0.16,'sine',0.13,0.08); tone(660,0.24,'triangle',0.12,0.16); break;
+  case 'heal': tone(523,0.12,'sine',0.15); tone(784,0.20,'sine',0.12,0.1); break;
+  case 'damage': tone(200,0.12,'square',0.15); tone(110,0.20,'square',0.12,0.06); break;
+  case 'success': tone(660,0.1,'triangle',0.15); tone(880,0.16,'triangle',0.12,0.08); break;
+  case 'error': tone(170,0.18,'square',0.13); break;
+}}
+function playClickSound(target){
+  const el=target.closest && target.closest('button, .pip, .chip, [data-tab], .diebtn, [data-collapse], label.pill');
+  if(!el) return;
+  if(el.id==='castGo') return;                       // castSpell() plays its own 'cast'
+  if(el.id==='healBtn'){ sfx('heal'); return; }
+  if(el.id==='dmgBtn'){ sfx('damage'); return; }
+  if(el.hasAttribute&&(el.hasAttribute('data-rollcheck')||el.hasAttribute('data-rolldmg'))||el.classList.contains('diebtn')){ sfx('roll'); return; }
+  if(el.matches('[data-tab]')){ sfx('tab'); return; }
+  sfx('click');
+}
+function castFx(name){ const meta=spellMeta(name); const el=document.createElement('div'); el.className='castfx';
+  el.innerHTML=`<div class="glow"></div><div class="ic">${meta?spellIcon(name):'✨'}</div>`;
+  document.body.appendChild(el); setTimeout(()=>el.remove(),820); }
+
+/* ---- collapsible sections (persisted) ---- */
+let collapsed = (()=>{ try{ return JSON.parse(localStorage.getItem('grimoire.collapsed')||'{}'); }catch(e){ return {}; } })();
+function toggleCollapse(k){ collapsed[k]=!collapsed[k]; localStorage.setItem('grimoire.collapsed',JSON.stringify(collapsed)); render(); }
+function chev(k){ return `<button class="chev" data-collapse="${k}" title="Collapse / expand" style="transform:rotate(${collapsed[k]?'-90':'0'}deg)">▾</button>`; }
+
+/* ---- Adventure log (every action) ---- */
+function openLog(){ const c=cur(); const log=(c&&c.log)||[];
+  $('#modalRoot').innerHTML=`<div class="modal" id="logModal"><div class="sheet"><div class="grip"></div>
+    <h2>📜 Adventure Log ${log.length?`<span class="muted" style="font-size:11px;text-transform:none">— ${log.length}</span>`:''}
+      ${log.length?`<button class="btn ghost sm" id="logClear" style="float:right">Clear</button>`:''}</h2>
+    ${log.length? log.slice(0,250).map(e=>`<div class="listrow"><div class="nm" style="font-size:13px">${esc(e.m)}</div><div class="sub" style="white-space:nowrap">${fmtLogTime(e.t)}</div></div>`).join('') : '<div class="empty">No actions logged yet. Casting, rolls of note, rests, level-ups, damage and conditions show up here.</div>'}
+    <button class="btn ghost block" id="logClose" style="margin-top:12px">Close</button>
+  </div></div>`;
+  $('#logClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#logModal').onclick=e=>{ if(e.target.id==='logModal') $('#modalRoot').innerHTML=''; };
+  { const lc=$('#logClear'); if(lc) lc.onclick=()=>{ if(c&&confirm('Clear the adventure log?')){ c.log=[]; save(); openLog(); } }; }
+}
+
+/* ---- universal search: stats, rules, spells, feats ---- */
+function searchProviders(c){
+  const str=abil(c,'str'), pb=profBonus(c), sm=mod(abil(c,c.spellAbility));
+  const list=[
+    {k:['speed','move','movement','run','running','walk','walking','distance','travel','foot'], t:'Movement Speed', v:()=>effSpeed(c)+' ft', n:()=>'Your speed each turn. Dashing (an action) doubles it to '+(effSpeed(c)*2)+' ft.'+((effBonus(c,'speed')||effSpeedMul(c)!==1)?' Includes active effects.':''), bd:'speed'},
+    {k:['dash','sprint','max movement','max distance','full move','furthest'], t:'Dash — max distance', v:()=>(effSpeed(c)*2)+' ft', n:()=>'Use your action to Dash and you can move '+(effSpeed(c)*2)+' ft this turn (double your '+effSpeed(c)+'-ft speed).'},
+    {k:['long jump','jump distance','broad jump','leap'], t:'Long Jump', v:()=>str+' ft', n:()=>'With a 10-ft running start you clear up to your STR score = '+str+' ft. A standing long jump is half: '+Math.floor(str/2)+' ft.'},
+    {k:['high jump','jump height','vertical jump','how high'], t:'High Jump', v:()=>Math.max(0,3+mod(abil(c,'str')))+' ft', n:()=>'3 + STR modifier = '+Math.max(0,3+mod(abil(c,'str')))+' ft up (running start); half if standing. You can reach about that + 1.5× your height above you.'},
+    {k:['jump'], t:'Jumping', v:()=>str+' ft long', n:()=>'Long jump: STR score ('+str+' ft) with a run-up. High jump: 3 + STR mod ('+Math.max(0,3+mod(abil(c,'str')))+' ft). Half each without a running start.'},
+    {k:['carry','carrying','capacity','lift','push','drag','encumbrance','weight','heavy'], t:'Carrying Capacity', v:()=>(str*15)+' lb', n:()=>'Carry up to STR×15 = '+(str*15)+' lb. You can push, drag or lift up to STR×30 = '+(str*30)+' lb (your speed drops to 5 ft while doing so).'},
+    {k:['armor class','ac','defense','defence','armour'], t:'Armor Class', v:()=>computeAC(c), n:()=>'Tap ⓘ for the full breakdown.', bd:'ac'},
+    {k:['initiative','init','turn order'], t:'Initiative', v:()=>sgn(initiative(c)), bd:'init'},
+    {k:['hp','hit points','health','wounds','life'], t:'Hit Points', v:()=>c.hp.cur+' / '+c.hp.max+(c.hp.temp?' (+'+c.hp.temp+' temp)':''), n:()=>'Current / maximum HP.'},
+    {k:['hit dice','hit die','short rest healing'], t:'Hit Dice', v:()=>{const hd=parseHitDice(c); return hd?(Math.max(0,hd.count-(c.hitDice.used||0))+' / '+hd.count+' · d'+hd.sides):'—';}, n:()=>'Spend on a short rest to heal (roll + CON each).'},
+    {k:['proficiency','prof bonus','proficiency bonus'], t:'Proficiency Bonus', v:()=>sgn(pb), bd:'prof'},
+    {k:['passive perception','passive','perception passive','awareness','notice','spot'], t:'Passive Perception', v:()=>10+skillBonus(c,'perception','wis',true), n:()=>'10 + Perception, used without rolling. The DM compares hidden creatures’ Stealth to it.', bd:'passive:perception:wis'},
+    {k:['passive investigation','search passive'], t:'Passive Investigation', v:()=>10+skillBonus(c,'investigation','int',true), bd:'passive:investigation:int'},
+    {k:['spell dc','save dc','spell save','spell save dc'], t:'Spell Save DC', v:()=>8+pb+sm, n:()=>'Enemies roll their save against this number.', bd:'spelldc'},
+    {k:['spell attack','spell atk','to hit spell'], t:'Spell Attack Bonus', v:()=>sgn(pb+sm), bd:'spellatk'},
+    {k:['level','character level'], t:'Level', v:()=>c.level+' '+esc(c.cls)},
+  ];
+  ABILITIES.forEach(([k,nm])=>list.push({k:[nm.toLowerCase(), k, nm.toLowerCase()+' modifier', nm.toLowerCase()+' score'], t:nm, v:()=>abil(c,k)+' ('+sgn(mod(abil(c,k)))+')', bd:'abil:'+k}));
+  SKILLS.forEach(([key,nm,ab])=>list.push({k:[nm.toLowerCase(), key], t:nm+' (skill)', v:()=>sgn(skillBonus(c,key,ab,true)), bd:'skill:'+key+':'+ab}));
+  return list;
+}
+function searchResults(c, q){
+  q=(q||'').trim().toLowerCase(); if(!q) return '<div class="empty">Type to search your stats, rules, spells, feats…</div>';
+  const hits=searchProviders(c).filter(p=>p.k.some(key=>key.includes(q)||q.includes(key)));
+  let html='';
+  hits.slice(0,14).forEach(p=>{ html+=`<div class="card" style="margin:0 0 8px;padding:12px"><div class="row between" style="align-items:flex-start"><div><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">${esc(p.t)}</div><div style="font-family:Georgia,serif;font-size:22px;font-weight:700;color:var(--accent)">${p.v()}</div></div>${p.bd?bd(p.bd):''}</div>${p.n?`<p class="muted" style="font-size:12.5px;margin:6px 0 0">${p.n()}</p>`:''}</div>`; });
+  const refs=[];
+  SPELLS.forEach(s=>{ if(s.n.toLowerCase().includes(q)) refs.push({n:s.n,t:'Spell',a:'data-spellinfo'}); });
+  FEATS.forEach(f=>{ if(f.toLowerCase().includes(q)) refs.push({n:f,t:'Feat',a:'data-featinfo'}); });
+  if(refs.length){ html+=`<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px">Reference</div>`+
+    refs.slice(0,24).map(r=>`<div class="listrow"><div class="nm">${esc(r.n)} <span class="sub">${r.t}</span></div><button class="del" ${r.a}="${esc(r.n)}" title="Info">ⓘ</button></div>`).join(''); }
+  if(!hits.length && !refs.length) return '<div class="empty">No matches. Try “run speed”, “jump height”, “carry capacity”, “AC”, a skill or a spell name.</div>';
+  return html;
+}
+function openSearch(){
+  $('#modalRoot').innerHTML=`<div class="modal" id="srchModal"><div class="sheet"><div class="grip"></div>
+    <h2>🔍 Search</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Look up your stats and rules — e.g. “run speed”, “jump height”, “carry capacity”, a skill, spell or feat.</p>
+    <input id="srchQ" placeholder="Search…" autocomplete="off">
+    <div id="srchRes" style="margin-top:10px;max-height:62vh;overflow:auto"></div>
+  </div></div>`;
+  const c=cur();
+  const draw=()=>{ const el=$('#srchRes'); if(el) el.innerHTML = c?searchResults(c, $('#srchQ').value):'<div class="empty">Create a character first.</div>'; };
+  $('#srchQ').addEventListener('input',draw);
+  $('#srchModal').onclick=e=>{ if(e.target.id==='srchModal') $('#modalRoot').innerHTML=''; };
+  setTimeout(()=>{ const i=$('#srchQ'); if(i) i.focus(); },60);
+  draw();
+}
+
 /* ---- math ---- */
 const mod = s => Math.floor((Number(s||10)-10)/2);
 const sgn = n => (n>=0?'+':'') + n;
@@ -1196,7 +1319,7 @@ function parseHitDice(c){
   const m = String((c.hitDice&&c.hitDice.total)||'').match(/(\d+)\s*d\s*(\d+)/i);
   return m ? {count:Number(m[1]), sides:Number(m[2])} : null;
 }
-function flashBanner(msg){ pushRoll({label:msg, total:'⚠', detail:'', kind:'msg'}); }
+function flashBanner(msg){ sfx('error'); pushRoll({label:msg, total:'⚠', detail:'', kind:'msg'}); }
 function spendHitDie(c){
   const hd=parseHitDice(c);
   if(!hd){ flashBanner('Set hit dice first (e.g. 5d10)'); return; }
@@ -1575,8 +1698,8 @@ function renderSheet(c){
   </div>
 
   <div class="card">
-    <h2>Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— ● = proficient (from ${esc(c.cls)})</span></h2>
-    ${ABILITIES.map(([k,nm])=>{
+    <h2>${chev('saves')}Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— ● = proficient (from ${esc(c.cls)})</span></h2>
+    ${collapsed.saves?'':ABILITIES.map(([k,nm])=>{
       const prof=!!c.saveProf[k];
       const b = mod(abil(c,k)) + (prof?profBonus(c):0);
       return `<div class="listrow">
@@ -1590,10 +1713,10 @@ function renderSheet(c){
 
   <div class="card">
     <div class="row between" style="margin-bottom:8px">
-      <h2 style="margin:0">Skills <span class="muted" style="text-transform:none;font-size:11px">— ${skillCount(c)}/${skillBudget(c)}${skillEdit?' · tap ◇ for expertise':''}</span></h2>
+      <h2 style="margin:0">${chev('skills')}Skills <span class="muted" style="text-transform:none;font-size:11px">— ${skillCount(c)}/${skillBudget(c)}${skillEdit?' · tap ◇ for expertise':''}</span></h2>
       <button class="btn ghost sm" id="skillEditBtn">${skillEdit?'✓ Done':'✎ Edit'}</button>
     </div>
-    ${SKILLS.map(([key,nm,ab])=>{
+    ${collapsed.skills?'':SKILLS.map(([key,nm,ab])=>{
       const b = skillBonus(c,key,ab,true), prof=!!c.skillProf[key], exp=!!c.skillExp[key];
       if(skillEdit) return `<div class="listrow">
         <input type="checkbox" class="chk" data-skill="${key}" ${prof?'checked':''}>
@@ -2048,7 +2171,7 @@ function renderSpells(c){
   ${effectsCard(c)}
 
   <div class="card">
-    <h2>Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ✓ = prepared · ⚡ = cast</span></h2>
+    <h2>${chev('spellbook')}Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ✓ = prepared · ⚡ = cast</span></h2>
     <div class="addrow">
       <select id="sp_pick" style="flex:2">
         <option value="">— add a ${esc(c.cls)} spell —</option>
@@ -2064,7 +2187,7 @@ function renderSpells(c){
       <button class="btn sm" id="addCustomSpell">Add</button>
     </div>
     <div style="margin-top:6px">
-      ${c.spells.length? [0,1,2,3,4,5,6,7,8,9].map(l=>{
+      ${collapsed.spellbook?'<div class="collapsed-note">'+c.spells.length+' spells hidden — tap ▸ to expand</div>': c.spells.length? [0,1,2,3,4,5,6,7,8,9].map(l=>{
         if(!byLvl[l].length) return '';
         return `<div style="margin-top:10px"><div class="tag" style="display:inline-block;margin-bottom:4px">${l===0?'Cantrips':'Level '+l}</div>`+
           byLvl[l].map(({s,i})=>`
@@ -2152,9 +2275,9 @@ function renderItems(c){
   </div>
 
   <div class="card">
-    <h2>Inventory</h2>
+    <h2>${chev('items')}Inventory ${c.items.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${c.items.length}</span>`:''}</h2>
     <div id="itemList">
-      ${c.items.length?c.items.map((it,i)=>`
+      ${collapsed.items?'<div class="collapsed-note">'+c.items.length+' items hidden — tap ▸ to expand</div>':c.items.length?c.items.map((it,i)=>`
         <div class="spell">
           <div class="nm"><b>${esc(it.name)}</b>${it.notes?`<small>${esc(it.notes)}</small>`:''}</div>
           <span class="tag">×${it.qty||1}</span>
@@ -2372,6 +2495,10 @@ function openAppMenu(){
     <p class="muted" style="font-size:13px;margin:0 0 14px">${DB.length} character${DB.length===1?'':'s'} saved on this device · Grimoire ${APP_VERSION}</p>
     <button class="btn block" id="mnNew" style="margin-bottom:10px">＋ New character</button>
     <button class="btn ghost block" id="mnRandom" style="margin-bottom:10px">🎲 Random hero</button>
+    <div class="row2" style="margin-bottom:10px">
+      <button class="btn ghost" id="mnLog">📜 Adventure log</button>
+      <button class="btn ghost" id="mnSound">${soundOn?'🔊 Sound: on':'🔇 Sound: off'}</button>
+    </div>
     <div class="row2">
       <button class="btn ghost" id="mnExport">⬇ Export backup</button>
       <button class="btn ghost" id="mnImport">⬆ Import backup</button>
@@ -2386,6 +2513,8 @@ function openAppMenu(){
   $('#mnClose').onclick=close;
   $('#mnNew').onclick=()=>{ close(); createCharacterFlow(); };
   $('#mnRandom').onclick=()=>{ close(); openRandomBuilder(); };
+  $('#mnLog').onclick=()=>{ close(); openLog(); };
+  $('#mnSound').onclick=()=>{ soundOn=!soundOn; localStorage.setItem('grimoire.sound', soundOn?'on':'off'); if(soundOn) sfx('success'); openAppMenu(); };
   $('#mnExport').onclick=exportData;
   $('#mnImport').onclick=()=>$('#mnImportFile').click();
   $('#mnImportFile').addEventListener('change',e=>{ importData(e); close(); });
@@ -2411,6 +2540,8 @@ function importData(e){
 
 /* ---- wiring ---- */
 document.addEventListener('click',e=>{
+  playClickSound(e.target);
+  const cl=e.target.closest('[data-collapse]'); if(cl){ toggleCollapse(cl.dataset.collapse); return; }
   const bdEl=e.target.closest('[data-bd]');
   if(bdEl){ const c=cur(); if(c) showBreakdown(c, bdEl.dataset.bd); return; }
   const rc=e.target.closest('[data-rollcheck]');
@@ -2426,11 +2557,12 @@ document.addEventListener('click',e=>{
   if(e.target.id==='welcomeNew'||e.target.id==='newChar') createCharacterFlow();
   if(e.target.id==='welcomeRandom') openRandomBuilder();
   if(e.target.id==='appMenu') openAppMenu();
+  if(e.target.id==='appSearch') openSearch();
 });
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v28';
+const APP_VERSION='v29';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
