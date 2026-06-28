@@ -223,6 +223,7 @@
     <div class="charpick">
       <select id="charSelect" title="Switch character"></select>
       <button class="iconbtn" id="newChar" title="New character">＋</button>
+      <button class="iconbtn" id="appMenu" title="App menu &amp; data">⚙</button>
     </div>
   </div>
 </header>
@@ -1929,11 +1930,7 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
-  $('#resetAllBtn').addEventListener('click',()=>{
-    if(!confirm('Delete ALL characters and reset the app on this device? This cannot be undone. (Consider Export first.)')) return;
-    try{ localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_CUR); }catch(e){}
-    DB=[]; curId=null; wiz=null; tab='bio'; render();
-  });
+  $('#resetAllBtn').addEventListener('click',resetAllData);
   $('#importFile').addEventListener('change',importData);
 }
 
@@ -1990,6 +1987,38 @@ function exportData(){
   a.href=url; a.download='grimoire-characters.json'; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+function resetAllData(){
+  if(!confirm('Delete ALL characters and reset the app on this device? This cannot be undone. (Consider Export first.)')) return;
+  if(!confirm('Are you absolutely sure? Every character will be permanently erased.')) return;
+  try{ localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_CUR); }catch(e){}
+  DB=[]; curId=null; wiz=null; tab='bio';
+  $('#modalRoot').innerHTML=''; render();
+  flashBanner('All data reset');
+}
+function openAppMenu(){
+  const c=cur();
+  $('#modalRoot').innerHTML=`<div class="modal" id="menuModal"><div class="sheet"><div class="grip"></div>
+    <h2>App &amp; Data</h2>
+    <p class="muted" style="font-size:13px;margin:0 0 14px">${DB.length} character${DB.length===1?'':'s'} saved on this device · Grimoire ${APP_VERSION}</p>
+    <button class="btn block" id="mnNew" style="margin-bottom:10px">＋ New character</button>
+    <div class="row2">
+      <button class="btn ghost" id="mnExport">⬇ Export backup</button>
+      <button class="btn ghost" id="mnImport">⬆ Import backup</button>
+    </div>
+    <input type="file" id="mnImportFile" accept="application/json" style="display:none">
+    <div style="height:1px;background:var(--line);margin:16px 0"></div>
+    <button class="btn bad block" id="mnReset">🗑 Reset app — delete ALL data</button>
+    <button class="btn ghost block" id="mnClose" style="margin-top:12px">Close</button>
+  </div></div>`;
+  const close=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#menuModal').onclick=e=>{ if(e.target.id==='menuModal') close(); };
+  $('#mnClose').onclick=close;
+  $('#mnNew').onclick=()=>{ close(); createCharacterFlow(); };
+  $('#mnExport').onclick=exportData;
+  $('#mnImport').onclick=()=>$('#mnImportFile').click();
+  $('#mnImportFile').addEventListener('change',e=>{ importData(e); close(); });
+  $('#mnReset').onclick=resetAllData;
+}
 function importData(e){
   const file=e.target.files[0]; if(!file) return;
   const r=new FileReader();
@@ -2021,11 +2050,12 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-tab]');
   if(t){ tab=t.dataset.tab; render(); }
   if(e.target.id==='welcomeNew'||e.target.id==='newChar') createCharacterFlow();
+  if(e.target.id==='appMenu') openAppMenu();
 });
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='bio'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v20';
+const APP_VERSION='v21';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
