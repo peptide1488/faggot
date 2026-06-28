@@ -570,42 +570,108 @@ function battleCard(c){
       <button class="btn ghost sm" data-bt="move5">– 5 ft</button>
       <button class="btn ghost sm" data-bt="move10">– 10 ft</button>
     </div>
+    <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px">Quick menu</div>
+    <div class="addrow">
+      <button class="btn sm" id="bqAttack" style="flex:1">⚔ Attacks</button>
+      ${(isCaster(c)||c.spells.length)?`<button class="btn sm" id="bqSpells" style="flex:1">✨ Spells</button>`:''}
+    </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
   </div>`;
 }
+function openQuickSpells(c){
+  const list=c.spells.slice().sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
+  $('#modalRoot').innerHTML=`<div class="modal" id="qsModal"><div class="sheet"><div class="grip"></div>
+    <h2>✨ Cast a spell</h2>
+    <input id="qsSearch" placeholder="Filter your spells…" autocomplete="off">
+    <div id="qsList" style="margin-top:10px;max-height:56vh;overflow:auto"></div>
+    <button class="btn ghost block" id="qsClose" style="margin-top:10px">Close</button>
+  </div></div>`;
+  const draw=()=>{ const q=($('#qsSearch').value||'').toLowerCase(); const f=list.filter(s=>s.name.toLowerCase().includes(q));
+    $('#qsList').innerHTML = f.length? f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${s.prepared?' · prepared':''}${isConcentration(s.name)?' · 🧠 conc':''}</small></div><button class="btn sm" data-qcast="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join('') : '<div class="empty">No spells. Add them on the Spells tab.</div>';
+    $('#qsList').querySelectorAll('[data-qcast]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.qcast.split('|'); castModal(c, a[0], Number(a[1])); })); };
+  $('#qsSearch').addEventListener('input',draw);
+  $('#qsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#qsModal').onclick=e=>{ if(e.target.id==='qsModal') $('#modalRoot').innerHTML=''; };
+  draw();
+}
+function critNotation(n){ const p=parseDice(n); let s=p.terms.map(t=>(t.n*2)+'d'+t.sides).join('+'); if(p.flat) s+=(p.flat>0?'+':'')+p.flat; return s||n; }
+function attackFlow(c, atk){
+  const toHit=Number(atk.toHit)||0;
+  const st={phase:'tohit', d20:0, total:0, crit:false, hit:null, dmgTotal:null, twoH:false};
+  const close=()=>{ $('#modalRoot').innerHTML=''; };
+  function rollToHit(face){
+    const d20=face!=null?face:rnd(20);
+    st.d20=d20; st.crit=(d20===20); st.total=d20+toHit; st.phase='hit';
+    pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
+    if(c.battle){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); c.battle.action=true; save(); }
+    draw();
+  }
+  function rollDmg(manual){
+    const base=(st.twoH&&atk.vers)?atk.vers:atk.dmg;
+    const notation=st.crit?critNotation(base):base;
+    let total, detail;
+    if(manual!=null){ total=manual; detail='entered'+(st.crit?' (crit)':''); }
+    else { const r=rollNotation(notation)||{total:0,detail:''}; total=r.total; detail=r.detail; }
+    st.dmgTotal=total; st.phase='done';
+    pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg'});
+    draw();
+  }
+  function draw(){
+    let body=`<h2>⚔ ${esc(atk.name)}</h2>`;
+    if(st.phase==='tohit'){
+      body+=`<p class="muted" style="font-size:13px">To hit <b>${sgn(toHit)}</b> — auto-roll the d20 or enter your own.</p>
+        <button class="btn block" id="afAuto">🎲 Roll to hit</button>
+        <div class="addrow" style="margin-top:8px"><input id="afManual" type="number" placeholder="enter d20 (1–20)"><button class="btn ghost" id="afUse">Use</button></div>`;
+    } else if(st.phase==='hit'){
+      body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--accent)">${st.total}</div><div class="muted">d20 (${st.d20}) ${sgn(toHit)}${st.crit?' · 💥 NAT 20':st.d20===1?' · NAT 1':''}</div></div>
+        <p style="text-align:center;margin:0 0 8px">Did it beat the target's AC?</p>
+        <div class="row2"><button class="btn" id="afHit">✓ Hit${st.crit?' (crit)':''}</button><button class="btn bad" id="afMiss">✗ Miss</button></div>`;
+    } else if(st.phase==='dmg'){
+      body+=`${st.crit?'<p style="text-align:center;color:var(--accent2);margin:0 0 8px"><b>💥 Critical hit — damage dice doubled!</b></p>':''}
+        ${atk.vers?`<label class="pill" style="cursor:pointer;margin-bottom:8px"><input type="checkbox" id="af2h" ${st.twoH?'checked':''}> Two-handed (${esc(atk.vers)})</label>`:''}
+        <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
+        <button class="btn block" id="afDmgAuto">🎲 Roll damage</button>
+        <div class="addrow" style="margin-top:8px"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn ghost" id="afDmgUse">Use</button></div>`;
+    } else {
+      body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div class="muted">${st.hit?(st.crit?'💥 Critical hit!':'Hit!'):'Miss'}</div>${st.hit?`<div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--bad)">${st.dmgTotal}</div><div class="muted">${esc(atk.dt||'')} damage</div>`:''}</div>
+        <button class="btn block" id="afAgain">⚔ Attack again</button>`;
+    }
+    body+=`<button class="btn ghost block" id="afClose" style="margin-top:10px">Close</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="afModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    $('#afModal').onclick=e=>{ if(e.target.id==='afModal') close(); };
+    $('#afClose').onclick=close;
+    if(st.phase==='tohit'){ $('#afAuto').onclick=()=>rollToHit(null); $('#afUse').onclick=()=>{ const v=Number($('#afManual').value); if(v>=1&&v<=20) rollToHit(v); else flashBanner('Enter 1–20'); }; }
+    else if(st.phase==='hit'){ $('#afHit').onclick=()=>{ st.hit=true; st.phase='dmg'; draw(); }; $('#afMiss').onclick=()=>{ st.hit=false; st.phase='done'; logChange(c, atk.name+' — attack missed'); draw(); }; }
+    else if(st.phase==='dmg'){ const t=$('#af2h'); if(t) t.onchange=()=>{ st.twoH=t.checked; draw(); }; $('#afDmgAuto').onclick=()=>rollDmg(null); $('#afDmgUse').onclick=()=>{ const el=$('#afDmgMan'); const v=Number(el.value); if(el.value!==''&&!isNaN(v)) rollDmg(v); }; }
+    else { $('#afAgain').onclick=()=>{ st.phase='tohit'; st.d20=0; st.total=0; st.crit=false; st.hit=null; st.dmgTotal=null; st.twoH=false; draw(); }; }
+  }
+  draw();
+}
+function weaponAflowAttrs(c, it){ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',vers:''}; const abm=mod(abil(c,weaponAbil(c,w))); const dn=w.dmg+(abm?sgn(abm):''); const vn=w.vers?(w.vers+(abm?sgn(abm):'')):''; return `data-aflow data-aname="${esc(it.name)}" data-ahit="${weaponToHit(c,w)}" data-admg="${esc(dn)}" data-adt="${esc(w.dt||'')}" data-avers="${esc(vn)}"`; }
 function openAttack(c){
   const ws=weaponItems(c), atks=extraAttacks(c)+1, A=k=>k.toUpperCase();
   let cards='';
   ws.forEach(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',props:'',rng:'5 ft',type:'melee',cat:''};
     const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), prof=weaponProficient(c,w), th=weaponToHit(c,w);
-    const dnote=w.dmg+(abm?sgn(abm):''), vnote=w.vers?(w.vers+(abm?sgn(abm):'')):null;
+    const dnote=w.dmg+(abm?sgn(abm):'');
     cards+=`<div class="card" style="margin:0 0 10px">
-      <div class="row" style="gap:8px;align-items:center"><span style="flex:none">${itemEmblem(weaponIconKey(it.name),5)}</span><div class="nm"><b>${esc(it.name)}</b><small>${w.cat?w.cat+' ':''}${w.type} · ${esc(w.props||'—')}</small></div></div>
-      <div class="addrow" style="gap:6px;flex-wrap:wrap;margin:8px 0"><span class="pill">🗡️ ${atks} attack${atks>1?'s':''}/action</span><span class="pill">📏 ${esc(w.rng||'5 ft')}</span>${w.ammo?`<span class="pill">🏹 ${w.ammo}</span>`:''}<span class="pill">Uses ${A(ab)} (${sgn(abm)})</span><span class="pill" style="${prof?'':'color:var(--bad)'}">${prof?'✓ Proficient (+'+profBonus(c)+')':'✗ Not proficient'}</span></div>
-      <div class="listrow"><div class="nm">To hit <span class="sub">${sgn(th)}</span></div><input type="number" class="atkin" data-kind="hit" data-bonus="${th}" data-label="${esc(it.name)} attack" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(it.name)} attack" data-bonus="${th}" title="Auto-roll">🎲 ${sgn(th)}</button></div>
-      <div class="listrow"><div class="nm">Damage <span class="sub">${esc(dnote)} ${esc(w.dt||'')}</span></div><input type="number" class="atkin" data-kind="dmg" data-label="${esc(it.name)} damage" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(it.name)} damage" data-notation="${esc(dnote)}" title="Auto-roll">🎲 ${esc(w.dmg)}</button></div>
-      ${vnote?`<div class="listrow"><div class="nm">Two-handed <span class="sub">${esc(vnote)}</span></div><button class="val rollbtn" data-rolldmg data-label="${esc(it.name)} damage (2H)" data-notation="${esc(vnote)}">🎲 ${w.vers}</button></div>`:''}
-      <p class="muted" style="font-size:11.5px;margin:6px 0 0">No save — compare your attack roll to the target's AC; on a hit, deal the damage.</p>
+      <div class="row" style="gap:8px;align-items:center"><span style="flex:none">${itemEmblem(weaponIconKey(it.name),5)}</span><div class="nm"><b>${esc(it.name)}</b><small>${esc(dnote)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}</small></div></div>
+      <div class="addrow" style="gap:6px;flex-wrap:wrap;margin:8px 0"><span class="pill">🗡️ ${atks}/action</span><span class="pill">📏 ${esc(w.rng||'5 ft')}</span>${w.ammo?`<span class="pill">🏹 ${w.ammo}</span>`:''}<span class="pill">${A(ab)} ${sgn(abm)}</span><span class="pill" style="${prof?'':'color:var(--bad)'}">${prof?'✓ Proficient':'✗ Not proficient'}</span></div>
+      <button class="btn block" ${weaponAflowAttrs(c,it)}>⚔ Roll attack →</button>
     </div>`;
   });
   (c.attacks||[]).forEach((a)=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
     cards+=`<div class="card" style="margin:0 0 10px"><div class="nm"><b>${esc(a.name)}</b>${a.damage?`<small>${esc(a.damage)}</small>`:''}</div>
-      <div class="listrow"><div class="nm">To hit</div><input type="number" class="atkin" data-kind="hit" data-bonus="${bn}" data-label="${esc(a.name)} attack" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(a.name)} attack" data-bonus="${bn}">🎲 ${sgn(bn)}</button></div>
-      ${a.damage?`<div class="listrow"><div class="nm">Damage</div><input type="number" class="atkin" data-kind="dmg" data-label="${esc(a.name)} damage" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(a.name)} damage" data-notation="${esc(a.damage)}">🎲 ${esc(a.damage)}</button></div>`:''}
-    </div>`;
+      <button class="btn block" data-aflow data-aname="${esc(a.name)}" data-ahit="${bn}" data-admg="${esc(a.damage||'')}" data-adt="" data-avers="">⚔ Roll attack →</button></div>`;
   });
   $('#modalRoot').innerHTML=`<div class="modal" id="atkModal"><div class="sheet"><div class="grip"></div>
     <h2>⚔ Attack</h2>
-    <p class="muted" style="font-size:12px;margin:0 0 10px">You can make <b>${atks}</b> attack${atks>1?'s':''} with one Attack action${extraAttacks(c)?' (Extra Attack)':''}. Tap 🎲 to auto-roll or type your own.</p>
-    ${(ws.length||(c.attacks||[]).length)?cards:'<div class="empty">No weapons equipped and no attacks added. Add & equip a weapon on the Items tab.</div>'}
+    <p class="muted" style="font-size:12px;margin:0 0 10px">You can make <b>${atks}</b> attack${atks>1?'s':''} with one Attack action${extraAttacks(c)?' (Extra Attack)':''}. Pick a weapon — it rolls to hit, asks if you hit, then rolls damage.</p>
+    ${(ws.length||(c.attacks||[]).length)?cards:'<div class="empty">No weapons or attacks yet. Add weapons on the Items tab.</div>'}
     <button class="btn ghost block" id="atkClose" style="margin-top:6px">Close</button>
   </div></div>`;
   $('#atkClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#atkModal').onclick=e=>{ if(e.target.id==='atkModal') $('#modalRoot').innerHTML=''; };
-  document.querySelectorAll('#atkModal .atkin').forEach(el=>el.addEventListener('change',()=>{ const v=Number(el.value); if(el.value===''||isNaN(v)) return;
-    if(el.dataset.kind==='hit'){ const b=Number(el.dataset.bonus)||0; pushRoll({label:el.dataset.label+' (manual)', total:v+b, detail:'d20 ('+v+') '+sgn(b), crit:v===20?'crit':v===1?'fumble':null, kind:'check'}); }
-    else pushRoll({label:el.dataset.label+' (manual)', total:v, detail:'entered', kind:'dmg'});
-    el.value=''; }));
 }
 function expertiseTotal(c){ const l=Number(c.level)||1; if(c.cls==='Rogue') return 2+(l>=6?2:0); if(c.cls==='Bard') return (l>=3?2:0)+(l>=10?2:0); return 0; }
 function expertiseOwed(c){ return Math.max(0, expertiseTotal(c) - SKILLS.filter(([k])=>c.skillExp[k]).length); }
@@ -978,6 +1044,7 @@ function castSpell(c, name, level){
   } }
   const tmpl=SPELL_EFFECTS[name];
   sfx('cast'); castFx(name);
+  if(c.battle) c.battle.action=true;
   if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')); }
   else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')); }
 }
@@ -2210,16 +2277,14 @@ function renderCombat(c){
       ${weaponItems(c).map(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:'',cat:''}; const ab=weaponAbil(c,w), abm=mod(abil(c,ab)), prof=weaponProficient(c,w), th=weaponToHit(c,w); const dn=w.dmg+(abm?sgn(abm):'');
         return `<div class="spell">
           <span style="flex:none">${itemEmblem(weaponIconKey(it.name),4)}</span>
-          <div class="nm"><b>${esc(it.name)}${it.equipped?' <span class="sub" style="color:var(--accent)">✓</span>':''}</b><small>${esc(dn)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}${prof?'':' · <span style="color:var(--bad)">not proficient</span>'}</small></div>
-          <button class="rollbtn" data-rollcheck data-label="${esc(it.name)} attack" data-bonus="${th}" title="Attack roll${prof?'':' (no proficiency bonus)'}">🎯 ${sgn(th)}</button>
-          <button class="rollbtn" data-rolldmg data-label="${esc(it.name)} damage" data-notation="${esc(dn)}" title="Roll ${esc(dn)}">⚔</button>
+          <div class="nm"><b>${esc(it.name)}${it.equipped?' <span class="sub" style="color:var(--accent)">✓</span>':''}</b><small>${sgn(th)} to hit · ${esc(dn)} ${esc(w.dt||'')} · ${esc(w.rng||'5 ft')}${prof?'':' · <span style="color:var(--bad)">not proficient</span>'}</small></div>
+          <button class="btn sm" ${weaponAflowAttrs(c,it)}>⚔ Attack</button>
         </div>`; }).join('')}
       ${c.attacks.length?c.attacks.map((a,i)=>{
         const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
         return `<div class="spell">
-          <div class="nm"><b>${esc(a.name)}</b>${a.damage?`<small>${esc(a.damage)}</small>`:''}</div>
-          <button class="rollbtn" data-rollcheck data-label="${esc(a.name)} attack" data-bonus="${bn}" title="Attack roll">🎯 ${esc(a.bonus||'+0')}</button>
-          ${a.damage?`<button class="rollbtn" data-rolldmg data-label="${esc(a.name)} damage" data-notation="${esc(a.damage)}" title="Roll ${esc(a.damage)}">⚔</button>`:''}
+          <div class="nm"><b>${esc(a.name)}</b>${a.damage?`<small>${sgn(bn)} to hit · ${esc(a.damage)}</small>`:''}</div>
+          <button class="btn sm" data-aflow data-aname="${esc(a.name)}" data-ahit="${bn}" data-admg="${esc(a.damage||'1d4')}" data-adt="" data-avers="">⚔ Attack</button>
           <button class="del" data-delatk="${i}">✕</button>
         </div>`;}).join(''):''}
       ${(!weaponItems(c).length && !c.attacks.length)?'<div class="empty">No weapons yet. Add them on the Items tab, or add a manual attack below.</div>':''}
@@ -2268,6 +2333,8 @@ function renderCombat(c){
   { const sb=$('#startBattle'); if(sb) sb.addEventListener('click',()=>startBattle(c)); }
   { const eb=$('#endBattle'); if(eb) eb.addEventListener('click',()=>endBattle(c)); }
   { const nt=$('#nextTurn'); if(nt) nt.addEventListener('click',()=>battleNextTurn(c)); }
+  { const qa=$('#bqAttack'); if(qa) qa.addEventListener('click',()=>openAttack(c)); }
+  { const qs=$('#bqSpells'); if(qs) qs.addEventListener('click',()=>openQuickSpells(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'||k==='bonus'||k==='reaction') b[k]=!b[k];
     else if(k==='atkminus') b.attacksLeft=Math.max(0,b.attacksLeft-1);
@@ -2788,6 +2855,7 @@ function importData(e){
 document.addEventListener('click',e=>{
   playClickSound(e.target);
   const cl=e.target.closest('[data-collapse]'); if(cl){ toggleCollapse(cl.dataset.collapse); return; }
+  const af=e.target.closest('[data-aflow]'); if(af){ const c=cur(); if(c) attackFlow(c, {name:af.dataset.aname, toHit:Number(af.dataset.ahit)||0, dmg:af.dataset.admg||'1d4', dt:af.dataset.adt||'', vers:af.dataset.avers||''}); return; }
   const bdEl=e.target.closest('[data-bd]');
   if(bdEl){ const c=cur(); if(c) showBreakdown(c, bdEl.dataset.bd); return; }
   const rc=e.target.closest('[data-rollcheck]');
@@ -2810,7 +2878,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v31';
+const APP_VERSION='v32';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
