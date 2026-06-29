@@ -284,6 +284,16 @@
   .ter-lava{background:linear-gradient(145deg,#f47a2c,#b22f0c)!important;box-shadow:inset 0 0 8px rgba(255,225,120,.7);animation:lavaglow 2.2s ease-in-out infinite}
   .ter-wall{background:linear-gradient(160deg,#7a6647,#4c3c28)!important;box-shadow:inset 0 2px 0 rgba(255,255,255,.2), inset 0 -4px 5px rgba(0,0,0,.45)}
   .ter-void{background:radial-gradient(circle at 50% 40%,#1a1510,#000)!important;box-shadow:inset 0 0 11px rgba(0,0,0,.95)}
+  .ter-stone{background:linear-gradient(145deg,#aab0b8,#878d96)!important}
+  .ter-wood{background:repeating-linear-gradient(90deg,#9a6a3a,#9a6a3a 6px,#8a5d31 6px,#8a5d31 12px)!important}
+  .ter-sand{background:linear-gradient(145deg,#e6d29a,#cdb472)!important}
+  .ter-snow{background:linear-gradient(145deg,#eef4fa,#cfdceb)!important;box-shadow:inset 0 0 4px rgba(255,255,255,.6)}
+  .ter-rubble{background:repeating-linear-gradient(45deg,#9a8c74,#9a8c74 3px,#8a7c64 3px,#8a7c64 6px)!important}
+  .ter-brush{background:linear-gradient(145deg,#5d8235,#3c5a22)!important;box-shadow:inset 0 0 5px rgba(20,50,10,.5)}
+  .ter-fog{background:linear-gradient(145deg,#d4d8dc,#b4bac0)!important;opacity:.85}
+  .ter-ice{background:linear-gradient(145deg,#d6f0fa,#a8d4e8)!important;box-shadow:inset 0 0 6px rgba(255,255,255,.7)}
+  .ter-acid{background:linear-gradient(145deg,#9fd64a,#5f9a22)!important;box-shadow:inset 0 0 7px rgba(200,255,120,.6);animation:lavaglow 2.6s ease-in-out infinite}
+  .ter-caltrops{background:#8a7a6a!important}
   @keyframes lavaglow{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
   .mcell.reach{box-shadow:inset 0 0 0 2px rgba(110,200,90,.9), inset 0 0 8px rgba(110,200,90,.5)!important;cursor:pointer}
   .mcell.reach::after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:rgba(150,230,120,.8)}
@@ -3253,13 +3263,13 @@ function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
 // Dijkstra over the grid: returns {cost:{"x,y":feet}, prev:{"x,y":"px,py"}}. Walls/void block; no diagonal corner-cutting; mud costs double.
 function dijkstra(s, sx, sy, maxFeet){
   const cols=s.map.cols, rows=s.map.rows, tiles=s.map.tiles||{}, K=(x,y)=>x+','+y;
-  const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const t=tiles[K(x,y)]; return t!=='wall'&&t!=='void'; };
+  const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const td=TERRAIN[tiles[K(x,y)]]; return !(td&&td.solid); };
   const cost={}, prev={}; cost[K(sx,sy)]=0; const frontier=[[sx,sy]];
   while(frontier.length){ frontier.sort((a,b)=>cost[K(a[0],a[1])]-cost[K(b[0],b[1])]); const [x,y]=frontier.shift(), cc=cost[K(x,y)];
     if(cc>=maxFeet) continue;
     for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){ if(!dx&&!dy) continue; const nx=x+dx, ny=y+dy; if(!passable(nx,ny)) continue;
       if(dx&&dy && (!passable(x+dx,y) || !passable(x,y+dy))) continue;   // no squeezing through a diagonal wall corner
-      const t=tiles[K(nx,ny)], step=(t==='mud'?10:5), nc=cc+step; if(nc>maxFeet) continue;
+      const td=TERRAIN[tiles[K(nx,ny)]], step=(td&&td.diff?10:5), nc=cc+step; if(nc>maxFeet) continue;
       if(cost[K(nx,ny)]==null || nc<cost[K(nx,ny)]){ cost[K(nx,ny)]=nc; prev[K(nx,ny)]=K(x,y); frontier.push([nx,ny]); } } }
   return {cost, prev};
 }
@@ -3267,7 +3277,7 @@ function reachableCells(s, sx, sy, maxFeet){ return dijkstra(s,sx,sy,maxFeet).co
 // Bresenham line of sight — a wall between attacker and target blocks the shot.
 function losClear(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{}; let dx=Math.abs(x1-x0), dy=Math.abs(y1-y0), sx=x0<x1?1:-1, sy=y0<y1?1:-1, err=dx-dy, x=x0, y=y0, guard=0;
   while(!(x===x1&&y===y1) && guard++<999){ const e2=2*err; if(e2>-dy){ err-=dy; x+=sx; } if(e2<dx){ err+=dy; y+=sy; }
-    if(x===x1&&y===y1) break; if(tiles[x+','+y]==='wall') return false; }
+    if(x===x1&&y===y1) break; const td=TERRAIN[tiles[x+','+y]]; if(td&&td.opaque) return false; }
   return true; }
 function pathTo(s, sx, sy, tx, ty, maxFeet){ const {cost,prev}=dijkstra(s,sx,sy,maxFeet); const K=(x,y)=>x+','+y; if(cost[K(tx,ty)]==null) return null;
   const path=[]; let cur=K(tx,ty); while(cur && cur!==K(sx,sy)){ const [x,y]=cur.split(',').map(Number); path.unshift({x,y}); cur=prev[cur]; } return path; }
@@ -3358,9 +3368,8 @@ function renderPlayerBattle(c){
     const [x,y]=el.dataset.cell.split(',').map(Number);
     if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;   // dead bodies don't block
     if(!net.moveMode){ flashBanner('Tap 🥾 Move first'); return; }
-    const ter=terrainAt(s,x,y);
-    if(ter==='wall'){ flashBanner('A wall blocks the way'); return; }
-    if(ter==='void'){ flashBanner('You won’t step into the void'); return; }
+    const ter=terrainAt(s,x,y), tdef=TERRAIN[ter];
+    if(tdef&&tdef.solid){ flashBanner(ter==='void'?'You won’t step into the void':'Blocked by terrain'); return; }
     const dashAvail=!b.action, dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
     const path=pathTo(s,me.x,me.y,x,y,dashMax);
     if(!path){ flashBanner('Can’t reach there — walls block the path or it’s too far'); return; }
@@ -3372,8 +3381,8 @@ function renderPlayerBattle(c){
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; net.moveMode=false;
     animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 110, ()=>{ save();
       if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
-      if(ter==='lava'){ const d=lavaDmg(); applyHp(c,-d); flashBanner('🔥 Lava! '+d+' damage'); }
-      else if(ter==='mud') flashBanner('Mud — difficult terrain'); render(); });
+      if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); flashBanner((tdef.e||'🔥')+' '+tdef.name+'! '+d+' damage'); }
+      else if(tdef&&tdef.diff) flashBanner(tdef.name+' — difficult terrain'); render(); });
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ b[el.dataset.pbt]=!b[el.dataset.pbt]; save(); render(); });
   { const mv=$('#pbMoveBtn'); if(mv) mv.onclick=()=>{ net.moveMode=!net.moveMode; render(); }; }
@@ -3441,14 +3450,25 @@ const MONSTERS_5E=[
   {n:'Gazer',cr:'1/2',ac:13,hp:13,spd:'10/30 fly',sprite:'eye',atk:'Bite +0 (1) · Eye Rays +4',desc:'A tiny aberration with four magical eye rays.'},
   {n:'Beholder',cr:'13',ac:18,hp:180,spd:'0/20 fly',sprite:'eye',atk:'Bite +5 · Eye Rays (10 random) · Antimagic Cone',desc:'A floating sphere of eyes; its central eye negates magic.'}
 ];
+// props: solid (impassable + blocks path), opaque (blocks line of sight), diff (difficult, ×2 move), dmg (dice on enter), deadly (instant down)
 const TERRAIN={
-  floor:{name:'Erase',  c:'',        e:''},
-  wall: {name:'Wall',   c:'#5a4a36', e:'🧱'},
-  grass:{name:'Grass',  c:'#6f9442', e:''},
-  mud:  {name:'Mud',    c:'#7a5a32', e:''},
-  lava: {name:'Lava',   c:'#d2521f', e:'🔥'},
-  water:{name:'Water',  c:'#3a6ea5', e:''},
-  void: {name:'Void',   c:'#15110b', e:''}
+  floor: {name:'Erase',  c:'',        e:''},
+  grass: {name:'Grass',  c:'#6f9442', e:''},
+  stone: {name:'Stone',  c:'#9aa0a8', e:''},
+  wood:  {name:'Wood',   c:'#9a6a3a', e:''},
+  sand:  {name:'Sand',   c:'#d9c48a', e:'', diff:true},
+  snow:  {name:'Snow',   c:'#dfe9f2', e:'', diff:true},
+  mud:   {name:'Mud',    c:'#7a5a32', e:'', diff:true},
+  rubble:{name:'Rubble', c:'#9a8c74', e:'', diff:true},
+  water: {name:'Water',  c:'#3a6ea5', e:'', diff:true},
+  brush: {name:'Brush',  c:'#4d6b2c', e:'🌿', diff:true, opaque:true},
+  fog:   {name:'Fog',    c:'#c8ccd0', e:'', opaque:true},
+  ice:   {name:'Ice',    c:'#bfe3f0', e:''},
+  acid:  {name:'Acid',   c:'#7fbf3a', e:'', dmg:'2d6'},
+  caltrops:{name:'Caltrops', c:'#8a7a6a', e:'✦', diff:true, dmg:'1d4'},
+  lava:  {name:'Lava',   c:'#d2521f', e:'🔥', dmg:'6d10'},
+  wall:  {name:'Wall',   c:'#5a4a36', e:'🧱', solid:true, opaque:true},
+  void:  {name:'Void',   c:'#15110b', e:'', solid:true, deadly:true}
 };
 /* ---- preset battle maps ---- */
 const MAP_PRESETS=(()=>{ const P={};
@@ -3585,10 +3605,10 @@ function renderDM(){
         if(cost>(mo.moveLeft||0)){ if(!dashAvail){ flashBanner(mo.name+' too far — needs its action to Dash'); return; } mo.moveLeft=(mo.moveLeft||0)+(mo.speed||30); mo.attacksLeft=0; flashBanner('🏃 '+mo.name+' Dashes (action used)'); }
         mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
-      if(s.battle.active){ if(ter==='void'){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(ter==='lava'){ mo.hp=Math.max(0,mo.hp-lavaDmg()); flashBanner('🔥 '+mo.name+' burns in lava'); } }
+      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } }
     } }
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && ter==='wall'){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
-      if(s.battle.active){ if(ter==='void'){ dmSend(p.id,{t:'apply',delta:-9999}); flashBanner(p.name+' pushed into the void! 💀'); } else if(ter==='lava'){ dmSend(p.id,{t:'apply',delta:-lavaDmg()}); flashBanner(p.name+' pushed into lava! 🔥'); } } } }
+      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } } } }
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain?')){ s.map.tiles={}; dmBroadcast(); render(); } }; }
   { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
@@ -3726,7 +3746,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v60';
+const APP_VERSION='v61';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
