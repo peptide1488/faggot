@@ -3294,7 +3294,7 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button></h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}</small></div><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:48px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}</small></div><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -3319,6 +3319,7 @@ function renderDM(){
   app.querySelectorAll('[data-mdel]').forEach(el=>el.onclick=()=>{ s.monsters=s.monsters.filter(m=>m.id!==el.dataset.mdel); dmBroadcast(); render(); });
   $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0}); dmBroadcast(); render(); };
   { const bb=$('#bestiaryBtn'); if(bb) bb.onclick=openBestiary; }
+  app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
@@ -3327,7 +3328,52 @@ function renderDM(){
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain?')){ s.map.tiles={}; dmBroadcast(); render(); } }; }
   $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
 }
-function deployMonster(m){ if(!net||net.role!=='dm') return; net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), name:m.n, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk}); dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
+function deployMonster(m){ if(!net||net.role!=='dm') return;
+  const same=net.session.monsters.filter(x=>x.base===m.n);
+  const nm=m.n+' '+(same.length+1);
+  if(same.length===1) same[0].name=same[0].base+' 1';   // retro-number the first when a second appears
+  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? nm : m.n, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk, init:m.init||0});
+  dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
+function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
+  const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
+  const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
+  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, raw:part}; }); }
+function dmMonsterAttack(mo){
+  const atks=parseMonsterAttacks(mo.atk); if(!atks.length) atks.push({name:'Attack',hit:0,dmg:'1d6'});
+  const players=net.session.players; if(!players.length){ flashBanner('No players connected to target'); return; }
+  const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0};
+  const tgt=()=>net.session.players.find(p=>p.id===st.targetId)||players[0];
+  function draw(){ const t=tgt(); let body=`<h2>⚔ ${esc(mo.name)} attacks</h2>`;
+    body+=`<div class="field"><label>Attack</label><div class="chips">${atks.map((a,i)=>`<button class="chip ${st.atk===a?'on':''}" data-ma="${i}">${esc(a.name)}${a.hit!=null?' +'+a.hit:a.dc?' (DC'+a.dc.n+')':''}</button>`).join('')}</div></div>`;
+    body+=`<div class="field"><label>Target</label><select id="maTgt">${players.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax}</option>`).join('')}</select></div>`;
+    if(st.atk.dc){
+      body+=`<div class="card" style="margin:0 0 10px"><b>${esc(st.atk.name)}</b><br>${esc(t.name)} must make a <b>DC ${st.atk.dc.n} ${st.atk.dc.ab}</b> save.${st.atk.dmg?'<br>Damage: '+esc(st.atk.dmg):''}</div>`;
+      if(st.atk.dmg){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage</button>`;
+        else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><div class="row2"><button class="btn bad" id="maFull">Apply ${st.dmg} (fail)</button><button class="btn ghost" id="maHalf">Apply ${Math.floor(st.dmg/2)} (save)</button></div>`; }
+    } else if(st.phase==='aim'){
+      body+=`<button class="btn block" id="maRoll">🎲 Roll to hit (+${st.atk.hit||0}) vs AC ${t.ac}</button>`;
+    } else {
+      const isHit=st.total>=t.ac||st.d20===20, crit=st.d20===20;
+      body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:32px;font-weight:700;color:${isHit?'var(--good)':'var(--bad)'}">${st.total}</div><div class="muted">d20(${st.d20}) +${st.atk.hit||0} vs AC ${t.ac} — ${crit?'💥 CRIT':isHit?'HIT':'MISS'}</div></div>`;
+      if(isHit){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage${crit?' (crit ×2 dice)':''}</button>`;
+        else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><button class="btn bad block" id="maApply">Apply ${st.dmg} to ${esc(t.name)}</button>`; }
+      body+=`<button class="btn ghost block" id="maReset" style="margin-top:8px">↺ New attack</button>`;
+    }
+    body+=`<button class="btn ghost block" id="maClose" style="margin-top:10px">Close</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="maModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    $('#maModal').onclick=e=>{ if(e.target.id==='maModal') $('#modalRoot').innerHTML=''; };
+    $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; draw(); }; }
+    document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; draw(); });
+    { const r=$('#maRoll'); if(r) r.onclick=()=>{ st.d20=rnd(20); st.total=st.d20+(st.atk.hit||0); st.phase='res'; pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+tgt().ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ const base=st.atk.dmg||'1d6'; const note=(st.d20===20)?critNotation(base):base; const rr=rollNotation(note)||{total:0,detail:''}; st.dmg=rr.total; pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:rr.total, detail:rr.detail, kind:'dmg'}); draw(); }; }
+    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; }; }
+    { const f=$('#maFull'); if(f) f.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; }; }
+    { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); dmSend(st.targetId,{t:'apply',delta:-half}); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; }; }
+    { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; draw(); }; }
+  }
+  draw();
+}
 function openBestiary(){
   $('#modalRoot').innerHTML=`<div class="modal" id="bestModal"><div class="sheet"><div class="grip"></div>
     <h2>📖 Bestiary <span class="muted" style="font-size:11px;text-transform:none">— ${MONSTERS_5E.length} monsters</span></h2>
@@ -3399,7 +3445,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v41';
+const APP_VERSION='v42';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
