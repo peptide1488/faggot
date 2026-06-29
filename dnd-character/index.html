@@ -262,6 +262,20 @@
   .chev{background:none;border:0;color:var(--mut);font-size:13px;padding:2px 6px;transition:transform .15s ease}
   .collapsed-note{color:var(--mut);font-size:12px;padding:6px 0 2px}
 
+  /* DM / multiplayer */
+  .netbar{position:sticky;top:0;z-index:21;background:linear-gradient(var(--accent2),#2c3f18);color:#f6efda;
+    padding:calc(env(safe-area-inset-top) + 8px) 12px 8px;display:flex;align-items:center;gap:10px;font-size:13px}
+  .netbar .code{font-family:Georgia,serif;font-weight:700;letter-spacing:2px}
+  .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
+  .mapwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;background:#e0cfa6;padding:4px}
+  .mapgrid{display:grid;gap:2px;min-width:max-content}
+  .mcell{width:34px;height:34px;background:rgba(255,250,235,.55);border:1px solid rgba(120,90,40,.18);border-radius:4px;display:grid;place-items:center;position:relative}
+  .mcell.tgt{cursor:pointer}
+  .tok{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff;font-family:Georgia,serif}
+  .tok.mon{background:#9c3b2c;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .tok.pl{background:#3b5320;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .tok.sel{outline:3px solid var(--gold)}
+
   /* cast spell animation overlay */
   .castfx{position:fixed;inset:0;z-index:60;pointer-events:none;display:grid;place-items:center}
   .castfx .glow{position:absolute;width:42vmax;height:42vmax;border-radius:50%;
@@ -597,7 +611,7 @@ function setEquipped(c, idx, on){
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle={round:1, init:ini, action:false, bonus:false, reaction:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c)}; logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
-function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c);
+function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
   let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
   exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
   logChange(c,'▶ Round '+b.round+' — turn reset'+(exp.length?'; expired: '+exp.map(e=>e.name).join(', '):'')); save(); render(); flashBanner('Round '+b.round); }
@@ -618,7 +632,7 @@ function battleCard(c){
     <div class="tiles" style="margin-top:8px">
       <div class="tile"><div class="lab">Initiative</div><div class="big">${b.init}</div></div>
       <div class="tile"><div class="lab">Attacks left</div><div class="big">${b.attacksLeft}/${atk}</div></div>
-      <div class="tile"><div class="lab">Move left</div><div class="big">${b.move}</div></div>
+      <div class="tile"><div class="lab">Move left${b.moveUsed?' · used '+b.moveUsed:''}</div><div class="big">${b.move}</div></div>
     </div>
     <div class="hp" style="margin-top:10px">
       <div class="tile" style="${c.hp.cur<=0?'box-shadow:inset 0 0 0 1px var(--bad)':''}"><div class="lab">HP${c.hp.cur<=0?' · DOWN':''}</div><div class="big" style="color:${c.hp.cur<=0?'var(--bad)':'var(--good)'}">${c.hp.cur}</div></div>
@@ -714,6 +728,7 @@ function attackFlow(c, atk){
     else { const r=rollNotation(notation)||{total:0,detail:''}; total=r.total; detail=r.detail; }
     st.dmgTotal=total; st.phase='done';
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg'});
+    if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total}); }catch(e){} }
     draw();
   }
   function draw(){
@@ -741,7 +756,7 @@ function attackFlow(c, atk){
     $('#afModal').onclick=e=>{ if(e.target.id==='afModal') close(); };
     $('#afClose').onclick=close;
     if(st.phase==='tohit'){ $('#afAuto').onclick=()=>rollToHit(null); $('#afUse').onclick=()=>{ const v=Number($('#afManual').value); if(v>=1&&v<=20) rollToHit(v); else flashBanner('Enter 1–20'); }; }
-    else if(st.phase==='hit'){ $('#afHit').onclick=()=>{ st.hit=true; st.phase='dmg'; draw(); }; $('#afMiss').onclick=()=>{ st.hit=false; st.phase='done'; logChange(c, atk.name+' — attack missed'); draw(); }; }
+    else if(st.phase==='hit'){ $('#afHit').onclick=()=>{ st.hit=true; st.phase='dmg'; draw(); }; $('#afMiss').onclick=()=>{ st.hit=false; st.phase='done'; logChange(c, atk.name+' — attack missed'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:false}); }catch(e){} } draw(); }; }
     else if(st.phase==='dmg'){ const t=$('#af2h'); if(t) t.onchange=()=>{ st.twoH=t.checked; draw(); }; $('#afDmgAuto').onclick=()=>rollDmg(null); $('#afDmgUse').onclick=()=>{ const el=$('#afDmgMan'); const v=Number(el.value); if(el.value!==''&&!isNaN(v)) rollDmg(v); }; }
     else { $('#afAgain').onclick=()=>{ st.phase='tohit'; st.d20=0; st.total=0; st.crit=false; st.hit=null; st.dmgTotal=null; st.twoH=false; draw(); }; }
   }
@@ -1713,6 +1728,8 @@ function fmtLogTime(t){ const d=new Date(t), now=new Date();
 
 function render(){
   renderHeader();
+  renderNetBar();
+  if(net && net.role==='dm'){ $('#tabs').style.display='none'; const fab0=$('#diceFab'); if(fab0) fab0.style.display='none'; renderDM(); return; }
   const c = cur();
   const inWiz = !!(wiz && c);
   $('#tabs').style.display = inWiz ? 'none' : '';
@@ -1761,6 +1778,10 @@ function renderWelcome(){
       <p>Create a character to track abilities, skills, hit points, spell slots, inventory and more. Everything is saved on this device and works offline.</p>
       <button class="btn block" id="welcomeNew" style="max-width:280px;margin:0 auto">Create a character</button>
       <button class="btn ghost block" id="welcomeRandom" style="max-width:280px;margin:10px auto 0">🎲 Surprise me — random hero</button>
+      <div class="row2" style="max-width:280px;margin:10px auto 0">
+        <button class="btn ghost" id="welcomeHost">🎲 Host (DM)</button>
+        <button class="btn ghost" id="welcomeJoin">🔗 Join game</button>
+      </div>
       <div class="emrow" style="justify-content:center;margin-top:26px;gap:10px">
         ${['Fighter','Wizard','Cleric','Rogue','Ranger'].map(cl=>`<span class="emblem">${pixelArt(CLASS_PIX[cl],6)}</span>`).join('')}
       </div>
@@ -2488,7 +2509,7 @@ function renderCombat(c){
     else if(k==='move10') b.move=Math.max(0,b.move-10);
     else if(k==='roundUp') b.round++;
     else if(k==='roundDown') b.round=Math.max(1,b.round-1);
-    else if(k==='dash'){ b.move+=effSpeed(c); b.action=true; logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
+    else if(k==='dash'){ if(b.action){ flashBanner('No action left to Dash this turn'); return; } b.move+=effSpeed(c); b.action=true; logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
     save(); render(); }));
   $('#addAtk').addEventListener('click',()=>{
     const name=$('#atk_name').value.trim(); if(!name) return;
@@ -2540,6 +2561,7 @@ function applyHp(c,delta){
     logChange(c,'Healed '+delta+' → '+c.hp.cur+' HP');
   }
   save(); render();
+  if(net&&net.role==='player') playerHello();   // keep DM's view of my HP live
 }
 
 /* ---------- SPELLS ---------- */
@@ -2974,6 +2996,10 @@ function openAppMenu(){
     <button class="btn block" id="mnNew" style="margin-bottom:10px">＋ New character</button>
     <button class="btn ghost block" id="mnRandom" style="margin-bottom:10px">🎲 Random hero</button>
     <div class="row2" style="margin-bottom:10px">
+      <button class="btn ghost" id="mnHost">🎲 Host (DM)</button>
+      <button class="btn ghost" id="mnJoin">🔗 Join game</button>
+    </div>
+    <div class="row2" style="margin-bottom:10px">
       <button class="btn ghost" id="mnLog">📜 Adventure log</button>
       <button class="btn ghost" id="mnSound">${soundOn?'🔊 Sound: on':'🔇 Sound: off'}</button>
     </div>
@@ -2992,6 +3018,8 @@ function openAppMenu(){
   $('#mnNew').onclick=()=>{ close(); createCharacterFlow(); };
   $('#mnRandom').onclick=()=>{ close(); openRandomBuilder(); };
   $('#mnLog').onclick=()=>{ close(); openLog(); };
+  $('#mnHost').onclick=()=>{ close(); dmHost(); };
+  $('#mnJoin').onclick=()=>{ close(); openJoin(); };
   $('#mnSound').onclick=()=>{ soundOn=!soundOn; localStorage.setItem('grimoire.sound', soundOn?'on':'off'); if(soundOn) sfx('success'); openAppMenu(); };
   $('#mnExport').onclick=exportData;
   $('#mnImport').onclick=()=>$('#mnImportFile').click();
@@ -3016,6 +3044,159 @@ function importData(e){
   r.readAsText(file);
 }
 
+/* ============ DM / MULTIPLAYER (WebRTC via PeerJS) ============ */
+let net=null;   // {role:'dm'|'player', ...}
+function loadPeer(cb){ if(window.Peer) return cb();
+  const s=document.createElement('script'); s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+  s.onload=()=>cb(); s.onerror=()=>flashBanner('No internet — multiplayer needs a connection'); document.head.appendChild(s); }
+function roomCode(){ const a='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<4;i++) s+=a[Math.floor(Math.random()*a.length)]; return s; }
+
+/* ---- DM host ---- */
+function dmHost(){
+  loadPeer(()=>{
+    const code=roomCode();
+    let peer; try{ peer=new Peer('grimoire-dm-'+code,{debug:1}); }catch(e){ flashBanner('Could not start host'); return; }
+    net={role:'dm', code, peer, conns:[], sel:null, session:{battle:{active:false,round:1}, map:{cols:10,rows:8}, monsters:[], players:[]}};
+    peer.on('open',()=>render());
+    peer.on('error',e=>flashBanner('Host error: '+(e.type||e.message||e)));
+    peer.on('connection',conn=>{
+      conn.on('open',()=>{ net.conns.push(conn); dmBroadcast(); render(); });
+      conn.on('data',d=>dmOnData(conn,d));
+      conn.on('close',()=>{ net.conns=net.conns.filter(x=>x!==conn); net.session.players=net.session.players.filter(p=>p.id!==conn.peer); dmBroadcast(); render(); });
+    });
+    tab='char'; render();
+  });
+}
+function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
+  if(d.t==='hello'||d.t==='charUpdate'){ let p=net.session.players.find(x=>x.id===conn.peer);
+    if(!p){ p={id:conn.peer,x:0,y:0}; net.session.players.push(p); }
+    Object.assign(p,{name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac});
+    dmBroadcast(); render();
+  } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && d.dmg){ mo.hp=Math.max(0,mo.hp-d.dmg); } net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg:d.dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+(d.dmg||0))); }
+  else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
+}
+function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
+function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
+function dmExit(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
+
+/* ---- Player join ---- */
+function openJoin(){
+  if(!DB.length){ flashBanner('Create a character first'); return; }
+  $('#modalRoot').innerHTML=`<div class="modal" id="joinModal"><div class="sheet"><div class="grip"></div>
+    <h2>🔗 Join a game</h2>
+    <div class="field"><label>Room code from your DM</label><input id="joinCode" placeholder="e.g. K7Q2" autocapitalize="characters" style="text-transform:uppercase"></div>
+    <div class="field"><label>Play as</label>${select('joinChar', DB.map(c=>c.name), (cur()||DB[0]).name)}</div>
+    <button class="btn block" id="joinGo" style="margin-top:8px">Join</button>
+    <button class="btn ghost block" id="joinClose" style="margin-top:10px">Cancel</button>
+  </div></div>`;
+  $('#joinClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#joinModal').onclick=e=>{ if(e.target.id==='joinModal') $('#modalRoot').innerHTML=''; };
+  $('#joinGo').onclick=()=>{ const code=($('#joinCode').value||'').trim().toUpperCase(); if(code.length<4){ flashBanner('Enter the 4-letter code'); return; }
+    const nm=$('#joinChar').value; const ch=DB.find(c=>c.name===nm)||DB[0]; $('#modalRoot').innerHTML=''; playerJoin(code, ch.id); };
+}
+function playerJoin(code, charId){
+  loadPeer(()=>{
+    let peer; try{ peer=new Peer('grimoire-pl-'+Math.random().toString(36).slice(2,8),{debug:1}); }catch(e){ flashBanner('Could not join'); return; }
+    net={role:'player', code, peer, conn:null, session:null, charId, targetMon:null};
+    peer.on('open',()=>{ const conn=peer.connect('grimoire-dm-'+code,{reliable:true}); net.conn=conn;
+      conn.on('open',()=>{ playerHello(); flashBanner('Joined game '+code); render(); });
+      conn.on('data',d=>playerOnData(d));
+      conn.on('close',()=>{ flashBanner('Disconnected from DM'); net=null; render(); });
+    });
+    peer.on('error',e=>{ flashBanner('Join failed: '+(e.type||e.message||e)); net=null; render(); });
+  });
+}
+function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
+function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c)}}); }catch(e){} }
+function playerOnData(d){ if(!d) return;
+  if(d.t==='session'){ net.session=d.session; const c=playerChar();
+    if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); } else if(!d.session.battle.active && c.battle){ c.battle=null; save(); } }
+    render();
+  } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
+}
+function playerLeave(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
+
+/* ---- shared map ---- */
+function mapGridHTML(s, isDM){ const {cols,rows}=s.map; let cells='';
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+    const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
+    let tok=''; if(mo) tok=`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`;
+    else if(pl) tok=`<span class="tok pl ${net&&net.sel==='p'+pl.id?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
+    cells+=`<div class="mcell ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
+  }
+  return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},34px)">${cells}</div></div>`;
+}
+
+/* ---- DM dashboard (full screen) ---- */
+function renderDM(){
+  const s=net.session; app.className='fade'; void app.offsetWidth;
+  app.innerHTML=`
+  <div class="card" style="border:2px solid var(--accent2)">
+    <div class="row between"><h2 style="margin:0;color:var(--accent2)">🎲 DM Mode</h2><button class="btn ghost sm" id="dmExit" style="color:var(--bad)">Exit</button></div>
+    <p class="muted" style="font-size:13px;margin:8px 0 0">Players tap "Join game" and enter:</p>
+    <div style="font-family:Georgia,serif;font-size:36px;font-weight:700;color:var(--accent);text-align:center;letter-spacing:8px;margin:6px 0">${net.peer&&!net.peer.disconnected?net.code:'connecting…'}</div>
+    <div class="muted" style="font-size:11.5px;text-align:center">${net.conns.length} player(s) connected</div>
+  </div>
+  <div class="card">
+    <div class="row between"><h2 style="margin:0">Battle</h2><div class="stepper"><button id="dmRD">−</button><div class="val">Round ${s.battle.round}</div><button id="dmRU">＋</button></div></div>
+    <button class="btn block" id="dmBattle" style="margin-top:10px;${s.battle.active?'background:var(--bad);border-color:var(--bad)':''}">${s.battle.active?'■ End battle (everyone)':'▶ Start battle (everyone)'}</button>
+  </div>
+  <div class="card">
+    <h2>Players ${s.players.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${s.players.length}</span>`:''}</h2>
+    ${s.players.length? s.players.map(p=>`<div class="spell"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
+  </div>
+  <div class="card">
+    <h2>Monsters</h2>
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell"><span class="tok mon" style="flex:none">${esc((mo.name[0]||'M').toUpperCase())}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}</small></div><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:48px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters.</div>'}
+    <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
+  </div>
+  <div class="card">
+    <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span></h2>
+    ${mapGridHTML(s,true)}
+    <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Tap a token chip, then tap a cell to place/move it.</p>
+    <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">${esc(p.name)}</button>`).join('')}</div>
+    <div class="addrow" style="margin-top:8px"><span class="muted" style="font-size:12px;flex:none">Grid</span><input id="mCols" type="number" value="${s.map.cols}" style="max-width:60px"><span class="muted">×</span><input id="mRows" type="number" value="${s.map.rows}" style="max-width:60px"><button class="btn ghost sm" id="mResize">Resize</button></div>
+  </div>`;
+  $('#dmExit').onclick=()=>{ if(confirm('Exit DM mode and disconnect players?')) dmExit(); };
+  $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
+  $('#dmRD').onclick=()=>{ s.battle.round=Math.max(1,s.battle.round-1); dmBroadcast(); render(); };
+  $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active) s.battle.round=1; dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
+  app.querySelectorAll('[data-pdmg]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pdmg, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:-Math.abs(amt)}); });
+  app.querySelectorAll('[data-pheal]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pheal, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:Math.abs(amt)}); });
+  app.querySelectorAll('[data-mdmg]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mdmg); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.max(0,mo.hp-Math.abs(amt)); dmBroadcast(); render(); } });
+  app.querySelectorAll('[data-mheal]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mheal); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.min(mo.max,mo.hp+Math.abs(amt)); dmBroadcast(); render(); } });
+  app.querySelectorAll('[data-mdel]').forEach(el=>el.onclick=()=>{ s.monsters=s.monsters.filter(m=>m.id!==el.dataset.mdel); dmBroadcast(); render(); });
+  $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0}); dmBroadcast(); render(); };
+  app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
+  app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
+    if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ mo.x=x; mo.y=y; } } else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ p.x=x; p.y=y; } }
+    net.sel=null; dmBroadcast(); render(); });
+  $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
+}
+
+/* ---- player session map (modal) ---- */
+function openSessionMap(){ if(!net||!net.session){ flashBanner('Not in a game'); return; } const s=net.session;
+  $('#modalRoot').innerHTML=`<div class="modal" id="smModal"><div class="sheet"><div class="grip"></div>
+    <h2>🗺 ${net.session.battle.active?'Battle — Round '+s.battle.round:'Map'}</h2>
+    ${mapGridHTML(s,false)}
+    <p class="muted" style="font-size:12px;margin:8px 0 4px">Tap a monster to attack it.</p>
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell"><span class="tok mon" style="flex:none">${esc((mo.name[0]||'M').toUpperCase())}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp>0?mo.hp+'/'+mo.max:'down'}</small></div><button class="btn sm" data-attackmon="${mo.id}">⚔ Attack</button></div>`).join('') : '<div class="empty">No monsters on the field.</div>'}
+    <button class="btn ghost block" id="smClose" style="margin-top:10px">Close</button>
+  </div></div>`;
+  $('#smClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#smModal').onclick=e=>{ if(e.target.id==='smModal') $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('[data-attackmon]').forEach(b=>b.onclick=()=>{ const mo=s.monsters.find(m=>m.id===b.dataset.attackmon); if(!mo) return;
+    net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){ try{ net.conn.send({t:'target',mon:mo.id}); }catch(e){} }
+    $('#modalRoot').innerHTML=''; const c=playerChar(); if(c) openAttack(c); flashBanner('Targeting '+mo.name+' (AC '+mo.ac+')'); });
+}
+function renderNetBar(){
+  let bar=document.getElementById('netbar');
+  if(net && net.role==='player'){ if(!bar){ bar=document.createElement('div'); bar.id='netbar'; bar.className='netbar'; document.body.insertBefore(bar, document.body.firstChild); }
+    bar.innerHTML=`<span>🔗 In game <span class="code">${esc(net.code)}</span>${net.session&&net.session.battle.active?' · ⚔ Battle R'+net.session.battle.round:''}</span><button id="nbMap">🗺 Map</button><button id="nbLeave">Leave</button>`;
+    bar.querySelector('#nbMap').onclick=openSessionMap; bar.querySelector('#nbLeave').onclick=()=>{ if(confirm('Leave the game?')) playerLeave(); };
+  } else if(bar){ bar.remove(); }
+}
+
 /* ---- wiring ---- */
 document.addEventListener('click',e=>{
   playClickSound(e.target);
@@ -3037,13 +3218,15 @@ document.addEventListener('click',e=>{
   if(t){ tab=t.dataset.tab; render(); }
   if(e.target.id==='welcomeNew'||e.target.id==='newChar') createCharacterFlow();
   if(e.target.id==='welcomeRandom') openRandomBuilder();
+  if(e.target.id==='welcomeHost') dmHost();
+  if(e.target.id==='welcomeJoin') openJoin();
   if(e.target.id==='appMenu') openAppMenu();
   if(e.target.id==='appSearch') openSearch();
 });
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v37';
+const APP_VERSION='v38';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
