@@ -3472,22 +3472,28 @@ const TERRAIN={
 };
 /* ---- preset battle maps ---- */
 const MAP_PRESETS=(()=>{ const P={};
+  const fill=(t,w,h,k)=>{ for(let y=0;y<h;y++)for(let x=0;x<w;x++) t[x+','+y]=k; };
   const box=(t,w,h)=>{ for(let x=0;x<w;x++){t[x+',0']='wall';t[x+','+(h-1)]='wall';} for(let y=0;y<h;y++){t['0,'+y]='wall';t[(w-1)+','+y]='wall';} };
-  (function field(){ const w=14,h=10,t={}; for(let y=0;y<h;y++)for(let x=0;x<w;x++) t[x+','+y]='grass';
-    for(let y=2;y<5;y++)for(let x=9;x<13;x++) t[x+','+y]='water'; for(let y=6;y<8;y++)for(let x=2;x<5;x++) t[x+','+y]='mud';
-    [[5,4],[6,4],[7,7],[11,7],[3,1]].forEach(([x,y])=>t[x+','+y]='wall'); P['Open Field']={cols:w,rows:h,tiles:t}; })();
-  (function dungeon(){ const w=14,h=11,t={}; box(t,w,h);
+  const rect=(t,x0,y0,x1,y1,k)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) t[x+','+y]=k; };
+  const put=(t,a,k)=>a.forEach(([x,y])=>t[x+','+y]=k);
+  (function field(){ const w=15,h=10,t={}; fill(t,w,h,'grass');
+    rect(t,10,1,13,4,'water'); rect(t,2,6,4,8,'mud'); rect(t,6,7,9,9,'sand');
+    put(t,[[5,3],[6,3],[5,4],[12,7],[13,7]],'brush'); put(t,[[8,2],[3,1],[11,8]],'wall'); P['Open Field']={cols:w,rows:h,tiles:t}; })();
+  (function dungeon(){ const w=15,h=11,t={}; fill(t,w,h,'stone'); box(t,w,h);
     for(let y=1;y<h-1;y++) if(y!==5) t['7,'+y]='wall'; for(let x=1;x<7;x++) if(x!==3) t[x+',5']='wall'; for(let x=7;x<w-1;x++) if(x!==10) t[x+',6']='wall';
-    [[2,2],[3,2],[10,2],[11,8]].forEach(([x,y])=>t[x+','+y]='wall'); P['Dungeon']={cols:w,rows:h,tiles:t}; })();
-  (function tavern(){ const w=13,h=10,t={}; box(t,w,h); delete t['6,'+(h-1)];
-    for(let x=1;x<5;x++) t[x+',2']='wall'; [[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]].forEach(([x,y])=>t[x+','+y]='wall'); t[(w-2)+',1']='lava'; P['Tavern']={cols:w,rows:h,tiles:t}; })();
-  (function castle(){ const w=14,h=12,t={}; box(t,w,h); delete t['6,'+(h-1)]; delete t['7,'+(h-1)];
-    for(let x=4;x<10;x++){ t[x+',3']='wall'; t[x+',8']='wall'; } for(let y=3;y<=8;y++){ t['4,'+y]='wall'; t['9,'+y]='wall'; } delete t['6,8']; delete t['7,8'];
-    [[2,2],[11,2],[2,9],[11,9]].forEach(([x,y])=>t[x+','+y]='wall'); P['Castle']={cols:w,rows:h,tiles:t}; })();
-  (function cave(){ const w=14,h=11,t={}; box(t,w,h);
-    [[3,3],[4,3],[8,2],[10,5],[5,7],[6,8],[11,8],[2,6],[7,4]].forEach(([x,y])=>t[x+','+y]='wall');
-    for(let y=7;y<10;y++)for(let x=2;x<5;x++) t[x+','+y]='water'; [[10,2],[11,2],[10,3]].forEach(([x,y])=>t[x+','+y]='lava'); P['Cave']={cols:w,rows:h,tiles:t}; })();
-  (function chasm(){ const w=14,h=10,t={}; for(let x=0;x<w;x++){ t[x+',4']='void'; t[x+',5']='void'; } [6,7].forEach(x=>{ delete t[x+',4']; delete t[x+',5']; }); P['Chasm Bridge']={cols:w,rows:h,tiles:t}; })();
+    put(t,[[2,2],[3,2]],'rubble'); rect(t,11,2,12,3,'fog'); put(t,[[4,8],[5,8]],'acid'); put(t,[[10,2]],'brush'); P['Dungeon']={cols:w,rows:h,tiles:t}; })();
+  (function tavern(){ const w=13,h=10,t={}; fill(t,w,h,'wood'); box(t,w,h); delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood';
+    for(let x=1;x<5;x++) t[x+',2']='wall'; put(t,[[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]],'wall'); t[(w-2)+',1']='lava'; put(t,[[1,8],[11,8]],'brush'); P['Tavern']={cols:w,rows:h,tiles:t}; })();
+  (function castle(){ const w=15,h=12,t={}; fill(t,w,h,'stone'); box(t,w,h); t['6,'+(h-1)]='stone'; t['7,'+(h-1)]='stone';
+    for(let x=5;x<10;x++){ t[x+',3']='wall'; t[x+',8']='wall'; } for(let y=3;y<=8;y++){ t['5,'+y]='wall'; t['9,'+y]='wall'; } delete t['7,8']; t['7,8']='stone';
+    rect(t,1,1,1,h-2,'water'); rect(t,w-2,1,w-2,h-2,'water'); put(t,[[2,2],[12,2],[2,9],[12,9]],'wall'); P['Castle']={cols:w,rows:h,tiles:t}; })();
+  (function cave(){ const w=15,h=11,t={}; fill(t,w,h,'stone'); box(t,w,h);
+    put(t,[[3,3],[4,3],[8,2],[10,5],[5,7],[6,8],[12,8],[2,6],[7,4],[11,3]],'wall'); put(t,[[3,4],[9,6],[6,2]],'rubble');
+    rect(t,2,8,4,9,'water'); put(t,[[11,2],[12,2],[11,3]],'lava'); put(t,[[7,7],[8,8]],'brush'); rect(t,9,8,10,9,'fog'); P['Cave']={cols:w,rows:h,tiles:t}; })();
+  (function chasm(){ const w=15,h=10,t={}; fill(t,w,h,'grass'); for(let x=0;x<w;x++){ t[x+',4']='void'; t[x+',5']='void'; } [7,8].forEach(x=>{ t[x+',4']='wood'; t[x+',5']='wood'; }); put(t,[[2,2],[12,7]],'brush'); rect(t,1,7,2,8,'mud'); P['Chasm Bridge']={cols:w,rows:h,tiles:t}; })();
+  (function swamp(){ const w=15,h=11,t={}; fill(t,w,h,'mud'); rect(t,2,2,5,4,'water'); rect(t,9,5,12,8,'water'); rect(t,6,8,8,9,'acid');
+    put(t,[[1,6],[4,7],[7,2],[10,2],[13,4],[12,9],[3,9],[8,5]],'brush'); rect(t,5,5,6,6,'fog'); P['Swamp']={cols:w,rows:h,tiles:t}; })();
+  (function frozen(){ const w=15,h=10,t={}; fill(t,w,h,'snow'); rect(t,5,3,9,6,'ice'); put(t,[[2,2],[12,2],[3,7],[11,7],[7,1],[7,8]],'wall'); put(t,[[1,5],[13,5]],'brush'); P['Frozen Lake']={cols:w,rows:h,tiles:t}; })();
   return P; })();
 function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
 function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{})}; dmBroadcast(); render(); }
@@ -3746,7 +3752,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v61';
+const APP_VERSION='v62';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
