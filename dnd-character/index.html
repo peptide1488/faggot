@@ -780,6 +780,7 @@ function attackFlow(c, atk){
   const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
+    if(c.battle && !atk.spell && (c.battle.attacksLeft||0)<=0){ flashBanner('No attacks left this turn'); return; }
     const d20=face!=null?face:rnd(20); sfx('swing');
     st.d20=d20; st.crit=(d20===20); st.total=d20+toHit;
     pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
@@ -823,8 +824,9 @@ function attackFlow(c, atk){
         <button class="btn block" id="afDmgAuto">🎲 Roll damage</button>
         <div class="addrow" style="margin-top:8px"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn ghost" id="afDmgUse">Use</button></div>`;
     } else {
+      const canAgain = !atk.spell && (!c.battle || (c.battle.attacksLeft||0)>0);
       body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div class="muted">${st.hit?(st.crit?'💥 Critical hit!':'Hit!'):'Miss'+(st.targetAC?' (rolled '+st.total+' vs AC '+st.targetAC+')':'')}</div>${st.hit?`<div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--bad)">${st.dmgTotal}</div><div class="muted">${esc(atk.dt||'')} damage</div>`:''}</div>
-        <button class="btn block" id="afAgain">⚔ Attack again</button>`;
+        ${canAgain?`<button class="btn block" id="afAgain">⚔ Attack again${c.battle?' ('+(c.battle.attacksLeft||0)+' left)':''}</button>`:`<div class="muted" style="text-align:center;font-size:12px">${c.battle?'No attacks left — close & end turn':''}</div>`}`;
     }
     body+=`<button class="btn ghost block" id="afClose" style="margin-top:10px">Close</button>`;
     $('#modalRoot').innerHTML=`<div class="modal" id="afModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
@@ -3537,7 +3539,7 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span></h2>
-    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?{reachCost:reachableCells(s,mo.x,mo.y,mo.moveLeft||0)}:{}; })():{})}
+    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0); return {reachCost:reachableCells(s,mo.x,mo.y,dashMax), reachNormal:(mo.moveLeft||0)}; })():{})}
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
@@ -3578,7 +3580,10 @@ function renderDM(){
     if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){
       if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; }
         if(s.monsters.some(m=>m.hp>0&&m.id!==mo.id&&m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)){ flashBanner('That tile is occupied'); return; }
-        const rc=reachableCells(s,mo.x,mo.y,mo.moveLeft||0), cost=rc[x+','+y]; if(cost==null){ flashBanner(mo.name+' can’t reach there (walls or too far)'); return; } mo.moveLeft=(mo.moveLeft||0)-cost; }
+        const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0);
+        const cost=reachableCells(s,mo.x,mo.y,dashMax)[x+','+y]; if(cost==null){ flashBanner(mo.name+' can’t reach there (walls or too far)'); return; }
+        if(cost>(mo.moveLeft||0)){ if(!dashAvail){ flashBanner(mo.name+' too far — needs its action to Dash'); return; } mo.moveLeft=(mo.moveLeft||0)+(mo.speed||30); mo.attacksLeft=0; flashBanner('🏃 '+mo.name+' Dashes (action used)'); }
+        mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
       if(s.battle.active){ if(ter==='void'){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(ter==='lava'){ mo.hp=Math.max(0,mo.hp-lavaDmg()); flashBanner('🔥 '+mo.name+' burns in lava'); } }
     } }
@@ -3721,7 +3726,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v59';
+const APP_VERSION='v60';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
