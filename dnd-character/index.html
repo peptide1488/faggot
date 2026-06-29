@@ -2402,7 +2402,7 @@ function renderCombat(c){
   </div>
 
   <div class="card">
-    <h2>Attacks & Weapons <button class="btn sm" id="attackBtn" style="float:right">⚔ Attack</button></h2>
+    <h2>Attacks & Weapons</h2>
     <div id="attackList">
       ${weaponItems(c).map(({it,i})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:'',cat:''}; const ab=weaponAbil(c,w), prof=weaponProficient(c,w), th=weaponToHit(c,w); const db=weaponDmgBonus(c,w), dn=w.dmg+(db?sgn(db):'');
         return `<div class="spell">
@@ -3025,7 +3025,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v35';
+const APP_VERSION='v36';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
