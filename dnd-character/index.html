@@ -730,15 +730,49 @@ function openQuickSpells(c){
   </div></div>`;
   const draw=()=>{ const q=($('#qsSearch').value||'').toLowerCase(); const f=list.filter(s=>s.name.toLowerCase().includes(q));
     $('#qsList').innerHTML = f.length? f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${s.prepared?' · prepared':''}${isConcentration(s.name)?' · 🧠 conc':''}</small></div><button class="btn sm" data-qcast="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join('') : '<div class="empty">No spells. Add them on the Spells tab.</div>';
-    $('#qsList').querySelectorAll('[data-qcast]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.qcast.split('|'); castModal(c, a[0], Number(a[1])); })); };
+    $('#qsList').querySelectorAll('[data-qcast]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.qcast.split('|'); const inBattle=net&&net.session&&net.session.battle.active; if(inBattle) openSpellTarget(c, a[0], Number(a[1])); else castModal(c, a[0], Number(a[1])); })); };
   $('#qsSearch').addEventListener('input',draw);
   $('#qsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#qsModal').onclick=e=>{ if(e.target.id==='qsModal') $('#modalRoot').innerHTML=''; };
   draw();
 }
+function openSpellTarget(c, name, level){
+  level=Number(level)||0;
+  const mc=parseSpellMechanics(name);
+  if(mc.buff && !mc.dmg && !mc.heal && !mc.attack && !mc.save){ castModal(c,name,level); return; }   // self/ally buff
+  if(!canCast(c,level)) return;
+  const s=net.session, me=myMapPos(), tilesR=spellRangeTiles(name);
+  const seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
+  const reach = seek ? reachableCells(s, me.x, me.y, tilesR*5) : null;
+  const inRange=(x,y)=> seek ? reach[x+','+y]!=null : (gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
+  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && Math.max(Math.abs(mo.x-ctr.x),Math.abs(mo.y-ctr.y))<=aoeR);
+  function resolveSingle(mo){ if(!castSpell(c,name,level)) return; net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){try{net.conn.send({t:'target',mon:mo.id});}catch(e){}}
+    if(mc.attack) attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'1d6',dt:mc.dtype||''});
+    else if(mc.save) attackFlow(c,{name,spell:true,save:{ab:mc.save},dmg:mc.dmg||'1d6',dt:mc.dtype||''});
+    else { const r=rollNotation(mc.dmg||'1d4')||{total:0,detail:''}; sfx('damage'); attackFx('hit'); pushRoll({label:name+' damage',total:r.total,detail:r.detail,kind:'dmg'}); if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total});}catch(e){}} flashBanner(name+' hits '+mo.name+' for '+r.total); } }
+  function resolveBlast(ctr){ const aff=blastTargets(ctr); if(!castSpell(c,name,level)) return; const r=rollNotation(mc.dmg||'1d6')||{total:0,detail:''}; sfx('damage'); attackFx('crit'); pushRoll({label:name+' (blast)',total:r.total,detail:r.detail,kind:'dmg'}); aff.forEach(mo=>{ if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total});}catch(e){}} }); flashBanner(name+' blasts '+aff.length+' for '+r.total+(mc.save?' (saves halve — DM adjusts)':'')); }
+  function draw(){
+    let body=`<h2>✨ ${esc(name)}</h2>`;
+    body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks (ignores walls)':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}${mc.save?' · '+String(mc.save).toUpperCase()+' save':''}</p>`;
+    const opts = (aoeR&&center)?{rangeFrom:{x:me.x,y:me.y,tiles:tilesR},blast:{x:center.x,y:center.y,r:aoeR}} : (seek?{reachCost:reach}:{rangeFrom:{x:me.x,y:me.y,tiles:tilesR}});
+    body+=mapGridHTML(s,false,opts);
+    body+=`<p class="muted" style="font-size:11.5px;margin:8px 0 0">${aoeR?'Tap a glowing tile to center the blast.':'Tap a monster in range to target it.'}</p>`;
+    if(aoeR&&center){ body+=`<button class="btn block" id="stCast" style="margin-top:8px">⚡ Cast — ${blastTargets(center).length} in blast</button>`; }
+    body+=`<button class="btn ghost block" id="stClose" style="margin-top:10px">Cancel</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="stModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    $('#stClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    $('#stModal').onclick=e=>{ if(e.target.id==='stModal') $('#modalRoot').innerHTML=''; };
+    document.querySelectorAll('#stModal [data-cell]').forEach(el=>el.onclick=()=>{ const [x,y]=el.dataset.cell.split(',').map(Number);
+      if(!inRange(x,y)){ flashBanner(seek?'No path within range':'Out of range / no line of sight'); return; }
+      if(aoeR){ center={x,y}; draw(); return; }
+      const mo=s.monsters.find(m=>m.hp>0&&m.x===x&&m.y===y); if(!mo){ flashBanner('Tap a monster'); return; } $('#modalRoot').innerHTML=''; resolveSingle(mo); });
+    { const sc=$('#stCast'); if(sc) sc.onclick=()=>{ $('#modalRoot').innerHTML=''; resolveBlast(center); }; }
+  }
+  draw();
+}
 function critNotation(n){ const p=parseDice(n); let s=p.terms.map(t=>(t.n*2)+'d'+t.sides).join('+'); if(p.flat) s+=(p.flat>0?'+':'')+p.flat; return s||n; }
 function attackFlow(c, atk){
-  if(c.battle && (c.battle.attacksLeft||0)<=0){ flashBanner('No attacks left this turn — end your turn to reset'); return; }
+  if(c.battle && !atk.spell && (c.battle.attacksLeft||0)<=0){ flashBanner('No attacks left this turn — end your turn to reset'); return; }
   const toHit=Number(atk.toHit)||0;
   const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
   const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
@@ -747,7 +781,7 @@ function attackFlow(c, atk){
     const d20=face!=null?face:rnd(20); sfx('swing');
     st.d20=d20; st.crit=(d20===20); st.total=d20+toHit;
     pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
-    if(c.battle){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); c.battle.action=true; save(); }
+    if(c.battle && !atk.spell){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); c.battle.action=true; save(); }
     const ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null;
     if(ac!=null){   // known target AC → auto-resolve, no Hit/Miss prompt
       const hit = d20===20 || (d20!==1 && st.total>=ac);
@@ -1196,22 +1230,29 @@ function advanceRound(c){
   save(); render();
   flashBanner(expired.length?('Round advanced — expired: '+expired.map(e=>e.name).join(', ')):'Round advanced');
 }
+function canCast(c, level){
+  if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
+  if(c.battle && c.battle.action){ flashBanner('You’ve already used your action this turn'); return false; }
+  if(level>0){ const tot=spellSlots(c)[level]||0, used=Math.min(tot,(c.slots[level]&&c.slots[level].used)||0); if(tot-used<=0){ flashBanner('No level '+level+' spell slots left'); return false; } }
+  return true;
+}
 function castSpell(c, name, level){
-  if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return; }
   level=Number(level)||0;
-  // spend a slot of that level if you have one available (cantrips are free)
-  if(level>0){ const total=spellSlots(c)[level]||0; if(total){ if(!c.slots[level]) c.slots[level]={total:0,used:0};
-      const used=Math.min(total,c.slots[level].used||0);
-      if(used<total){ c.slots[level].used=used+1; } else { flashBanner('No level '+level+' slots left — cast anyway'); }
-  } }
-  const tmpl=SPELL_EFFECTS[name];
-  sfx('cast'); castFx(name);
-  if(c.battle) c.battle.action=true;
+  if(!canCast(c,level)) return false;
+  if(level>0){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
+  if(c.battle) c.battle.action=true;   // casting a spell uses your action
+  const tmpl=SPELL_EFFECTS[name]; sfx('cast'); castFx(name);
   if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')); }
   else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')); }
+  return true;
 }
 // Heuristically read mechanics out of a spell's one-line summary (attack? save? damage/heal dice?).
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
+// AoE spells: burst radius in tiles (5ft each). Cones/lines approximated as bursts.
+const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':2,'Burning Hands':3,'Cone of Cold':12,'Lightning Bolt':12,'Sleep':2,'Stinking Cloud':4,'Hypnotic Pattern':6,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':4,'Faerie Fire':4,'Spike Growth':4,'Moonbeam':1,'Entangle':4,'Grease':2};
+// "Seeking" spells: auto-hit, no line of sight needed, range follows a path (curves around walls).
+const SPELL_SEEK=new Set(['magic missile']);
+function spellSeeks(name){ const n=(name||'').toLowerCase(); if(SPELL_SEEK.has(n)) return true; const mc=parseSpellMechanics(name); return !mc.attack && !mc.save && !!mc.dmg && !SPELL_AOE[name]; }
 function parseSpellMechanics(name){
   const eff=SPELL_EFFECTS[name], d=SPELL_DESC[name]||'';
   const out={attack:false, save:null, dmg:null, dtype:'', heal:null, buff:!!eff,
@@ -3238,12 +3279,8 @@ function playerAttackMenu(c){
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const b=weaponDmgBonus(c,w);
     actions.push({label:it.name, sub:(w.type==='ranged'?'ranged':/reach/.test(w.props||'')?'reach':'melee')+' · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
       atk:{name:it.name, toHit:weaponToHit(c,w), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}}); });
-  // damaging cantrips (attack-roll or save) — none while raging
-  (isRaging(c)?[]:c.spells.filter(s=>(s.level||0)===0)).forEach(s=>{ const mc=parseSpellMechanics(s.name); if(!mc.dmg&&!mc.heal) return;
-    const sb=profBonus(c)+mod(abil(c,c.spellAbility));
-    actions.push({label:s.name, sub:'cantrip · '+(mc.dmg||mc.heal||'')+' '+(mc.dtype||''), tiles:spellRangeTiles(s.name),
-      atk:{name:s.name, toHit:mc.attack?sb:null, save:mc.save?{ab:mc.save}:null, dmg:mc.dmg||mc.heal||'1d6', dt:mc.dtype||''}}); });
-  if(!actions.length){ flashBanner('No weapons or attack cantrips'); return; }
+  // (spells & cantrips are cast via the ✨ Spells button → map targeting)
+  if(!actions.length){ flashBanner('No weapons — use ✨ Spells to cast'); return; }
   let pick=null;
   function draw(){
     let body=`<h2>⚔ Attack</h2>`;
@@ -3427,6 +3464,8 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
     if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=' reach'; }
+    if(opts.rangeFrom && ter!=='wall'){ const rf=opts.rangeFrom, d=Math.max(Math.abs(rf.x-x),Math.abs(rf.y-y)); if(d>0 && d<=rf.tiles && losClear(s,rf.x,rf.y,x,y)) extra+=' reach'; }
+    if(opts.blast){ const bl=opts.blast, d=Math.max(Math.abs(bl.x-x),Math.abs(bl.y-y)); if(d<=bl.r) extra+=' intarget'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
     cells+=`<div class="mcell${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}</div>`;
@@ -3508,7 +3547,9 @@ function renderDM(){
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
     const ter=terrainAt(s,x,y);
     if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){
-      if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; } const rc=reachableCells(s,mo.x,mo.y,mo.moveLeft||0), cost=rc[x+','+y]; if(cost==null){ flashBanner(mo.name+' can’t reach there (walls or too far)'); return; } mo.moveLeft=(mo.moveLeft||0)-cost; }
+      if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; }
+        if(s.monsters.some(m=>m.hp>0&&m.id!==mo.id&&m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)){ flashBanner('That tile is occupied'); return; }
+        const rc=reachableCells(s,mo.x,mo.y,mo.moveLeft||0), cost=rc[x+','+y]; if(cost==null){ flashBanner(mo.name+' can’t reach there (walls or too far)'); return; } mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
       if(s.battle.active){ if(ter==='void'){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(ter==='lava'){ mo.hp=Math.max(0,mo.hp-lavaDmg()); flashBanner('🔥 '+mo.name+' burns in lava'); } }
     } }
@@ -3649,7 +3690,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v56';
+const APP_VERSION='v57';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
