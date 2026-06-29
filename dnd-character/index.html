@@ -3441,6 +3441,27 @@ const TERRAIN={
   water:{name:'Water',  c:'#3a6ea5', e:''},
   void: {name:'Void',   c:'#15110b', e:''}
 };
+/* ---- preset battle maps ---- */
+const MAP_PRESETS=(()=>{ const P={};
+  const box=(t,w,h)=>{ for(let x=0;x<w;x++){t[x+',0']='wall';t[x+','+(h-1)]='wall';} for(let y=0;y<h;y++){t['0,'+y]='wall';t[(w-1)+','+y]='wall';} };
+  (function field(){ const w=14,h=10,t={}; for(let y=0;y<h;y++)for(let x=0;x<w;x++) t[x+','+y]='grass';
+    for(let y=2;y<5;y++)for(let x=9;x<13;x++) t[x+','+y]='water'; for(let y=6;y<8;y++)for(let x=2;x<5;x++) t[x+','+y]='mud';
+    [[5,4],[6,4],[7,7],[11,7],[3,1]].forEach(([x,y])=>t[x+','+y]='wall'); P['Open Field']={cols:w,rows:h,tiles:t}; })();
+  (function dungeon(){ const w=14,h=11,t={}; box(t,w,h);
+    for(let y=1;y<h-1;y++) if(y!==5) t['7,'+y]='wall'; for(let x=1;x<7;x++) if(x!==3) t[x+',5']='wall'; for(let x=7;x<w-1;x++) if(x!==10) t[x+',6']='wall';
+    [[2,2],[3,2],[10,2],[11,8]].forEach(([x,y])=>t[x+','+y]='wall'); P['Dungeon']={cols:w,rows:h,tiles:t}; })();
+  (function tavern(){ const w=13,h=10,t={}; box(t,w,h); delete t['6,'+(h-1)];
+    for(let x=1;x<5;x++) t[x+',2']='wall'; [[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]].forEach(([x,y])=>t[x+','+y]='wall'); t[(w-2)+',1']='lava'; P['Tavern']={cols:w,rows:h,tiles:t}; })();
+  (function castle(){ const w=14,h=12,t={}; box(t,w,h); delete t['6,'+(h-1)]; delete t['7,'+(h-1)];
+    for(let x=4;x<10;x++){ t[x+',3']='wall'; t[x+',8']='wall'; } for(let y=3;y<=8;y++){ t['4,'+y]='wall'; t['9,'+y]='wall'; } delete t['6,8']; delete t['7,8'];
+    [[2,2],[11,2],[2,9],[11,9]].forEach(([x,y])=>t[x+','+y]='wall'); P['Castle']={cols:w,rows:h,tiles:t}; })();
+  (function cave(){ const w=14,h=11,t={}; box(t,w,h);
+    [[3,3],[4,3],[8,2],[10,5],[5,7],[6,8],[11,8],[2,6],[7,4]].forEach(([x,y])=>t[x+','+y]='wall');
+    for(let y=7;y<10;y++)for(let x=2;x<5;x++) t[x+','+y]='water'; [[10,2],[11,2],[10,3]].forEach(([x,y])=>t[x+','+y]='lava'); P['Cave']={cols:w,rows:h,tiles:t}; })();
+  (function chasm(){ const w=14,h=10,t={}; for(let x=0;x<w;x++){ t[x+',4']='void'; t[x+',5']='void'; } [6,7].forEach(x=>{ delete t[x+',4']; delete t[x+',5']; }); P['Chasm Bridge']={cols:w,rows:h,tiles:t}; })();
+  return P; })();
+function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
+function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{})}; dmBroadcast(); render(); }
 function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
   const at=(x,y)=>tiles[x+','+y];
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
@@ -3514,6 +3535,7 @@ function renderDM(){
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
     <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">🟥 ${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">🟩 ${esc(p.name)}</button>`).join('')}</div>
+    <div class="addrow" style="margin-top:8px"><select id="mPreset" style="flex:2"><option value="">— load a map —</option><optgroup label="Presets">${Object.keys(MAP_PRESETS).map(k=>`<option value="p:${esc(k)}">${esc(k)}</option>`).join('')}</optgroup>${Object.keys(savedMaps()).length?`<optgroup label="Saved">${Object.keys(savedMaps()).map(n=>`<option value="s:${esc(n)}">💾 ${esc(n)}</option>`).join('')}</optgroup>`:''}</select><button class="btn sm" id="mLoad">Load</button><button class="btn ghost sm" id="mSave">💾 Save</button></div>
     <button class="btn ghost sm block" id="mClear" style="margin-top:8px">Clear all terrain</button>
     <div class="addrow" style="margin-top:8px"><span class="muted" style="font-size:12px;flex:none">Grid</span><input id="mCols" type="number" value="${s.map.cols}" style="max-width:60px"><span class="muted">×</span><input id="mRows" type="number" value="${s.map.rows}" style="max-width:60px"><button class="btn ghost sm" id="mResize">Resize</button></div>
   </div>
@@ -3557,6 +3579,8 @@ function renderDM(){
       if(s.battle.active){ if(ter==='void'){ dmSend(p.id,{t:'apply',delta:-9999}); flashBanner(p.name+' pushed into the void! 💀'); } else if(ter==='lava'){ dmSend(p.id,{t:'apply',delta:-lavaDmg()}); flashBanner(p.name+' pushed into lava! 🔥'); } } } }
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain?')){ s.map.tiles={}; dmBroadcast(); render(); } }; }
+  { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
+  { const ms=$('#mSave'); if(ms) ms.onclick=()=>{ const nm=prompt('Save current map as:'); if(!nm) return; const all=savedMaps(); all[nm]={cols:s.map.cols,rows:s.map.rows,tiles:Object.assign({},s.map.tiles||{})}; try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(e){} flashBanner('Map saved: '+nm); render(); }; }
   $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
 }
 function deployMonster(m){ if(!net||net.role!=='dm') return;
@@ -3690,7 +3714,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v57';
+const APP_VERSION='v58';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
