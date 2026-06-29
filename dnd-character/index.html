@@ -3100,8 +3100,8 @@ function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.pla
 function rollInitiative(){ const s=net.session; const o=[];
   s.players.forEach(p=>o.push({k:'p',id:p.id,name:p.name,roll:rnd(20)+(p.init||0)}));
   s.monsters.forEach(m=>o.push({k:'m',id:m.id,name:m.name,roll:rnd(20)+(m.init||0)}));
-  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>m.attacksLeft=m.attacks||1); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
-function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo) mo.attacksLeft=mo.attacks||1; } }
+  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>{ m.attacksLeft=m.attacks||1; m.moveLeft=m.speed||30; }); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
+function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo){ mo.attacksLeft=mo.attacks||1; mo.moveLeft=mo.speed||30; } } }
 function orderDead(o){ if(o.k!=='m') return false; const mo=net.session.monsters.find(m=>m.id===o.id); return mo&&mo.hp<=0; }
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; dmBroadcast(); render(); return; }
   let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
@@ -3160,6 +3160,8 @@ function playerOnData(d){ if(!d) return;
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
 }
 function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by)); }
+function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
+function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
 function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
 function spellRangeTiles(name){ const mc=parseSpellMechanics(name); if((mc.range||'')==='Touch') return 1; const m=String(mc.range||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; }
 function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
@@ -3248,11 +3250,16 @@ function renderPlayerBattle(c){
     const [x,y]=el.dataset.cell.split(',').map(Number);
     if(s.monsters.some(m=>m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;
     if(!net.moveMode){ flashBanner('Tap 🥾 Move first'); return; }
-    const cost=gridDist(me.x,me.y,x,y)*5;
-    if(cost>(b.move||0)){ flashBanner('Too far — '+cost+' ft (you have '+(b.move||0)+' ft left)'); return; }
+    const ter=terrainAt(s,x,y);
+    if(ter==='wall'){ flashBanner('A wall blocks the way'); return; }
+    if(ter==='void'){ flashBanner('You won’t step into the void'); return; }
+    const mult=(ter==='mud')?2:1, cost=gridDist(me.x,me.y,x,y)*5*mult;
+    if(cost>(b.move||0)){ flashBanner('Too far — '+cost+' ft'+(mult>1?' (mud, ×2)':'')+' (you have '+(b.move||0)+' ft left)'); return; }
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; me.x=x; me.y=y; save();
     if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
-    net.moveMode=false;   // one move per tap; press Move again to keep going with what's left
+    net.moveMode=false;
+    if(ter==='lava'){ const d=lavaDmg(); applyHp(c,-d); flashBanner('🔥 Lava! '+d+' damage'); }
+    else if(ter==='mud') flashBanner('Mud — difficult terrain (½ speed)');
     render();
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ b[el.dataset.pbt]=!b[el.dataset.pbt]; save(); render(); });
@@ -3351,7 +3358,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     else if(pl) tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id)?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
-    if(opts.reach && !mo && !pl){ const dd=Math.max(Math.abs(opts.reach.x-x),Math.abs(opts.reach.y-y)); if(dd>0 && dd<=opts.reach.tiles) extra+=' reach'; }
+    if(opts.reach && !mo && !pl && ter!=='wall' && ter!=='void'){ const dd=Math.max(Math.abs(opts.reach.x-x),Math.abs(opts.reach.y-y)); if(dd>0 && dd<=opts.reach.tiles) extra+=' reach'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
     cells+=`<div class="mcell${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}</div>`;
@@ -3395,7 +3402,8 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span></h2>
-    ${mapGridHTML(s,true)}
+    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?{reach:{x:mo.x,y:mo.y,tiles:Math.floor((mo.moveLeft||0)/5)}}:{}; })():{})}
+    ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
     <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">🟥 ${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">🟩 ${esc(p.name)}</button>`).join('')}</div>
@@ -3422,14 +3430,21 @@ function renderDM(){
   app.querySelectorAll('[data-mdmg]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mdmg); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.max(0,mo.hp-Math.abs(amt)); dmBroadcast(); render(); } });
   app.querySelectorAll('[data-mheal]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mheal); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.min(mo.max,mo.hp+Math.abs(amt)); dmBroadcast(); render(); } });
   app.querySelectorAll('[data-mdel]').forEach(el=>el.onclick=()=>{ s.monsters=s.monsters.filter(m=>m.id!==el.dataset.mdel); dmBroadcast(); render(); });
-  $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0}); dmBroadcast(); render(); };
+  $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0,attacks:1,attacksLeft:1,speed:30,moveLeft:30}); dmBroadcast(); render(); };
   { const bb=$('#bestiaryBtn'); if(bb) bb.onclick=openBestiary; }
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
-    if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ mo.x=x; mo.y=y; mo.placed=true; } } else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ p.x=x; p.y=y; p.placed=true; } }
+    const ter=terrainAt(s,x,y);
+    if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){
+      if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; } const mult=(ter==='mud')?2:1, cost=gridDist(mo.x,mo.y,x,y)*5*mult; if(cost>(mo.moveLeft||0)){ flashBanner(mo.name+' too far — '+cost+' ft ('+(mo.moveLeft||0)+' left)'); return; } mo.moveLeft=(mo.moveLeft||0)-cost; }
+      mo.x=x; mo.y=y; mo.placed=true;
+      if(s.battle.active){ if(ter==='void'){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(ter==='lava'){ mo.hp=Math.max(0,mo.hp-lavaDmg()); flashBanner('🔥 '+mo.name+' burns in lava'); } }
+    } }
+    else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && ter==='wall'){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
+      if(s.battle.active){ if(ter==='void'){ dmSend(p.id,{t:'apply',delta:-9999}); flashBanner(p.name+' pushed into the void! 💀'); } else if(ter==='lava'){ dmSend(p.id,{t:'apply',delta:-lavaDmg()}); flashBanner(p.name+' pushed into lava! 🔥'); } } } }
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain?')){ s.map.tiles={}; dmBroadcast(); render(); } }; }
   $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
@@ -3438,7 +3453,8 @@ function deployMonster(m){ if(!net||net.role!=='dm') return;
   const same=net.session.monsters.filter(x=>x.base===m.n);
   if(same.length===1){ same[0].name=same[0].base+' 1'; same[0].num=1; }   // retro-number the first when a second appears
   const idx=net.session.monsters.length, cols=net.session.map.cols||10;
-  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:idx%cols, y:Math.floor(idx/cols), sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1});
+  const spd=(typeof m.spd==='number')?m.spd:(String(m.spd||'').match(/(\d+)/)?Number(String(m.spd).match(/(\d+)/)[1]):30);
+  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:idx%cols, y:Math.floor(idx/cols), sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1, speed:spd, moveLeft:spd});
   dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
@@ -3558,7 +3574,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v49';
+const APP_VERSION='v50';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
