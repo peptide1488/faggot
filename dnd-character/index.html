@@ -313,6 +313,9 @@
   .hpbar.crit i{background:linear-gradient(#f06a4a,#9c2f1c)}
   .mnum{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 2px;border-radius:7px;background:#1a1410;color:#f6efda;font-size:9px;font-weight:700;line-height:14px;text-align:center;box-shadow:0 0 0 1.5px rgba(255,255,255,.5)}
   .condmark{position:absolute;top:-4px;left:-4px;font-size:11px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
+  .mfx-proj{position:absolute;z-index:6;pointer-events:none;font-size:17px;transform:translate(-50%,-50%) rotate(var(--rot,0deg));transition:left .4s linear,top .4s linear;filter:drop-shadow(0 0 3px rgba(255,220,120,.9))}
+  .mfx-burst{position:absolute;z-index:6;pointer-events:none;transform:translate(-50%,-50%) scale(.2);border-radius:50%;background:radial-gradient(circle,rgba(255,220,120,.9),rgba(220,80,30,.55) 55%,transparent 72%);animation:mburst .65s ease-out forwards}
+  @keyframes mburst{to{transform:translate(-50%,-50%) scale(1);opacity:0}}
 
   /* cast spell animation overlay */
   .castfx{position:fixed;inset:0;z-index:60;pointer-events:none;display:grid;place-items:center}
@@ -760,13 +763,17 @@ function openSpellTarget(c, name, level){
   const inRange=(x,y)=> seek ? reach[x+','+y]!=null : (gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
   const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && Math.max(Math.abs(mo.x-ctr.x),Math.abs(mo.y-ctr.y))<=aoeR);
   const applyCond=(mo)=>{ const sc=SPELL_COND[name]; if(sc&&net.conn){ try{ net.conn.send({t:'moncond',mon:mo.id,cond:sc.c,rounds:sc.r}); }catch(e){} } };
-  function resolveSingle(mo){ if(!castSpell(c,name,level)) return; net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){try{net.conn.send({t:'target',mon:mo.id});}catch(e){}}
-    if(mc.attack) attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'1d6',dt:mc.dtype||''});
-    else if(mc.save) attackFlow(c,{name,spell:true,save:{ab:mc.save},dmg:mc.dmg||'1d6',dt:mc.dtype||''});
-    else if(mc.dmg){ const r=rollNotation(mc.dmg||'1d4')||{total:0,detail:''}; sfx('damage'); attackFx('hit'); pushRoll({label:name+' damage',total:r.total,detail:r.detail,kind:'dmg'}); if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total});}catch(e){}} flashBanner(name+' hits '+mo.name+' for '+r.total); }
-    else { sfx('cast'); flashBanner(name+' on '+mo.name); }   // pure condition spell (no damage)
-    applyCond(mo); }
-  function resolveBlast(ctr){ const aff=blastTargets(ctr); if(!castSpell(c,name,level)) return; const dmg=mc.dmg?(rollNotation(mc.dmg)||{total:0,detail:''}):null; sfx('damage'); attackFx('crit'); if(dmg) pushRoll({label:name+' (blast)',total:dmg.total,detail:dmg.detail,kind:'dmg'}); aff.forEach(mo=>{ if(dmg&&net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:dmg.total});}catch(e){}} applyCond(mo); }); flashBanner(name+' hits '+aff.length+(dmg?' for '+dmg.total:'')+(mc.save?' (saves halve — DM adjusts)':'')); }
+  function resolveSingle(mo){
+    mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':mc.dtype==='lightning'?'⚡':'✦');   // bolt flies to target on the map
+    setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return; net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){try{net.conn.send({t:'target',mon:mo.id});}catch(e){}}
+      if(mc.attack) attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'1d6',dt:mc.dtype||''});
+      else if(mc.save) attackFlow(c,{name,spell:true,save:{ab:mc.save},dmg:mc.dmg||'1d6',dt:mc.dtype||''});
+      else if(mc.dmg){ const r=rollNotation(mc.dmg||'1d4')||{total:0,detail:''}; sfx('damage'); attackFx('hit'); pushRoll({label:name+' damage',total:r.total,detail:r.detail,kind:'dmg'}); if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total});}catch(e){}} flashBanner(name+' hits '+mo.name+' for '+r.total); }
+      else { sfx('cast'); flashBanner(name+' on '+mo.name); }
+      applyCond(mo); }, 430); }
+  function resolveBlast(ctr){ const aff=blastTargets(ctr);
+    mapProjectile(me.x,me.y,ctr.x,ctr.y,'🔥'); setTimeout(()=>mapBurst(ctr.x,ctr.y,aoeR),300);   // bolt then explosion on the map
+    setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return; const dmg=mc.dmg?(rollNotation(mc.dmg)||{total:0,detail:''}):null; sfx('damage'); attackFx('crit'); if(dmg) pushRoll({label:name+' (blast)',total:dmg.total,detail:dmg.detail,kind:'dmg'}); aff.forEach(mo=>{ if(dmg&&net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:dmg.total});}catch(e){}} applyCond(mo); }); flashBanner(name+' hits '+aff.length+(dmg?' for '+dmg.total:'')+(mc.save?' (saves halve — DM adjusts)':'')); }, 750); }
   function draw(){
     let body=`<h2>✨ ${esc(name)}</h2>`;
     body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks (ignores walls)':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}${mc.save?' · '+String(mc.save).toUpperCase()+' save':''}</p>`;
@@ -781,8 +788,8 @@ function openSpellTarget(c, name, level){
     document.querySelectorAll('#stModal [data-cell]').forEach(el=>el.onclick=()=>{ const [x,y]=el.dataset.cell.split(',').map(Number);
       if(!inRange(x,y)){ flashBanner(seek?'No path within range':'Out of range / no line of sight'); return; }
       if(aoeR){ center={x,y}; draw(); return; }
-      const mo=s.monsters.find(m=>m.hp>0&&m.x===x&&m.y===y); if(!mo){ flashBanner('Tap a monster'); return; } $('#modalRoot').innerHTML=''; resolveSingle(mo); });
-    { const sc=$('#stCast'); if(sc) sc.onclick=()=>{ $('#modalRoot').innerHTML=''; resolveBlast(center); }; }
+      const mo=s.monsters.find(m=>m.hp>0&&m.x===x&&m.y===y); if(!mo){ flashBanner('Tap a monster'); return; } resolveSingle(mo); });
+    { const sc=$('#stCast'); if(sc) sc.onclick=()=>{ resolveBlast(center); }; }
   }
   draw();
 }
@@ -1662,6 +1669,15 @@ function attackFx(kind){ const el=document.createElement('div'); el.className='c
   const map={hit:{ic:'💥',col:'rgba(200,80,40,.5)'}, crit:{ic:'💥',col:'rgba(240,180,60,.6)'}, miss:{ic:'💨',col:'rgba(160,160,160,.35)'}, heal:{ic:'✨',col:'rgba(80,180,90,.45)'}, slash:{ic:'⚔️',col:'rgba(210,210,220,.4)'}}[kind]||{ic:'⚔️',col:'rgba(200,80,40,.5)'};
   el.innerHTML=`<div class="glow" style="background:radial-gradient(circle,${map.col},transparent 60%)"></div><div class="ic">${map.ic}</div>`;
   document.body.appendChild(el); setTimeout(()=>el.remove(),700); }
+/* ---- on-map effects: projectiles & explosions ---- */
+function curMapGrid(){ return document.querySelector('#stModal .mapgrid, #atkModal .mapgrid, #smModal .mapgrid') || document.querySelector('.mapgrid'); }
+function cellCenter(grid,x,y){ const cell=grid.querySelector('[data-cell="'+x+','+y+'"]'); if(!cell) return null; const g=grid.getBoundingClientRect(), c=cell.getBoundingClientRect(); return {x:c.left-g.left+c.width/2, y:c.top-g.top+c.height/2}; }
+function mapProjectile(fx,fy,tx,ty,glyph){ const grid=curMapGrid(); if(!grid) return; const a=cellCenter(grid,fx,fy), b=cellCenter(grid,tx,ty); if(!a||!b) return; const wrap=grid.parentElement; if(getComputedStyle(wrap).position==='static') wrap.style.position='relative';
+  const p=document.createElement('div'); p.className='mfx-proj'; p.textContent=glyph||'✦'; p.style.left=a.x+'px'; p.style.top=a.y+'px';
+  const ang=Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI; p.style.setProperty('--rot',ang+'deg'); wrap.appendChild(p);
+  requestAnimationFrame(()=>{ p.style.left=b.x+'px'; p.style.top=b.y+'px'; }); setTimeout(()=>p.remove(),420); }
+function mapBurst(cx,cy,radius){ const grid=curMapGrid(); if(!grid) return; const c=cellCenter(grid,cx,cy); if(!c) return; const wrap=grid.parentElement; if(getComputedStyle(wrap).position==='static') wrap.style.position='relative';
+  const sz=((radius||1)*2+1)*38; const b=document.createElement('div'); b.className='mfx-burst'; b.style.width=b.style.height=sz+'px'; b.style.left=c.x+'px'; b.style.top=c.y+'px'; wrap.appendChild(b); setTimeout(()=>b.remove(),650); }
 function playClickSound(target){
   const el=target.closest && target.closest('button, .pip, .chip, [data-tab], .diebtn, [data-collapse], label.pill');
   if(!el) return;
@@ -3764,7 +3780,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v63';
+const APP_VERSION='v64';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
