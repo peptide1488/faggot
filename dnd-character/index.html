@@ -620,6 +620,17 @@ function battleCard(c){
       <div class="tile"><div class="lab">Attacks left</div><div class="big">${b.attacksLeft}/${atk}</div></div>
       <div class="tile"><div class="lab">Move left</div><div class="big">${b.move}</div></div>
     </div>
+    <div class="hp" style="margin-top:10px">
+      <div class="tile" style="${c.hp.cur<=0?'box-shadow:inset 0 0 0 1px var(--bad)':''}"><div class="lab">HP${c.hp.cur<=0?' · DOWN':''}</div><div class="big" style="color:${c.hp.cur<=0?'var(--bad)':'var(--good)'}">${c.hp.cur}</div></div>
+      <div class="tile"><div class="lab">Max</div><div class="big">${c.hp.max}</div></div>
+      <div class="tile"><div class="lab">Temp</div><div class="big">${c.hp.temp||0}</div></div>
+    </div>
+    <div class="hpbtns" style="margin-top:8px">
+      <button class="btn bad sm" id="bDmg">– Damage</button>
+      <input type="number" id="bAmt" value="1" min="1" inputmode="numeric">
+      <button class="btn sm" id="bHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button>
+    </div>
+    ${c.hp.cur<=0?`<button class="btn block" id="bDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓ / ${c.death.fail||0}✗)</button>`:''}
     <div class="chips" style="margin-top:10px">
       <button class="chip ${b.action?'on':''}" data-bt="action">${b.action?'✓ ':''}Action</button>
       <button class="chip ${b.bonus?'on':''}" data-bt="bonus">${b.bonus?'✓ ':''}Bonus action</button>
@@ -637,6 +648,10 @@ function battleCard(c){
       ${c.cls==='Barbarian'?`<button class="btn sm" id="rageBtn" style="flex:1;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
     </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
+    <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">Battle log</div>
+    <div style="max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px">
+      ${(c.log&&c.log.length)? c.log.slice(0,20).map(e=>`<div class="listrow" style="padding:4px 0"><div class="nm" style="font-size:12px">${esc(e.m)}</div><div class="sub" style="white-space:nowrap;font-size:11px">${fmtLogTime(e.t)}</div></div>`).join('') : '<div class="empty" style="padding:8px 0">Nothing yet — rolls, damage, casts and turns will show here.</div>'}
+    </div>
   </div>`;
 }
 function isRaging(c){ return (c.effects||[]).some(e=>e.name==='Rage'); }
@@ -2462,6 +2477,9 @@ function renderCombat(c){
   { const qs=$('#bqSpells'); if(qs) qs.addEventListener('click',()=>openQuickSpells(c)); }
   { const mb=$('#moveBtn'); if(mb) mb.addEventListener('click',()=>openMove(c)); }
   { const rb=$('#rageBtn'); if(rb) rb.addEventListener('click',()=>toggleRage(c)); }
+  { const bd=$('#bDmg'); if(bd) bd.addEventListener('click',()=>applyHp(c,-Math.abs(Number($('#bAmt').value)||0))); }
+  { const bh=$('#bHeal'); if(bh) bh.addEventListener('click',()=>applyHp(c,Math.abs(Number($('#bAmt').value)||0))); }
+  { const bds=$('#bDeath'); if(bds) bds.addEventListener('click',()=>rollDeathSave(c)); }
   { const rb2=$('#rageBtn2'); if(rb2) rb2.addEventListener('click',()=>toggleRage(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'||k==='bonus'||k==='reaction') b[k]=!b[k];
@@ -3025,7 +3043,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v36';
+const APP_VERSION='v37';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
