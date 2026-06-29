@@ -311,6 +311,7 @@
   .hpbar.low i{background:linear-gradient(#f0a93a,#c87a14)}
   .hpbar.crit i{background:linear-gradient(#f06a4a,#9c2f1c)}
   .mnum{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 2px;border-radius:7px;background:#1a1410;color:#f6efda;font-size:9px;font-weight:700;line-height:14px;text-align:center;box-shadow:0 0 0 1.5px rgba(255,255,255,.5)}
+  .elevbadge{position:absolute;bottom:1px;left:2px;font-size:8px;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.9);pointer-events:none}
   .condmark{position:absolute;top:-4px;left:-4px;font-size:11px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
   .mfx-proj{position:absolute;z-index:6;pointer-events:none;font-size:17px;transform:translate(-50%,-50%) rotate(var(--rot,0deg));transition:left .4s linear,top .4s linear;filter:drop-shadow(0 0 3px rgba(255,220,120,.9))}
   .mfx-burst{position:absolute;z-index:6;pointer-events:none;transform:translate(-50%,-50%) scale(.2);border-radius:50%;background:radial-gradient(circle,rgba(255,220,120,.9),rgba(220,80,30,.55) 55%,transparent 72%);animation:mburst .65s ease-out forwards}
@@ -2182,7 +2183,7 @@ function levelUp(){
      ${isAsi?`<div class="card" style="margin:0 0 12px"><h2>Ability Score Improvement</h2>
         <div class="seg" id="luSeg"><button class="on" data-asi="asi">+2 / +1×2</button><button data-asi="feat">Take a feat</button></div>
         <div id="luBody"></div></div>`:''}
-     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— ${learnCap} this level</span></h2>
+     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— ${esc(c.cls)}: ${learnCap} this level</span></h2>
         <div class="addrow">${spellLearnSelect(c, nl, 'leveled')}<button class="btn sm" id="luLearn">Add</button></div>
         <div class="muted" id="luSpellDesc" style="font-size:12px;margin-top:6px;line-height:1.5"></div>
         <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px">Spells learned: 0 / ${learnCap}. Pick one, tap Add, then pick another.</div>
@@ -3463,6 +3464,7 @@ function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by))
 // Opportunity attack trigger: a mover leaves an enemy's reach when it starts within reach and ends outside it.
 function leavesReach(fromX,fromY,toX,toY,ex,ey,reach){ reach=reach||1; return gridDist(fromX,fromY,ex,ey)<=reach && gridDist(toX,toY,ex,ey)>reach; }
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
+function heightAt(s,x,y){ return (s.map&&s.map.height&&s.map.height[x+','+y])||0; }   // elevation level (0 default); each level = 5 ft
 function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
 // Dijkstra over the grid: returns {cost:{"x,y":feet}, prev:{"x,y":"px,py"}}. Walls/void block; no diagonal corner-cutting; mud costs double.
 function dijkstra(s, sx, sy, maxFeet){
@@ -3473,7 +3475,7 @@ function dijkstra(s, sx, sy, maxFeet){
     if(cc>=maxFeet) continue;
     for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){ if(!dx&&!dy) continue; const nx=x+dx, ny=y+dy; if(!passable(nx,ny)) continue;
       if(dx&&dy && (!passable(x+dx,y) || !passable(x,y+dy))) continue;   // no squeezing through a diagonal wall corner
-      const td=TERRAIN[tiles[K(nx,ny)]], step=(td&&td.diff?10:5), nc=cc+step; if(nc>maxFeet) continue;
+      const td=TERRAIN[tiles[K(nx,ny)]], climb=Math.max(0, heightAt(s,nx,ny)-heightAt(s,x,y))*5, step=(td&&td.diff?10:5)+climb, nc=cc+step; if(nc>maxFeet) continue;
       if(cost[K(nx,ny)]==null || nc<cost[K(nx,ny)]){ cost[K(nx,ny)]=nc; prev[K(nx,ny)]=K(x,y); frontier.push([nx,ny]); } } }
   return {cost, prev};
 }
@@ -3719,7 +3721,7 @@ const MAP_PRESETS=(()=>{ const P={};
   (function frozen(){ const w=15,h=10,t={}; fill(t,w,h,'snow'); rect(t,5,3,9,6,'ice'); put(t,[[2,2],[12,2],[3,7],[11,7],[7,1],[7,8]],'wall'); put(t,[[1,5],[13,5]],'brush'); P['Frozen Lake']={cols:w,rows:h,tiles:t}; })();
   return P; })();
 function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
-function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{})}; dmBroadcast(); render(); }
+function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{}), height:Object.assign({},d.height||{})}; dmBroadcast(); render(); }
 function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
   const at=(x,y)=>tiles[x+','+y];
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
@@ -3746,7 +3748,10 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     if(opts.blast){ const bl=opts.blast, d=Math.max(Math.abs(bl.x-x),Math.abs(bl.y-y)); if(d<=bl.r) extra+=' intarget'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
-    cells+=`<div class="mcell${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}</div>`;
+    const hgt=heightAt(s,x,y);
+    if(hgt>0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(255,255,255,${(hgt*0.10).toFixed(2)}), 0 ${hgt+1}px ${hgt*2}px rgba(0,0,0,.28);`; }
+    const elevBadge = hgt>0 ? `<span class="elevbadge">▲${hgt}</span>` : '';
+    cells+=`<div class="mcell${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}${elevBadge}</div>`;
   }
   return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
 }
@@ -3791,6 +3796,7 @@ function renderDM(){
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
+    <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Elevation:</span><button class="chip ${net.sel==='t:elev+'?'on':''}" data-place="t:elev+">⬆ Raise</button><button class="chip ${net.sel==='t:elev-'?'on':''}" data-place="t:elev-">⬇ Lower</button></div>
     <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">🟥 ${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">🟩 ${esc(p.name)}</button>`).join('')}</div>
     <div class="addrow" style="margin-top:8px"><select id="mPreset" style="flex:2"><option value="">— load a map —</option><optgroup label="Presets">${Object.keys(MAP_PRESETS).map(k=>`<option value="p:${esc(k)}">${esc(k)}</option>`).join('')}</optgroup>${Object.keys(savedMaps()).length?`<optgroup label="Saved">${Object.keys(savedMaps()).map(n=>`<option value="s:${esc(n)}">💾 ${esc(n)}</option>`).join('')}</optgroup>`:''}</select><button class="btn sm" id="mLoad">Load</button><button class="btn ghost sm" id="mSave">💾 Save</button></div>
     <button class="btn ghost sm block" id="mClear" style="margin-top:8px">Clear all terrain</button>
@@ -3825,7 +3831,9 @@ function renderDM(){
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
-    if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
+    if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2);
+      if(key==='elev+'||key==='elev-'){ if(!s.map.height) s.map.height={}; const cur=s.map.height[x+','+y]||0; const nh=Math.max(0,Math.min(4, cur+(key==='elev+'?1:-1))); if(nh) s.map.height[x+','+y]=nh; else delete s.map.height[x+','+y]; dmBroadcast(); render(); return; }
+      if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain/elevation, keep brush
     const ter=terrainAt(s,x,y);
     if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ const fromX=mo.x, fromY=mo.y, wasBattle=s.battle.active;
       if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; }
@@ -3841,9 +3849,9 @@ function renderDM(){
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && ter==='wall'){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
       if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } } } }
     net.sel=null; dmBroadcast(); render(); });
-  { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain?')){ s.map.tiles={}; dmBroadcast(); render(); } }; }
+  { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain & elevation?')){ s.map.tiles={}; s.map.height={}; dmBroadcast(); render(); } }; }
   { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
-  { const ms=$('#mSave'); if(ms) ms.onclick=()=>{ const nm=prompt('Save current map as:'); if(!nm) return; const all=savedMaps(); all[nm]={cols:s.map.cols,rows:s.map.rows,tiles:Object.assign({},s.map.tiles||{})}; try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(e){} flashBanner('Map saved: '+nm); render(); }; }
+  { const ms=$('#mSave'); if(ms) ms.onclick=()=>{ const nm=prompt('Save current map as:'); if(!nm) return; const all=savedMaps(); all[nm]={cols:s.map.cols,rows:s.map.rows,tiles:Object.assign({},s.map.tiles||{}),height:Object.assign({},s.map.height||{})}; try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(e){} flashBanner('Map saved: '+nm); render(); }; }
   $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
 }
 function deployMonster(m){ if(!net||net.role!=='dm') return;
@@ -4392,7 +4400,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v76';
+const APP_VERSION='v77';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
