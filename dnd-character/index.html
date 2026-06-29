@@ -3081,16 +3081,17 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && d.dmg){ mo.hp=Math.max(0,mo.hp-d.dmg); } net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg:d.dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+(d.dmg||0))); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
-  else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; dmBroadcast(); render(); } }
+  else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true; dmBroadcast(); render(); } }
 }
 function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
-function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
+function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.placed) return; p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ if(m.placed) return; m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
 function rollInitiative(){ const s=net.session; const o=[];
   s.players.forEach(p=>o.push({k:'p',id:p.id,name:p.name,roll:rnd(20)+(p.init||0)}));
   s.monsters.forEach(m=>o.push({k:'m',id:m.id,name:m.name,roll:rnd(20)+(m.init||0)}));
-  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; dmBroadcast(); render(); flashBanner('Initiative rolled'); }
+  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>m.attacksLeft=m.attacks||1); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
+function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo) mo.attacksLeft=mo.attacks||1; } }
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; dmBroadcast(); render(); return; }
-  s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; dmBroadcast(); render(); }
+  s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; dmRefreshActor(); dmBroadcast(); render(); }
 function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
 function dmExit(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
@@ -3383,7 +3384,7 @@ function renderDM(){
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
-    if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ mo.x=x; mo.y=y; } } else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ p.x=x; p.y=y; } }
+    if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ mo.x=x; mo.y=y; mo.placed=true; } } else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ p.x=x; p.y=y; p.placed=true; } }
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain?')){ s.map.tiles={}; dmBroadcast(); render(); } }; }
   $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
@@ -3391,13 +3392,14 @@ function renderDM(){
 function deployMonster(m){ if(!net||net.role!=='dm') return;
   const same=net.session.monsters.filter(x=>x.base===m.n);
   if(same.length===1){ same[0].name=same[0].base+' 1'; same[0].num=1; }   // retro-number the first when a second appears
-  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk, init:m.init||0});
+  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1});
   dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
   const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
   return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, raw:part}; }); }
 function dmMonsterAttack(mo){
+  if(net.session.battle.active && mo.attacksLeft!=null && mo.attacksLeft<=0){ flashBanner(mo.name+' already attacked this turn — ▶ Next turn to reset'); return; }
   const atks=parseMonsterAttacks(mo.atk); if(!atks.length) atks.push({name:'Attack',hit:0,dmg:'1d6'});
   const players=net.session.players; if(!players.length){ flashBanner('No players connected to target'); return; }
   const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0};
@@ -3426,9 +3428,10 @@ function dmMonsterAttack(mo){
     document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; draw(); });
     { const r=$('#maRoll'); if(r) r.onclick=()=>{ st.d20=rnd(20); st.total=st.d20+(st.atk.hit||0); st.phase='res'; pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+tgt().ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
     { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ const base=st.atk.dmg||'1d6'; const note=(st.d20===20)?critNotation(base):base; const rr=rollNotation(note)||{total:0,detail:''}; st.dmg=rr.total; pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:rr.total, detail:rr.detail, kind:'dmg'}); draw(); }; }
-    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; }; }
-    { const f=$('#maFull'); if(f) f.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; }; }
-    { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); dmSend(st.targetId,{t:'apply',delta:-half}); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; }; }
+    const useAtk=()=>{ if(mo.attacksLeft!=null) mo.attacksLeft=Math.max(0,mo.attacksLeft-1); dmBroadcast(); render(); };
+    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const f=$('#maFull'); if(f) f.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); dmSend(st.targetId,{t:'apply',delta:-half}); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; draw(); }; }
   }
   draw();
@@ -3504,7 +3507,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v45';
+const APP_VERSION='v46';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
