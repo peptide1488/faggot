@@ -3465,21 +3465,26 @@ function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by))
 function leavesReach(fromX,fromY,toX,toY,ex,ey,reach){ reach=reach||1; return gridDist(fromX,fromY,ex,ey)<=reach && gridDist(toX,toY,ex,ey)>reach; }
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
 function heightAt(s,x,y){ return (s.map&&s.map.height&&s.map.height[x+','+y])||0; }   // elevation level (0 default); each level = 5 ft
+// Flight: lets a creature cross chasms/void and ignore ground hazards & difficult/elevation cost.
+const FLYING_RACES=new Set(['Aarakocra','Owlin','Fairy']);
+function isFlying(c){ if(!c) return false; if((c.effects||[]).some(e=>e.name==='Fly'||e.name==='Levitate')) return true; return FLYING_RACES.has(c.race); }
+function monsterFlies(mo){ return !!(mo&&mo.fly); }
 function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
 // Dijkstra over the grid: returns {cost:{"x,y":feet}, prev:{"x,y":"px,py"}}. Walls/void block; no diagonal corner-cutting; mud costs double.
-function dijkstra(s, sx, sy, maxFeet){
+function dijkstra(s, sx, sy, maxFeet, fly){
   const cols=s.map.cols, rows=s.map.rows, tiles=s.map.tiles||{}, K=(x,y)=>x+','+y;
-  const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const td=TERRAIN[tiles[K(x,y)]]; return !(td&&td.solid); };
+  // Flyers cross void (chasms) but still can't pass through walls; they ignore difficult terrain & climb cost.
+  const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const tk=tiles[K(x,y)], td=TERRAIN[tk]; if(td&&td.solid) return fly && tk==='void'; return true; };
   const cost={}, prev={}; cost[K(sx,sy)]=0; const frontier=[[sx,sy]];
   while(frontier.length){ frontier.sort((a,b)=>cost[K(a[0],a[1])]-cost[K(b[0],b[1])]); const [x,y]=frontier.shift(), cc=cost[K(x,y)];
     if(cc>=maxFeet) continue;
     for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){ if(!dx&&!dy) continue; const nx=x+dx, ny=y+dy; if(!passable(nx,ny)) continue;
       if(dx&&dy && (!passable(x+dx,y) || !passable(x,y+dy))) continue;   // no squeezing through a diagonal wall corner
-      const td=TERRAIN[tiles[K(nx,ny)]], climb=Math.max(0, heightAt(s,nx,ny)-heightAt(s,x,y))*5, step=(td&&td.diff?10:5)+climb, nc=cc+step; if(nc>maxFeet) continue;
+      const td=TERRAIN[tiles[K(nx,ny)]], climb=fly?0:Math.max(0, heightAt(s,nx,ny)-heightAt(s,x,y))*5, step=fly?5:((td&&td.diff?10:5)+climb), nc=cc+step; if(nc>maxFeet) continue;
       if(cost[K(nx,ny)]==null || nc<cost[K(nx,ny)]){ cost[K(nx,ny)]=nc; prev[K(nx,ny)]=K(x,y); frontier.push([nx,ny]); } } }
   return {cost, prev};
 }
-function reachableCells(s, sx, sy, maxFeet){ return dijkstra(s,sx,sy,maxFeet).cost; }
+function reachableCells(s, sx, sy, maxFeet, fly){ return dijkstra(s,sx,sy,maxFeet,fly).cost; }
 // Bresenham line of sight — a wall between attacker and target blocks the shot.
 function losClear(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{}; let dx=Math.abs(x1-x0), dy=Math.abs(y1-y0), sx=x0<x1?1:-1, sy=y0<y1?1:-1, err=dx-dy, x=x0, y=y0, guard=0;
   while(!(x===x1&&y===y1) && guard++<999){ const e2=2*err; if(e2>-dy){ err-=dy; x+=sx; } if(e2<dx){ err+=dy; y+=sy; }
@@ -3495,7 +3500,7 @@ function coverBetween(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{};
     const occ=(s.monsters||[]).some(m=>m.hp>0&&m.x===x&&m.y===y) || (s.players||[]).some(p=>p.x===x&&p.y===y);
     if(occ) cover=Math.max(cover,2); }
   return cover; }
-function pathTo(s, sx, sy, tx, ty, maxFeet){ const {cost,prev}=dijkstra(s,sx,sy,maxFeet); const K=(x,y)=>x+','+y; if(cost[K(tx,ty)]==null) return null;
+function pathTo(s, sx, sy, tx, ty, maxFeet, fly){ const {cost,prev}=dijkstra(s,sx,sy,maxFeet,fly); const K=(x,y)=>x+','+y; if(cost[K(tx,ty)]==null) return null;
   const path=[]; let cur=K(tx,ty); while(cur && cur!==K(sx,sy)){ const [x,y]=cur.split(',').map(Number); path.unshift({x,y}); cur=prev[cur]; } return path; }
 function animateToken(get,set,path,step,done){ let i=0; (function go(){ if(i>=path.length){ done&&done(); return; } set(path[i].x,path[i].y); i++; render(); setTimeout(go, step||110); })(); }
 function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
@@ -3561,7 +3566,7 @@ function renderPlayerBattle(c){
   </div>
   <div class="card">
     <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button></h2>
-    ${mapGridHTML(s,false, net.moveMode?(()=>{ const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0); return {reachCost:reachableCells(s,me.x,me.y,dashMax), reachNormal:(b.move||0)}; })():{})}
+    ${mapGridHTML(s,false, net.moveMode?(()=>{ const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0); return {reachCost:reachableCells(s,me.x,me.y,dashMax,isFlying(c)), reachNormal:(b.move||0)}; })():{})}
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?('🟢 normal move ('+(b.move||0)+' ft)'+(hasAction(c)?' · 🔴 Dash range (uses your action)':'')) :'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
   </div>
   <div class="card">
@@ -3587,12 +3592,12 @@ function renderPlayerBattle(c){
     const [x,y]=el.dataset.cell.split(',').map(Number);
     if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;   // dead bodies don't block
     if(!net.moveMode){ flashBanner('Tap 🥾 Move first'); return; }
-    const ter=terrainAt(s,x,y), tdef=TERRAIN[ter];
-    if(tdef&&tdef.solid){ flashBanner(ter==='void'?'You won’t step into the void':'Blocked by terrain'); return; }
+    const ter=terrainAt(s,x,y), tdef=TERRAIN[ter], fly=isFlying(c);
+    if(tdef&&tdef.solid && !(fly&&ter==='void')){ flashBanner(ter==='void'?'You won’t step into the void':'Blocked by terrain'); return; }
     const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
-    const path=pathTo(s,me.x,me.y,x,y,dashMax);
+    const path=pathTo(s,me.x,me.y,x,y,dashMax,fly);
     if(!path){ flashBanner('Can’t reach there — walls block the path or it’s too far'); return; }
-    const cost=reachableCells(s,me.x,me.y,dashMax)[x+','+y];
+    const cost=reachableCells(s,me.x,me.y,dashMax,fly)[x+','+y];
     if(cost==null){ flashBanner('Out of range'); return; }
     if(cost>(b.move||0)){   // beyond normal speed → Dash (costs your action)
       if(!dashAvail){ flashBanner('Too far — Dash needs your action (already used)'); return; }
@@ -3602,7 +3607,8 @@ function renderPlayerBattle(c){
     animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 110, ()=>{ save();
       if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
       if(provokers.length && net.conn){ try{ net.conn.send({t:'provoke', cid:clientId(), who:c.name, mons:provokers.map(m=>m.id)}); }catch(e){} logChange(c,'⚔ Provoked opportunity attack'+(provokers.length>1?'s':'')+' from '+provokers.map(m=>m.name).join(', ')); }
-      if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); flashBanner((tdef.e||'🔥')+' '+tdef.name+'! '+d+' damage'); }
+      if(fly){ flashBanner('🕊️ Flying over the terrain'); }
+      else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); flashBanner((tdef.e||'🔥')+' '+tdef.name+'! '+d+' damage'); }
       else if(tdef&&tdef.diff) flashBanner(tdef.name+' — difficult terrain'); render(); });
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ const k=el.dataset.pbt;
@@ -3792,7 +3798,7 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span></h2>
-    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0); return {reachCost:reachableCells(s,mo.x,mo.y,dashMax), reachNormal:(mo.moveLeft||0)}; })():{})}
+    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0); return {reachCost:reachableCells(s,mo.x,mo.y,dashMax,monsterFlies(mo)), reachNormal:(mo.moveLeft||0)}; })():{})}
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
@@ -3835,15 +3841,15 @@ function renderDM(){
       if(key==='elev+'||key==='elev-'){ if(!s.map.height) s.map.height={}; const cur=s.map.height[x+','+y]||0; const nh=Math.max(0,Math.min(4, cur+(key==='elev+'?1:-1))); if(nh) s.map.height[x+','+y]=nh; else delete s.map.height[x+','+y]; dmBroadcast(); render(); return; }
       if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain/elevation, keep brush
     const ter=terrainAt(s,x,y);
-    if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ const fromX=mo.x, fromY=mo.y, wasBattle=s.battle.active;
-      if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; }
+    if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ const fromX=mo.x, fromY=mo.y, wasBattle=s.battle.active, mfly=monsterFlies(mo);
+      if(s.battle.active){ const tdef0=TERRAIN[ter]; if(tdef0&&tdef0.solid && !(mfly&&ter==='void')){ flashBanner((ter==='void'?'Void blocks ':'Wall blocks ')+mo.name); return; }
         if(s.monsters.some(m=>m.hp>0&&m.id!==mo.id&&m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)){ flashBanner('That tile is occupied'); return; }
         const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0);
-        const cost=reachableCells(s,mo.x,mo.y,dashMax)[x+','+y]; if(cost==null){ flashBanner(mo.name+' can’t reach there (walls or too far)'); return; }
+        const cost=reachableCells(s,mo.x,mo.y,dashMax,mfly)[x+','+y]; if(cost==null){ flashBanner(mo.name+' can’t reach there (walls or too far)'); return; }
         if(cost>(mo.moveLeft||0)){ if(!dashAvail){ flashBanner(mo.name+' too far — needs its action to Dash'); return; } mo.moveLeft=(mo.moveLeft||0)+(mo.speed||30); mo.attacksLeft=0; flashBanner('🏃 '+mo.name+' Dashes (action used)'); }
         mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
-      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } }
+      if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } }
       if(wasBattle){ const leaving=s.players.filter(p=>(p.hpCur||0)>0 && leavesReach(fromX,fromY,mo.x,mo.y,p.x,p.y,1)); leaving.forEach(p=>dmSend(p.id,{t:'oachance',mon:mo.id,name:mo.name,ac:mo.ac})); if(leaving.length) flashBanner('⚔ '+mo.name+' provokes opportunity attack'+(leaving.length>1?'s':'')+' from '+leaving.map(p=>p.name).join(', ')); }
     } }
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && ter==='wall'){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
@@ -3859,7 +3865,8 @@ function deployMonster(m){ if(!net||net.role!=='dm') return;
   if(same.length===1){ same[0].name=same[0].base+' 1'; same[0].num=1; }   // retro-number the first when a second appears
   const idx=net.session.monsters.length, cols=net.session.map.cols||10;
   const spd=(typeof m.spd==='number')?m.spd:(String(m.spd||'').match(/(\d+)/)?Number(String(m.spd).match(/(\d+)/)[1]):30);
-  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:idx%cols, y:Math.floor(idx/cols), sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1, speed:spd, moveLeft:spd});
+  const fly=/fly/i.test(String(m.spd||''));
+  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:idx%cols, y:Math.floor(idx/cols), sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1, speed:spd, moveLeft:spd, fly});
   dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
@@ -4112,9 +4119,9 @@ function startQuickBattle(c, crMax, count){
   const chosen=[]; for(let i=0;i<count;i++) chosen.push(rndPick(usable.length?usable:[MONSTERS_5E[0]]));
   const pc={id:'pc', side:'pc', name:c.name, c, x:0,y:0, hpCur:c.hp.cur, hpMax:c.hp.max, ac:computeAC(c)};
   const counts={};
-  const monsters=chosen.map((m,i)=>{ counts[m.n]=(counts[m.n]||0)+1; const spd=m.spd||30;
+  const monsters=chosen.map((m,i)=>{ counts[m.n]=(counts[m.n]||0)+1; const spd=(typeof m.spd==='number')?m.spd:(parseInt(m.spd)||30); const fly=/fly/i.test(String(m.spd||''));
     return {id:'qm'+i, side:'mon', base:m.n, name:m.n+(chosen.filter(x=>x.n===m.n).length>1?' '+counts[m.n]:''), num:chosen.filter(x=>x.n===m.n).length>1?counts[m.n]:0,
-      x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:1, attacksLeft:1, moveLeft:spd, reactionUsed:false, brain:'tactical', init:rnd(20)}; });
+      x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:1, attacksLeft:1, moveLeft:spd, reactionUsed:false, brain:'tactical', fly, init:rnd(20)}; });
   QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles)}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
   qbPlaceUnits();
   // battle resources for the PC (mirror startBattle without its render)
@@ -4174,9 +4181,9 @@ function qbRunBrain(u){ if(!QB||QB.over){ return; }
 }
 function qbApplyIntent(u, it, done){
   if(it.type==='attack'){ const tgt=qbUnitById(it.targetId); if(!tgt||qbHP(tgt)<=0||(u.attacksLeft||0)<=0){ done(); return; } u.attacksLeft--; qbResolveAttack(u, tgt, it.atk, done); return; }
-  if(it.type==='move'){ const path=pathTo(QB, u.x,u.y, it.to.x, it.to.y, (u.moveLeft||0)+(it.dash?(u.speed||30):0));
+  if(it.type==='move'){ const ufly=monsterFlies(u); const path=pathTo(QB, u.x,u.y, it.to.x, it.to.y, (u.moveLeft||0)+(it.dash?(u.speed||30):0), ufly);
     if(!path){ done(); return; }
-    const cost=reachableCells(QB,u.x,u.y,(u.moveLeft||0)+(it.dash?(u.speed||30):0))[it.to.x+','+it.to.y]; if(cost==null){ done(); return; }
+    const cost=reachableCells(QB,u.x,u.y,(u.moveLeft||0)+(it.dash?(u.speed||30):0),ufly)[it.to.x+','+it.to.y]; if(cost==null){ done(); return; }
     if(it.dash){ u.moveLeft=(u.moveLeft||0)+(u.speed||30); u.attacksLeft=0; qbLog('🏃 '+u.name+' dashes'); }
     const fromX=u.x, fromY=u.y; u.moveLeft=Math.max(0,(u.moveLeft||0)-cost);
     const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,1);
@@ -4199,8 +4206,9 @@ BRAINS.tactical = function(qb, u){
   foes.forEach(f=>usable.forEach(a=>{ if(canHitFrom(u.x,u.y,f,a)){ if(!best||f.c.hp.cur<best.f.c.hp.cur) best={f,a}; } }));
   if(best){ const out=[]; for(let k=0;k<(u.attacksLeft||1);k++) out.push({type:'attack', targetId:best.f.id, atk:best.a}); return out; }
   // 2) move to a cell from which we can attack the nearest foe, then attack
+  const ufly=monsterFlies(u);
   const target=foes.slice().sort((a,b)=>dist(a)-dist(b))[0];
-  const reach=reachableCells(qb, u.x, u.y, u.moveLeft||0);
+  const reach=reachableCells(qb, u.x, u.y, u.moveLeft||0, ufly);
   let spot=null, spotCost=1e9, spotAtk=null;
   Object.keys(reach).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return;
     usable.forEach(a=>{ if(canHitFrom(x,y,target,a)){ const cost=reach[k]; if(cost<spotCost){ spot={x,y}; spotCost=cost; spotAtk=a; } } }); });
@@ -4210,7 +4218,7 @@ BRAINS.tactical = function(qb, u){
   Object.keys(reach).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return; const d=gridDist(x,y,target.x,target.y); if(d<bestD){ bestD=d; stepTo={x,y}; } });
   if(stepTo) return [{type:'move', to:stepTo}];
   // truly stuck within normal move → Dash toward the foe
-  const reachD=reachableCells(qb, u.x, u.y, (u.moveLeft||0)+(u.speed||30)); let dashTo=null, dd=dist(target);
+  const reachD=reachableCells(qb, u.x, u.y, (u.moveLeft||0)+(u.speed||30), ufly); let dashTo=null, dd=dist(target);
   Object.keys(reachD).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return; const d=gridDist(x,y,target.x,target.y); if(d<dd){ dd=d; dashTo={x,y}; } });
   if(dashTo) return [{type:'move', to:dashTo, dash:true}];
   return [];
@@ -4222,7 +4230,7 @@ function renderQuickBattle(){
   const o=qbCurrent(), myTurn=o&&o.k==='p'&&!s.over;
   app.className='fade'; void app.offsetWidth;
   const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
-  const moveOpts = (myTurn&&s.moveMode)?{reachCost:reachableCells(s,pc.x,pc.y,dashMax), reachNormal:(b.move||0)}:{};
+  const moveOpts = (myTurn&&s.moveMode)?{reachCost:reachableCells(s,pc.x,pc.y,dashMax,isFlying(c)), reachNormal:(b.move||0)}:{};
   app.innerHTML=`
   <div class="card" style="border:2px solid var(--accent2)">
     <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Quick Battle</h2><button class="btn ghost sm" id="qbExit" style="color:var(--bad)">Exit</button></div>
@@ -4274,17 +4282,18 @@ function renderQuickBattle(){
     const [x,y]=el.dataset.cell.split(',').map(Number); if(!s.moveMode){ flashBanner('Tap 🥾 Move first'); return; } qbMovePc(x,y);
   });
 }
-function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle;
+function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isFlying(c);
   if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)||(pc.x===x&&pc.y===y)) return;
-  const ter=(s.map.tiles||{})[x+','+y], tdef=TERRAIN[ter]; if(tdef&&tdef.solid){ flashBanner('Blocked by terrain'); return; }
+  const ter=(s.map.tiles||{})[x+','+y], tdef=TERRAIN[ter]; if(tdef&&tdef.solid && !(fly&&ter==='void')){ flashBanner('Blocked by terrain'); return; }
   const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
-  const path=pathTo(s,pc.x,pc.y,x,y,dashMax); if(!path){ flashBanner('Can’t reach there'); return; }
-  const cost=reachableCells(s,pc.x,pc.y,dashMax)[x+','+y]; if(cost==null){ flashBanner('Out of range'); return; }
+  const path=pathTo(s,pc.x,pc.y,x,y,dashMax,fly); if(!path){ flashBanner('Can’t reach there'); return; }
+  const cost=reachableCells(s,pc.x,pc.y,dashMax,fly)[x+','+y]; if(cost==null){ flashBanner('Out of range'); return; }
   if(cost>(b.move||0)){ if(!dashAvail){ flashBanner('Too far — Dash needs your action'); return; } b.move=(b.move||0)+effSpeed(c); spendAction(c); qbLog('🏃 '+c.name+' dashes'); }
   const fromX=pc.x, fromY=pc.y; b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; s.moveMode=false;
   const provokers=s.monsters.filter(m=>m.hp>0 && !m.reactionUsed && leavesReach(fromX,fromY,x,y,m.x,m.y,1));
   animateToken(null,(nx,ny)=>{ pc.x=nx; pc.y=ny; }, path, 100, ()=>{ save();
-    if(tdef&&tdef.deadly){ applyHp(c,-c.hp.cur); qbLog('💀 '+c.name+' fell into the void!'); }
+    if(fly){ qbLog('🕊️ '+c.name+' flies over the terrain'); }
+    else if(tdef&&tdef.deadly){ applyHp(c,-c.hp.cur); qbLog('💀 '+c.name+' fell into the void!'); }
     else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); qbLog((tdef.e||'🔥')+' '+tdef.name+' — '+d+' damage'); }
     pc.hpCur=c.hp.cur;
     provokers.forEach(m=>qbMonsterOAonPc(m, pc));
@@ -4400,7 +4409,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v77';
+const APP_VERSION='v78';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
