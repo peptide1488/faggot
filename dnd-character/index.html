@@ -794,12 +794,17 @@ function openSpellTarget(c, name, level){
 }
 function critNotation(n){ const p=parseDice(n); let s=p.terms.map(t=>(t.n*2)+'d'+t.sides).join('+'); if(p.flat) s+=(p.flat>0?'+':'')+p.flat; return s||n; }
 function attackFlow(c, atk){
+  // The Attack action is spent only once; extra attacks come from attacksLeft.
+  // If your action is already used (e.g. you cast a spell) and you haven't started
+  // an attack sequence yet, you can't also attack this turn.
+  if(c.battle && !atk.spell && c.battle.action && (c.battle.attacksLeft||0) >= (extraAttacks(c)+1)){ flashBanner('You already used your action this turn — end your turn to reset'); return; }
   if(c.battle && !atk.spell && (c.battle.attacksLeft||0)<=0){ flashBanner('No attacks left this turn — end your turn to reset'); return; }
   const toHit=Number(atk.toHit)||0;
   const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
   const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
+    if(c.battle && !atk.spell && c.battle.action && (c.battle.attacksLeft||0) >= (extraAttacks(c)+1)){ flashBanner('You already used your action this turn'); return; }
     if(c.battle && !atk.spell && (c.battle.attacksLeft||0)<=0){ flashBanner('No attacks left this turn'); return; }
     const d20=face!=null?face:rnd(20); sfx('swing');
     st.d20=d20; st.crit=(d20===20); st.total=d20+toHit;
@@ -3777,7 +3782,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v65';
+const APP_VERSION='v66';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
