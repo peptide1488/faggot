@@ -744,7 +744,7 @@ function attackFlow(c, atk){
   const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
-    const d20=face!=null?face:rnd(20);
+    const d20=face!=null?face:rnd(20); sfx('swing');
     st.d20=d20; st.crit=(d20===20); st.total=d20+toHit;
     pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
     if(c.battle){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); c.battle.action=true; save(); }
@@ -752,7 +752,8 @@ function attackFlow(c, atk){
     if(ac!=null){   // known target AC → auto-resolve, no Hit/Miss prompt
       const hit = d20===20 || (d20!==1 && st.total>=ac);
       st.targetAC=ac; st.hit=hit; st.phase = hit?'dmg':'done';
-      if(!hit){ logChange(c, atk.name+' misses (rolled '+st.total+' vs AC '+ac+')'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack',mon:net.targetMon.id,who:c.name,hit:false}); }catch(e){} } }
+      if(hit){ sfx(st.crit?'crit':'hit'); attackFx(st.crit?'crit':'hit'); }
+      else { sfx('miss'); attackFx('miss'); logChange(c, atk.name+' misses (rolled '+st.total+' vs AC '+ac+')'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack',mon:net.targetMon.id,who:c.name,hit:false}); }catch(e){} } }
     } else { st.phase='hit'; }
     draw();
   }
@@ -762,7 +763,7 @@ function attackFlow(c, atk){
     let total, detail;
     if(manual!=null){ total=manual; detail='entered'+(st.crit?' (crit)':''); }
     else { const r=rollNotation(notation)||{total:0,detail:''}; total=r.total; detail=r.detail; }
-    st.dmgTotal=total; st.phase='done';
+    st.dmgTotal=total; st.phase='done'; sfx(atk.heal?'heal':'damage'); attackFx(atk.heal?'heal':(st.crit?'crit':'hit'));
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg'});
     if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total}); }catch(e){} }
     draw();
@@ -794,7 +795,7 @@ function attackFlow(c, atk){
     $('#afModal').onclick=e=>{ if(e.target.id==='afModal') close(); };
     $('#afClose').onclick=close;
     if(st.phase==='tohit'){ $('#afAuto').onclick=()=>rollToHit(null); $('#afUse').onclick=()=>{ const v=Number($('#afManual').value); if(v>=1&&v<=20) rollToHit(v); else flashBanner('Enter 1–20'); }; }
-    else if(st.phase==='hit'){ $('#afHit').onclick=()=>{ st.hit=true; st.phase='dmg'; draw(); }; $('#afMiss').onclick=()=>{ st.hit=false; st.phase='done'; logChange(c, atk.name+' — attack missed'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:false}); }catch(e){} } draw(); }; }
+    else if(st.phase==='hit'){ $('#afHit').onclick=()=>{ st.hit=true; st.phase='dmg'; sfx(st.crit?'crit':'hit'); attackFx(st.crit?'crit':'hit'); draw(); }; $('#afMiss').onclick=()=>{ st.hit=false; st.phase='done'; sfx('miss'); attackFx('miss'); logChange(c, atk.name+' — attack missed'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:false}); }catch(e){} } draw(); }; }
     else if(st.phase==='dmg'){ const t=$('#af2h'); if(t) t.onchange=()=>{ st.twoH=t.checked; draw(); }; $('#afDmgAuto').onclick=()=>rollDmg(null); $('#afDmgUse').onclick=()=>{ const el=$('#afDmgMan'); const v=Number(el.value); if(el.value!==''&&!isNaN(v)) rollDmg(v); }; }
     else { $('#afAgain').onclick=()=>{ st.phase='tohit'; st.d20=0; st.total=0; st.crit=false; st.hit=null; st.dmgTotal=null; st.twoH=false; draw(); }; }
   }
@@ -1591,7 +1592,15 @@ function sfx(kind){ if(!soundOn) return; switch(kind){
   case 'damage': tone(200,0.12,'square',0.15); tone(110,0.20,'square',0.12,0.06); break;
   case 'success': tone(660,0.1,'triangle',0.15); tone(880,0.16,'triangle',0.12,0.08); break;
   case 'error': tone(170,0.18,'square',0.13); break;
+  case 'swing': tone(720,0.07,'sawtooth',0.10); tone(300,0.10,'sawtooth',0.10,0.05); break;          // whoosh down
+  case 'hit': tone(150,0.10,'square',0.18); tone(90,0.16,'square',0.14,0.04); break;                 // meaty thud
+  case 'crit': tone(180,0.10,'square',0.2); tone(120,0.18,'square',0.16,0.05); tone(900,0.14,'triangle',0.14,0.12); break;
+  case 'miss': tone(520,0.06,'triangle',0.07); tone(360,0.10,'triangle',0.06,0.05); break;           // whiff
 }}
+function attackFx(kind){ const el=document.createElement('div'); el.className='castfx';
+  const map={hit:{ic:'💥',col:'rgba(200,80,40,.5)'}, crit:{ic:'💥',col:'rgba(240,180,60,.6)'}, miss:{ic:'💨',col:'rgba(160,160,160,.35)'}, heal:{ic:'✨',col:'rgba(80,180,90,.45)'}, slash:{ic:'⚔️',col:'rgba(210,210,220,.4)'}}[kind]||{ic:'⚔️',col:'rgba(200,80,40,.5)'};
+  el.innerHTML=`<div class="glow" style="background:radial-gradient(circle,${map.col},transparent 60%)"></div><div class="ic">${map.ic}</div>`;
+  document.body.appendChild(el); setTimeout(()=>el.remove(),700); }
 function playClickSound(target){
   const el=target.closest && target.closest('button, .pip, .chip, [data-tab], .diebtn, [data-collapse], label.pill');
   if(!el) return;
@@ -3554,8 +3563,8 @@ function dmMonsterAttack(mo){
     $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; draw(); }; }
     document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; draw(); });
-    { const r=$('#maRoll'); if(r) r.onclick=()=>{ st.d20=rnd(20); st.total=st.d20+(st.atk.hit||0); st.phase='res'; pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+tgt().ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
-    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ const base=st.atk.dmg||'1d6'; const note=(st.d20===20)?critNotation(base):base; const rr=rollNotation(note)||{total:0,detail:''}; st.dmg=rr.total; pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:rr.total, detail:rr.detail, kind:'dmg'}); draw(); }; }
+    { const r=$('#maRoll'); if(r) r.onclick=()=>{ sfx('swing'); st.d20=rnd(20); st.total=st.d20+(st.atk.hit||0); st.phase='res'; const isH=st.total>=tgt().ac||st.d20===20; sfx(st.d20===20?'crit':isH?'hit':'miss'); attackFx(st.d20===20?'crit':isH?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+tgt().ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ sfx('damage'); attackFx(st.d20===20?'crit':'hit'); const base=st.atk.dmg||'1d6'; const note=(st.d20===20)?critNotation(base):base; const rr=rollNotation(note)||{total:0,detail:''}; st.dmg=rr.total; pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:rr.total, detail:rr.detail, kind:'dmg'}); draw(); }; }
     const useAtk=()=>{ if(mo.attacksLeft!=null) mo.attacksLeft=Math.max(0,mo.attacksLeft-1); dmBroadcast(); render(); };
     { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const f=$('#maFull'); if(f) f.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
@@ -3640,7 +3649,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v55';
+const APP_VERSION='v56';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
