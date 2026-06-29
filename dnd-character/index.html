@@ -1730,6 +1730,7 @@ function render(){
   renderHeader();
   renderNetBar();
   if(net && net.role==='dm'){ $('#tabs').style.display='none'; const fab0=$('#diceFab'); if(fab0) fab0.style.display='none'; renderDM(); return; }
+  if(net && net.role==='player' && net.session && net.session.battle.active){ const pc=playerChar(); if(pc){ renderPlayerBattle(pc); return; } }
   const c = cur();
   const inWiz = !!(wiz && c);
   $('#tabs').style.display = inWiz ? 'none' : '';
@@ -3074,6 +3075,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && d.dmg){ mo.hp=Math.max(0,mo.hp-d.dmg); } net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg:d.dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+(d.dmg||0))); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
+  else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; dmBroadcast(); render(); } }
 }
 function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
 function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
@@ -3110,13 +3112,122 @@ function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c)}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ net.session=d.session; const c=playerChar();
-    if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); } else if(!d.session.battle.active && c.battle){ c.battle=null; save(); } }
+    if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
+      else if(!d.session.battle.active && c.battle){ c.battle=null; save(); }
+      else if(c.battle && c.battle.round!==d.session.battle.round){ // DM advanced the round → reset my turn
+        c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
+    }
     render();
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
+}
+function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by)); }
+function renderPlayerBattle(c){
+  const s=net.session, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0}, b=c.battle||{};
+  $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
+  app.className='fade'; void app.offsetWidth;
+  app.innerHTML=`
+  <div class="card" style="border:2px solid var(--accent)">
+    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Battle · Round ${s.battle.round}</h2><span class="muted" style="font-size:11px">DM controls turns</span></div>
+    <div class="tiles" style="margin-top:8px">
+      <div class="tile" style="${c.hp.cur<=0?'box-shadow:inset 0 0 0 1px var(--bad)':''}"><div class="lab">HP${c.hp.cur<=0?' · DOWN':''}</div><div class="big" style="color:${c.hp.cur<=0?'var(--bad)':'var(--good)'}">${c.hp.cur}/${c.hp.max}</div></div>
+      <div class="tile"><div class="lab">Move left${b.moveUsed?' · used '+b.moveUsed:''}</div><div class="big">${b.move||0}</div></div>
+      <div class="tile"><div class="lab">AC</div><div class="big">${computeAC(c)}</div></div>
+    </div>
+    <div class="chips" style="margin-top:10px">
+      <button class="chip ${b.action?'on':''}" data-pbt="action">${b.action?'✓ ':''}Action</button>
+      <button class="chip ${b.bonus?'on':''}" data-pbt="bonus">${b.bonus?'✓ ':''}Bonus</button>
+      <button class="chip ${b.reaction?'on':''}" data-pbt="reaction">${b.reaction?'✓ ':''}Reaction</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Battlefield</h2>
+    ${mapGridHTML(s,false)}
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Tap an empty tile to move (5 ft per tile, diagonals count as 5). Tap a monster 🟥 to attack it.</p>
+  </div>
+  <div class="card">
+    <h2>Your turn</h2>
+    <div class="row2">
+      <button class="btn" id="pbAttack">⚔ Attack</button>
+      ${(isCaster(c)||c.spells.length)?`<button class="btn" id="pbSpells">✨ Spells</button>`:''}
+    </div>
+    ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
+    <div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>
+    ${c.hp.cur<=0?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
+  </div>`;
+  app.querySelectorAll('[data-cell]').forEach(el=>el.addEventListener('click',()=>{
+    const t=el.getAttribute('data-target'); if(t){ const mo=s.monsters.find(m=>m.id===t); if(mo){ net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){ try{ net.conn.send({t:'target',mon:mo.id}); }catch(e){} } flashBanner('Targeting '+mo.name+' (AC '+mo.ac+')'); openAttack(c); } return; }
+    const [x,y]=el.dataset.cell.split(',').map(Number);
+    if(s.monsters.some(m=>m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;
+    const cost=gridDist(me.x,me.y,x,y)*5;
+    if((b.move||0)<cost){ flashBanner('Too far — '+cost+' ft (you have '+(b.move||0)+')'); return; }
+    b.move-=cost; b.moveUsed=(b.moveUsed||0)+cost; me.x=x; me.y=y; save();
+    if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
+    render();
+  }));
+  app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ b[el.dataset.pbt]=!b[el.dataset.pbt]; save(); render(); });
+  { const a=$('#pbAttack'); if(a) a.onclick=()=>openAttack(c); }
+  { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
+  { const rg=$('#pbRage'); if(rg) rg.onclick=()=>toggleRage(c); }
+  { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
+  { const hh=$('#pbHeal'); if(hh) hh.onclick=()=>applyHp(c,Math.abs(Number($('#pbAmt').value)||0)); }
+  { const ds=$('#pbDeath'); if(ds) ds.onclick=()=>rollDeathSave(c); }
 }
 function playerLeave(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
 /* ---- shared map ---- */
+const MONSTER_PIX={
+  skeleton:["...oooo.....","..oeeeeo....",".oeeeeeeo...",".oexeexeo...",".oeeeeeeo...",".oexxxxeo...","..oeeeeo....","...o..o.....","..o.oo.o....","............","............","............"],
+  zombie:["...oooo.....","..onnnno....",".onxnnxno...",".onnnnnno...",".onneenno...",".onnnnnno...","..onnnno....",".on.nn.no...","..o.nn.o....","...o..o.....","............","............"],
+  ghost:["...oooo.....","..oeeeeo....",".oeeeeeeo...",".oexeexeo...",".oeeeeeeo...",".oeeeeeeo...",".oeeeeeeo...",".oeoeoeoeo..","............","............","............","............"],
+  wolf:["............","o.o.........","ododo..oooo.",".odddoodddo.","..oddddddddo","..oddddddddo","..oddddddddo","..o.o..o.o..","............","............","............","............"],
+  bear:["............","..oo....oo..",".owwo..owwo.","..owwwwwwo..",".owwwwwwwwo.","owwwwwwwwwwo","owwwwwwwwwwo","owwwwwwwwwwo",".ow.ww.ww.o.","..o.....o...","............","............"],
+  spider:["............","o..o..o..o..",".o.o..o.o...","..oxxxxxo...",".oxxxxxxxo..","..oxxxxxo...",".o.o..o.o...","o..o..o..o..","............","............","............","............"],
+  snake:["............","..ooo.......",".onnno......",".onxno......",".onnno......","..onno......","...onno.....","....onno....","...onno.....","..onno......","..ooo.......","............"],
+  dragon:["......oo....",".o...oddo...","oro..oddo...",".oroooddo...","..orddddo...","oodddddddoo.","oddddddddddo","oddddddddddo",".o.oddddo.o.","...o.oo.o...","............","............"],
+  ogre:["...oooo.....","..okkkko....",".okxkkxko...",".okkkkkko...","..okkkko....","ookkkkkkoo..","okkkkkkkko..","okkkkkkkko..","o.okkkko.o..","...o..o.....","..o....o....","............"],
+  slime:["............","............","...ogggo....","..ogggggo...",".oggxggxgo..","ogggggggggo.","ogggggggggo.","ogggggggggo.","ogggggggggo.",".oooooooooo.","............","............"],
+  demon:["..o....o....","..oo..oo....","...orrro....","..orrrrro...","..orxrrxo...","..orrrrro...","..orrrrro...","...orrro....","..o.rr.o....",".o..rr..o...","o...oo...o..","............"],
+  eye:["............","...oooo.....","..oeeeeo....",".oeeeeeeo...",".oeppppeo...",".oepxxpeo...",".oeppppeo...",".oeeeeeeo...","..oeeeeo....","...oooo.....","............","............"]
+};
+function monsterSprite(k){ return MONSTER_PIX[k] || RACE_PIX[({goblin:'Goblin',orc:'Orc',human:'_default',lizardfolk:'Dragonborn'})[k]] || RACE_PIX._default; }
+// Curated SRD bestiary: {n, cr, ac, hp, spd, sprite, atk, desc}
+const MONSTERS_5E=[
+  {n:'Goblin',cr:'1/4',ac:15,hp:7,spd:30,sprite:'goblin',atk:'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Small, cowardly raiders that swarm in packs and flee when bloodied.'},
+  {n:'Hobgoblin',cr:'1/2',ac:18,hp:11,spd:30,sprite:'goblin',atk:'Longsword +3 (1d8+1)',desc:'Disciplined martial goblinoids; deadlier when allies are near.'},
+  {n:'Bugbear',cr:'1',ac:16,hp:27,spd:30,sprite:'goblin',atk:'Morningstar +4 (2d8+2)',desc:'Hulking goblinoid ambushers that hit hard on a surprise round.'},
+  {n:'Kobold',cr:'1/8',ac:12,hp:5,spd:30,sprite:'goblin',atk:'Dagger +4 (1d4+2)',desc:'Tiny draconic schemers; pack tactics give advantage in groups.'},
+  {n:'Orc',cr:'1/2',ac:13,hp:15,spd:30,sprite:'orc',atk:'Greataxe +5 (1d12+3)',desc:'Savage warriors that charge straight into melee.'},
+  {n:'Bandit',cr:'1/8',ac:12,hp:11,spd:30,sprite:'human',atk:'Scimitar +3 (1d6+1) · Crossbow +3 (1d8+1)',desc:'Common brigands and highway robbers.'},
+  {n:'Guard',cr:'1/8',ac:16,hp:11,spd:30,sprite:'human',atk:'Spear +3 (1d6+1)',desc:'Town watch and hired muscle.'},
+  {n:'Cultist',cr:'1/8',ac:12,hp:9,spd:30,sprite:'human',atk:'Scimitar +3 (1d6+1)',desc:'Fanatical devotees of dark powers.'},
+  {n:'Mage',cr:'6',ac:12,hp:40,spd:30,sprite:'human',atk:'Fireball (DC15, 8d6) · Magic Missile · Dagger +5',desc:'A trained spellcaster with shield, counterspell and big AoE.'},
+  {n:'Skeleton',cr:'1/4',ac:13,hp:13,spd:30,sprite:'skeleton',atk:'Shortsword +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Reanimated bones; vulnerable to bludgeoning, immune to poison.'},
+  {n:'Zombie',cr:'1/4',ac:8,hp:22,spd:20,sprite:'zombie',atk:'Slam +3 (1d6+1)',desc:'Shambling undead; Undead Fortitude can keep it up at 1 HP.'},
+  {n:'Ghoul',cr:'1',ac:12,hp:22,spd:30,sprite:'zombie',atk:'Claws +2 (2d4+2) · Bite +2 (2d6+2)',desc:'Ravenous undead; its claws can paralyze non-elves.'},
+  {n:'Specter',cr:'1',ac:12,hp:22,spd:0,sprite:'ghost',atk:'Life Drain +4 (3d6, lowers max HP)',desc:'Incorporeal undead that flies and passes through walls.'},
+  {n:'Ghost',cr:'4',ac:11,hp:45,spd:0,sprite:'ghost',atk:'Withering Touch +5 (4d6) · Horrifying Visage',desc:'A tormented spirit that can possess and age its victims.'},
+  {n:'Wraith',cr:'5',ac:13,hp:67,spd:0,sprite:'ghost',atk:'Life Drain +6 (4d8+3)',desc:'A powerful undead of pure malice that creates new specters.'},
+  {n:'Wolf',cr:'1/4',ac:13,hp:11,spd:40,sprite:'wolf',atk:'Bite +4 (2d4+2, knock prone)',desc:'Pack hunter; pack tactics grant advantage.'},
+  {n:'Dire Wolf',cr:'1',ac:14,hp:37,spd:50,sprite:'wolf',atk:'Bite +5 (2d6+3, knock prone)',desc:'A massive wolf the size of a horse.'},
+  {n:'Brown Bear',cr:'1',ac:11,hp:34,spd:40,sprite:'bear',atk:'Claws +5 (2d6+4) · Bite +5 (1d8+4)',desc:'Powerful beast with keen smell.'},
+  {n:'Giant Spider',cr:'1',ac:14,hp:26,spd:30,sprite:'spider',atk:'Bite +5 (1d8+3 + DC11 Con 2d8 poison) · Web',desc:'Climbs walls; restrains prey with webbing.'},
+  {n:'Giant Snake',cr:'1/4',ac:12,hp:13,spd:30,sprite:'snake',atk:'Bite +4 (1d6+2) · Constrict +4 (1d8+2)',desc:'A constrictor that grapples and crushes.'},
+  {n:'Poisonous Snake',cr:'1/8',ac:13,hp:2,spd:30,sprite:'snake',atk:'Bite +5 (1 + DC10 Con 2d4 poison)',desc:'Tiny but deadly venom.'},
+  {n:'Ogre',cr:'2',ac:11,hp:59,spd:40,sprite:'ogre',atk:'Greatclub +6 (2d8+4)',desc:'Dim-witted giant brute that smashes everything.'},
+  {n:'Troll',cr:'5',ac:15,hp:84,spd:30,sprite:'ogre',atk:'Claw +7 (2d6+4) · Bite +7 (1d6+4)',desc:'Regenerates 10 HP/turn unless hit by fire or acid.'},
+  {n:'Hill Giant',cr:'5',ac:13,hp:105,spd:40,sprite:'ogre',atk:'Greatclub +8 (3d8+5) · Rock +8 (3d10+5)',desc:'Enormous, gluttonous giant that hurls boulders.'},
+  {n:'Gray Ooze',cr:'1/2',ac:8,hp:22,spd:10,sprite:'slime',atk:'Pseudopod +3 (2d6+1 acid, corrodes metal)',desc:'Acidic sludge that mimics wet stone.'},
+  {n:'Gelatinous Cube',cr:'2',ac:6,hp:84,spd:15,sprite:'slime',atk:'Pseudopod +4 (3d6 acid) · Engulf',desc:'A transparent 10-ft cube that engulfs and dissolves.'},
+  {n:'Imp',cr:'1',ac:13,hp:10,spd:20,sprite:'demon',atk:'Sting +5 (1d4+3 + DC11 Con 3d6 poison)',desc:'Shape-shifting fiend; invisible, resists most damage.'},
+  {n:'Quasit',cr:'1',ac:13,hp:7,spd:40,sprite:'demon',atk:'Claws +4 (1d4+2 + DC10 Con poison)',desc:'Tiny demon that turns invisible and frightens.'},
+  {n:'Dretch',cr:'1/4',ac:11,hp:18,spd:20,sprite:'demon',atk:'Claws +2 (2d4) · Fetid Cloud',desc:'Lowly demon that fights in mobs and reeks.'},
+  {n:'Lizardfolk',cr:'1/2',ac:15,hp:22,spd:30,sprite:'lizardfolk',atk:'Spear +4 (1d6+2) · Bite +4 (1d6+2)',desc:'Cold, pragmatic reptilian hunters.'},
+  {n:'Wyvern',cr:'6',ac:13,hp:110,spd:'20/80 fly',sprite:'dragon',atk:'Stinger +7 (2d6+4 + DC15 Con 7d6 poison) · Bite +7',desc:'Lesser dragon-kin with a venomous tail.'},
+  {n:'Red Dragon Wyrmling',cr:'4',ac:17,hp:75,spd:'30/60 fly',sprite:'dragon',atk:'Bite +6 (1d10+4 + 1d6 fire) · Fire Breath (DC13 Dex, 7d6)',desc:'A young chromatic dragon with a fiery breath cone.'},
+  {n:'Young Red Dragon',cr:'10',ac:18,hp:178,spd:'40/80 fly',sprite:'dragon',atk:'Bite +10 (2d10+6 + 1d6 fire) · Fire Breath (DC17 Dex, 16d6)',desc:'A fearsome adolescent dragon; multiattack + recharge breath.'},
+  {n:'Gazer',cr:'1/2',ac:13,hp:13,spd:'10/30 fly',sprite:'eye',atk:'Bite +0 (1) · Eye Rays +4',desc:'A tiny aberration with four magical eye rays.'},
+  {n:'Beholder',cr:'13',ac:18,hp:180,spd:'0/20 fly',sprite:'eye',atk:'Bite +5 · Eye Rays (10 random) · Antimagic Cone',desc:'A floating sphere of eyes; its central eye negates magic.'}
+];
 const TERRAIN={
   floor:{name:'Erase',  c:'',        e:''},
   wall: {name:'Wall',   c:'#5a4a36', e:'🧱'},
@@ -3127,13 +3238,24 @@ const TERRAIN={
   void: {name:'Void',   c:'#15110b', e:''}
 };
 function mapGridHTML(s, isDM){ const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
+  const at=(x,y)=>tiles[x+','+y];
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
-    const ter=tiles[x+','+y], td=ter&&TERRAIN[ter]; const bg=td&&td.c?`background:${td.c};`:'';
+    const ter=at(x,y), td=ter&&TERRAIN[ter]; let style='';
+    if(td&&td.c){
+      // autotile: same-terrain neighbours connect (square edge); outer corners round off
+      const U=at(x,y-1)===ter, D=at(x,y+1)===ter, L=at(x-1,y)===ter, R=at(x+1,y)===ter, RAD='11px';
+      const tl=(!U&&!L)?RAD:'0', tr=(!U&&!R)?RAD:'0', br=(!D&&!R)?RAD:'0', bl=(!D&&!L)?RAD:'0';
+      const m=2; // overlap the 2px gap so connected cells merge seamlessly
+      style=`background:${td.c};border-radius:${tl} ${tr} ${br} ${bl};`
+        + (U?`margin-top:-${m}px;padding-top:${m}px;`:'') + (D?`margin-bottom:-${m}px;padding-bottom:${m}px;`:'')
+        + (L?`margin-left:-${m}px;padding-left:${m}px;`:'') + (R?`margin-right:-${m}px;padding-right:${m}px;`:'')
+        + 'border-color:transparent;';
+    }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
-    let tok=''; if(mo) tok=`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`;
+    let tok=''; if(mo) tok=mo.sprite?`<span class="tok" style="background:none;box-shadow:none">${pixelArt(monsterSprite(mo.sprite),2)}</span>`:`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`;
     else if(pl) tok=`<span class="tok pl ${net&&net.sel==='p'+pl.id?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
-    cells+=`<div class="mcell ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" style="${bg}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
+    cells+=`<div class="mcell ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" style="${style}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
   }
   return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},34px)">${cells}</div></div>`;
 }
@@ -3157,8 +3279,8 @@ function renderDM(){
     ${s.players.length? s.players.map(p=>`<div class="spell"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
   </div>
   <div class="card">
-    <h2>Monsters</h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell"><span class="tok mon" style="flex:none">${esc((mo.name[0]||'M').toUpperCase())}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}</small></div><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:48px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters.</div>'}
+    <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button></h2>
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}</small></div><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:48px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -3180,6 +3302,7 @@ function renderDM(){
   app.querySelectorAll('[data-mheal]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mheal); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.min(mo.max,mo.hp+Math.abs(amt)); dmBroadcast(); render(); } });
   app.querySelectorAll('[data-mdel]').forEach(el=>el.onclick=()=>{ s.monsters=s.monsters.filter(m=>m.id!==el.dataset.mdel); dmBroadcast(); render(); });
   $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0}); dmBroadcast(); render(); };
+  { const bb=$('#bestiaryBtn'); if(bb) bb.onclick=openBestiary; }
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
@@ -3187,6 +3310,25 @@ function renderDM(){
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain?')){ s.map.tiles={}; dmBroadcast(); render(); } }; }
   $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
+}
+function deployMonster(m){ if(!net||net.role!=='dm') return; net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), name:m.n, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk}); dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
+function openBestiary(){
+  $('#modalRoot').innerHTML=`<div class="modal" id="bestModal"><div class="sheet"><div class="grip"></div>
+    <h2>📖 Bestiary <span class="muted" style="font-size:11px;text-transform:none">— ${MONSTERS_5E.length} monsters</span></h2>
+    <input id="bestSearch" placeholder="Search monsters…" autocomplete="off">
+    <div id="bestList" style="margin-top:10px;max-height:60vh;overflow:auto"></div>
+    <button class="btn ghost block" id="bestClose" style="margin-top:10px">Close</button>
+  </div></div>`;
+  const draw=()=>{ const q=($('#bestSearch').value||'').toLowerCase(); const f=MONSTERS_5E.filter(m=>m.n.toLowerCase().includes(q));
+    $('#bestList').innerHTML = f.map(m=>`<div class="spell" style="align-items:flex-start">
+      <span style="flex:none">${itemEmblem?'':''}<span class="emblem" style="padding:3px">${pixelArt(monsterSprite(m.sprite),4)}</span></span>
+      <div class="nm"><b>${esc(m.n)} <span class="sub">CR ${m.cr}</span></b><small>AC ${m.ac} · HP ${m.hp} · Speed ${m.spd} ft<br>${esc(m.atk)}<br><span style="opacity:.8">${esc(m.desc)}</span></small></div>
+      <button class="btn sm" data-deploy="${esc(m.n)}">Deploy</button></div>`).join('') || '<div class="empty">No matches.</div>';
+    $('#bestList').querySelectorAll('[data-deploy]').forEach(b=>b.onclick=()=>{ const m=MONSTERS_5E.find(x=>x.n===b.dataset.deploy); if(m) deployMonster(m); }); };
+  $('#bestSearch').addEventListener('input',draw);
+  $('#bestClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#bestModal').onclick=e=>{ if(e.target.id==='bestModal') $('#modalRoot').innerHTML=''; };
+  draw();
 }
 
 /* ---- player session map (modal) ---- */
@@ -3241,7 +3383,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v39';
+const APP_VERSION='v40';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
