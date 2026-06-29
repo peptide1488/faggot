@@ -3162,6 +3162,18 @@ function playerOnData(d){ if(!d) return;
 function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by)); }
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
 function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
+// Dijkstra over the grid: returns {"x,y":feetCost}. Walls/void block the path; mud costs double; you can path through but not end on occupied cells.
+function reachableCells(s, sx, sy, maxFeet){
+  const cols=s.map.cols, rows=s.map.rows, tiles=s.map.tiles||{}, K=(x,y)=>x+','+y;
+  const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const t=tiles[K(x,y)]; return t!=='wall'&&t!=='void'; };
+  const cost={}; cost[K(sx,sy)]=0; const frontier=[[sx,sy]];
+  while(frontier.length){ frontier.sort((a,b)=>cost[K(a[0],a[1])]-cost[K(b[0],b[1])]); const [x,y]=frontier.shift(), cc=cost[K(x,y)];
+    if(cc>=maxFeet) continue;
+    for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){ if(!dx&&!dy) continue; const nx=x+dx, ny=y+dy; if(!passable(nx,ny)) continue;
+      const t=tiles[K(nx,ny)], step=(t==='mud'?10:5), nc=cc+step; if(nc>maxFeet) continue;
+      if(cost[K(nx,ny)]==null || nc<cost[K(nx,ny)]){ cost[K(nx,ny)]=nc; frontier.push([nx,ny]); } } }
+  return cost;
+}
 function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
 function spellRangeTiles(name){ const mc=parseSpellMechanics(name); if((mc.range||'')==='Touch') return 1; const m=String(mc.range||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; }
 function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
@@ -3226,7 +3238,7 @@ function renderPlayerBattle(c){
   </div>
   <div class="card">
     <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button></h2>
-    ${mapGridHTML(s,false, net.moveMode?{reach:{x:me.x,y:me.y,tiles:Math.floor((b.move||0)/5)}}:{})}
+    ${mapGridHTML(s,false, net.moveMode?{reachCost:reachableCells(s,me.x,me.y,b.move||0)}:{})}
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?'Tap a glowing tile to move there ('+(b.move||0)+' ft left).':'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
   </div>
   <div class="card">
@@ -3253,8 +3265,8 @@ function renderPlayerBattle(c){
     const ter=terrainAt(s,x,y);
     if(ter==='wall'){ flashBanner('A wall blocks the way'); return; }
     if(ter==='void'){ flashBanner('You won’t step into the void'); return; }
-    const mult=(ter==='mud')?2:1, cost=gridDist(me.x,me.y,x,y)*5*mult;
-    if(cost>(b.move||0)){ flashBanner('Too far — '+cost+' ft'+(mult>1?' (mud, ×2)':'')+' (you have '+(b.move||0)+' ft left)'); return; }
+    const rc=reachableCells(s,me.x,me.y,b.move||0), cost=rc[x+','+y];
+    if(cost==null){ flashBanner('Can’t reach there — walls block the path or it’s too far'); return; }
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; me.x=x; me.y=y; save();
     if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
     net.moveMode=false;
@@ -3358,7 +3370,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     else if(pl) tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id)?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
-    if(opts.reach && !mo && !pl && ter!=='wall' && ter!=='void'){ const dd=Math.max(Math.abs(opts.reach.x-x),Math.abs(opts.reach.y-y)); if(dd>0 && dd<=opts.reach.tiles) extra+=' reach'; }
+    if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=' reach'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
     cells+=`<div class="mcell${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}</div>`;
@@ -3402,7 +3414,7 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span></h2>
-    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?{reach:{x:mo.x,y:mo.y,tiles:Math.floor((mo.moveLeft||0)/5)}}:{}; })():{})}
+    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?{reachCost:reachableCells(s,mo.x,mo.y,mo.moveLeft||0)}:{}; })():{})}
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
@@ -3439,7 +3451,7 @@ function renderDM(){
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
     const ter=terrainAt(s,x,y);
     if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){
-      if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; } const mult=(ter==='mud')?2:1, cost=gridDist(mo.x,mo.y,x,y)*5*mult; if(cost>(mo.moveLeft||0)){ flashBanner(mo.name+' too far — '+cost+' ft ('+(mo.moveLeft||0)+' left)'); return; } mo.moveLeft=(mo.moveLeft||0)-cost; }
+      if(s.battle.active){ if(ter==='wall'){ flashBanner('Wall blocks '+mo.name); return; } const rc=reachableCells(s,mo.x,mo.y,mo.moveLeft||0), cost=rc[x+','+y]; if(cost==null){ flashBanner(mo.name+' can’t reach there (walls or too far)'); return; } mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
       if(s.battle.active){ if(ter==='void'){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(ter==='lava'){ mo.hp=Math.max(0,mo.hp-lavaDmg()); flashBanner('🔥 '+mo.name+' burns in lava'); } }
     } }
@@ -3459,16 +3471,22 @@ function deployMonster(m){ if(!net||net.role!=='dm') return;
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
   const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
-  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, raw:part}; }); }
+  let tiles=/reach/i.test(part)?2:1;
+  if(/breath|cone|line/i.test(part)) tiles=6;
+  else if(/bow|crossbow|sling|javelin|dart|spit|ray|bolt|hurl|thrown|web|net|stinger|spike/i.test(part)) tiles=24;
+  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, tiles, raw:part}; }); }
 function dmMonsterAttack(mo){
   if(net.session.battle.active && mo.attacksLeft!=null && mo.attacksLeft<=0){ flashBanner(mo.name+' already attacked this turn — ▶ Next turn to reset'); return; }
   const atks=parseMonsterAttacks(mo.atk); if(!atks.length) atks.push({name:'Attack',hit:0,dmg:'1d6'});
   const players=net.session.players; if(!players.length){ flashBanner('No players connected to target'); return; }
   const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0};
   const tgt=()=>net.session.players.find(p=>p.id===st.targetId)||players[0];
-  function draw(){ const t=tgt(); let body=`<h2>⚔ ${esc(mo.name)} attacks</h2>`;
-    body+=`<div class="field"><label>Attack</label><div class="chips">${atks.map((a,i)=>`<button class="chip ${st.atk===a?'on':''}" data-ma="${i}">${esc(a.name)}${a.hit!=null?' +'+a.hit:a.dc?' (DC'+a.dc.n+')':''}</button>`).join('')}</div></div>`;
-    body+=`<div class="field"><label>Target</label><select id="maTgt">${players.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax}</option>`).join('')}</select></div>`;
+  function draw(){ const range=st.atk.tiles||1; const inR=players.filter(p=>gridDist(mo.x,mo.y,p.x,p.y)<=range);
+    if(inR.length && !inR.some(p=>p.id===st.targetId)) st.targetId=inR[0].id;
+    const t=tgt(); let body=`<h2>⚔ ${esc(mo.name)} attacks</h2>`;
+    body+=`<div class="field"><label>Attack</label><div class="chips">${atks.map((a,i)=>`<button class="chip ${st.atk===a?'on':''}" data-ma="${i}">${esc(a.name)}${a.hit!=null?' +'+a.hit:a.dc?' (DC'+a.dc.n+')':''}${a.tiles>1?' · '+(a.tiles*5)+'ft':''}</button>`).join('')}</div></div>`;
+    if(!inR.length){ body+=`<div class="empty" style="padding:10px 0">No players within ${range*5} ft of ${esc(mo.name)} for ${esc(st.atk.name)} — 📍 move it closer or pick another attack.</div>`; }
+    else { body+=`<div class="field"><label>Target (in range)</label><select id="maTgt">${inR.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax} · ${gridDist(mo.x,mo.y,p.x,p.y)*5}ft</option>`).join('')}</select></div>`;
     if(st.atk.dc){
       body+=`<div class="card" style="margin:0 0 10px"><b>${esc(st.atk.name)}</b><br>${esc(t.name)} must make a <b>DC ${st.atk.dc.n} ${st.atk.dc.ab}</b> save.${st.atk.dmg?'<br>Damage: '+esc(st.atk.dmg):''}</div>`;
       if(st.atk.dmg){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage</button>`;
@@ -3481,7 +3499,7 @@ function dmMonsterAttack(mo){
       if(isHit){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage${crit?' (crit ×2 dice)':''}</button>`;
         else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><button class="btn bad block" id="maApply">Apply ${st.dmg} to ${esc(t.name)}</button>`; }
       body+=`<button class="btn ghost block" id="maReset" style="margin-top:8px">↺ New attack</button>`;
-    }
+    } }
     body+=`<button class="btn ghost block" id="maClose" style="margin-top:10px">Close</button>`;
     $('#modalRoot').innerHTML=`<div class="modal" id="maModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
     $('#maModal').onclick=e=>{ if(e.target.id==='maModal') $('#modalRoot').innerHTML=''; };
@@ -3574,7 +3592,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v50';
+const APP_VERSION='v51';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
