@@ -1343,13 +1343,35 @@ function newCharacter(name){
 }
 function logChange(c, msg){ if(!c) return; c.log=c.log||[]; c.log.unshift({t:Date.now(), m:msg}); if(c.log.length>250) c.log.pop(); save(); }
 function ensureFields(c){
+  if(!c || typeof c!=='object') return c;
+  if(!c.id) c.id=uid();
+  if(c.name==null) c.name='Adventurer';
+  if(!c.cls) c.cls='Fighter';
+  if(c.level==null) c.level=1;
+  if(c.race==null) c.race=''; if(c.subclass==null) c.subclass=''; if(c.background==null) c.background='';
+  if(c.xp==null) c.xp=0;
+  if(!c.abilities) c.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10};
   if(!c.conditions) c.conditions={};
   if(c.exhaustion==null) c.exhaustion=0;
   if(!c.concentration) c.concentration={active:false, spell:''};
   if(!c.abilMethod) c.abilMethod='manual';   // keep existing characters' scores as-is
   if(!c.asiBonus) c.asiBonus={str:0,dex:0,con:0,int:0,wis:0,cha:0};
   if(!c.feats) c.feats=[];
+  if(!c.skillProf) c.skillProf={}; if(!c.skillExp) c.skillExp={};
+  if(!c.saveProf) c.saveProf={str:false,dex:false,con:false,int:false,wis:false,cha:false};
   if(c.armor==null){ c.armor='none'; c.shield=!!c.shield; c.acOverride=(c.ac!=null?c.ac:''); }   // keep old AC as override
+  if(c.acOverride===undefined) c.acOverride='';
+  if(c.speed==null) c.speed=30; if(c.initMisc==null) c.initMisc=0; if(c.profOverride==null) c.profOverride='';
+  if(!c.hp) c.hp={max:8,cur:8,temp:0}; if(c.hp.temp==null) c.hp.temp=0;
+  if(!c.hitDice) c.hitDice={total:(Number(c.level)||1)+'d8', used:0};
+  if(!c.death) c.death={succ:0, fail:0};
+  if(!c.attacks) c.attacks=[];
+  if(!c.spellAbility) c.spellAbility=CLASS_SPELL_ABILITY[c.cls]||'int';
+  if(!c.spells) c.spells=[];
+  if(!c.slots){ c.slots={}; for(let i=1;i<=9;i++) c.slots[i]={total:0,used:0}; }
+  if(!c.items) c.items=[];
+  if(!c.currency) c.currency={cp:0,sp:0,ep:0,gp:0,pp:0};
+  if(c.features==null) c.features=''; if(c.notes==null) c.notes='';
   if(!c.log) c.log=[];
   if(c.portrait===undefined) c.portrait='';
   if(!c.effects) c.effects=[];
@@ -1655,6 +1677,16 @@ function spendHitDie(c){
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
   render();
 }
+function rollDeathSave(c){
+  const d=rnd(20);
+  if(d===20){ c.hp.cur=1; c.death={succ:0,fail:0}; if(c.conditions) delete c.conditions['Unconscious']; pushRoll({label:'Death save', total:d, detail:'nat 20 — back up at 1 HP', crit:'crit', kind:'check'}); logChange(c,'NAT 20 death save — regained 1 HP, conscious'); flashBanner('Back up at 1 HP!'); save(); render(); return; }
+  if(d===1){ c.death.fail=Math.min(3,(c.death.fail||0)+2); pushRoll({label:'Death save', total:d, detail:'nat 1 — 2 failures', crit:'fumble', kind:'check'}); }
+  else if(d>=10){ c.death.succ=Math.min(3,(c.death.succ||0)+1); pushRoll({label:'Death save', total:d, detail:'success (≥10)', kind:'check'}); }
+  else { c.death.fail=Math.min(3,(c.death.fail||0)+1); pushRoll({label:'Death save', total:d, detail:'failure (<10)', kind:'check'}); }
+  if(c.death.succ>=3){ c.death={succ:0,fail:0}; logChange(c,'Three successes — stable'); flashBanner('Stable'); }
+  if(c.death.fail>=3){ logChange(c,'Three failures — the character has died'); flashBanner('💀 Dead'); }
+  save(); render();
+}
 
 /* ---- rendering ---- */
 const $ = sel => document.querySelector(sel);
@@ -1878,7 +1910,7 @@ function wizNext(){
 
 /* ---------- LEVEL UP ---------- */
 function abilKeyByName(nm){ const f=ABILITIES.find(a=>a[1]===nm); return f?f[0]:null; }
-function clampAbil(c){ ABILITIES.forEach(([k])=>{ const total=abil(c,k); if(total>20){ c.asiBonus[k]=Math.max(0,c.asiBonus[k]-(total-20)); } }); }
+function clampAbil(c){ ABILITIES.forEach(([k])=>{ const total=abilBase(c,k); if(total>20){ c.asiBonus[k]=Math.max(0,c.asiBonus[k]-(total-20)); } }); }   // clamp the permanent score (base+race+ASI), not temporary buffs
 function levelUp(){
   const c=cur(); if(c.level>=20){ flashBanner('Already level 20'); return; }
   const nl=c.level+1;
@@ -2319,9 +2351,10 @@ function renderCombat(c){
       <div class="muted" style="font-size:12px">${hd?`${hdLeft}/${hd.count}`:''}</div>
     </div>
     <div style="margin-top:12px">
-      <label>Death saves</label>
+      <label>Death saves${c.hp.cur<=0?' <span class="muted" style="text-transform:none">— you are dying</span>':''}</label>
       <div class="listrow"><div class="nm">Successes</div><div class="pips" id="deathSucc">${pips(3,c.death.succ,'succ')}</div></div>
       <div class="listrow"><div class="nm">Failures</div><div class="pips" id="deathFail">${pips(3,c.death.fail,'fail')}</div></div>
+      ${c.hp.cur<=0?`<button class="btn block" id="deathRoll" style="margin-top:8px">🎲 Roll death save</button>`:''}
     </div>
     <button class="btn ghost block" id="spendHd" style="margin-top:12px">☾ Short rest: roll a Hit Die to heal${hd?` · ${hdLeft}/${hd.count} left`:''}</button>
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">On a short rest you can spend Hit Dice — roll the die + your CON to recover HP. You regain half on a long rest.</p>
@@ -2449,6 +2482,7 @@ function renderCombat(c){
   }));
 
   $('#spendHd').addEventListener('click',()=>spendHitDie(c));
+  { const dr=$('#deathRoll'); if(dr) dr.addEventListener('click',()=>rollDeathSave(c)); }
   app.querySelectorAll('[data-cond]').forEach(el=>el.addEventListener('click',()=>{
     const k=el.dataset.cond;
     if(c.conditions[k]){ delete c.conditions[k]; logChange(c,'Cleared condition: '+k); } else { c.conditions[k]=true; logChange(c,'Gained condition: '+k); }
@@ -2472,12 +2506,19 @@ function hdPips(total, used){
 }
 function applyHp(c,delta){
   if(delta<0){
-    let dmg=-delta;
+    let dmg=-delta; const wasAt0=c.hp.cur<=0;
     if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
-    c.hp.cur=Math.max(0,c.hp.cur-dmg);
+    const before=c.hp.cur; c.hp.cur=Math.max(0,c.hp.cur-dmg);
     logChange(c,'Took '+(-delta)+' damage → '+c.hp.cur+' HP');
+    // damage while at 0 HP = failed death save(s); a crit/≥max-HP hit is two
+    if(wasAt0 && dmg>0){ const fails=dmg>=c.hp.max?2:1; c.death.fail=Math.min(3,(c.death.fail||0)+fails); logChange(c,'Hit at 0 HP — '+fails+' death-save failure'+(fails>1?'s':'')); }
+    // dropped to 0 → unconscious; instant death if damage ≥ max HP over current
+    if(before>0 && c.hp.cur===0){ c.conditions['Unconscious']=true; logChange(c,'Dropped to 0 HP — Unconscious'); flashBanner('Down! Roll death saves'); }
+    // concentration check on taking damage
+    if(c.concentration && c.concentration.active && dmg>0){ const save=Math.max(10, Math.floor((-delta)/2)); flashBanner('Concentration save: DC '+save+' CON'); }
   }else{
     c.hp.cur=Math.min(c.hp.max,c.hp.cur+delta);
+    if(c.hp.cur>0){ if(c.conditions['Unconscious']) delete c.conditions['Unconscious']; c.death={succ:0,fail:0}; }   // healed above 0 → stable & conscious
     logChange(c,'Healed '+delta+' → '+c.hp.cur+' HP');
   }
   save(); render();
@@ -2948,7 +2989,7 @@ function importData(e){
       if(!Array.isArray(data)) throw new Error('bad');
       if(!confirm('Import will merge these characters into your list. Continue?')){ e.target.value=''; return; }
       const ids=new Set(DB.map(c=>c.id));
-      data.forEach(c=>{ if(!ids.has(c.id)) DB.push(c); });
+      data.forEach(c=>{ if(c && !ids.has(c.id)) DB.push(ensureFields(c)); });
       save(); render();
       alert('Imported '+data.length+' character(s).');
     }catch(err){ alert('That file could not be read as a Grimoire backup.'); }
@@ -2984,7 +3025,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v34';
+const APP_VERSION='v35';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
