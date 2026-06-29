@@ -271,6 +271,9 @@
   .mapgrid{display:grid;gap:2px;min-width:max-content}
   .mcell{width:34px;height:34px;background:rgba(255,250,235,.55);border:1px solid rgba(120,90,40,.18);border-radius:4px;display:grid;place-items:center;position:relative;cursor:pointer}
   .mcell.tgt{cursor:pointer}
+  .mcell.reach{box-shadow:inset 0 0 0 2px rgba(77,106,44,.7);background:rgba(111,148,66,.35)!important;cursor:pointer}
+  .mcell.intarget{box-shadow:inset 0 0 0 2px var(--bad);animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:inset 0 0 0 2px var(--bad)}50%{box-shadow:inset 0 0 0 3px var(--bad)}}
   .tok{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff;font-family:Georgia,serif}
   .tok.mon{background:#9c3b2c;box-shadow:0 1px 3px rgba(0,0,0,.3)}
   .tok.pl{background:#3b5320;box-shadow:0 1px 3px rgba(0,0,0,.3)}
@@ -712,7 +715,8 @@ function openQuickSpells(c){
 function critNotation(n){ const p=parseDice(n); let s=p.terms.map(t=>(t.n*2)+'d'+t.sides).join('+'); if(p.flat) s+=(p.flat>0?'+':'')+p.flat; return s||n; }
 function attackFlow(c, atk){
   const toHit=Number(atk.toHit)||0;
-  const st={phase:'tohit', d20:0, total:0, crit:false, hit:null, dmgTotal:null, twoH:false};
+  const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
+  const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
     const d20=face!=null?face:rnd(20);
@@ -743,7 +747,8 @@ function attackFlow(c, atk){
         <p style="text-align:center;margin:0 0 8px">Did it beat the target's AC?</p>
         <div class="row2"><button class="btn" id="afHit">✓ Hit${st.crit?' (crit)':''}</button><button class="btn bad" id="afMiss">✗ Miss</button></div>`;
     } else if(st.phase==='dmg'){
-      body+=`${st.crit?'<p style="text-align:center;color:var(--accent2);margin:0 0 8px"><b>💥 Critical hit — damage dice doubled!</b></p>':''}
+      body+=`${saveOnly?`<p style="text-align:center;margin:0 0 8px">🛡️ Target makes a <b>${(atk.save.ab||'').toUpperCase()} save vs your DC ${8+profBonus(c)+mod(abil(c,c.spellAbility))}</b></p>`:''}
+        ${st.crit?'<p style="text-align:center;color:var(--accent2);margin:0 0 8px"><b>💥 Critical hit — damage dice doubled!</b></p>':''}
         ${atk.vers?`<label class="pill" style="cursor:pointer;margin-bottom:8px"><input type="checkbox" id="af2h" ${st.twoH?'checked':''}> Two-handed (${esc(atk.vers)})</label>`:''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
         <button class="btn block" id="afDmgAuto">🎲 Roll damage</button>
@@ -3129,6 +3134,44 @@ function playerOnData(d){ if(!d) return;
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
 }
 function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by)); }
+function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
+function spellRangeTiles(name){ const mc=parseSpellMechanics(name); if((mc.range||'')==='Touch') return 1; const m=String(mc.range||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; }
+function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
+function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; return net.session.monsters.filter(m=>m.hp>0 && gridDist(fromPos.x,fromPos.y,m.x,m.y)<=tiles); }
+// Player picks an attack/spell, then a target that's actually in range.
+function playerAttackMenu(c){
+  const me=myMapPos();
+  const actions=[];
+  weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const b=weaponDmgBonus(c,w);
+    actions.push({label:it.name, sub:(w.type==='ranged'?'ranged':/reach/.test(w.props||'')?'reach':'melee')+' · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
+      atk:{name:it.name, toHit:weaponToHit(c,w), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}}); });
+  // damaging cantrips (attack-roll or save)
+  c.spells.filter(s=>(s.level||0)===0).forEach(s=>{ const mc=parseSpellMechanics(s.name); if(!mc.dmg&&!mc.heal) return;
+    const sb=profBonus(c)+mod(abil(c,c.spellAbility));
+    actions.push({label:s.name, sub:'cantrip · '+(mc.dmg||mc.heal||'')+' '+(mc.dtype||''), tiles:spellRangeTiles(s.name),
+      atk:{name:s.name, toHit:mc.attack?sb:null, save:mc.save?{ab:mc.save}:null, dmg:mc.dmg||mc.heal||'1d6', dt:mc.dtype||''}}); });
+  if(!actions.length){ flashBanner('No weapons or attack cantrips'); return; }
+  let pick=null;
+  function draw(){
+    let body=`<h2>⚔ Attack</h2>`;
+    if(!pick){ body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Choose a weapon or cantrip:</p>`+
+      actions.map((a,i)=>{ const n=monstersInRange(me,a.tiles).length; return `<div class="spell"><div class="nm"><b>${esc(a.label)}</b><small>${esc(a.sub)} · range ${a.tiles*5} ft</small></div><button class="btn sm" data-pa="${i}">${n} in range</button></div>`; }).join(''); }
+    else { const inr=monstersInRange(me,pick.tiles);
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(pick.label)}</b> — range ${pick.tiles*5} ft. Pick a target:</p>`;
+      body+= inr.length? inr.map(mo=>`<div class="spell"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):''}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max} · ${gridDist(me.x,me.y,mo.x,mo.y)*5} ft away</small></div><button class="btn sm" data-pt="${mo.id}">Attack</button></div>`).join('')
+        : '<div class="empty">No targets in range — move closer (or pick a longer-ranged attack).</div>';
+      body+=`<button class="btn ghost block" id="paBack" style="margin-top:8px">← Back</button>`;
+    }
+    body+=`<button class="btn ghost block" id="paClose" style="margin-top:10px">Close</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="paModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    $('#paModal').onclick=e=>{ if(e.target.id==='paModal') $('#modalRoot').innerHTML=''; };
+    $('#paClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    { const bk=$('#paBack'); if(bk) bk.onclick=()=>{ pick=null; draw(); }; }
+    document.querySelectorAll('[data-pa]').forEach(b=>b.onclick=()=>{ pick=actions[Number(b.dataset.pa)]; draw(); });
+    document.querySelectorAll('[data-pt]').forEach(b=>b.onclick=()=>{ const mo=net.session.monsters.find(m=>m.id===b.dataset.pt); if(mo){ net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; $('#modalRoot').innerHTML=''; attackFlow(c, pick.atk); } });
+  }
+  draw();
+}
 function renderPlayerBattle(c){
   const s=net.session, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0}, b=c.battle||{};
   $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
@@ -3151,9 +3194,9 @@ function renderPlayerBattle(c){
     </div>
   </div>
   <div class="card">
-    <h2>Battlefield</h2>
-    ${mapGridHTML(s,false)}
-    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Tap an empty tile to move (5 ft per tile, diagonals count as 5). Tap a monster 🟥 to attack it.</p>
+    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button></h2>
+    ${mapGridHTML(s,false, net.moveMode?{reach:{x:me.x,y:me.y,tiles:Math.floor((b.move||0)/5)}}:{})}
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?'Tap a glowing tile to move there ('+(b.move||0)+' ft left).':'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
   </div>
   <div class="card">
     <h2>Your turn</h2>
@@ -3166,17 +3209,20 @@ function renderPlayerBattle(c){
     ${c.hp.cur<=0?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
   </div>`;
   app.querySelectorAll('[data-cell]').forEach(el=>el.addEventListener('click',()=>{
-    const t=el.getAttribute('data-target'); if(t){ const mo=s.monsters.find(m=>m.id===t); if(mo){ net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){ try{ net.conn.send({t:'target',mon:mo.id}); }catch(e){} } flashBanner('Targeting '+mo.name+' (AC '+mo.ac+')'); openAttack(c); } return; }
+    const t=el.getAttribute('data-target'); if(t){ playerAttackMenu(c); return; }
     const [x,y]=el.dataset.cell.split(',').map(Number);
     if(s.monsters.some(m=>m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;
+    if(!net.moveMode){ flashBanner('Tap 🥾 Move first'); return; }
     const cost=gridDist(me.x,me.y,x,y)*5;
     if((b.move||0)<cost){ flashBanner('Too far — '+cost+' ft (you have '+(b.move||0)+')'); return; }
     b.move-=cost; b.moveUsed=(b.moveUsed||0)+cost; me.x=x; me.y=y; save();
     if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
+    if((b.move||0)<5) net.moveMode=false;
     render();
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ b[el.dataset.pbt]=!b[el.dataset.pbt]; save(); render(); });
-  { const a=$('#pbAttack'); if(a) a.onclick=()=>openAttack(c); }
+  { const mv=$('#pbMoveBtn'); if(mv) mv.onclick=()=>{ net.moveMode=!net.moveMode; render(); }; }
+  { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
   { const rg=$('#pbRage'); if(rg) rg.onclick=()=>toggleRage(c); }
   { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
@@ -3248,7 +3294,7 @@ const TERRAIN={
   water:{name:'Water',  c:'#3a6ea5', e:''},
   void: {name:'Void',   c:'#15110b', e:''}
 };
-function mapGridHTML(s, isDM){ const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
+function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
   const at=(x,y)=>tiles[x+','+y];
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
     const ter=at(x,y), td=ter&&TERRAIN[ter]; let style='';
@@ -3266,7 +3312,10 @@ function mapGridHTML(s, isDM){ const {cols,rows}=s.map; const tiles=s.map.tiles|
     let tok=''; if(mo){ const badge=mo.num?`<span class="mnum">${mo.num}</span>`:''; tok=(mo.sprite?`<span class="tok" style="background:none;box-shadow:none">${pixelArt(monsterSprite(mo.sprite),2)}</span>`:`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`)+badge; }
     else if(pl) tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id)?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
-    cells+=`<div class="mcell ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" style="${style}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
+    let extra='';
+    if(opts.reach && !mo && !pl){ const dd=Math.max(Math.abs(opts.reach.x-x),Math.abs(opts.reach.y-y)); if(dd>0 && dd<=opts.reach.tiles) extra+=' reach'; }
+    if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
+    cells+=`<div class="mcell${extra} ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" style="${style}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
   }
   return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},34px)">${cells}</div></div>`;
 }
@@ -3455,7 +3504,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v44';
+const APP_VERSION='v45';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
