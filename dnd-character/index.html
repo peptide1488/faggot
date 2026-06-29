@@ -267,18 +267,39 @@
     padding:calc(env(safe-area-inset-top) + 8px) 12px 8px;display:flex;align-items:center;gap:10px;font-size:13px}
   .netbar .code{font-family:Georgia,serif;font-weight:700;letter-spacing:2px}
   .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
-  .mapwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;background:#e0cfa6;padding:4px}
+  .mapwrap{overflow:auto;border-radius:12px;padding:6px;
+    background:
+      linear-gradient(rgba(20,16,11,.06),rgba(20,16,11,.06)),
+      repeating-linear-gradient(0deg,rgba(0,0,0,.05) 0 1px,transparent 1px 38px),
+      repeating-linear-gradient(90deg,rgba(0,0,0,.05) 0 1px,transparent 1px 38px),
+      #cdb88c;
+    box-shadow:inset 0 0 18px rgba(60,42,20,.35), 0 2px 8px rgba(0,0,0,.18)}
   .mapgrid{display:grid;gap:2px;min-width:max-content}
-  .mcell{width:34px;height:34px;background:rgba(255,250,235,.55);border:1px solid rgba(120,90,40,.18);border-radius:4px;display:grid;place-items:center;position:relative;cursor:pointer}
-  .mcell.tgt{cursor:pointer}
-  .mcell.reach{box-shadow:inset 0 0 0 2px rgba(77,106,44,.7);background:rgba(111,148,66,.35)!important;cursor:pointer}
-  .mcell.intarget{box-shadow:inset 0 0 0 2px var(--bad);animation:pulse 1s ease-in-out infinite}
-  @keyframes pulse{0%,100%{box-shadow:inset 0 0 0 2px var(--bad)}50%{box-shadow:inset 0 0 0 3px var(--bad)}}
-  .tok{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff;font-family:Georgia,serif}
-  .tok.mon{background:#9c3b2c;box-shadow:0 1px 3px rgba(0,0,0,.3)}
-  .tok.pl{background:#3b5320;box-shadow:0 1px 3px rgba(0,0,0,.3)}
-  .tok.sel{outline:3px solid var(--gold)}
-  .mnum{position:absolute;top:-2px;right:-2px;min-width:13px;height:13px;padding:0 2px;border-radius:7px;background:#1a1410;color:#f6efda;font-size:9px;font-weight:700;line-height:13px;text-align:center;box-shadow:0 0 0 1px rgba(255,255,255,.4)}
+  .mcell{width:36px;height:36px;border-radius:5px;display:grid;place-items:center;position:relative;cursor:pointer;
+    background:linear-gradient(145deg,#efe3c4,#dccba0);box-shadow:inset 0 1px 0 rgba(255,255,255,.45), inset 0 -2px 3px rgba(120,90,40,.18)}
+  /* terrain tiles */
+  .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
+  .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
+  .ter-water{background:linear-gradient(145deg,#56a0d6,#2f6ba8)!important;box-shadow:inset 0 0 7px rgba(255,255,255,.35)}
+  .ter-lava{background:linear-gradient(145deg,#f47a2c,#b22f0c)!important;box-shadow:inset 0 0 8px rgba(255,225,120,.7);animation:lavaglow 2.2s ease-in-out infinite}
+  .ter-wall{background:linear-gradient(160deg,#7a6647,#4c3c28)!important;box-shadow:inset 0 2px 0 rgba(255,255,255,.2), inset 0 -4px 5px rgba(0,0,0,.45)}
+  .ter-void{background:radial-gradient(circle at 50% 40%,#1a1510,#000)!important;box-shadow:inset 0 0 11px rgba(0,0,0,.95)}
+  @keyframes lavaglow{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
+  .mcell.reach{box-shadow:inset 0 0 0 2px rgba(110,200,90,.9), inset 0 0 8px rgba(110,200,90,.5)!important;cursor:pointer}
+  .mcell.reach::after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:rgba(150,230,120,.8)}
+  .mcell.intarget{box-shadow:inset 0 0 0 2px var(--bad), inset 0 0 8px rgba(156,59,44,.6)!important;animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.3)}}
+  .tok{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff;font-family:Georgia,serif;
+    box-shadow:0 2px 4px rgba(0,0,0,.45), inset 0 2px 3px rgba(255,255,255,.25); border:1.5px solid rgba(0,0,0,.25)}
+  .tok.mon{background:radial-gradient(circle at 38% 30%,#c25140,#8a3024)}
+  .tok.pl{background:radial-gradient(circle at 38% 30%,#5f8a36,#33521d)}
+  .tok.sel{outline:3px solid var(--gold);outline-offset:1px}
+  .tok.deadtok{box-shadow:none;border-color:transparent}
+  .hpbar{position:absolute;bottom:1px;left:50%;transform:translateX(-50%);width:28px;height:4px;border-radius:2px;background:rgba(0,0,0,.55);overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.3)}
+  .hpbar i{display:block;height:100%;background:linear-gradient(#5fd06a,#2f9c3a)}
+  .hpbar.low i{background:linear-gradient(#f0a93a,#c87a14)}
+  .hpbar.crit i{background:linear-gradient(#f06a4a,#9c2f1c)}
+  .mnum{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 2px;border-radius:7px;background:#1a1410;color:#f6efda;font-size:9px;font-weight:700;line-height:14px;text-align:center;box-shadow:0 0 0 1.5px rgba(255,255,255,.5)}
 
   /* cast spell animation overlay */
   .castfx{position:fixed;inset:0;z-index:60;pointer-events:none;display:grid;place-items:center}
@@ -3367,25 +3388,25 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       const U=at(x,y-1)===ter, D=at(x,y+1)===ter, L=at(x-1,y)===ter, R=at(x+1,y)===ter, RAD='11px';
       const tl=(!U&&!L)?RAD:'0', tr=(!U&&!R)?RAD:'0', br=(!D&&!R)?RAD:'0', bl=(!D&&!L)?RAD:'0';
       const m=2; // overlap the 2px gap so connected cells merge seamlessly
-      style=`background:${td.c};border-radius:${tl} ${tr} ${br} ${bl};`
+      style=`border-radius:${tl} ${tr} ${br} ${bl};`
         + (U?`margin-top:-${m}px;padding-top:${m}px;`:'') + (D?`margin-bottom:-${m}px;padding-bottom:${m}px;`:'')
-        + (L?`margin-left:-${m}px;padding-left:${m}px;`:'') + (R?`margin-right:-${m}px;padding-right:${m}px;`:'')
-        + 'border-color:transparent;';
+        + (L?`margin-left:-${m}px;padding-left:${m}px;`:'') + (R?`margin-right:-${m}px;padding-right:${m}px;`:'');
     }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
+    const hpbar=(cur,mx)=>{ if(!mx) return ''; const p=Math.max(0,Math.min(100,Math.round(cur/mx*100))); const cl=p<=25?'crit':p<=50?'low':''; return `<span class="hpbar ${cl}"><i style="width:${p}%"></i></span>`; };
     let tok=''; if(mo){ const dead=mo.hp<=0; const inner=mo.sprite?pixelArt(monsterSprite(mo.sprite),2):esc((mo.name[0]||'M').toUpperCase());
       const tcls='tok '+(mo.sprite?'':'mon')+(net&&net.sel==='m'+mo.id?' sel':'')+(dead?' deadtok':'');
       const tstyle=(mo.sprite?'background:none;box-shadow:none;':'')+(dead?'filter:grayscale(1) brightness(.55);transform:rotate(90deg);opacity:.65;':'');
-      tok=`<span class="${tcls}" style="${tstyle}">${inner}</span>`+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')); }
-    else if(pl) tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id)?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
+      tok=`<span class="${tcls}" style="${tstyle}">${inner}</span>`+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')+hpbar(mo.hp,mo.max)); }
+    else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id); tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`+hpbar(pl.hpCur,pl.hpMax); }
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
     if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=' reach'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
-    cells+=`<div class="mcell${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}</div>`;
+    cells+=`<div class="mcell${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}</div>`;
   }
-  return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},34px)">${cells}</div></div>`;
+  return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
 }
 
 /* ---- DM dashboard (full screen) ---- */
@@ -3602,7 +3623,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v53';
+const APP_VERSION='v54';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
