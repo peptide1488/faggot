@@ -697,8 +697,10 @@ function isRaging(c){ return (c.effects||[]).some(e=>e.name==='Rage'); }
 function rageDamage(c){ const l=Number(c.level)||1; return l>=16?4:l>=9?3:2; }
 function toggleRage(c){
   if(isRaging(c)){ c.effects=(c.effects||[]).filter(e=>e.name!=='Rage'); logChange(c,'Rage ended'); save(); render(); return; }
-  addEffect(c,'Rage',{rounds:100, note:'Advantage on STR checks & saves · +'+rageDamage(c)+' melee (STR) damage · resistance to bludgeoning/piercing/slashing.'});
-  sfx('damage'); logChange(c,'🪓 RAGE! +'+rageDamage(c)+' melee damage, resistance to b/p/s'); save(); render(); flashBanner('🪓 RAGE!');
+  // can't concentrate while raging — drop any concentration spell
+  if(c.concentration&&c.concentration.active){ c.effects=(c.effects||[]).filter(e=>!e.conc); c.concentration={active:false,spell:''}; }
+  addEffect(c,'Rage',{rounds:100, note:'Half damage from b/p/s · +'+rageDamage(c)+' melee (STR) damage · advantage on STR · can’t cast/concentrate.'});
+  sfx('damage'); logChange(c,'🪓 RAGE! +'+rageDamage(c)+' melee damage, ½ physical damage, no spells'); save(); render(); flashBanner('🪓 RAGE!');
 }
 function openMove(c){
   if(!c.battle) return; const b=c.battle;
@@ -718,6 +720,7 @@ function openMove(c){
   $('#mvModal').onclick=e=>{ if(e.target.id==='mvModal') $('#modalRoot').innerHTML=''; };
 }
 function openQuickSpells(c){
+  if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return; }
   const list=c.spells.slice().sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
   $('#modalRoot').innerHTML=`<div class="modal" id="qsModal"><div class="sheet"><div class="grip"></div>
     <h2>✨ Cast a spell</h2>
@@ -1193,6 +1196,7 @@ function advanceRound(c){
   flashBanner(expired.length?('Round advanced — expired: '+expired.map(e=>e.name).join(', ')):'Round advanced');
 }
 function castSpell(c, name, level){
+  if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return; }
   level=Number(level)||0;
   // spend a slot of that level if you have one available (cantrips are free)
   if(level>0){ const total=spellSlots(c)[level]||0; if(total){ if(!c.slots[level]) c.slots[level]={total:0,used:0};
@@ -1225,6 +1229,7 @@ function parseSpellMechanics(name){
   return out;
 }
 function castModal(c, name, baseLevel){
+  if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return; }
   baseLevel=Number(baseLevel)||0;
   const meta=spellMeta(name), m=parseSpellMechanics(name), A=abilFullName;
   const dc=8+profBonus(c)+mod(abil(c,c.spellAbility)), atkB=profBonus(c)+mod(abil(c,c.spellAbility));
@@ -2582,9 +2587,11 @@ function hdPips(total, used){
 function applyHp(c,delta){
   if(delta<0){
     let dmg=-delta; const wasAt0=c.hp.cur<=0;
+    const raged=isRaging(c)&&dmg>0; if(raged) dmg=Math.floor(dmg/2);   // Rage: resistance to b/p/s (halved)
     if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
     const before=c.hp.cur; c.hp.cur=Math.max(0,c.hp.cur-dmg);
-    logChange(c,'Took '+(-delta)+' damage → '+c.hp.cur+' HP');
+    logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+' damage → '+c.hp.cur+' HP');
+    if(raged) flashBanner('🪓 Rage — damage halved (physical)');
     // damage while at 0 HP = failed death save(s); a crit/≥max-HP hit is two
     if(wasAt0 && dmg>0){ const fails=dmg>=c.hp.max?2:1; c.death.fail=Math.min(3,(c.death.fail||0)+fails); logChange(c,'Hit at 0 HP — '+fails+' death-save failure'+(fails>1?'s':'')); }
     // dropped to 0 → unconscious; instant death if damage ≥ max HP over current
@@ -3115,6 +3122,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && d.dmg){ mo.hp=Math.max(0,mo.hp-d.dmg); } net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg:d.dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+(d.dmg||0))); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
   else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true; dmBroadcast(); render(); } }
+  else if(d.t==='endturn'){ const cur=net.session.order&&net.session.order[net.session.turn]; if(cur&&cur.id===conn.peer) dmNextTurn(); }
 }
 function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
 function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.placed) return; p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ if(m.placed) return; m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
@@ -3127,6 +3135,9 @@ function orderDead(o){ if(o.k!=='m') return false; const mo=net.session.monsters
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; dmBroadcast(); render(); return; }
   let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
   dmRefreshActor(); dmBroadcast(); render(); }
+function dmPrevTurn(){ const s=net.session; if(!s.order||!s.order.length) return;
+  let guard=0; do{ if((s.turn||0)===0){ s.turn=s.order.length-1; if(s.battle.round>1) s.battle.round--; } else s.turn--; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
+  dmBroadcast(); render(); flashBanner('Back to '+(s.order[s.turn]?s.order[s.turn].name:'previous')); }
 function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
 function dmExit(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
@@ -3174,8 +3185,10 @@ function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
       else if(!d.session.battle.active && c.battle){ c.battle=null; save(); }
-      else if(c.battle && c.battle.round!==d.session.battle.round){ // DM advanced the round → reset my turn
-        c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
+      else if(c.battle){ const cur=d.session.order&&d.session.order[d.session.turn]; const myTurn=cur&&cur.id===net.peer.id;
+        if((myTurn && !net.wasMyTurn) || (!d.session.order||!d.session.order.length) && c.battle.round!==d.session.battle.round){   // my turn started (or no initiative → round change) → reset resources
+          c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
+        net.wasMyTurn=myTurn; }
     }
     render();
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
@@ -3216,8 +3229,8 @@ function playerAttackMenu(c){
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const b=weaponDmgBonus(c,w);
     actions.push({label:it.name, sub:(w.type==='ranged'?'ranged':/reach/.test(w.props||'')?'reach':'melee')+' · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
       atk:{name:it.name, toHit:weaponToHit(c,w), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}}); });
-  // damaging cantrips (attack-roll or save)
-  c.spells.filter(s=>(s.level||0)===0).forEach(s=>{ const mc=parseSpellMechanics(s.name); if(!mc.dmg&&!mc.heal) return;
+  // damaging cantrips (attack-roll or save) — none while raging
+  (isRaging(c)?[]:c.spells.filter(s=>(s.level||0)===0)).forEach(s=>{ const mc=parseSpellMechanics(s.name); if(!mc.dmg&&!mc.heal) return;
     const sb=profBonus(c)+mod(abil(c,c.spellAbility));
     actions.push({label:s.name, sub:'cantrip · '+(mc.dmg||mc.heal||'')+' '+(mc.dtype||''), tiles:spellRangeTiles(s.name),
       atk:{name:s.name, toHit:mc.attack?sb:null, save:mc.save?{ab:mc.save}:null, dmg:mc.dmg||mc.heal||'1d6', dt:mc.dtype||''}}); });
@@ -3274,13 +3287,15 @@ function renderPlayerBattle(c){
   </div>
   <div class="card">
     <h2>Your turn</h2>
+    ${(c.effects&&c.effects.length)?`<div class="addrow" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">${c.effects.map(e=>`<span class="pill" style="${e.name==='Rage'?'background:var(--bad);color:#fff;border-color:var(--bad)':''}">${spellIcon(e.name)} ${esc(e.name)}${e.mods&&modSummary(e.mods)?' · '+modSummary(e.mods):''}</span>`).join('')}</div>`:''}
     <div class="row2">
       <button class="btn" id="pbAttack">⚔ Attack</button>
       ${(isCaster(c)||c.spells.length)?`<button class="btn" id="pbSpells">✨ Spells</button>`:''}
     </div>
-    ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
+    ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging — tap to stop':'Enter Rage'}</button>`:''}
     <div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>
     ${c.hp.cur<=0?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
+    <button class="btn block" id="pbEndTurn" style="margin-top:10px;${myTurn?'':'opacity:.5'}">⏭ End my turn</button>
   </div>
   <div class="card">
     <h2>Battle Log</h2>
@@ -3310,6 +3325,7 @@ function renderPlayerBattle(c){
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
   { const rg=$('#pbRage'); if(rg) rg.onclick=()=>toggleRage(c); }
+  { const et=$('#pbEndTurn'); if(et) et.onclick=()=>{ if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} } net.moveMode=false; flashBanner('Turn ended'); }; }
   { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
   { const hh=$('#pbHeal'); if(hh) hh.onclick=()=>applyHp(c,Math.abs(Number($('#pbAmt').value)||0)); }
   { const ds=$('#pbDeath'); if(ds) ds.onclick=()=>rollDeathSave(c); }
@@ -3431,7 +3447,7 @@ function renderDM(){
         <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Up now: ${esc(cur.name||'—')}</div>
         ${curMon? `<div class="row2"><button class="btn" id="curAtk">⚔ ${esc(curMon.name)} attacks</button><button class="btn ghost" id="curMove">📍 Move it</button></div>`
           : `<p class="muted" style="font-size:12.5px;margin:0">It's <b>${esc(cur.name||'a player')}</b>'s turn — they act on their own device.</p>`}
-        <button class="btn block" id="dmNextT" style="margin-top:8px">▶ Next turn →</button>
+        <div class="row2" style="margin-top:8px"><button class="btn ghost" id="dmPrevT">◀ Back</button><button class="btn" id="dmNextT">Next turn ▶</button></div>
       </div>
     </div>`; })() : (s.battle.active?'<div class="card"><div class="empty">No combatants. Deploy monsters and have players join, then ↻ re-roll.</div></div>':'')}
   <div class="card">
@@ -3465,6 +3481,7 @@ function renderDM(){
   $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
   { const rr=$('#dmReroll'); if(rr) rr.onclick=rollInitiative; }
   { const nt=$('#dmNextT'); if(nt) nt.onclick=dmNextTurn; }
+  { const pt=$('#dmPrevT'); if(pt) pt.onclick=dmPrevTurn; }
   { const ca=$('#curAtk'); if(ca) ca.onclick=()=>{ const cur=s.order[s.turn]; const mo=cur&&s.monsters.find(m=>m.id===cur.id); if(mo) dmMonsterAttack(mo); }; }
   { const cm=$('#curMove'); if(cm) cm.onclick=()=>{ const cur=s.order[s.turn]; if(cur){ net.sel='m'+cur.id; render(); flashBanner('Tap a map cell to move '+cur.name); } }; }
   app.querySelectorAll('[data-pdmg]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pdmg, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:-Math.abs(amt)}); });
@@ -3623,7 +3640,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v54';
+const APP_VERSION='v55';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
