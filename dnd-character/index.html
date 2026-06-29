@@ -3952,7 +3952,43 @@ function renderNetBar(){
    (human / tactical / future agent), so an external agent can drive any
    unit later — even monster-vs-monster with different AIs.
    ========================================================================= */
-const BRAINS = {};   // name -> function(qb, unit) -> [intent]; intents: {type:'move',to} | {type:'attack',targetId,atk}
+const BRAINS = {};   // name -> function(enc, unit) -> [intent]; intents: {type:'move',to} | {type:'attack',targetId,atk}
+
+/* =========================================================================
+   UNIFIED COMBAT ENGINE (used by Quick Battle now; DM/player adopt it next).
+   - Engine.applyAction(adapter, action) is the single pure resolver: it
+     validates, rolls dice, mutates state via the adapter, and returns an
+     `event` describing what happened (for UI/sound/log/agents).
+   - An `adapter` binds the engine to a concrete encounter (Quick Battle's
+     qbAdapter today; a session adapter later) — same logic, any state shape.
+   - CONTROLLERS decide a unit's actions each turn: `human` (actions come
+     from the UI), `tactical` (built-in AI), `agent` (future LLM/remote).
+     Swapping who controls a unit = swapping one field. This is what lets
+     player / DM / agent drive any combatant through the exact same path.
+   ========================================================================= */
+const Engine = {
+  // resolve one attack → returns an event {type,actorId,targetId,hit,crit,dmg,total,ac,void?}
+  attack(ad, actorId, targetId, atk){
+    const a=ad.unit(actorId), t=ad.unit(targetId);
+    if(!a||!t||ad.hp(t)<=0) return {type:'attack', void:true, actorId, targetId};
+    const ac=ad.ac(t), d20=rnd(20), total=d20+(atk.toHit||0), crit=d20===20, hit=crit||(d20!==1&&total>=ac);
+    let dmg=0; if(hit){ const note=crit?critNotation(atk.dmg||'1d6'):(atk.dmg||'1d6'); dmg=(rollNotation(note)||{total:0}).total; ad.hurt(t,dmg); }
+    return {type:'attack', actorId, targetId, atk, d20, total, ac, hit, crit, dmg};
+  },
+  // single entry point any controller (UI/AI/agent) calls
+  applyAction(ad, action){
+    switch(action.type){
+      case 'attack': return Engine.attack(ad, action.actorId, action.targetId, action.atk);
+      default: return {type:action.type, void:true};
+    }
+  }
+};
+const CONTROLLERS = {
+  human:    { decide:null },                                  // actions come from the UI; engine waits
+  tactical: { decide:(enc,u)=> (BRAINS.tactical||(()=>[]))(enc,u) },
+  agent:    { decide:(enc,u)=> (BRAINS.agent||BRAINS.tactical||(()=>[]))(enc,u) }   // stub: falls back to tactical until an agent is wired
+};
+function unitController(u){ return u.controller || (u.side==='mon' ? (u.brain||'tactical') : 'human'); }
 function crToNum(cr){ const s=String(cr==null?0:cr); if(s.includes('/')){ const [a,b]=s.split('/').map(Number); return b?a/b:0; } return Number(s)||0; }
 function qbAC(u){ return u.side==='pc'?computeAC(u.c):u.ac; }
 function qbHP(u){ return u.side==='pc'?u.c.hp.cur:u.hp; }
@@ -3962,6 +3998,9 @@ function qbAlive(u){ return qbHP(u)>0; }
 function qbUnitById(id){ return QB.players.find(p=>p.id===id)||QB.monsters.find(m=>m.id===id); }
 function qbLog(m){ QB.log.unshift({m, t:Date.now()}); if(QB.log.length>40) QB.log.pop(); }
 function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); } }
+// adapter binding the unified Engine to Quick Battle's state
+const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
+  enemiesOf:u=> u.side==='pc'?QB.monsters.filter(m=>m.hp>0):QB.players.filter(p=>p.c.hp.cur>0), map:()=>QB.map };
 // the PC's usable attacks (weapons + custom), as generic atk objects
 function qbPcAttacks(c){ const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w);
@@ -4051,12 +4090,11 @@ function qbEndPcTurn(){ const o=qbCurrent(); if(o&&o.k==='p'){ QB.moveMode=false
 // ---- attack resolution (shared by PC, AI, opportunity attacks) ----
 function qbResolveAttack(att, tgt, atk, done){
   if(!att||!tgt||qbHP(tgt)<=0){ done&&done(); return; }
-  const ac=qbAC(tgt), d20=rnd(20), total=d20+(atk.toHit||0), crit=d20===20, hit=crit||(d20!==1&&total>=ac);
   const glyph=(atk.tiles||1)>1?'➶':'✦'; mapProjectile(att.x,att.y,tgt.x,tgt.y,glyph); sfx('swing');
+  const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});   // unified resolver
   setTimeout(()=>{
-    if(hit){ const note=crit?critNotation(atk.dmg||'1d6'):(atk.dmg||'1d6'); const dmg=(rollNotation(note)||{total:0}).total;
-      qbHurt(tgt,dmg); sfx(crit?'crit':'hit'); attackFx(crit?'crit':'hit'); qbLog((crit?'💥 ':'')+qbName(att)+' '+(crit?'crits':'hits')+' '+qbName(tgt)+' for '+dmg+' ('+total+' vs AC '+ac+')'); }
-    else { sfx('miss'); attackFx('miss'); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+total+' vs AC '+ac+')'); }
+    if(ev.hit){ sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit'); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+' ('+ev.total+' vs AC '+ev.ac+')'); }
+    else { sfx('miss'); attackFx('miss'); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
     qbCheckEnd(); save(); render(); done&&done();
   }, 280);
 }
@@ -4300,7 +4338,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v72';
+const APP_VERSION='v73';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
