@@ -3176,13 +3176,18 @@ function dijkstra(s, sx, sy, maxFeet){
   return {cost, prev};
 }
 function reachableCells(s, sx, sy, maxFeet){ return dijkstra(s,sx,sy,maxFeet).cost; }
+// Bresenham line of sight — a wall between attacker and target blocks the shot.
+function losClear(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{}; let dx=Math.abs(x1-x0), dy=Math.abs(y1-y0), sx=x0<x1?1:-1, sy=y0<y1?1:-1, err=dx-dy, x=x0, y=y0, guard=0;
+  while(!(x===x1&&y===y1) && guard++<999){ const e2=2*err; if(e2>-dy){ err-=dy; x+=sx; } if(e2<dx){ err+=dy; y+=sy; }
+    if(x===x1&&y===y1) break; if(tiles[x+','+y]==='wall') return false; }
+  return true; }
 function pathTo(s, sx, sy, tx, ty, maxFeet){ const {cost,prev}=dijkstra(s,sx,sy,maxFeet); const K=(x,y)=>x+','+y; if(cost[K(tx,ty)]==null) return null;
   const path=[]; let cur=K(tx,ty); while(cur && cur!==K(sx,sy)){ const [x,y]=cur.split(',').map(Number); path.unshift({x,y}); cur=prev[cur]; } return path; }
 function animateToken(get,set,path,step,done){ let i=0; (function go(){ if(i>=path.length){ done&&done(); return; } set(path[i].x,path[i].y); i++; render(); setTimeout(go, step||110); })(); }
 function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
 function spellRangeTiles(name){ const mc=parseSpellMechanics(name); if((mc.range||'')==='Touch') return 1; const m=String(mc.range||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; }
 function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
-function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; return net.session.monsters.filter(m=>m.hp>0 && gridDist(fromPos.x,fromPos.y,m.x,m.y)<=tiles); }
+function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; return net.session.monsters.filter(m=>m.hp>0 && gridDist(fromPos.x,fromPos.y,m.x,m.y)<=tiles && losClear(net.session,fromPos.x,fromPos.y,m.x,m.y)); }
 // Player picks an attack/spell, then a target that's actually in range.
 function playerAttackMenu(c){
   const me=myMapPos();
@@ -3265,7 +3270,7 @@ function renderPlayerBattle(c){
   app.querySelectorAll('[data-cell]').forEach(el=>el.addEventListener('click',()=>{
     const t=el.getAttribute('data-target'); if(t){ playerAttackMenu(c); return; }
     const [x,y]=el.dataset.cell.split(',').map(Number);
-    if(s.monsters.some(m=>m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;
+    if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;   // dead bodies don't block
     if(!net.moveMode){ flashBanner('Tap 🥾 Move first'); return; }
     const ter=terrainAt(s,x,y);
     if(ter==='wall'){ flashBanner('A wall blocks the way'); return; }
@@ -3486,7 +3491,7 @@ function dmMonsterAttack(mo){
   const players=net.session.players; if(!players.length){ flashBanner('No players connected to target'); return; }
   const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0};
   const tgt=()=>net.session.players.find(p=>p.id===st.targetId)||players[0];
-  function draw(){ const range=st.atk.tiles||1; const inR=players.filter(p=>gridDist(mo.x,mo.y,p.x,p.y)<=range);
+  function draw(){ const range=st.atk.tiles||1; const inR=players.filter(p=>gridDist(mo.x,mo.y,p.x,p.y)<=range && losClear(net.session,mo.x,mo.y,p.x,p.y));
     if(inR.length && !inR.some(p=>p.id===st.targetId)) st.targetId=inR[0].id;
     const t=tgt(); let body=`<h2>⚔ ${esc(mo.name)} attacks</h2>`;
     body+=`<div class="field"><label>Attack</label><div class="chips">${atks.map((a,i)=>`<button class="chip ${st.atk===a?'on':''}" data-ma="${i}">${esc(a.name)}${a.hit!=null?' +'+a.hit:a.dc?' (DC'+a.dc.n+')':''}${a.tiles>1?' · '+(a.tiles*5)+'ft':''}</button>`).join('')}</div></div>`;
@@ -3597,7 +3602,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v52';
+const APP_VERSION='v53';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
