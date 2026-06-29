@@ -1747,7 +1747,7 @@ function attackFx(kind){ const el=document.createElement('div'); el.className='c
   el.innerHTML=`<div class="glow" style="background:radial-gradient(circle,${map.col},transparent 60%)"></div><div class="ic">${map.ic}</div>`;
   document.body.appendChild(el); setTimeout(()=>el.remove(),700); }
 /* ---- on-map effects: projectiles & explosions ---- */
-function curMapGrid(){ return document.querySelector('#stModal .mapgrid, #atkModal .mapgrid, #smModal .mapgrid') || document.querySelector('.mapgrid'); }
+function curMapGrid(){ return document.querySelector('#stModal .mapgrid, #qstModal .mapgrid, #atkModal .mapgrid, #smModal .mapgrid') || document.querySelector('.mapgrid'); }
 function cellCenter(grid,x,y){ const cell=grid.querySelector('[data-cell="'+x+','+y+'"]'); if(!cell) return null; const g=grid.getBoundingClientRect(), c=cell.getBoundingClientRect(); return {x:c.left-g.left+c.width/2, y:c.top-g.top+c.height/2}; }
 function mapProjectile(fx,fy,tx,ty,glyph){ const grid=curMapGrid(); if(!grid) return; const a=cellCenter(grid,fx,fy), b=cellCenter(grid,tx,ty); if(!a||!b) return; const wrap=grid.parentElement; if(getComputedStyle(wrap).position==='static') wrap.style.position='relative';
   const p=document.createElement('div'); p.className='mfx-proj'; p.textContent=glyph||'✦'; p.style.left=a.x+'px'; p.style.top=a.y+'px';
@@ -4043,7 +4043,7 @@ function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
     QB.moveMode=false; save(); render(); }
 }
 function qbNextTurn(){ if(!QB) return; if(QB.over){ render(); return; }
-  let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0) QB.battle.round++; guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
+  let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0){ QB.battle.round++; QB.monsters.forEach(m=>{ if(m.conds){ m.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); m.conds=m.conds.filter(x=>x.rounds==null||x.rounds>0); } }); } guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
   qbBeginTurn();
 }
 function qbEndPcTurn(){ const o=qbCurrent(); if(o&&o.k==='p'){ QB.moveMode=false; qbNextTurn(); } }
@@ -4127,7 +4127,7 @@ function renderQuickBattle(){
   <div class="card" style="border:2px solid var(--accent2)">
     <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Quick Battle</h2><button class="btn ghost sm" id="qbExit" style="color:var(--bad)">Exit</button></div>
     <div class="muted" style="font-size:12px;margin-top:6px">Round ${s.battle.round} · ${s.over?(s.over==='win'?'🏆 Victory!':'💀 Defeated'):(myTurn?'Your turn':'⏳ '+esc(o?o.name:'…')+'…')}</div>
-    <div class="addrow" style="gap:5px;flex-wrap:wrap;margin-top:8px">${s.order.map((it,i)=>{ const u=qbUnitById(it.id); const dead=u&&!qbAlive(u); return `<span class="pill" style="${i===s.turn?'background:var(--accent2);color:#fff;':''}${dead?'opacity:.4;text-decoration:line-through':''}">${it.k==='m'?'🟥':'🟩'} ${esc(it.name)}</span>`; }).join('')}</div>
+    <div class="addrow" style="gap:5px;flex-wrap:wrap;margin-top:8px">${s.order.map((it,i)=>{ const u=qbUnitById(it.id); const dead=u&&!qbAlive(u); return `<span class="pill" style="${i===s.turn?'background:var(--accent2);color:#fff;':''}${dead?'opacity:.4;text-decoration:line-through':''}">${it.k==='m'?'🟥':'🟩'} ${esc(it.name)} <b>${it.roll}</b></span>`; }).join('')}</div>
   </div>
   ${s.over?`<div class="card" style="text-align:center"><div style="font-size:40px">${s.over==='win'?'🏆':'💀'}</div><h2 style="margin:6px 0">${s.over==='win'?'Victory!':'You were defeated'}</h2>
     <button class="btn block" id="qbAgain" style="margin-top:8px">⚔ New Quick Battle</button>
@@ -4144,11 +4144,13 @@ function renderQuickBattle(){
       <button class="chip ${b.bonus?'on':''}">Bonus</button>
       <button class="chip ${b.reaction?'on':''}">Reaction</button>
     </div>
-    <div class="row2" style="margin-top:10px">
-      <button class="btn ${s.moveMode?'':'ghost'}" id="qbMove" ${myTurn?'':'disabled style="opacity:.5"'}>🥾 ${s.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button>
-      <button class="btn" id="qbEnd" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
+    <div class="addrow" style="gap:6px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn ${s.moveMode?'':'ghost'}" id="qbMove" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>🥾 ${s.moveMode?'Moving ('+(b.move||0)+'ft)':'Move'}</button>
+      <button class="btn" id="qbAttack" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>⚔ Attack</button>
+      ${(isCaster(c)||c.spells.length)?`<button class="btn" id="qbCast" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>✨ Spells</button>`:''}
     </div>
-    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'🟢 normal move · 🔴 Dash (uses action). Tap a tile.':'Tap 🟥 a monster in range to attack, or 🥾 Move.'):'Wait for your turn…'}</p>
+    <button class="btn ghost block" id="qbEnd" style="margin-top:8px" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'🟢 normal move · 🔴 Dash (uses action). Tap a tile.':'⚔ Attack a monster in range, ✨ cast a spell, or 🥾 Move. You can also tap a 🟥 monster directly.'):'⏳ Waiting for '+esc(o?o.name:'…')+'…'}</p>
   </div>
   <div class="card">
     <h2>Battlefield</h2>
@@ -4164,6 +4166,8 @@ function renderQuickBattle(){
   { const a=$('#qbAgain'); if(a) a.onclick=()=>{ QB=null; openQuickBattle(); }; }
   { const d=$('#qbDone'); if(d) d.onclick=qbExit; }
   { const mv=$('#qbMove'); if(mv&&myTurn) mv.onclick=()=>{ s.moveMode=!s.moveMode; render(); }; }
+  { const at=$('#qbAttack'); if(at&&myTurn) at.onclick=()=>qbOpenAttack(c); }
+  { const ca=$('#qbCast'); if(ca&&myTurn) ca.onclick=()=>qbOpenSpells(c); }
   { const en=$('#qbEnd'); if(en&&myTurn) en.onclick=qbEndPcTurn; }
   if(myTurn) app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{
     const t=el.getAttribute('data-target'); if(t){ const mo=s.monsters.find(m=>m.id===t); if(mo&&mo.hp>0) qbPcAttack(mo); return; }
@@ -4203,6 +4207,64 @@ function qbPcAttack(mo){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle;
   $('#qbwModal').onclick=e=>{ if(e.target.id==='qbwModal') $('#modalRoot').innerHTML=''; };
   document.querySelectorAll('[data-qbw]').forEach(btn=>btn.onclick=()=>go(inrange[Number(btn.dataset.qbw)]));
 }
+// explicit Attack picker — lists living monsters with range, so attacking is discoverable
+function qbOpenAttack(c){ const s=QB, pc=s.players[0]; const foes=s.monsters.filter(m=>m.hp>0); if(!foes.length) return;
+  const atks=qbPcAttacks(c); const reach=Math.max(...atks.map(a=>a.tiles||1));
+  $('#modalRoot').innerHTML=`<div class="modal" id="qaModal"><div class="sheet"><div class="grip"></div><h2>⚔ Attack</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Your reach: ${reach*5} ft. Pick a target in range:</p>
+    ${foes.map(mo=>{ const d=gridDist(pc.x,pc.y,mo.x,mo.y); const inr=atks.some(a=>qbInRange(pc,mo,a)); return `<div class="spell" style="${inr?'':'opacity:.5'}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):''}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max} · ${d*5} ft</small></div>${inr?`<button class="btn sm" data-qatk="${mo.id}">Attack</button>`:`<span class="pill">out of range</span>`}</div>`; }).join('')}
+    <button class="btn ghost block" id="qaClose" style="margin-top:10px">Close</button></div></div>`;
+  $('#qaClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#qaModal').onclick=e=>{ if(e.target.id==='qaModal') $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('[data-qatk]').forEach(b=>b.onclick=()=>{ const mo=s.monsters.find(m=>m.id===b.dataset.qatk); $('#modalRoot').innerHTML=''; if(mo) qbPcAttack(mo); });
+}
+// PC spellcasting in Quick Battle
+function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while raging'); return; }
+  const list=c.spells.slice().sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
+  $('#modalRoot').innerHTML=`<div class="modal" id="qsModal"><div class="sheet"><div class="grip"></div>
+    <h2>✨ Cast a spell</h2><input id="qsSearch" placeholder="Filter your spells…" autocomplete="off">
+    <div id="qsList" style="margin-top:10px;max-height:56vh;overflow:auto"></div>
+    <button class="btn ghost block" id="qsClose" style="margin-top:10px">Close</button></div></div>`;
+  const draw=()=>{ const q=($('#qsSearch').value||'').toLowerCase(); const f=list.filter(s=>s.name.toLowerCase().includes(q));
+    $('#qsList').innerHTML=f.length?f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${spellCastTime(s.name)==='bonus'?' · bonus':''}${isConcentration(s.name)?' · 🧠':''}</small></div><button class="btn sm" data-qsc="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join(''):'<div class="empty">No spells. Add them on the Spells tab.</div>';
+    $('#qsList').querySelectorAll('[data-qsc]').forEach(b=>b.onclick=()=>{ const a=b.dataset.qsc.split('|'); const name=a[0], lvl=Number(a[1]); const mc=parseSpellMechanics(name);
+      if(mc.buff && !mc.dmg && !mc.heal && !mc.attack && !mc.save){ castModal(c,name,lvl); }   // self/ally buff → existing modal (spends action via castSpell)
+      else qbSpellTarget(c,name,lvl); }); };
+  $('#qsSearch').addEventListener('input',draw); $('#qsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#qsModal').onclick=e=>{ if(e.target.id==='qsModal') $('#modalRoot').innerHTML=''; }; draw();
+}
+function qbApplyCond(mo,name){ const sc=SPELL_COND[name]; if(sc){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===sc.c)) mo.conds.push({name:sc.c,rounds:sc.r}); } }
+function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.players[0];
+  if(!canCast(c,name,level)) return;   // pre-check; castSpell re-checks + spends on confirm
+  const mc=parseSpellMechanics(name), tilesR=spellRangeTiles(name), seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
+  const reach=seek?reachableCells(s,me.x,me.y,tilesR*5):null;
+  const inRange=(x,y)=> seek?reach[x+','+y]!=null:(gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
+  const spellAtk=profBonus(c)+mod(abil(c,c.spellAbility));
+  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && gridDist(mo.x,mo.y,ctr.x,ctr.y)<=aoeR);
+  function finish(){ qbCheckEnd(); save(); render(); }
+  function resolveSingle(mo){ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
+    if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'1d6', tiles:tilesR}, ()=>{ qbApplyCond(mo,name); finish(); }); }
+    else { mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':'✦');
+      setTimeout(()=>{ if(mc.dmg){ const r=rollNotation(mc.dmg)||{total:0}; qbHurt(mo, r.total); sfx('damage'); attackFx('hit'); qbLog(name+' hits '+mo.name+' for '+r.total); } else { sfx('cast'); qbLog(name+' on '+mo.name); } qbApplyCond(mo,name); finish(); }, 300); } }
+  function resolveBlast(ctr){ const aff=blastTargets(ctr); $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
+    mapProjectile(me.x,me.y,ctr.x,ctr.y,'🔥'); setTimeout(()=>mapBurst(ctr.x,ctr.y,aoeR),250);
+    setTimeout(()=>{ const r=mc.dmg?(rollNotation(mc.dmg)||{total:0}):null; sfx('damage'); attackFx('crit'); aff.forEach(mo=>{ if(r) qbHurt(mo,r.total); qbApplyCond(mo,name); }); qbLog(name+' blasts '+aff.length+' enemies'+(r?' for '+r.total:'')); finish(); }, 600); }
+  function draw(){ let body=`<h2>✨ ${esc(name)}</h2><p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}</p>`;
+    const opts=(aoeR&&center)?{rangeFrom:{x:me.x,y:me.y,tiles:tilesR},blast:{x:center.x,y:center.y,r:aoeR}}:(seek?{reachCost:reach}:{rangeFrom:{x:me.x,y:me.y,tiles:tilesR}});
+    body+=mapGridHTML(s,false,opts);
+    body+=`<p class="muted" style="font-size:11.5px;margin:8px 0 0">${aoeR?'Tap a glowing tile to center the blast.':'Tap a monster in range.'}</p>`;
+    if(aoeR&&center) body+=`<button class="btn block" id="qstCast" style="margin-top:8px">⚡ Cast — ${blastTargets(center).length} in blast</button>`;
+    body+=`<button class="btn ghost block" id="qstClose" style="margin-top:10px">Cancel</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="qstModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    $('#qstClose').onclick=()=>{ $('#modalRoot').innerHTML=''; }; $('#qstModal').onclick=e=>{ if(e.target.id==='qstModal') $('#modalRoot').innerHTML=''; };
+    document.querySelectorAll('#qstModal [data-cell]').forEach(el=>el.onclick=()=>{ const [x,y]=el.dataset.cell.split(',').map(Number);
+      if(!inRange(x,y)){ flashBanner(seek?'No path within range':'Out of range / no line of sight'); return; }
+      if(aoeR){ center={x,y}; draw(); return; }
+      const mo=s.monsters.find(m=>m.hp>0&&m.x===x&&m.y===y); if(!mo){ flashBanner('Tap a monster'); return; } resolveSingle(mo); });
+    { const sc=$('#qstCast'); if(sc) sc.onclick=()=>resolveBlast(center); }
+  }
+  draw();
+}
 function qbExit(){ QB=null; render(); }
 
 /* reconnect when a backgrounded player tab regains focus / network */
@@ -4238,7 +4300,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v71';
+const APP_VERSION='v72';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
