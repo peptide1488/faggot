@@ -850,13 +850,13 @@ function attackFlow(c, atk){
         spendAction(c);
       }
     }
-    const d20=face!=null?face:rnd(20); sfx('swing');
-    st.d20=d20; st.crit=(d20===20); st.total=d20+toHit;
+    const ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null;
+    const r=Engine.roll(toHit, ac, face); sfx('swing');   // unified d20 resolver
+    const d20=r.d20; st.d20=d20; st.crit=r.crit; st.total=r.total;
     pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
     if(c.battle && !atk.spell && !atk.offhand && !atk.reaction){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); save(); }
-    const ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null;
     if(ac!=null){   // known target AC → auto-resolve, no Hit/Miss prompt
-      const hit = d20===20 || (d20!==1 && st.total>=ac);
+      const hit = r.hit;
       st.targetAC=ac; st.hit=hit; st.phase = hit?'dmg':'done';
       if(hit){ sfx(st.crit?'crit':'hit'); attackFx(st.crit?'crit':'hit'); }
       else { sfx('miss'); attackFx('miss'); logChange(c, atk.name+' misses (rolled '+st.total+' vs AC '+ac+')'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack',mon:net.targetMon.id,who:c.name,hit:false}); }catch(e){} } }
@@ -3362,14 +3362,12 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
 // A monster spends its reaction to make one melee attack against a player who left its reach (auto-rolled).
 function dmOpportunityAttack(mo,p){
   if(mo.reactionUsed||mo.hp<=0) return;
-  const atks=parseMonsterAttacks(mo.atk).filter(a=>a.hit!=null && (a.tiles||1)<=1);   // melee only
-  const a=atks[0]||{name:'Attack',hit:0,dmg:'1d6'};
+  const a=parseMonsterAttacks(mo.atk).filter(a=>a.hit!=null && (a.tiles||1)<=1)[0] || {name:'Attack',hit:0,dmg:'1d6'};   // melee only
   mo.reactionUsed=true;
-  const d20=rnd(20), total=d20+(a.hit||0), hit=d20===20||(d20!==1&&total>=p.ac);
-  let dmg=0; if(hit){ const note=d20===20?critNotation(a.dmg||'1d6'):(a.dmg||'1d6'); dmg=(rollNotation(note)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-dmg}); }
-  sfx(d20===20?'crit':hit?'hit':'miss');
-  pushRoll({label:'⚔ '+mo.name+' opportunity attack', total, detail:'d20('+d20+') +'+(a.hit||0)+' vs AC '+p.ac+(hit?' — '+dmg+' dmg':' — miss'), crit:d20===20?'crit':null, kind:'check'});
-  flashBanner('⚔ Opportunity: '+mo.name+(hit?' hits '+p.name+' for '+dmg:' misses '+p.name));
+  const ev=Engine.applyAction(sessionAdapter, {type:'attack', actorId:mo.id, targetId:p.id, atk:{name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:1}});
+  sfx(ev.crit?'crit':ev.hit?'hit':'miss');
+  pushRoll({label:'⚔ '+mo.name+' opportunity attack', total:ev.total, detail:'d20('+ev.d20+') +'+(a.hit||0)+' vs AC '+ev.ac+(ev.hit?' — '+ev.dmg+' dmg':' — miss'), crit:ev.crit?'crit':null, kind:'check'});
+  flashBanner('⚔ Opportunity: '+mo.name+(ev.hit?' hits '+p.name+' for '+ev.dmg:' misses '+p.name));
   dmBroadcast(); render();
 }
 function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
@@ -3890,12 +3888,12 @@ function dmMonsterAttack(mo){
     $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; draw(); }; }
     document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; draw(); });
-    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); st.d20=rnd(20); st.total=st.d20+(st.atk.hit||0); st.phase='res'; const isH=st.total>=tgt().ac||st.d20===20; sfx(st.d20===20?'crit':isH?'hit':'miss'); attackFx(st.d20===20?'crit':isH?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+tgt().ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
-    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; sfx('damage'); attackFx(st.d20===20?'crit':'hit'); const base=st.atk.dmg||'1d6'; const note=(st.d20===20)?critNotation(base):base; const rr=rollNotation(note)||{total:0,detail:''}; st.dmg=rr.total; pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:rr.total, detail:rr.detail, kind:'dmg'}); draw(); }; }
+    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0}); st.d20=res.d20; st.total=res.total; st.phase='res'; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; sfx('damage'); attackFx(st.d20===20?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, st.d20===20); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(st.d20===20?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
     const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
-    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
-    { const f=$('#maFull'); if(f) f.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
-    { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); dmSend(st.targetId,{t:'apply',delta:-half}); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const f=$('#maFull'); if(f) f.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); sessionAdapter.hurt(tgt(), half); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; st.consumed=false; draw(); }; }
   }
   draw();
@@ -3990,13 +3988,22 @@ const BRAINS = {};   // name -> function(enc, unit) -> [intent]; intents: {type:
      player / DM / agent drive any combatant through the exact same path.
    ========================================================================= */
 const Engine = {
-  // resolve one attack → returns an event {type,actorId,targetId,hit,crit,dmg,total,ac,void?}
-  attack(ad, actorId, targetId, atk){
+  // pure d20 roll vs an AC (adapter-free). ac==null → hit unknown (caller prompts).
+  roll(toHit, ac, face){ const d20=face!=null?face:rnd(20), total=d20+(toHit||0), crit=d20===20;
+    const hit = ac==null ? null : (crit||(d20!==1&&total>=ac)); return {d20, total, crit, hit}; },
+  // resolve a to-hit against a target via an adapter — no damage, no mutation
+  hitResult(ad, actorId, targetId, atk, face){
+    const t=ad.unit(targetId); const ac=t?ad.ac(t):(atk.targetAC||10);
+    return Object.assign({ac}, Engine.roll(atk.toHit, ac, face));
+  },
+  rollDamage(atk, crit){ const base=atk.dmg||'1d6'; const note=crit?critNotation(base):base; return (rollNotation(note)||{total:0}).total; },
+  // resolve one attack atomically → returns an event {type,actorId,targetId,hit,crit,dmg,total,ac,void?}
+  attack(ad, actorId, targetId, atk, opts){ opts=opts||{};
     const a=ad.unit(actorId), t=ad.unit(targetId);
     if(!a||!t||ad.hp(t)<=0) return {type:'attack', void:true, actorId, targetId};
-    const ac=ad.ac(t), d20=rnd(20), total=d20+(atk.toHit||0), crit=d20===20, hit=crit||(d20!==1&&total>=ac);
-    let dmg=0; if(hit){ const note=crit?critNotation(atk.dmg||'1d6'):(atk.dmg||'1d6'); dmg=(rollNotation(note)||{total:0}).total; ad.hurt(t,dmg); }
-    return {type:'attack', actorId, targetId, atk, d20, total, ac, hit, crit, dmg};
+    const r=Engine.hitResult(ad, actorId, targetId, atk, opts.face);
+    let dmg=0; if(r.hit){ dmg=Engine.rollDamage(atk, r.crit); if(opts.apply!==false) ad.hurt(t,dmg); }
+    return {type:'attack', actorId, targetId, atk, d20:r.d20, total:r.total, ac:r.ac, hit:r.hit, crit:r.crit, dmg};
   },
   // single entry point any controller (UI/AI/agent) calls
   applyAction(ad, action){
@@ -4012,6 +4019,15 @@ const CONTROLLERS = {
   agent:    { decide:(enc,u)=> (BRAINS.agent||BRAINS.tactical||(()=>[]))(enc,u) }   // stub: falls back to tactical until an agent is wired
 };
 function unitController(u){ return u.controller || (u.side==='mon' ? (u.brain||'tactical') : 'human'); }
+// Adapter binding the unified Engine to a multiplayer net.session.
+// Monsters carry .hp/.max; players carry .hpCur/.hpMax — that's how we tell them apart.
+const sessionAdapter = {
+  unit:id=>{ const s=net&&net.session; if(!s) return null; return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id||p.cid===id); },
+  ac:u=>u.ac,
+  hp:u=> u.hp!=null ? u.hp : u.hpCur,
+  hurt:(u,dmg)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); } else { dmSend(u.id,{t:'apply',delta:-dmg}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },
+  name:u=>u.name
+};
 function crToNum(cr){ const s=String(cr==null?0:cr); if(s.includes('/')){ const [a,b]=s.split('/').map(Number); return b?a/b:0; } return Number(s)||0; }
 function qbAC(u){ return u.side==='pc'?computeAC(u.c):u.ac; }
 function qbHP(u){ return u.side==='pc'?u.c.hp.cur:u.hp; }
@@ -4361,7 +4377,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v74';
+const APP_VERSION='v75';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
