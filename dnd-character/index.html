@@ -3708,20 +3708,28 @@ function dmMonsterAttack(mo){
   if(net.session.battle.active && mo.attacksLeft!=null && mo.attacksLeft<=0){ flashBanner(mo.name+' already attacked this turn — ▶ Next turn to reset'); return; }
   const atks=parseMonsterAttacks(mo.atk); if(!atks.length) atks.push({name:'Attack',hit:0,dmg:'1d6'});
   const players=net.session.players; if(!players.length){ flashBanner('No players connected to target'); return; }
-  const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0};
+  const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0, consumed:false};
   const tgt=()=>net.session.players.find(p=>p.id===st.targetId)||players[0];
+  // Making an attack (hit OR miss) spends one of the monster's attacks — identical to
+  // the player rule. Each fresh attack in the sequence must commit before it can roll.
+  const commitAttack=()=>{ if(!net.session.battle.active || mo.attacksLeft==null) return true;
+    if(st.consumed) return true;
+    if(mo.attacksLeft<=0){ flashBanner(mo.name+' has no attacks left — ▶ Next turn to reset'); return false; }
+    mo.attacksLeft=Math.max(0,mo.attacksLeft-1); st.consumed=true; dmBroadcast(); return true; };
   function draw(){ const range=st.atk.tiles||1; const inR=players.filter(p=>gridDist(mo.x,mo.y,p.x,p.y)<=range && losClear(net.session,mo.x,mo.y,p.x,p.y));
     if(inR.length && !inR.some(p=>p.id===st.targetId)) st.targetId=inR[0].id;
-    const t=tgt(); let body=`<h2>⚔ ${esc(mo.name)} attacks</h2>`;
+    const t=tgt(); const left=(net.session.battle.active&&mo.attacksLeft!=null)?mo.attacksLeft:null;
+    let body=`<h2>⚔ ${esc(mo.name)} attacks${left!=null?` <span class="muted" style="font-size:12px;text-transform:none">— ${left}/${mo.attacks||1} attack${(mo.attacks||1)>1?'s':''} left</span>`:''}</h2>`;
     body+=`<div class="field"><label>Attack</label><div class="chips">${atks.map((a,i)=>`<button class="chip ${st.atk===a?'on':''}" data-ma="${i}">${esc(a.name)}${a.hit!=null?' +'+a.hit:a.dc?' (DC'+a.dc.n+')':''}${a.tiles>1?' · '+(a.tiles*5)+'ft':''}</button>`).join('')}</div></div>`;
     if(!inR.length){ body+=`<div class="empty" style="padding:10px 0">No players within ${range*5} ft of ${esc(mo.name)} for ${esc(st.atk.name)} — 📍 move it closer or pick another attack.</div>`; }
     else { body+=`<div class="field"><label>Target (in range)</label><select id="maTgt">${inR.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax} · ${gridDist(mo.x,mo.y,p.x,p.y)*5}ft</option>`).join('')}</select></div>`;
+    const outOfAttacks = left!=null && left<=0 && !st.consumed;
     if(st.atk.dc){
       body+=`<div class="card" style="margin:0 0 10px"><b>${esc(st.atk.name)}</b><br>${esc(t.name)} must make a <b>DC ${st.atk.dc.n} ${st.atk.dc.ab}</b> save.${st.atk.dmg?'<br>Damage: '+esc(st.atk.dmg):''}</div>`;
-      if(st.atk.dmg){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage</button>`;
+      if(st.atk.dmg){ if(!st.dmg) body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maDmg">🎲 Roll damage</button>`;
         else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><div class="row2"><button class="btn bad" id="maFull">Apply ${st.dmg} (fail)</button><button class="btn ghost" id="maHalf">Apply ${Math.floor(st.dmg/2)} (save)</button></div>`; }
     } else if(st.phase==='aim'){
-      body+=`<button class="btn block" id="maRoll">🎲 Roll to hit (+${st.atk.hit||0}) vs AC ${t.ac}</button>`;
+      body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maRoll">🎲 Roll to hit (+${st.atk.hit||0}) vs AC ${t.ac}</button>`;
     } else {
       const isHit=st.total>=t.ac||st.d20===20, crit=st.d20===20;
       body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:32px;font-weight:700;color:${isHit?'var(--good)':'var(--bad)'}">${st.total}</div><div class="muted">d20(${st.d20}) +${st.atk.hit||0} vs AC ${t.ac} — ${crit?'💥 CRIT':isHit?'HIT':'MISS'}</div></div>`;
@@ -3735,13 +3743,13 @@ function dmMonsterAttack(mo){
     $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; draw(); }; }
     document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; draw(); });
-    { const r=$('#maRoll'); if(r) r.onclick=()=>{ sfx('swing'); st.d20=rnd(20); st.total=st.d20+(st.atk.hit||0); st.phase='res'; const isH=st.total>=tgt().ac||st.d20===20; sfx(st.d20===20?'crit':isH?'hit':'miss'); attackFx(st.d20===20?'crit':isH?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+tgt().ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
-    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ sfx('damage'); attackFx(st.d20===20?'crit':'hit'); const base=st.atk.dmg||'1d6'; const note=(st.d20===20)?critNotation(base):base; const rr=rollNotation(note)||{total:0,detail:''}; st.dmg=rr.total; pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:rr.total, detail:rr.detail, kind:'dmg'}); draw(); }; }
-    const useAtk=()=>{ if(mo.attacksLeft!=null) mo.attacksLeft=Math.max(0,mo.attacksLeft-1); dmBroadcast(); render(); };
+    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); st.d20=rnd(20); st.total=st.d20+(st.atk.hit||0); st.phase='res'; const isH=st.total>=tgt().ac||st.d20===20; sfx(st.d20===20?'crit':isH?'hit':'miss'); attackFx(st.d20===20?'crit':isH?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+tgt().ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; sfx('damage'); attackFx(st.d20===20?'crit':'hit'); const base=st.atk.dmg||'1d6'; const note=(st.d20===20)?critNotation(base):base; const rr=rollNotation(note)||{total:0,detail:''}; st.dmg=rr.total; pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:rr.total, detail:rr.detail, kind:'dmg'}); draw(); }; }
+    const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
     { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const f=$('#maFull'); if(f) f.onclick=()=>{ dmSend(st.targetId,{t:'apply',delta:-Math.abs(st.dmg)}); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); dmSend(st.targetId,{t:'apply',delta:-half}); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
-    { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; draw(); }; }
+    { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; st.consumed=false; draw(); }; }
   }
   draw();
 }
@@ -3821,7 +3829,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v67';
+const APP_VERSION='v68';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
