@@ -664,7 +664,7 @@ function setEquipped(c, idx, on){
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle={round:1, init:ini, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c)}; logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
-function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
+function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
   let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
   exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
   logChange(c,'▶ Round '+b.round+' — turn reset'+(exp.length?'; expired: '+exp.map(e=>e.name).join(', '):'')); save(); render(); flashBanner('Round '+b.round); }
@@ -769,7 +769,7 @@ function openSpellTarget(c, name, level){
   level=Number(level)||0;
   const mc=parseSpellMechanics(name);
   if(mc.buff && !mc.dmg && !mc.heal && !mc.attack && !mc.save){ castModal(c,name,level); return; }   // self/ally buff
-  if(!canCast(c,level)) return;
+  if(!canCast(c,name,level)) return;
   const s=net.session, me=myMapPos(), tilesR=spellRangeTiles(name);
   const seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
   const reach = seek ? reachableCells(s, me.x, me.y, tilesR*5) : null;
@@ -1289,20 +1289,39 @@ function advanceRound(c){
   save(); render();
   flashBanner(expired.length?('Round advanced — expired: '+expired.map(e=>e.name).join(', ')):'Round advanced');
 }
-function canCast(c, level){
+function canCast(c, name, level){
+  if(typeof level==='undefined'){ level=name; name=''; }   // back-compat: canCast(c, level)
+  level=Number(level)||0;
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
-  if(c.battle && !hasAction(c)){ flashBanner('You’ve already used your action this turn'); return false; }
+  const ct=spellCastTime(name);
+  if(c.battle){
+    const b=c.battle;
+    if(ct==='bonus'){
+      if(b.bonus){ flashBanner('Bonus action already used this turn'); return false; }
+      if(b.castBonusSpell){ flashBanner('You already cast a bonus-action spell this turn'); return false; }
+      if(b.castLeveledSpell){ flashBanner('Can’t cast a bonus-action spell after another spell this turn'); return false; }
+    } else {
+      if(!hasAction(c)){ flashBanner('You’ve already used your action this turn'); return false; }
+      // After a bonus-action spell, the only other spell allowed is a cantrip cast as an action.
+      if(b.castBonusSpell && level>0){ flashBanner('After a bonus-action spell you can only cast a cantrip'); return false; }
+    }
+  }
   if(level>0){ const tot=spellSlots(c)[level]||0, used=Math.min(tot,(c.slots[level]&&c.slots[level].used)||0); if(tot-used<=0){ flashBanner('No level '+level+' spell slots left'); return false; } }
   return true;
 }
 function castSpell(c, name, level){
   level=Number(level)||0;
-  if(!canCast(c,level)) return false;
+  if(!canCast(c,name,level)) return false;
+  const ct=spellCastTime(name);
   if(level>0){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
-  if(c.battle) spendAction(c);   // casting a spell uses your action
+  if(c.battle){
+    if(ct==='bonus'){ c.battle.bonus=true; c.battle.castBonusSpell=true; }
+    else { spendAction(c); if(level>0) c.battle.castLeveledSpell=true; }
+  }
   const tmpl=SPELL_EFFECTS[name]; sfx('cast'); castFx(name);
-  if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')); }
-  else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')); }
+  const ba=(ct==='bonus')?' · bonus action':'';
+  if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' [bonus action]':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')+ba); }
+  else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' [bonus action]':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')+ba); }
   return true;
 }
 // Heuristically read mechanics out of a spell's one-line summary (attack? save? damage/heal dice?).
@@ -1311,6 +1330,9 @@ const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necroti
 const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':2,'Burning Hands':3,'Cone of Cold':12,'Lightning Bolt':12,'Sleep':2,'Stinking Cloud':4,'Hypnotic Pattern':6,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':4,'Faerie Fire':4,'Spike Growth':4,'Moonbeam':1,'Entangle':4,'Grease':2};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
 const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:100},"Hunter's Mark":{c:'Marked',r:100},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Tasha\'s Hideous Laughter':{c:'Prone',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10}};
+// Spells whose casting time is a bonus action (everything else defaults to an action).
+const BONUS_ACTION_SPELLS=new Set(['Healing Word','Mass Healing Word','Misty Step','Spiritual Weapon','Hex',"Hunter's Mark",'Shield of Faith','Sanctuary','Healing Spirit','Searing Smite','Wrathful Smite','Thunderous Smite','Branding Smite','Ensnaring Strike','Hail of Thorns','Zephyr Strike','Compelled Duel','Flame Blade','Magic Stone',"Hunter’s Mark"]);
+function spellCastTime(name){ return BONUS_ACTION_SPELLS.has(name)?'bonus':'action'; }
 // "Seeking" spells: auto-hit, no line of sight needed, range follows a path (curves around walls).
 const SPELL_SEEK=new Set(['magic missile']);
 function spellSeeks(name){ const n=(name||'').toLowerCase(); if(SPELL_SEEK.has(n)) return true; const mc=parseSpellMechanics(name); return !mc.attack && !mc.save && !!mc.dmg && !SPELL_AOE[name]; }
@@ -2708,9 +2730,11 @@ function hdPips(total, used){
   return h;
 }
 function applyHp(c,delta){
+  let concDmg=0;
   if(delta<0){
     let dmg=-delta; const wasAt0=c.hp.cur<=0;
     const raged=isRaging(c)&&dmg>0; if(raged) dmg=Math.floor(dmg/2);   // Rage: resistance to b/p/s (halved)
+    concDmg=dmg;   // damage taken (after resistance) drives the concentration DC, even if temp HP absorbs it
     if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
     const before=c.hp.cur; c.hp.cur=Math.max(0,c.hp.cur-dmg);
     logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+' damage → '+c.hp.cur+' HP');
@@ -2719,8 +2743,6 @@ function applyHp(c,delta){
     if(wasAt0 && dmg>0){ const fails=dmg>=c.hp.max?2:1; c.death.fail=Math.min(3,(c.death.fail||0)+fails); logChange(c,'Hit at 0 HP — '+fails+' death-save failure'+(fails>1?'s':'')); }
     // dropped to 0 → unconscious; instant death if damage ≥ max HP over current
     if(before>0 && c.hp.cur===0){ c.conditions['Unconscious']=true; logChange(c,'Dropped to 0 HP — Unconscious'); flashBanner('Down! Roll death saves'); }
-    // concentration check on taking damage
-    if(c.concentration && c.concentration.active && dmg>0){ const save=Math.max(10, Math.floor((-delta)/2)); flashBanner('Concentration save: DC '+save+' CON'); }
   }else{
     c.hp.cur=Math.min(c.hp.max,c.hp.cur+delta);
     if(c.hp.cur>0){ if(c.conditions['Unconscious']) delete c.conditions['Unconscious']; c.death={succ:0,fail:0}; }   // healed above 0 → stable & conscious
@@ -2728,6 +2750,43 @@ function applyHp(c,delta){
   }
   save(); render();
   if(net&&net.role==='player') playerHello();   // keep DM's view of my HP live
+  if(concDmg>0 && c.concentration && c.concentration.active) concentrationCheck(c, concDmg);   // prompt the CON save (after render so the modal survives)
+}
+// When a concentrating caster takes damage, they must make a CON save (DC = max 10 or half the damage) or lose the spell.
+function concentrationCheck(c, dmg){
+  if(!(c.concentration && c.concentration.active)) return;
+  const dc=Math.max(10, Math.floor(dmg/2));
+  const conBonus=mod(abil(c,'con'))+((c.saveProf&&c.saveProf.con)?profBonus(c):0);
+  const adv=hasFeat(c,'War Caster');   // War Caster grants advantage on concentration saves
+  const spell=c.concentration.spell||'a spell';
+  const drop=()=>{ c.effects=(c.effects||[]).filter(e=>!e.conc); c.concentration={active:false,spell:''}; logChange(c,'💨 Lost concentration on '+spell); save(); render(); };
+  const st={rolled:false, d20:0, total:0, ok:false};
+  function draw(){
+    let body=`<h2>🧠 Concentration — ${esc(spell)}</h2>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Took ${dmg} damage. Make a <b>CON save vs DC ${dc}</b> or lose concentration.${adv?' <b>(advantage — War Caster)</b>':''}</p>`;
+    if(!st.rolled){
+      body+=`<button class="btn block" id="ccRoll">🎲 Roll CON save (${sgn(conBonus)}${adv?', adv':''})</button>
+        <div class="addrow" style="margin-top:8px"><input id="ccMan" type="number" placeholder="enter d20 (1–20)"><button class="btn ghost" id="ccUse">Use</button></div>
+        <button class="btn ghost block" id="ccDrop" style="margin-top:8px">Drop concentration</button>`;
+    } else {
+      body+=`<div class="card" style="text-align:center;margin:0 0 10px;background:${st.ok?'rgba(63,125,54,.14)':'rgba(160,40,40,.14)'}">
+        <div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:${st.ok?'var(--good)':'var(--bad)'}">${st.total}</div>
+        <div class="muted">d20 (${st.d20}) ${sgn(conBonus)} vs DC ${dc} — ${st.ok?'✓ HELD':'✗ LOST'}</div></div>`;
+    }
+    body+=`<button class="btn ghost block" id="ccClose" style="margin-top:8px">Close</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="ccModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    const close=()=>{ $('#modalRoot').innerHTML=''; };
+    $('#ccClose').onclick=close; $('#ccModal').onclick=e=>{ if(e.target.id==='ccModal') close(); };
+    const resolve=(face)=>{ const r1=face!=null?face:rnd(20), r2=rnd(20); const d20=(adv&&face==null)?Math.max(r1,r2):r1;
+      st.d20=d20; st.total=d20+conBonus; st.ok=st.total>=dc; st.rolled=true;
+      pushRoll({label:'Concentration (CON)', total:st.total, detail:'d20 ('+d20+') '+sgn(conBonus)+' vs DC '+dc, kind:'save'});
+      sfx(st.ok?'success':'error'); if(!st.ok) drop(); else { logChange(c,'Held concentration on '+spell+' ('+st.total+' vs '+dc+')'); save(); }
+      draw(); };
+    { const r=$('#ccRoll'); if(r) r.onclick=()=>resolve(null); }
+    { const u=$('#ccUse'); if(u) u.onclick=()=>{ const v=Number($('#ccMan').value); if(v>=1&&v<=20) resolve(v); else flashBanner('Enter 1–20'); }; }
+    { const dp=$('#ccDrop'); if(dp) dp.onclick=()=>{ drop(); close(); }; }
+  }
+  draw();
 }
 
 /* ---------- SPELLS ---------- */
@@ -3315,7 +3374,7 @@ function playerOnData(d){ if(!d) return;
       else if(!d.session.battle.active && c.battle){ c.battle=null; save(); }
       else if(c.battle){ const cur=d.session.order&&d.session.order[d.session.turn]; const myTurn=cur&&cur.id===net.peer.id;
         if((myTurn && !net.wasMyTurn) || (!d.session.order||!d.session.order.length) && c.battle.round!==d.session.battle.round){   // my turn started (or no initiative → round change) → reset resources
-          c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.actionsMax=actionsPerTurn(c); c.battle.actionsUsed=0; c.battle.surged=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
+          c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.actionsMax=actionsPerTurn(c); c.battle.actionsUsed=0; c.battle.surged=false; c.battle.castBonusSpell=false; c.battle.castLeveledSpell=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
         net.wasMyTurn=myTurn; }
     }
     render();
@@ -3628,7 +3687,7 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button></h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn ghost sm" data-msheet="${mo.id}" title="View full stat block">📋</button><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -3666,6 +3725,7 @@ function renderDM(){
   app.querySelectorAll('[data-mclr]').forEach(el=>el.onclick=()=>{ const [id,cn]=el.dataset.mclr.split('|'); const mo=s.monsters.find(m=>m.id===id); if(mo&&mo.conds){ mo.conds=mo.conds.filter(x=>x.name!==cn); dmBroadcast(); render(); } });
   $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0,attacks:1,attacksLeft:1,speed:30,moveLeft:30}); dmBroadcast(); render(); };
   { const bb=$('#bestiaryBtn'); if(bb) bb.onclick=openBestiary; }
+  app.querySelectorAll('[data-msheet]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.msheet); if(mo) openMonsterSheet(mo); });
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
@@ -3753,6 +3813,33 @@ function dmMonsterAttack(mo){
   }
   draw();
 }
+function openMonsterSheet(mo){
+  const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name))||{};
+  const atks=parseMonsterAttacks(mo.atk);
+  const conds=(mo.conds&&mo.conds.length)?mo.conds.map(x=>'🌀 '+esc(x.name)+(x.rounds!=null?' ('+x.rounds+')':'')).join(', '):'None';
+  const battle=net.session&&net.session.battle&&net.session.battle.active;
+  const sheet=`<div class="modal" id="msheetModal"><div class="sheet"><div class="grip"></div>
+    <div style="display:flex;gap:12px;align-items:center;margin:0 0 8px">
+      <span class="emblem" style="padding:3px;flex:none">${mo.sprite?pixelArt(monsterSprite(mo.sprite),4):'🗿'}</span>
+      <div><h2 style="margin:0">${esc(mo.name)}</h2><div class="muted" style="font-size:12px">${base.cr?'CR '+esc(base.cr)+' · ':''}${esc(base.n||mo.base||'Custom')}</div></div>
+    </div>
+    <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:0 0 10px">
+      <div class="tile"><div class="lab">AC</div><div class="big">${mo.ac}</div></div>
+      <div class="tile"><div class="lab">HP</div><div class="big">${mo.hp}/${mo.max}</div></div>
+      <div class="tile"><div class="lab">Speed</div><div class="big">${mo.speed||base.spd||30}<span style="font-size:11px"> ft</span></div></div>
+    </div>
+    ${battle?`<div class="muted" style="font-size:12px;margin:0 0 8px">Attacks this turn: <b>${mo.attacksLeft!=null?mo.attacksLeft:(mo.attacks||1)}/${mo.attacks||1}</b> · Move left: <b>${mo.moveLeft!=null?mo.moveLeft:(mo.speed||30)} ft</b></div>`:''}
+    <div class="field"><label>Attacks</label>
+      ${atks.length?atks.map(a=>`<div class="spell"><div class="nm"><b>${esc(a.name)}</b><small>${a.hit!=null?'+'+a.hit+' to hit':a.dc?'DC '+a.dc.n+' '+a.dc.ab+' save':''}${a.dmg?' · '+esc(a.dmg)+' damage':''}${a.tiles>1?' · reach/range '+(a.tiles*5)+' ft':''}</small></div></div>`).join(''):'<div class="empty" style="padding:6px 0">No attacks defined.</div>'}
+    </div>
+    <div class="field"><label>Conditions</label><div class="muted" style="font-size:13px">${conds}</div></div>
+    ${base.desc?`<div class="field"><label>Notes</label><div class="muted" style="font-size:13px">${esc(base.desc)}</div></div>`:''}
+    <button class="btn ghost block" id="msheetClose" style="margin-top:10px">Close</button>
+  </div></div>`;
+  $('#modalRoot').innerHTML=sheet;
+  $('#msheetClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#msheetModal').onclick=e=>{ if(e.target.id==='msheetModal') $('#modalRoot').innerHTML=''; };
+}
 function openBestiary(){
   $('#modalRoot').innerHTML=`<div class="modal" id="bestModal"><div class="sheet"><div class="grip"></div>
     <h2>📖 Bestiary <span class="muted" style="font-size:11px;text-transform:none">— ${MONSTERS_5E.length} monsters</span></h2>
@@ -3829,7 +3916,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v68';
+const APP_VERSION='v69';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
