@@ -312,6 +312,7 @@
   .hpbar.low i{background:linear-gradient(#f0a93a,#c87a14)}
   .hpbar.crit i{background:linear-gradient(#f06a4a,#9c2f1c)}
   .mnum{position:absolute;top:-3px;right:-3px;min-width:14px;height:14px;padding:0 2px;border-radius:7px;background:#1a1410;color:#f6efda;font-size:9px;font-weight:700;line-height:14px;text-align:center;box-shadow:0 0 0 1.5px rgba(255,255,255,.5)}
+  .condmark{position:absolute;top:-4px;left:-4px;font-size:11px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
 
   /* cast spell animation overlay */
   .castfx{position:fixed;inset:0;z-index:60;pointer-events:none;display:grid;place-items:center}
@@ -758,11 +759,14 @@ function openSpellTarget(c, name, level){
   const reach = seek ? reachableCells(s, me.x, me.y, tilesR*5) : null;
   const inRange=(x,y)=> seek ? reach[x+','+y]!=null : (gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
   const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && Math.max(Math.abs(mo.x-ctr.x),Math.abs(mo.y-ctr.y))<=aoeR);
+  const applyCond=(mo)=>{ const sc=SPELL_COND[name]; if(sc&&net.conn){ try{ net.conn.send({t:'moncond',mon:mo.id,cond:sc.c,rounds:sc.r}); }catch(e){} } };
   function resolveSingle(mo){ if(!castSpell(c,name,level)) return; net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){try{net.conn.send({t:'target',mon:mo.id});}catch(e){}}
     if(mc.attack) attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'1d6',dt:mc.dtype||''});
     else if(mc.save) attackFlow(c,{name,spell:true,save:{ab:mc.save},dmg:mc.dmg||'1d6',dt:mc.dtype||''});
-    else { const r=rollNotation(mc.dmg||'1d4')||{total:0,detail:''}; sfx('damage'); attackFx('hit'); pushRoll({label:name+' damage',total:r.total,detail:r.detail,kind:'dmg'}); if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total});}catch(e){}} flashBanner(name+' hits '+mo.name+' for '+r.total); } }
-  function resolveBlast(ctr){ const aff=blastTargets(ctr); if(!castSpell(c,name,level)) return; const r=rollNotation(mc.dmg||'1d6')||{total:0,detail:''}; sfx('damage'); attackFx('crit'); pushRoll({label:name+' (blast)',total:r.total,detail:r.detail,kind:'dmg'}); aff.forEach(mo=>{ if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total});}catch(e){}} }); flashBanner(name+' blasts '+aff.length+' for '+r.total+(mc.save?' (saves halve — DM adjusts)':'')); }
+    else if(mc.dmg){ const r=rollNotation(mc.dmg||'1d4')||{total:0,detail:''}; sfx('damage'); attackFx('hit'); pushRoll({label:name+' damage',total:r.total,detail:r.detail,kind:'dmg'}); if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total});}catch(e){}} flashBanner(name+' hits '+mo.name+' for '+r.total); }
+    else { sfx('cast'); flashBanner(name+' on '+mo.name); }   // pure condition spell (no damage)
+    applyCond(mo); }
+  function resolveBlast(ctr){ const aff=blastTargets(ctr); if(!castSpell(c,name,level)) return; const dmg=mc.dmg?(rollNotation(mc.dmg)||{total:0,detail:''}):null; sfx('damage'); attackFx('crit'); if(dmg) pushRoll({label:name+' (blast)',total:dmg.total,detail:dmg.detail,kind:'dmg'}); aff.forEach(mo=>{ if(dmg&&net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:dmg.total});}catch(e){}} applyCond(mo); }); flashBanner(name+' hits '+aff.length+(dmg?' for '+dmg.total:'')+(mc.save?' (saves halve — DM adjusts)':'')); }
   function draw(){
     let body=`<h2>✨ ${esc(name)}</h2>`;
     body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks (ignores walls)':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}${mc.save?' · '+String(mc.save).toUpperCase()+' save':''}</p>`;
@@ -1264,6 +1268,8 @@ function castSpell(c, name, level){
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 // AoE spells: burst radius in tiles (5ft each). Cones/lines approximated as bursts.
 const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':2,'Burning Hands':3,'Cone of Cold':12,'Lightning Bolt':12,'Sleep':2,'Stinking Cloud':4,'Hypnotic Pattern':6,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':4,'Faerie Fire':4,'Spike Growth':4,'Moonbeam':1,'Entangle':4,'Grease':2};
+// Condition a spell imposes on its target(s) {c:label, r:rounds}.
+const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:100},"Hunter's Mark":{c:'Marked',r:100},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Tasha\'s Hideous Laughter':{c:'Prone',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10}};
 // "Seeking" spells: auto-hit, no line of sight needed, range follows a path (curves around walls).
 const SPELL_SEEK=new Set(['magic missile']);
 function spellSeeks(name){ const n=(name||'').toLowerCase(); if(SPELL_SEEK.has(n)) return true; const mc=parseSpellMechanics(name); return !mc.attack && !mc.save && !!mc.dmg && !SPELL_AOE[name]; }
@@ -3187,6 +3193,8 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
   else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true; dmBroadcast(); render(); } }
   else if(d.t==='endturn'){ const cur=net.session.order&&net.session.order[net.session.turn]; if(cur&&cur.id===conn.peer) dmNextTurn(); }
+  else if(d.t==='moncond'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===d.cond)) mo.conds.push({name:d.cond,rounds:d.rounds||10}); dmBroadcast(); render(); flashBanner(mo.name+' → '+d.cond); } }
+  else if(d.t==='provoke'){ net.lastProvoke={who:d.who,n:d.n}; flashBanner('⚔ '+d.who+' provoked opportunity attacks from '+d.n+' enemy(ies) — they may react'); render(); }
 }
 function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
 function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.placed) return; p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ if(m.placed) return; m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
@@ -3196,8 +3204,10 @@ function rollInitiative(){ const s=net.session; const o=[];
   o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>{ m.attacksLeft=m.attacks||1; m.moveLeft=m.speed||30; }); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
 function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo){ mo.attacksLeft=mo.attacks||1; mo.moveLeft=mo.speed||30; } } }
 function orderDead(o){ if(o.k!=='m') return false; const mo=net.session.monsters.find(m=>m.id===o.id); return mo&&mo.hp<=0; }
-function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; dmBroadcast(); render(); return; }
-  let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
+function tickMonsterConds(){ const s=net.session; (s.monsters||[]).forEach(mo=>{ if(mo.conds){ mo.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); mo.conds=mo.conds.filter(x=>x.rounds==null||x.rounds>0); } }); }
+function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; tickMonsterConds(); dmBroadcast(); render(); return; }
+  const oldR=s.battle.round; let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
+  if(s.battle.round>oldR) tickMonsterConds();
   dmRefreshActor(); dmBroadcast(); render(); }
 function dmPrevTurn(){ const s=net.session; if(!s.order||!s.order.length) return;
   let guard=0; do{ if((s.turn||0)===0){ s.turn=s.order.length-1; if(s.battle.round>1) s.battle.round--; } else s.turn--; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
@@ -3515,7 +3525,8 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     let tok=''; if(mo){ const dead=mo.hp<=0; const inner=mo.sprite?pixelArt(monsterSprite(mo.sprite),2):esc((mo.name[0]||'M').toUpperCase());
       const tcls='tok '+(mo.sprite?'':'mon')+(net&&net.sel==='m'+mo.id?' sel':'')+(dead?' deadtok':'');
       const tstyle=(mo.sprite?'background:none;box-shadow:none;':'')+(dead?'filter:grayscale(1) brightness(.55);transform:rotate(90deg);opacity:.65;':'');
-      tok=`<span class="${tcls}" style="${tstyle}">${inner}</span>`+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')+hpbar(mo.hp,mo.max)); }
+      const condMark=(!dead&&mo.conds&&mo.conds.length)?`<span class="condmark" title="${esc(mo.conds.map(x=>x.name).join(', '))}">🌀</span>`:'';
+      tok=`<span class="${tcls}" style="${tstyle}">${inner}</span>`+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')+condMark+hpbar(mo.hp,mo.max)); }
     else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id); tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`+hpbar(pl.hpCur,pl.hpMax); }
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
@@ -3560,7 +3571,7 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button></h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}</small></div><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -3595,6 +3606,7 @@ function renderDM(){
   app.querySelectorAll('[data-mdmg]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mdmg); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.max(0,mo.hp-Math.abs(amt)); dmBroadcast(); render(); } });
   app.querySelectorAll('[data-mheal]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mheal); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.min(mo.max,mo.hp+Math.abs(amt)); dmBroadcast(); render(); } });
   app.querySelectorAll('[data-mdel]').forEach(el=>el.onclick=()=>{ s.monsters=s.monsters.filter(m=>m.id!==el.dataset.mdel); dmBroadcast(); render(); });
+  app.querySelectorAll('[data-mclr]').forEach(el=>el.onclick=()=>{ const [id,cn]=el.dataset.mclr.split('|'); const mo=s.monsters.find(m=>m.id===id); if(mo&&mo.conds){ mo.conds=mo.conds.filter(x=>x.name!==cn); dmBroadcast(); render(); } });
   $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0,attacks:1,attacksLeft:1,speed:30,moveLeft:30}); dmBroadcast(); render(); };
   { const bb=$('#bestiaryBtn'); if(bb) bb.onclick=openBestiary; }
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
@@ -3752,7 +3764,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v62';
+const APP_VERSION='v63';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
