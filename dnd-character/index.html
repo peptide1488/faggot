@@ -3199,7 +3199,10 @@ function playerAttackMenu(c){
   draw();
 }
 function renderPlayerBattle(c){
-  const s=net.session, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0}, b=c.battle||{};
+  const s=net.session, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0};
+  if(!c.battle) c.battle={round:s.battle.round||1, action:false, bonus:false, reaction:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0};
+  if(c.battle.move==null) c.battle.move=effSpeed(c);
+  const b=c.battle;
   $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
   app.className='fade'; void app.offsetWidth;
   const myTurn = s.order&&s.order.length&&s.order[s.turn]&&s.order[s.turn].id===net.peer.id;
@@ -3246,10 +3249,10 @@ function renderPlayerBattle(c){
     if(s.monsters.some(m=>m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;
     if(!net.moveMode){ flashBanner('Tap 🥾 Move first'); return; }
     const cost=gridDist(me.x,me.y,x,y)*5;
-    if((b.move||0)<cost){ flashBanner('Too far — '+cost+' ft (you have '+(b.move||0)+')'); return; }
-    b.move-=cost; b.moveUsed=(b.moveUsed||0)+cost; me.x=x; me.y=y; save();
+    if(cost>(b.move||0)){ flashBanner('Too far — '+cost+' ft (you have '+(b.move||0)+' ft left)'); return; }
+    b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; me.x=x; me.y=y; save();
     if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
-    if((b.move||0)<5) net.moveMode=false;
+    net.moveMode=false;   // one move per tap; press Move again to keep going with what's left
     render();
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ b[el.dataset.pbt]=!b[el.dataset.pbt]; save(); render(); });
@@ -3555,7 +3558,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v48';
+const APP_VERSION='v49';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
