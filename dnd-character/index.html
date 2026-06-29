@@ -269,7 +269,7 @@
   .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
   .mapwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;background:#e0cfa6;padding:4px}
   .mapgrid{display:grid;gap:2px;min-width:max-content}
-  .mcell{width:34px;height:34px;background:rgba(255,250,235,.55);border:1px solid rgba(120,90,40,.18);border-radius:4px;display:grid;place-items:center;position:relative}
+  .mcell{width:34px;height:34px;background:rgba(255,250,235,.55);border:1px solid rgba(120,90,40,.18);border-radius:4px;display:grid;place-items:center;position:relative;cursor:pointer}
   .mcell.tgt{cursor:pointer}
   .tok{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff;font-family:Georgia,serif}
   .tok.mon{background:#9c3b2c;box-shadow:0 1px 3px rgba(0,0,0,.3)}
@@ -3057,7 +3057,7 @@ function dmHost(){
   loadPeer(()=>{
     const code=roomCode();
     let peer; try{ peer=new Peer('grimoire-dm-'+code,{debug:1}); }catch(e){ flashBanner('Could not start host'); return; }
-    net={role:'dm', code, peer, conns:[], sel:null, session:{battle:{active:false,round:1}, map:{cols:10,rows:8,tiles:{}}, monsters:[], players:[]}};
+    net={role:'dm', code, peer, conns:[], sel:null, session:{battle:{active:false,round:1}, map:{cols:10,rows:8,tiles:{}}, monsters:[], players:[], order:[], turn:0}};
     peer.on('open',()=>render());
     peer.on('error',e=>flashBanner('Host error: '+(e.type||e.message||e)));
     peer.on('connection',conn=>{
@@ -3071,13 +3071,20 @@ function dmHost(){
 function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   if(d.t==='hello'||d.t==='charUpdate'){ let p=net.session.players.find(x=>x.id===conn.peer);
     if(!p){ p={id:conn.peer,x:0,y:0}; net.session.players.push(p); }
-    Object.assign(p,{name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac});
+    Object.assign(p,{name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && d.dmg){ mo.hp=Math.max(0,mo.hp-d.dmg); } net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg:d.dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+(d.dmg||0))); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
   else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; dmBroadcast(); render(); } }
 }
 function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
+function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
+function rollInitiative(){ const s=net.session; const o=[];
+  s.players.forEach(p=>o.push({k:'p',id:p.id,name:p.name,roll:rnd(20)+(p.init||0)}));
+  s.monsters.forEach(m=>o.push({k:'m',id:m.id,name:m.name,roll:rnd(20)+(m.init||0)}));
+  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; dmBroadcast(); render(); flashBanner('Initiative rolled'); }
+function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; dmBroadcast(); render(); return; }
+  s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; dmBroadcast(); render(); }
 function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
 function dmExit(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
@@ -3109,7 +3116,7 @@ function playerJoin(code, charId){
   });
 }
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
-function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c)}}); }catch(e){} }
+function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c)}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -3125,9 +3132,12 @@ function renderPlayerBattle(c){
   const s=net.session, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0}, b=c.battle||{};
   $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
   app.className='fade'; void app.offsetWidth;
+  const myTurn = s.order&&s.order.length&&s.order[s.turn]&&s.order[s.turn].id===net.peer.id;
   app.innerHTML=`
   <div class="card" style="border:2px solid var(--accent)">
     <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Battle · Round ${s.battle.round}</h2><span class="muted" style="font-size:11px">DM controls turns</span></div>
+    ${(s.order&&s.order.length)?`<div style="text-align:center;margin:8px 0;font-weight:700;color:${myTurn?'var(--accent)':'var(--mut)'}">${myTurn?'★ YOUR TURN ★':'Now: '+esc((s.order[s.turn]||{}).name||'—')}</div>
+      <div class="chips" style="justify-content:center">${s.order.map((o,i)=>`<span class="chip ${i===s.turn?'on':''}" style="${i===s.turn?'':'opacity:.6'}">${o.k==='m'?'🟥':'🟩'} ${esc(o.name)} (${o.roll})</span>`).join('')}</div>`:''}
     <div class="tiles" style="margin-top:8px">
       <div class="tile" style="${c.hp.cur<=0?'box-shadow:inset 0 0 0 1px var(--bad)':''}"><div class="lab">HP${c.hp.cur<=0?' · DOWN':''}</div><div class="big" style="color:${c.hp.cur<=0?'var(--bad)':'var(--good)'}">${c.hp.cur}/${c.hp.max}</div></div>
       <div class="tile"><div class="lab">Move left${b.moveUsed?' · used '+b.moveUsed:''}</div><div class="big">${b.move||0}</div></div>
@@ -3253,7 +3263,7 @@ function mapGridHTML(s, isDM){ const {cols,rows}=s.map; const tiles=s.map.tiles|
     }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
     let tok=''; if(mo) tok=mo.sprite?`<span class="tok" style="background:none;box-shadow:none">${pixelArt(monsterSprite(mo.sprite),2)}</span>`:`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`;
-    else if(pl) tok=`<span class="tok pl ${net&&net.sel==='p'+pl.id?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
+    else if(pl) tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id)?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     cells+=`<div class="mcell ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" style="${style}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
   }
@@ -3273,6 +3283,10 @@ function renderDM(){
   <div class="card">
     <div class="row between"><h2 style="margin:0">Battle</h2><div class="stepper"><button id="dmRD">−</button><div class="val">Round ${s.battle.round}</div><button id="dmRU">＋</button></div></div>
     <button class="btn block" id="dmBattle" style="margin-top:10px;${s.battle.active?'background:var(--bad);border-color:var(--bad)':''}">${s.battle.active?'■ End battle (everyone)':'▶ Start battle (everyone)'}</button>
+  </div>
+  <div class="card">
+    <h2>Turn Order <button class="btn sm" id="dmRollInit" style="float:right">🎲 Roll initiative</button></h2>
+    ${(s.order&&s.order.length)? s.order.map((o,i)=>`<div class="listrow" style="${i===s.turn?'background:rgba(77,106,44,.14);border-radius:8px':''}"><span style="flex:none;width:22px">${i===s.turn?'▶':''}</span><div class="nm"><b>${o.k==='m'?'🟥 ':'🟩 '}${esc(o.name)}</b></div><div class="val">${o.roll}</div></div>`).join('')+`<button class="btn block" id="dmNextT" style="margin-top:10px">▶ Next turn (${s.order[s.turn]?esc(s.order[s.turn].name):'—'})</button>` : '<div class="empty">Add players & monsters, then roll initiative.</div>'}
   </div>
   <div class="card">
     <h2>Players ${s.players.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${s.players.length}</span>`:''}</h2>
@@ -3295,7 +3309,9 @@ function renderDM(){
   $('#dmExit').onclick=()=>{ if(confirm('Exit DM mode and disconnect players?')) dmExit(); };
   $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
   $('#dmRD').onclick=()=>{ s.battle.round=Math.max(1,s.battle.round-1); dmBroadcast(); render(); };
-  $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active) s.battle.round=1; dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
+  $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; dmAutoPlace(); rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
+  { const ri=$('#dmRollInit'); if(ri) ri.onclick=rollInitiative; }
+  { const nt=$('#dmNextT'); if(nt) nt.onclick=dmNextTurn; }
   app.querySelectorAll('[data-pdmg]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pdmg, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:-Math.abs(amt)}); });
   app.querySelectorAll('[data-pheal]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pheal, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:Math.abs(amt)}); });
   app.querySelectorAll('[data-mdmg]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mdmg); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.max(0,mo.hp-Math.abs(amt)); dmBroadcast(); render(); } });
@@ -3383,7 +3399,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v40';
+const APP_VERSION='v41';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
