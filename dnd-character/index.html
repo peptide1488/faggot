@@ -714,15 +714,22 @@ function openQuickSpells(c){
 }
 function critNotation(n){ const p=parseDice(n); let s=p.terms.map(t=>(t.n*2)+'d'+t.sides).join('+'); if(p.flat) s+=(p.flat>0?'+':'')+p.flat; return s||n; }
 function attackFlow(c, atk){
+  if(c.battle && (c.battle.attacksLeft||0)<=0){ flashBanner('No attacks left this turn — end your turn to reset'); return; }
   const toHit=Number(atk.toHit)||0;
   const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
   const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
     const d20=face!=null?face:rnd(20);
-    st.d20=d20; st.crit=(d20===20); st.total=d20+toHit; st.phase='hit';
+    st.d20=d20; st.crit=(d20===20); st.total=d20+toHit;
     pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
     if(c.battle){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); c.battle.action=true; save(); }
+    const ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null;
+    if(ac!=null){   // known target AC → auto-resolve, no Hit/Miss prompt
+      const hit = d20===20 || (d20!==1 && st.total>=ac);
+      st.targetAC=ac; st.hit=hit; st.phase = hit?'dmg':'done';
+      if(!hit){ logChange(c, atk.name+' misses (rolled '+st.total+' vs AC '+ac+')'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack',mon:net.targetMon.id,who:c.name,hit:false}); }catch(e){} } }
+    } else { st.phase='hit'; }
     draw();
   }
   function rollDmg(manual){
@@ -747,14 +754,15 @@ function attackFlow(c, atk){
         <p style="text-align:center;margin:0 0 8px">Did it beat the target's AC?</p>
         <div class="row2"><button class="btn" id="afHit">✓ Hit${st.crit?' (crit)':''}</button><button class="btn bad" id="afMiss">✗ Miss</button></div>`;
     } else if(st.phase==='dmg'){
-      body+=`${saveOnly?`<p style="text-align:center;margin:0 0 8px">🛡️ Target makes a <b>${(atk.save.ab||'').toUpperCase()} save vs your DC ${8+profBonus(c)+mod(abil(c,c.spellAbility))}</b></p>`:''}
-        ${st.crit?'<p style="text-align:center;color:var(--accent2);margin:0 0 8px"><b>💥 Critical hit — damage dice doubled!</b></p>':''}
+      body+=`${(st.targetAC&&!saveOnly)?`<div class="card" style="text-align:center;margin:0 0 8px;background:rgba(63,125,54,.12)"><b style="color:var(--good)">${st.crit?'💥 CRITICAL HIT':'✓ HIT'}</b> — rolled ${st.total} vs AC ${st.targetAC}</div>`:''}
+        ${saveOnly?`<p style="text-align:center;margin:0 0 8px">🛡️ Target makes a <b>${(atk.save.ab||'').toUpperCase()} save vs your DC ${8+profBonus(c)+mod(abil(c,c.spellAbility))}</b></p>`:''}
+        ${(st.crit&&!st.targetAC)?'<p style="text-align:center;color:var(--accent2);margin:0 0 8px"><b>💥 Critical hit — damage dice doubled!</b></p>':''}
         ${atk.vers?`<label class="pill" style="cursor:pointer;margin-bottom:8px"><input type="checkbox" id="af2h" ${st.twoH?'checked':''}> Two-handed (${esc(atk.vers)})</label>`:''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
         <button class="btn block" id="afDmgAuto">🎲 Roll damage</button>
         <div class="addrow" style="margin-top:8px"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn ghost" id="afDmgUse">Use</button></div>`;
     } else {
-      body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div class="muted">${st.hit?(st.crit?'💥 Critical hit!':'Hit!'):'Miss'}</div>${st.hit?`<div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--bad)">${st.dmgTotal}</div><div class="muted">${esc(atk.dt||'')} damage</div>`:''}</div>
+      body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div class="muted">${st.hit?(st.crit?'💥 Critical hit!':'Hit!'):'Miss'+(st.targetAC?' (rolled '+st.total+' vs AC '+st.targetAC+')':'')}</div>${st.hit?`<div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--bad)">${st.dmgTotal}</div><div class="muted">${esc(atk.dt||'')} damage</div>`:''}</div>
         <button class="btn block" id="afAgain">⚔ Attack again</button>`;
     }
     body+=`<button class="btn ghost block" id="afClose" style="margin-top:10px">Close</button>`;
@@ -3094,8 +3102,10 @@ function rollInitiative(){ const s=net.session; const o=[];
   s.monsters.forEach(m=>o.push({k:'m',id:m.id,name:m.name,roll:rnd(20)+(m.init||0)}));
   o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>m.attacksLeft=m.attacks||1); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
 function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo) mo.attacksLeft=mo.attacks||1; } }
+function orderDead(o){ if(o.k!=='m') return false; const mo=net.session.monsters.find(m=>m.id===o.id); return mo&&mo.hp<=0; }
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; dmBroadcast(); render(); return; }
-  s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; dmRefreshActor(); dmBroadcast(); render(); }
+  let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
+  dmRefreshActor(); dmBroadcast(); render(); }
 function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
 function dmExit(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
@@ -3223,6 +3233,12 @@ function renderPlayerBattle(c){
     ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
     <div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>
     ${c.hp.cur<=0?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
+  </div>
+  <div class="card">
+    <h2>Battle Log</h2>
+    <div style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px">
+      ${(c.log&&c.log.length)? c.log.slice(0,30).map(e=>`<div class="listrow" style="padding:4px 0"><div class="nm" style="font-size:12px">${esc(e.m)}</div><div class="sub" style="white-space:nowrap;font-size:11px">${fmtLogTime(e.t)}</div></div>`).join('') : '<div class="empty" style="padding:8px 0">Your rolls, damage, casts and moves show here.</div>'}
+    </div>
   </div>`;
   app.querySelectorAll('[data-cell]').forEach(el=>el.addEventListener('click',()=>{
     const t=el.getAttribute('data-target'); if(t){ playerAttackMenu(c); return; }
@@ -3325,13 +3341,17 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
         + 'border-color:transparent;';
     }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
-    let tok=''; if(mo){ const badge=mo.num?`<span class="mnum">${mo.num}</span>`:''; tok=(mo.sprite?`<span class="tok" style="background:none;box-shadow:none">${pixelArt(monsterSprite(mo.sprite),2)}</span>`:`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`)+badge; }
+    let tok=''; if(mo){ const dead=mo.hp<=0; const inner=mo.sprite?pixelArt(monsterSprite(mo.sprite),2):esc((mo.name[0]||'M').toUpperCase());
+      const tcls='tok '+(mo.sprite?'':'mon')+(net&&net.sel==='m'+mo.id?' sel':'')+(dead?' deadtok':'');
+      const tstyle=(mo.sprite?'background:none;box-shadow:none;':'')+(dead?'filter:grayscale(1) brightness(.55);transform:rotate(90deg);opacity:.65;':'');
+      tok=`<span class="${tcls}" style="${tstyle}">${inner}</span>`+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')); }
     else if(pl) tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id)?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
     if(opts.reach && !mo && !pl){ const dd=Math.max(Math.abs(opts.reach.x-x),Math.abs(opts.reach.y-y)); if(dd>0 && dd<=opts.reach.tiles) extra+=' reach'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
-    cells+=`<div class="mcell${extra} ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" style="${style}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
+    const canTarget = !isDM && mo && mo.hp>0;
+    cells+=`<div class="mcell${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}</div>`;
   }
   return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},34px)">${cells}</div></div>`;
 }
@@ -3353,7 +3373,7 @@ function renderDM(){
   ${(s.order&&s.order.length)?(()=>{ const cur=s.order[s.turn]||{}; const curMon=cur.k==='m'?s.monsters.find(m=>m.id===cur.id):null;
     return `<div class="card">
       <div class="row between"><h2 style="margin:0">Turn Order</h2><button class="btn ghost sm" id="dmReroll">↻ Re-roll</button></div>
-      ${s.order.map((o,i)=>`<div class="listrow" style="${i===s.turn?'background:rgba(77,106,44,.14);border-radius:8px':''}"><span style="flex:none;width:22px">${i===s.turn?'▶':''}</span><div class="nm"><b>${o.k==='m'?'🟥 ':'🟩 '}${esc(o.name)}</b></div><div class="val">${o.roll}</div></div>`).join('')}
+      ${s.order.map((o,i)=>{ const dead=orderDead(o); return `<div class="listrow" style="${i===s.turn?'background:rgba(77,106,44,.14);border-radius:8px':''}${dead?';opacity:.45':''}"><span style="flex:none;width:22px">${i===s.turn?'▶':''}</span><div class="nm"><b style="${dead?'text-decoration:line-through':''}">${o.k==='m'?'🟥 ':'🟩 '}${esc(o.name)}${dead?' 💀':''}</b></div><div class="val">${o.roll}</div></div>`; }).join('')}
       <div class="card" style="margin:10px 0 0;background:rgba(77,106,44,.10)">
         <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Up now: ${esc(cur.name||'—')}</div>
         ${curMon? `<div class="row2"><button class="btn" id="curAtk">⚔ ${esc(curMon.name)} attacks</button><button class="btn ghost" id="curMove">📍 Move it</button></div>`
@@ -3378,6 +3398,12 @@ function renderDM(){
     <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">🟥 ${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">🟩 ${esc(p.name)}</button>`).join('')}</div>
     <button class="btn ghost sm block" id="mClear" style="margin-top:8px">Clear all terrain</button>
     <div class="addrow" style="margin-top:8px"><span class="muted" style="font-size:12px;flex:none">Grid</span><input id="mCols" type="number" value="${s.map.cols}" style="max-width:60px"><span class="muted">×</span><input id="mRows" type="number" value="${s.map.rows}" style="max-width:60px"><button class="btn ghost sm" id="mResize">Resize</button></div>
+  </div>
+  <div class="card">
+    <h2>Battle Log</h2>
+    <div style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px">
+      ${rollLog.length? rollLog.slice(0,30).map(r=>`<div class="listrow" style="padding:4px 0"><span class="lr-total" style="min-width:30px">${r.total}</span><div class="nm" style="font-size:12px">${esc(r.label)}</div><div class="sub" style="white-space:nowrap;font-size:11px">${esc(String(r.detail||'').replace(/<[^>]+>/g,''))}</div></div>`).join('') : '<div class="empty" style="padding:8px 0">Monster attacks & player hits show here.</div>'}
+    </div>
   </div>`;
   $('#dmExit').onclick=()=>{ if(confirm('Exit DM mode and disconnect players?')) dmExit(); };
   $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
@@ -3529,7 +3555,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v47';
+const APP_VERSION='v48';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
