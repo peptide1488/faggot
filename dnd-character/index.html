@@ -2919,10 +2919,11 @@ const RND_PRIO = {
   Warlock:['cha','con','dex','wis','int','str'], Druid:['wis','con','dex','int','cha','str'], Cleric:['wis','con','str','dex','cha','int'], Artificer:['int','con','dex','wis','cha','str']
 };
 const RND_FEATS_SIMPLE=['Tough','Alert','Lucky','Mobile','Savage Attacker','Durable','Athlete'];
-const NAME_HARD=['Bron','Gar','Thok','Dur','Grim','Kaz','Ulf','Mor','Rok','Hren','Bal','Dra'];
-const NAME_SOFT=['Ael','Lia','Syl','Mira','Eli','Thes','Yara','Fen','Lor','Ny','Cael','Ari'];
-const NAME_END =['ar','on','eth','wyn','ius','ra','din','gar','iel','os','ana','eth'];
-function randName(race){ const soft=['Elf','Half-Elf','Fairy','Gnome','Aasimar','Tabaxi'].includes(race); return rndPick(soft?NAME_SOFT:NAME_HARD)+rndPick(NAME_END); }
+const NAME_HARD=['Bron','Gar','Thok','Dur','Grim','Kaz','Ulf','Mor','Rok','Hren','Bal','Dra','Korg','Brak','Throg','Var','Drok','Hark','Gor','Krum','Sten','Bald','Rurik','Hror','Thane','Gun','Org','Wrath','Dain','Bru','Tor','Hond','Skar','Vorn','Garn','Mok','Dreng','Hagn','Ozz','Krell'];
+const NAME_SOFT=['Ael','Lia','Syl','Mira','Eli','Thes','Yara','Fen','Lor','Ny','Cael','Ari','Vael','Sera','Lyra','Elin','Thal','Riel','Aza','Nim','Sael','Ily','Wren','Eowy','Fae','Lael','Myr','Cyl','Aev','Sora','Ria','Vyn','Elar','Tia','Quel','Isol','Lun','Vesp','Aer','Niam'];
+const NAME_END =['ar','on','eth','wyn','ius','ra','din','gar','iel','os','ana','eth','wen','dor','iel','as','ira','oth','wick','mund','ric','las','enn','ys','via','ael','orn','isa','wyr','ond','ix','aine','ette','een','aly'];
+const NAME_SURNAME=['Stormborn','Ironheart','Blackwood','Brightblade','Shadowstep','Oakenshield','Stonefist','Emberfell','Frostbeard','Nightwhisper','Dawnstrider','Grimhollow','Silvervein','Thornwood','Ravenscar','Hollowbrook','Ashdown','Wolfsbane','Goldmane','Duskwalker','Highcliff','Stormvale','Briarheart','Coppervein','Mistwalker','Drakemoor'];
+function randName(race){ const soft=['Elf','Half-Elf','Fairy','Gnome','Aasimar','Tabaxi','Tiefling'].includes(race); const first=rndPick(soft?NAME_SOFT:NAME_HARD)+rndPick(NAME_END); return Math.random()<0.5 ? first+' '+rndPick(NAME_SURNAME) : first; }
 let rndAns={style:'melee',heritage:'common',vibe:'heroic'};
 function openRandomBuilder(){ rndAns={style:'melee',heritage:'common',vibe:'heroic'}; renderRandomBuilder(); }
 function renderRandomBuilder(){
@@ -3066,18 +3067,21 @@ function dmHost(){
     net={role:'dm', code, peer, conns:[], sel:null, session:{battle:{active:false,round:1}, map:{cols:10,rows:8,tiles:{}}, monsters:[], players:[], order:[], turn:0}};
     peer.on('open',()=>render());
     peer.on('error',e=>flashBanner('Host error: '+(e.type||e.message||e)));
+    peer.on('disconnected',()=>{ try{ if(!peer.destroyed) peer.reconnect(); }catch(e){} });
     peer.on('connection',conn=>{
       conn.on('open',()=>{ net.conns.push(conn); dmBroadcast(); render(); });
       conn.on('data',d=>dmOnData(conn,d));
-      conn.on('close',()=>{ net.conns=net.conns.filter(x=>x!==conn); net.session.players=net.session.players.filter(p=>p.id!==conn.peer); dmBroadcast(); render(); });
+      conn.on('close',()=>{ net.conns=net.conns.filter(x=>x!==conn); const p=net.session.players.find(x=>x.id===conn.peer); if(p) p.online=false; render(); });   // keep the player (mark offline) so reconnect re-binds — no duplicates, position preserved
     });
     tab='char'; render();
   });
 }
 function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
-  if(d.t==='hello'||d.t==='charUpdate'){ let p=net.session.players.find(x=>x.id===conn.peer);
-    if(!p){ p={id:conn.peer,x:0,y:0}; net.session.players.push(p); }
-    Object.assign(p,{name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0});
+  if(d.t==='hello'||d.t==='charUpdate'){ const cid=d.char.cid;
+    let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
+    if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
+    p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && d.dmg){ mo.hp=Math.max(0,mo.hp-d.dmg); } net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg:d.dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+(d.dmg||0))); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
@@ -3110,20 +3114,31 @@ function openJoin(){
   $('#joinGo').onclick=()=>{ const code=($('#joinCode').value||'').trim().toUpperCase(); if(code.length<4){ flashBanner('Enter the 4-letter code'); return; }
     const nm=$('#joinChar').value; const ch=DB.find(c=>c.name===nm)||DB[0]; $('#modalRoot').innerHTML=''; playerJoin(code, ch.id); };
 }
+function playerConnect(){ if(!net||net.role!=='player'||!net.peer) return;
+  try{ if(net.conn && net.conn.open) return; }catch(e){}
+  let conn; try{ conn=net.peer.connect('grimoire-dm-'+net.code,{reliable:true}); }catch(e){ scheduleReconnect(); return; }
+  net.conn=conn;
+  conn.on('open',()=>{ net.connected=true; playerHello(); render(); });
+  conn.on('data',d=>playerOnData(d));
+  conn.on('close',()=>{ net.connected=false; render(); scheduleReconnect(); });
+  conn.on('error',()=>{ net.connected=false; scheduleReconnect(); });
+}
+function scheduleReconnect(){ if(!net||net.role!=='player') return; clearTimeout(net._rt);
+  net._rt=setTimeout(()=>{ if(!net||net.role!=='player') return; if(net.conn&&net.conn.open) return;
+    try{ if(net.peer&&net.peer.disconnected&&!net.peer.destroyed) net.peer.reconnect(); }catch(e){}
+    playerConnect(); }, 2500); }
 function playerJoin(code, charId){
   loadPeer(()=>{
     let peer; try{ peer=new Peer('grimoire-pl-'+Math.random().toString(36).slice(2,8),{debug:1}); }catch(e){ flashBanner('Could not join'); return; }
-    net={role:'player', code, peer, conn:null, session:null, charId, targetMon:null};
-    peer.on('open',()=>{ const conn=peer.connect('grimoire-dm-'+code,{reliable:true}); net.conn=conn;
-      conn.on('open',()=>{ playerHello(); flashBanner('Joined game '+code); render(); });
-      conn.on('data',d=>playerOnData(d));
-      conn.on('close',()=>{ flashBanner('Disconnected from DM'); net=null; render(); });
-    });
-    peer.on('error',e=>{ flashBanner('Join failed: '+(e.type||e.message||e)); net=null; render(); });
+    net={role:'player', code, peer, conn:null, session:null, charId, targetMon:null, connected:false};
+    peer.on('open',()=>{ playerConnect(); flashBanner('Joining game '+code+'…'); });
+    peer.on('disconnected',()=>{ try{ if(!peer.destroyed) peer.reconnect(); }catch(e){} });
+    peer.on('error',e=>{ const t=e&&e.type; if(t==='peer-unavailable'){ flashBanner('DM not found — check the code'); } else { net&&(net.connected=false); scheduleReconnect(); } render&&render(); });
   });
 }
+function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c'+Math.random().toString(36).slice(2,10); localStorage.setItem('grimoire.cid',id); } return id; }
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
-function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c)}}); }catch(e){} }
+function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c)}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -3348,7 +3363,7 @@ function renderDM(){
     </div>`; })() : (s.battle.active?'<div class="card"><div class="empty">No combatants. Deploy monsters and have players join, then ↻ re-roll.</div></div>':'')}
   <div class="card">
     <h2>Players ${s.players.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${s.players.length}</span>`:''}</h2>
-    ${s.players.length? s.players.map(p=>`<div class="spell"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
+    ${s.players.length? s.players.map(p=>`<div class="spell" style="${p.online===false?'opacity:.5':''}"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}${p.online===false?' <span class="sub">offline</span>':''}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button><button class="del" data-pdel="${p.cid||p.id}" title="Remove player">✕</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
   </div>
   <div class="card">
     <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button></h2>
@@ -3367,13 +3382,14 @@ function renderDM(){
   $('#dmExit').onclick=()=>{ if(confirm('Exit DM mode and disconnect players?')) dmExit(); };
   $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
   $('#dmRD').onclick=()=>{ s.battle.round=Math.max(1,s.battle.round-1); dmBroadcast(); render(); };
-  $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; dmAutoPlace(); rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
+  $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
   { const rr=$('#dmReroll'); if(rr) rr.onclick=rollInitiative; }
   { const nt=$('#dmNextT'); if(nt) nt.onclick=dmNextTurn; }
   { const ca=$('#curAtk'); if(ca) ca.onclick=()=>{ const cur=s.order[s.turn]; const mo=cur&&s.monsters.find(m=>m.id===cur.id); if(mo) dmMonsterAttack(mo); }; }
   { const cm=$('#curMove'); if(cm) cm.onclick=()=>{ const cur=s.order[s.turn]; if(cur){ net.sel='m'+cur.id; render(); flashBanner('Tap a map cell to move '+cur.name); } }; }
   app.querySelectorAll('[data-pdmg]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pdmg, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:-Math.abs(amt)}); });
   app.querySelectorAll('[data-pheal]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pheal, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:Math.abs(amt)}); });
+  app.querySelectorAll('[data-pdel]').forEach(el=>el.onclick=()=>{ const key=el.dataset.pdel; s.players=s.players.filter(p=>(p.cid||p.id)!==key); s.order=(s.order||[]).filter(o=>o.k!=='p'||net.session.players.some(p=>p.id===o.id)); dmBroadcast(); render(); });
   app.querySelectorAll('[data-mdmg]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mdmg); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.max(0,mo.hp-Math.abs(amt)); dmBroadcast(); render(); } });
   app.querySelectorAll('[data-mheal]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mheal); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.min(mo.max,mo.hp+Math.abs(amt)); dmBroadcast(); render(); } });
   app.querySelectorAll('[data-mdel]').forEach(el=>el.onclick=()=>{ s.monsters=s.monsters.filter(m=>m.id!==el.dataset.mdel); dmBroadcast(); render(); });
@@ -3392,7 +3408,8 @@ function renderDM(){
 function deployMonster(m){ if(!net||net.role!=='dm') return;
   const same=net.session.monsters.filter(x=>x.base===m.n);
   if(same.length===1){ same[0].name=same[0].base+' 1'; same[0].num=1; }   // retro-number the first when a second appears
-  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1});
+  const idx=net.session.monsters.length, cols=net.session.map.cols||10;
+  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:idx%cols, y:Math.floor(idx/cols), sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1});
   dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
@@ -3473,10 +3490,15 @@ function openSessionMap(){ if(!net||!net.session){ flashBanner('Not in a game');
 function renderNetBar(){
   let bar=document.getElementById('netbar');
   if(net && net.role==='player'){ if(!bar){ bar=document.createElement('div'); bar.id='netbar'; bar.className='netbar'; document.body.insertBefore(bar, document.body.firstChild); }
-    bar.innerHTML=`<span>🔗 In game <span class="code">${esc(net.code)}</span>${net.session&&net.session.battle.active?' · ⚔ Battle R'+net.session.battle.round:''}</span><button id="nbMap">🗺 Map</button><button id="nbLeave">Leave</button>`;
+    const status = net.connected ? (net.session&&net.session.battle.active?' · ⚔ Battle R'+net.session.battle.round:'') : ' · <span style="color:#ffd9c9">reconnecting…</span>';
+    bar.innerHTML=`<span>🔗 In game <span class="code">${esc(net.code)}</span>${status}</span><button id="nbMap">🗺 Map</button><button id="nbLeave">Leave</button>`;
     bar.querySelector('#nbMap').onclick=openSessionMap; bar.querySelector('#nbLeave').onclick=()=>{ if(confirm('Leave the game?')) playerLeave(); };
   } else if(bar){ bar.remove(); }
 }
+
+/* reconnect when a backgrounded player tab regains focus / network */
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden && net && net.role==='player'){ try{ if(net.conn&&net.conn.open) return; }catch(e){} scheduleReconnect(); } });
+window.addEventListener('online',()=>{ if(net && net.role==='player'){ try{ if(net.conn&&net.conn.open) return; }catch(e){} scheduleReconnect(); } });
 
 /* ---- wiring ---- */
 document.addEventListener('click',e=>{
@@ -3507,7 +3529,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v46';
+const APP_VERSION='v47';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
