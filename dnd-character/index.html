@@ -850,7 +850,8 @@ function attackFlow(c, atk){
         spendAction(c);
       }
     }
-    const ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null;
+    let ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null, cover=0;
+    if(ac!=null && net&&net.session&&!atk.spell){ const me=myMapPos(); const mo=net.session.monsters.find(m=>m.id===net.targetMon.id); if(mo){ cover=coverBetween(net.session, me.x,me.y, mo.x,mo.y); ac+=cover; } }
     const r=Engine.roll(toHit, ac, face); sfx('swing');   // unified d20 resolver
     const d20=r.d20; st.d20=d20; st.crit=r.crit; st.total=r.total;
     pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
@@ -859,7 +860,7 @@ function attackFlow(c, atk){
       const hit = r.hit;
       st.targetAC=ac; st.hit=hit; st.phase = hit?'dmg':'done';
       if(hit){ sfx(st.crit?'crit':'hit'); attackFx(st.crit?'crit':'hit'); }
-      else { sfx('miss'); attackFx('miss'); logChange(c, atk.name+' misses (rolled '+st.total+' vs AC '+ac+')'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack',mon:net.targetMon.id,who:c.name,hit:false}); }catch(e){} } }
+      else { sfx('miss'); attackFx('miss'); logChange(c, atk.name+' misses (rolled '+st.total+' vs AC '+ac+(cover?' incl. +'+cover+' cover':'')+')'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack',mon:net.targetMon.id,who:c.name,hit:false}); }catch(e){} } }
     } else { st.phase='hit'; }
     draw();
   }
@@ -3482,6 +3483,16 @@ function losClear(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{}; let dx=Math.abs(
   while(!(x===x1&&y===y1) && guard++<999){ const e2=2*err; if(e2>-dy){ err-=dy; x+=sx; } if(e2<dx){ err+=dy; y+=sy; }
     if(x===x1&&y===y1) break; const td=TERRAIN[tiles[x+','+y]]; if(td&&td.opaque) return false; }
   return true; }
+// Cover between attacker and target: opaque/solid terrain in the way = three-quarters (+5),
+// an intervening creature = half (+2). Returns the AC bonus the target gets.
+function coverBetween(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{};
+  let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy,x=x0,y=y0,guard=0,cover=0;
+  while(!(x===x1&&y===y1)&&guard++<999){ const e2=2*err; if(e2>-dy){err-=dy;x+=sx;} if(e2<dx){err+=dy;y+=sy;}
+    if(x===x1&&y===y1) break;
+    const td=TERRAIN[tiles[x+','+y]]; if(td&&(td.solid||td.opaque)){ cover=Math.max(cover,5); continue; }
+    const occ=(s.monsters||[]).some(m=>m.hp>0&&m.x===x&&m.y===y) || (s.players||[]).some(p=>p.x===x&&p.y===y);
+    if(occ) cover=Math.max(cover,2); }
+  return cover; }
 function pathTo(s, sx, sy, tx, ty, maxFeet){ const {cost,prev}=dijkstra(s,sx,sy,maxFeet); const K=(x,y)=>x+','+y; if(cost[K(tx,ty)]==null) return null;
   const path=[]; let cur=K(tx,ty); while(cur && cur!==K(sx,sy)){ const [x,y]=cur.split(',').map(Number); path.unshift({x,y}); cur=prev[cur]; } return path; }
 function animateToken(get,set,path,step,done){ let i=0; (function go(){ if(i>=path.length){ done&&done(); return; } set(path[i].x,path[i].y); i++; render(); setTimeout(go, step||110); })(); }
@@ -3876,8 +3887,8 @@ function dmMonsterAttack(mo){
     } else if(st.phase==='aim'){
       body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maRoll">🎲 Roll to hit (+${st.atk.hit||0}) vs AC ${t.ac}</button>`;
     } else {
-      const isHit=st.total>=t.ac||st.d20===20, crit=st.d20===20;
-      body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:32px;font-weight:700;color:${isHit?'var(--good)':'var(--bad)'}">${st.total}</div><div class="muted">d20(${st.d20}) +${st.atk.hit||0} vs AC ${t.ac} — ${crit?'💥 CRIT':isHit?'HIT':'MISS'}</div></div>`;
+      const ac=st.ac!=null?st.ac:t.ac, isHit=st.total>=ac||st.d20===20, crit=st.d20===20;
+      body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:32px;font-weight:700;color:${isHit?'var(--good)':'var(--bad)'}">${st.total}</div><div class="muted">d20(${st.d20}) +${st.atk.hit||0} vs AC ${ac}${st.cover?' (+'+st.cover+' cover)':''} — ${crit?'💥 CRIT':isHit?'HIT':'MISS'}</div></div>`;
       if(isHit){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage${crit?' (crit ×2 dice)':''}</button>`;
         else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><button class="btn bad block" id="maApply">Apply ${st.dmg} to ${esc(t.name)}</button>`; }
       body+=`<button class="btn ghost block" id="maReset" style="margin-top:8px">↺ New attack</button>`;
@@ -3888,7 +3899,7 @@ function dmMonsterAttack(mo){
     $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; draw(); }; }
     document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; draw(); });
-    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0}); st.d20=res.d20; st.total=res.total; st.phase='res'; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.phase='res'; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
     { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; sfx('damage'); attackFx(st.d20===20?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, st.d20===20); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(st.d20===20?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
     const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
     { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
@@ -3991,10 +4002,12 @@ const Engine = {
   // pure d20 roll vs an AC (adapter-free). ac==null → hit unknown (caller prompts).
   roll(toHit, ac, face){ const d20=face!=null?face:rnd(20), total=d20+(toHit||0), crit=d20===20;
     const hit = ac==null ? null : (crit||(d20!==1&&total>=ac)); return {d20, total, crit, hit}; },
-  // resolve a to-hit against a target via an adapter — no damage, no mutation
+  // resolve a to-hit against a target via an adapter — no damage, no mutation. Adds cover to AC.
   hitResult(ad, actorId, targetId, atk, face){
-    const t=ad.unit(targetId); const ac=t?ad.ac(t):(atk.targetAC||10);
-    return Object.assign({ac}, Engine.roll(atk.toHit, ac, face));
+    const t=ad.unit(targetId), a=ad.unit(actorId);
+    const cover=(ad.cover && a && t) ? ad.cover(a,t) : 0;
+    const ac=(t?ad.ac(t):(atk.targetAC||10)) + cover;
+    return Object.assign({ac, cover}, Engine.roll(atk.toHit, ac, face));
   },
   rollDamage(atk, crit){ const base=atk.dmg||'1d6'; const note=crit?critNotation(base):base; return (rollNotation(note)||{total:0}).total; },
   // resolve one attack atomically → returns an event {type,actorId,targetId,hit,crit,dmg,total,ac,void?}
@@ -4026,6 +4039,7 @@ const sessionAdapter = {
   ac:u=>u.ac,
   hp:u=> u.hp!=null ? u.hp : u.hpCur,
   hurt:(u,dmg)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); } else { dmSend(u.id,{t:'apply',delta:-dmg}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },
+  cover:(a,t)=> (a&&t&&net&&net.session) ? coverBetween(net.session, a.x,a.y, t.x,t.y) : 0,
   name:u=>u.name
 };
 function crToNum(cr){ const s=String(cr==null?0:cr); if(s.includes('/')){ const [a,b]=s.split('/').map(Number); return b?a/b:0; } return Number(s)||0; }
@@ -4039,7 +4053,8 @@ function qbLog(m){ QB.log.unshift({m, t:Date.now()}); if(QB.log.length>40) QB.lo
 function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); } }
 // adapter binding the unified Engine to Quick Battle's state
 const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
-  enemiesOf:u=> u.side==='pc'?QB.monsters.filter(m=>m.hp>0):QB.players.filter(p=>p.c.hp.cur>0), map:()=>QB.map };
+  enemiesOf:u=> u.side==='pc'?QB.monsters.filter(m=>m.hp>0):QB.players.filter(p=>p.c.hp.cur>0), map:()=>QB.map,
+  cover:(a,t)=> (a&&t) ? coverBetween(QB, a.x,a.y, t.x,t.y) : 0 };
 // the PC's usable attacks (weapons + custom), as generic atk objects
 function qbPcAttacks(c){ const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w);
@@ -4377,7 +4392,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v75';
+const APP_VERSION='v76';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
