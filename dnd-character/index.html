@@ -267,16 +267,15 @@
     padding:calc(env(safe-area-inset-top) + 8px) 12px 8px;display:flex;align-items:center;gap:10px;font-size:13px}
   .netbar .code{font-family:Georgia,serif;font-weight:700;letter-spacing:2px}
   .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
-  .mapwrap{overflow:auto;border-radius:12px;padding:6px;
-    background:
-      linear-gradient(rgba(20,16,11,.06),rgba(20,16,11,.06)),
-      repeating-linear-gradient(0deg,rgba(0,0,0,.05) 0 1px,transparent 1px 38px),
-      repeating-linear-gradient(90deg,rgba(0,0,0,.05) 0 1px,transparent 1px 38px),
-      #cdb88c;
+  .mapwrap{overflow:auto;border-radius:12px;padding:6px;background:#b8a274;
     box-shadow:inset 0 0 18px rgba(60,42,20,.35), 0 2px 8px rgba(0,0,0,.18)}
-  .mapgrid{display:grid;gap:2px;min-width:max-content}
-  .mcell{width:36px;height:36px;border-radius:5px;display:grid;place-items:center;position:relative;cursor:pointer;
-    background:linear-gradient(145deg,#efe3c4,#dccba0);box-shadow:inset 0 1px 0 rgba(255,255,255,.45), inset 0 -2px 3px rgba(120,90,40,.18)}
+  .mapgrid{display:grid;gap:0;min-width:max-content;
+    background:
+      repeating-linear-gradient(0deg,rgba(40,28,12,.20) 0 1px,transparent 1px 36px),
+      repeating-linear-gradient(90deg,rgba(40,28,12,.20) 0 1px,transparent 1px 36px),
+      linear-gradient(145deg,#efe3c4,#dccba0);
+    box-shadow:inset 0 0 0 1px rgba(40,28,12,.25)}
+  .mcell{width:36px;height:36px;display:grid;place-items:center;position:relative;cursor:pointer;background:transparent}
   /* terrain tiles */
   .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
   .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
@@ -3529,12 +3528,10 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     const ter=at(x,y), td=ter&&TERRAIN[ter]; let style='';
     if(td&&td.c){
       // autotile: same-terrain neighbours connect (square edge); outer corners round off
-      const U=at(x,y-1)===ter, D=at(x,y+1)===ter, L=at(x-1,y)===ter, R=at(x+1,y)===ter, RAD='11px';
+      // autotile: flush cells (no gap); round only true outer corners → seamless blocks
+      const U=at(x,y-1)===ter, D=at(x,y+1)===ter, L=at(x-1,y)===ter, R=at(x+1,y)===ter, RAD='10px';
       const tl=(!U&&!L)?RAD:'0', tr=(!U&&!R)?RAD:'0', br=(!D&&!R)?RAD:'0', bl=(!D&&!L)?RAD:'0';
-      const m=2; // overlap the 2px gap so connected cells merge seamlessly
-      style=`border-radius:${tl} ${tr} ${br} ${bl};`
-        + (U?`margin-top:-${m}px;padding-top:${m}px;`:'') + (D?`margin-bottom:-${m}px;padding-bottom:${m}px;`:'')
-        + (L?`margin-left:-${m}px;padding-left:${m}px;`:'') + (R?`margin-right:-${m}px;padding-right:${m}px;`:'');
+      style=`border-radius:${tl} ${tr} ${br} ${bl};`;
     }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
     const hpbar=(cur,mx)=>{ if(!mx) return ''; const p=Math.max(0,Math.min(100,Math.round(cur/mx*100))); const cl=p<=25?'crit':p<=50?'low':''; return `<span class="hpbar ${cl}"><i style="width:${p}%"></i></span>`; };
@@ -3780,7 +3777,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v64';
+const APP_VERSION='v65';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
