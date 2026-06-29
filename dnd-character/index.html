@@ -1933,6 +1933,7 @@ function fmtLogTime(t){ const d=new Date(t), now=new Date();
 function render(){
   renderHeader();
   renderNetBar();
+  if(QB && QB.active){ $('#tabs').style.display='none'; const fab0=$('#diceFab'); if(fab0) fab0.style.display='none'; renderQuickBattle(); return; }
   if(net && net.role==='dm'){ $('#tabs').style.display='none'; const fab0=$('#diceFab'); if(fab0) fab0.style.display='none'; renderDM(); return; }
   if(net && net.role==='player' && net.session && net.session.battle.active){ const pc=playerChar(); if(pc){ renderPlayerBattle(pc); return; } }
   const c = cur();
@@ -3247,6 +3248,7 @@ function openAppMenu(){
       <button class="btn ghost" id="mnHost">🎲 Host (DM)</button>
       <button class="btn ghost" id="mnJoin">🔗 Join game</button>
     </div>
+    <button class="btn block" id="mnQuick" style="margin-bottom:10px">⚔ Quick Battle (solo vs AI)</button>
     <div class="row2" style="margin-bottom:10px">
       <button class="btn ghost" id="mnLog">📜 Adventure log</button>
       <button class="btn ghost" id="mnSound">${soundOn?'🔊 Sound: on':'🔇 Sound: off'}</button>
@@ -3268,6 +3270,7 @@ function openAppMenu(){
   $('#mnLog').onclick=()=>{ close(); openLog(); };
   $('#mnHost').onclick=()=>{ close(); dmHost(); };
   $('#mnJoin').onclick=()=>{ close(); openJoin(); };
+  $('#mnQuick').onclick=()=>{ close(); openQuickBattle(); };
   $('#mnSound').onclick=()=>{ soundOn=!soundOn; localStorage.setItem('grimoire.sound', soundOn?'on':'off'); if(soundOn) sfx('success'); openAppMenu(); };
   $('#mnExport').onclick=exportData;
   $('#mnImport').onclick=()=>$('#mnImportFile').click();
@@ -3294,6 +3297,7 @@ function importData(e){
 
 /* ============ DM / MULTIPLAYER (WebRTC via PeerJS) ============ */
 let net=null;   // {role:'dm'|'player', ...}
+let QB=null;    // Quick Battle (solo vs AI) state, see the Quick Battle section
 function loadPeer(cb){ if(window.Peer) return cb();
   const s=document.createElement('script'); s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
   s.onload=()=>cb(); s.onerror=()=>flashBanner('No internet — multiplayer needs a connection'); document.head.appendChild(s); }
@@ -3943,6 +3947,264 @@ function renderNetBar(){
   } else if(bar){ bar.remove(); }
 }
 
+/* =========================================================================
+   QUICK BATTLE — solo vs AI. Each combatant has a swappable "brain"
+   (human / tactical / future agent), so an external agent can drive any
+   unit later — even monster-vs-monster with different AIs.
+   ========================================================================= */
+const BRAINS = {};   // name -> function(qb, unit) -> [intent]; intents: {type:'move',to} | {type:'attack',targetId,atk}
+function crToNum(cr){ const s=String(cr==null?0:cr); if(s.includes('/')){ const [a,b]=s.split('/').map(Number); return b?a/b:0; } return Number(s)||0; }
+function qbAC(u){ return u.side==='pc'?computeAC(u.c):u.ac; }
+function qbHP(u){ return u.side==='pc'?u.c.hp.cur:u.hp; }
+function qbName(u){ return u.name; }
+function qbReach(u){ if(u.side==='pc'){ return 1; } const a=parseMonsterAttacks(u.atk).filter(x=>x.hit!=null); const t=Math.max(1,...a.map(x=>x.tiles||1).filter(n=>n<=2)); return t||1; }
+function qbAlive(u){ return qbHP(u)>0; }
+function qbUnitById(id){ return QB.players.find(p=>p.id===id)||QB.monsters.find(m=>m.id===id); }
+function qbLog(m){ QB.log.unshift({m, t:Date.now()}); if(QB.log.length>40) QB.log.pop(); }
+function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); } }
+// the PC's usable attacks (weapons + custom), as generic atk objects
+function qbPcAttacks(c){ const out=[];
+  weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w);
+    out.push({name:it.name, toHit:weaponToHit(c,w), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}); });
+  (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0; out.push({name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:'', tiles:1, melee:true}); });
+  if(!out.length) out.push({name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
+  return out;
+}
+function qbInRange(att, tgt, atk){ const d=gridDist(att.x,att.y,tgt.x,tgt.y); if(d>(atk.tiles||1)) return false; if((atk.tiles||1)>1) return losClear(QB,att.x,att.y,tgt.x,tgt.y); return true; }
+function qbEnemiesAlive(){ return QB.monsters.some(m=>m.hp>0); }
+function qbCheckEnd(){ if(!QB) return; if(QB.players[0].c.hp.cur<=0){ QB.over='lose'; } else if(!qbEnemiesAlive()){ QB.over='win'; } }
+
+function openQuickBattle(){
+  if(!DB.length){ flashBanner('Create a character first (or roll a random hero)'); return; }
+  const st={charId:(cur()||DB[0]).id, cr:'1', count:3};
+  function draw(){
+    $('#modalRoot').innerHTML=`<div class="modal" id="qbModal"><div class="sheet"><div class="grip"></div>
+      <h2>⚔ Quick Battle</h2>
+      <p class="muted" style="font-size:12.5px;margin:0 0 10px">Drop a hero into a random arena against AI monsters. Monsters move and fight on their own.</p>
+      <div class="field"><label>Hero</label>
+        <select id="qbChar">${DB.map(c=>`<option value="${c.id}" ${c.id===st.charId?'selected':''}>${esc(c.name)} — Lv ${c.level} ${esc(c.cls)}</option>`).join('')}</select>
+        <button class="btn ghost sm block" id="qbRandHero" style="margin-top:6px">🎲 Forge a random hero to fight with</button></div>
+      <div class="field"><label>Enemy difficulty (max CR)</label>
+        <div class="chips">${['1/8','1/4','1/2','1','2','3','5'].map(cr=>`<button class="chip ${st.cr===cr?'on':''}" data-qbcr="${cr}">CR ${cr}</button>`).join('')}</div></div>
+      <div class="field"><label>How many monsters</label>
+        <div class="chips">${[1,2,3,4,5,6].map(n=>`<button class="chip ${st.count===n?'on':''}" data-qbn="${n}">${n}</button>`).join('')}</div></div>
+      <button class="btn block" id="qbStart" style="margin-top:10px">▶ Start battle</button>
+      <button class="btn ghost block" id="qbCancel" style="margin-top:10px">Cancel</button>
+    </div></div>`;
+    $('#qbCancel').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    $('#qbModal').onclick=e=>{ if(e.target.id==='qbModal') $('#modalRoot').innerHTML=''; };
+    $('#qbChar').onchange=e=>{ st.charId=e.target.value; };
+    $('#qbRandHero').onclick=()=>{ const c=forgeRandomReturn(); if(c){ st.charId=c.id; flashBanner('Forged '+c.name); draw(); } };
+    document.querySelectorAll('[data-qbcr]').forEach(b=>b.onclick=()=>{ st.cr=b.dataset.qbcr; draw(); });
+    document.querySelectorAll('[data-qbn]').forEach(b=>b.onclick=()=>{ st.count=Number(b.dataset.qbn); draw(); });
+    $('#qbStart').onclick=()=>{ const c=DB.find(x=>x.id===st.charId)||DB[0]; $('#modalRoot').innerHTML=''; startQuickBattle(c, crToNum(st.cr), st.count); };
+  }
+  draw();
+}
+// forge a random hero and return it (saved to DB) — wraps the existing generator without forcing a screen change
+function forgeRandomReturn(){ const before=DB.length; forgeRandom({style:rndPick(['martial','arcane','divine','primal','stealth','support']), heritage:'common', vibe:rndPick(['heroic','grim','wild','noble'])}); return DB.length>before?DB[DB.length-1]:null; }
+
+function startQuickBattle(c, crMax, count){
+  const presetKeys=Object.keys(MAP_PRESETS); const map=MAP_PRESETS[rndPick(presetKeys)];
+  const pool=MONSTERS_5E.filter(m=>{ const n=crToNum(m.cr); return n<=crMax+1e-6 && n>=Math.min(crMax/4, crMax); });
+  const usable=pool.length?pool:MONSTERS_5E.filter(m=>crToNum(m.cr)<=crMax+1e-6);
+  const chosen=[]; for(let i=0;i<count;i++) chosen.push(rndPick(usable.length?usable:[MONSTERS_5E[0]]));
+  const pc={id:'pc', side:'pc', name:c.name, c, x:0,y:0, hpCur:c.hp.cur, hpMax:c.hp.max, ac:computeAC(c)};
+  const counts={};
+  const monsters=chosen.map((m,i)=>{ counts[m.n]=(counts[m.n]||0)+1; const spd=m.spd||30;
+    return {id:'qm'+i, side:'mon', base:m.n, name:m.n+(chosen.filter(x=>x.n===m.n).length>1?' '+counts[m.n]:''), num:chosen.filter(x=>x.n===m.n).length>1?counts[m.n]:0,
+      x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:1, attacksLeft:1, moveLeft:spd, reactionUsed:false, brain:'tactical', init:rnd(20)}; });
+  QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles)}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
+  qbPlaceUnits();
+  // battle resources for the PC (mirror startBattle without its render)
+  c.battle={round:1, init:rnd(20)+initiative(c), action:false,bonus:false,reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0};
+  const order=[{k:'p',id:'pc',name:c.name,roll:c.battle.init}].concat(monsters.map(m=>({k:'m',id:m.id,name:m.name,roll:m.init})));
+  order.sort((a,b)=>b.roll-a.roll); QB.order=order; QB.turn=0;
+  qbLog('⚔ Battle begins — '+monsters.length+' enemies. Initiative: '+order.map(o=>o.name+' '+o.roll).join(', '));
+  sfx('success'); save(); render(); flashBanner('Quick Battle! Round 1');
+  qbBeginTurn();
+}
+function qbPlaceUnits(){ const s=QB, cols=s.map.cols, rows=s.map.rows;
+  const free=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const t=TERRAIN[(s.map.tiles||{})[x+','+y]]; return !(t&&t.solid); };
+  const taken=()=>s.players.concat(s.monsters).filter(u=>u.x!=null);
+  const occupied=(x,y)=>taken().some(u=>u.x===x&&u.y===y);
+  const pc=s.players[0]; const cx=Math.floor(cols/2);
+  pcloop: for(let r=rows-1;r>=0;r--){ for(let o=0;o<cols;o++){ const x=cx+((o%2)?1:-1)*Math.ceil(o/2); if(free(x,r)&&!occupied(x,r)){ pc.x=x; pc.y=r; break pcloop; } } }
+  let p=0; for(let r=0;r<rows && p<s.monsters.length;r++) for(let x=0;x<cols && p<s.monsters.length;x++){ if(free(x,r)&&!occupied(x,r)){ s.monsters[p].x=x; s.monsters[p].y=r; p++; } }
+}
+function qbCurrent(){ return QB.order[QB.turn]; }
+function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
+  if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=mo.speed||30; mo.reactionUsed=false; render();
+    setTimeout(()=>qbRunBrain(mo), 500); }
+  else { const c=QB.players[0].c, b=c.battle;   // PC turn — refresh resources, then wait for input
+    b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
+    let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
+    exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
+    QB.moveMode=false; save(); render(); }
+}
+function qbNextTurn(){ if(!QB) return; if(QB.over){ render(); return; }
+  let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0) QB.battle.round++; guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
+  qbBeginTurn();
+}
+function qbEndPcTurn(){ const o=qbCurrent(); if(o&&o.k==='p'){ QB.moveMode=false; qbNextTurn(); } }
+
+// ---- attack resolution (shared by PC, AI, opportunity attacks) ----
+function qbResolveAttack(att, tgt, atk, done){
+  if(!att||!tgt||qbHP(tgt)<=0){ done&&done(); return; }
+  const ac=qbAC(tgt), d20=rnd(20), total=d20+(atk.toHit||0), crit=d20===20, hit=crit||(d20!==1&&total>=ac);
+  const glyph=(atk.tiles||1)>1?'➶':'✦'; mapProjectile(att.x,att.y,tgt.x,tgt.y,glyph); sfx('swing');
+  setTimeout(()=>{
+    if(hit){ const note=crit?critNotation(atk.dmg||'1d6'):(atk.dmg||'1d6'); const dmg=(rollNotation(note)||{total:0}).total;
+      qbHurt(tgt,dmg); sfx(crit?'crit':'hit'); attackFx(crit?'crit':'hit'); qbLog((crit?'💥 ':'')+qbName(att)+' '+(crit?'crits':'hits')+' '+qbName(tgt)+' for '+dmg+' ('+total+' vs AC '+ac+')'); }
+    else { sfx('miss'); attackFx('miss'); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+total+' vs AC '+ac+')'); }
+    qbCheckEnd(); save(); render(); done&&done();
+  }, 280);
+}
+// ---- opportunity attacks ----
+function qbMonsterOAonPc(mo, pc){ if(mo.reactionUsed||mo.hp<=0) return; const a=parseMonsterAttacks(mo.atk).filter(x=>x.hit!=null && (x.tiles||1)<=1)[0]; if(!a) return; mo.reactionUsed=true; qbLog('⚔ Opportunity: '+mo.name); qbResolveAttack(mo, pc, {name:mo.name+' (opportunity)', toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:1}); }
+function qbPcOAonMonster(pc, mo){ const c=pc.c; if(c.battle.reaction||c.hp.cur<=0) return; const melee=qbPcAttacks(c).filter(a=>a.melee); if(!melee.length) return; c.battle.reaction=true; qbLog('⚔ Opportunity: '+c.name); qbResolveAttack(pc, mo, melee[0]); }
+
+// ---- AI driver: ask the unit's brain for intents, execute them in sequence ----
+function qbRunBrain(u){ if(!QB||QB.over){ return; }
+  const brain=BRAINS[u.brain]||BRAINS.tactical; let intents=[]; try{ intents=brain(QB,u)||[]; }catch(e){ intents=[]; }
+  let i=0; (function step(){ if(!QB||QB.over||qbHP(u)<=0||!qbEnemiesAlive()){ if(QB&&!QB.over) setTimeout(qbNextTurn,400); else render(); return; }
+    if(i>=intents.length){ setTimeout(qbNextTurn,400); return; }
+    qbApplyIntent(u, intents[i++], ()=>setTimeout(step, 260));
+  })();
+}
+function qbApplyIntent(u, it, done){
+  if(it.type==='attack'){ const tgt=qbUnitById(it.targetId); if(!tgt||qbHP(tgt)<=0||(u.attacksLeft||0)<=0){ done(); return; } u.attacksLeft--; qbResolveAttack(u, tgt, it.atk, done); return; }
+  if(it.type==='move'){ const path=pathTo(QB, u.x,u.y, it.to.x, it.to.y, (u.moveLeft||0)+(it.dash?(u.speed||30):0));
+    if(!path){ done(); return; }
+    const cost=reachableCells(QB,u.x,u.y,(u.moveLeft||0)+(it.dash?(u.speed||30):0))[it.to.x+','+it.to.y]; if(cost==null){ done(); return; }
+    if(it.dash){ u.moveLeft=(u.moveLeft||0)+(u.speed||30); u.attacksLeft=0; qbLog('🏃 '+u.name+' dashes'); }
+    const fromX=u.x, fromY=u.y; u.moveLeft=Math.max(0,(u.moveLeft||0)-cost);
+    const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,1);
+    animateToken(null,(nx,ny)=>{ u.x=nx; u.y=ny; }, path, 90, ()=>{ save();
+      if(provokePc) qbPcOAonMonster(pc, u);
+      setTimeout(done, provokePc?500:0); });
+    return; }
+  done();
+}
+
+// ---- the built-in tactical brain ----
+BRAINS.tactical = function(qb, u){
+  const foes=qb.players.filter(p=>p.c.hp.cur>0); if(!foes.length) return [];
+  const atks=parseMonsterAttacks(u.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:a.tiles||1})).filter(a=>true);
+  const usable=atks.length?atks:[{name:'Attack',toHit:0,dmg:'1d6',tiles:1}];
+  const dist=f=>gridDist(u.x,u.y,f.x,f.y);
+  const canHitFrom=(x,y,f,a)=>{ const d=gridDist(x,y,f.x,f.y); if(d>a.tiles) return false; if(a.tiles>1) return losClear(qb,x,y,f.x,f.y); return true; };
+  // 1) can we attack someone right now? prefer the lowest-HP foe we can hit
+  let best=null;
+  foes.forEach(f=>usable.forEach(a=>{ if(canHitFrom(u.x,u.y,f,a)){ if(!best||f.c.hp.cur<best.f.c.hp.cur) best={f,a}; } }));
+  if(best){ const out=[]; for(let k=0;k<(u.attacksLeft||1);k++) out.push({type:'attack', targetId:best.f.id, atk:best.a}); return out; }
+  // 2) move to a cell from which we can attack the nearest foe, then attack
+  const target=foes.slice().sort((a,b)=>dist(a)-dist(b))[0];
+  const reach=reachableCells(qb, u.x, u.y, u.moveLeft||0);
+  let spot=null, spotCost=1e9, spotAtk=null;
+  Object.keys(reach).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return;
+    usable.forEach(a=>{ if(canHitFrom(x,y,target,a)){ const cost=reach[k]; if(cost<spotCost){ spot={x,y}; spotCost=cost; spotAtk=a; } } }); });
+  if(spot){ const out=[{type:'move', to:spot}]; for(let k=0;k<(u.attacksLeft||1);k++) out.push({type:'attack', targetId:target.id, atk:spotAtk}); return out; }
+  // 3) can't reach — step as close as possible toward the nearest foe (Dash if truly stuck)
+  let stepTo=null, bestD=dist(target);
+  Object.keys(reach).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return; const d=gridDist(x,y,target.x,target.y); if(d<bestD){ bestD=d; stepTo={x,y}; } });
+  if(stepTo) return [{type:'move', to:stepTo}];
+  // truly stuck within normal move → Dash toward the foe
+  const reachD=reachableCells(qb, u.x, u.y, (u.moveLeft||0)+(u.speed||30)); let dashTo=null, dd=dist(target);
+  Object.keys(reachD).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return; const d=gridDist(x,y,target.x,target.y); if(d<dd){ dd=d; dashTo={x,y}; } });
+  if(dashTo) return [{type:'move', to:dashTo, dash:true}];
+  return [];
+};
+
+// ---- PC turn UI ----
+function renderQuickBattle(){
+  const s=QB, pc=s.players[0], c=pc.c, b=c.battle; pc.hpCur=c.hp.cur; pc.hpMax=c.hp.max; pc.ac=computeAC(c);
+  const o=qbCurrent(), myTurn=o&&o.k==='p'&&!s.over;
+  app.className='fade'; void app.offsetWidth;
+  const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
+  const moveOpts = (myTurn&&s.moveMode)?{reachCost:reachableCells(s,pc.x,pc.y,dashMax), reachNormal:(b.move||0)}:{};
+  app.innerHTML=`
+  <div class="card" style="border:2px solid var(--accent2)">
+    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Quick Battle</h2><button class="btn ghost sm" id="qbExit" style="color:var(--bad)">Exit</button></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Round ${s.battle.round} · ${s.over?(s.over==='win'?'🏆 Victory!':'💀 Defeated'):(myTurn?'Your turn':'⏳ '+esc(o?o.name:'…')+'…')}</div>
+    <div class="addrow" style="gap:5px;flex-wrap:wrap;margin-top:8px">${s.order.map((it,i)=>{ const u=qbUnitById(it.id); const dead=u&&!qbAlive(u); return `<span class="pill" style="${i===s.turn?'background:var(--accent2);color:#fff;':''}${dead?'opacity:.4;text-decoration:line-through':''}">${it.k==='m'?'🟥':'🟩'} ${esc(it.name)}</span>`; }).join('')}</div>
+  </div>
+  ${s.over?`<div class="card" style="text-align:center"><div style="font-size:40px">${s.over==='win'?'🏆':'💀'}</div><h2 style="margin:6px 0">${s.over==='win'?'Victory!':'You were defeated'}</h2>
+    <button class="btn block" id="qbAgain" style="margin-top:8px">⚔ New Quick Battle</button>
+    <button class="btn ghost block" id="qbDone" style="margin-top:8px">Back to character</button></div>`:`
+  <div class="card">
+    <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+      <div class="tile"><div class="lab">HP</div><div class="big" style="color:${c.hp.cur<=c.hp.max*0.3?'var(--bad)':'inherit'}">${c.hp.cur}/${c.hp.max}</div></div>
+      <div class="tile"><div class="lab">AC</div><div class="big">${computeAC(c)}</div></div>
+      <div class="tile"><div class="lab">Move</div><div class="big">${b.move||0}<span style="font-size:11px">ft</span></div></div>
+      <div class="tile"><div class="lab">Attacks</div><div class="big">${b.attacksLeft||0}</div></div>
+    </div>
+    <div class="chips" style="margin-top:10px">
+      <button class="chip ${!hasAction(c)?'on':''}">${!hasAction(c)?'✓ ':''}Action${(b.actionsMax||1)>1?' '+actionsLeft(c)+'/'+(b.actionsMax||1):''}</button>
+      <button class="chip ${b.bonus?'on':''}">Bonus</button>
+      <button class="chip ${b.reaction?'on':''}">Reaction</button>
+    </div>
+    <div class="row2" style="margin-top:10px">
+      <button class="btn ${s.moveMode?'':'ghost'}" id="qbMove" ${myTurn?'':'disabled style="opacity:.5"'}>🥾 ${s.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button>
+      <button class="btn" id="qbEnd" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'🟢 normal move · 🔴 Dash (uses action). Tap a tile.':'Tap 🟥 a monster in range to attack, or 🥾 Move.'):'Wait for your turn…'}</p>
+  </div>
+  <div class="card">
+    <h2>Battlefield</h2>
+    ${mapGridHTML(s,false,moveOpts)}
+  </div>`}
+  <div class="card">
+    <h2>Battle Log</h2>
+    <div style="max-height:170px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px">
+      ${s.log.length? s.log.map(e=>`<div class="listrow" style="padding:4px 0"><div class="nm" style="font-size:12px">${esc(e.m)}</div></div>`).join(''):'<div class="empty" style="padding:8px 0">…</div>'}
+    </div>
+  </div>`;
+  $('#qbExit').onclick=qbExit;
+  { const a=$('#qbAgain'); if(a) a.onclick=()=>{ QB=null; openQuickBattle(); }; }
+  { const d=$('#qbDone'); if(d) d.onclick=qbExit; }
+  { const mv=$('#qbMove'); if(mv&&myTurn) mv.onclick=()=>{ s.moveMode=!s.moveMode; render(); }; }
+  { const en=$('#qbEnd'); if(en&&myTurn) en.onclick=qbEndPcTurn; }
+  if(myTurn) app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{
+    const t=el.getAttribute('data-target'); if(t){ const mo=s.monsters.find(m=>m.id===t); if(mo&&mo.hp>0) qbPcAttack(mo); return; }
+    const [x,y]=el.dataset.cell.split(',').map(Number); if(!s.moveMode){ flashBanner('Tap 🥾 Move first'); return; } qbMovePc(x,y);
+  });
+}
+function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle;
+  if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)||(pc.x===x&&pc.y===y)) return;
+  const ter=(s.map.tiles||{})[x+','+y], tdef=TERRAIN[ter]; if(tdef&&tdef.solid){ flashBanner('Blocked by terrain'); return; }
+  const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
+  const path=pathTo(s,pc.x,pc.y,x,y,dashMax); if(!path){ flashBanner('Can’t reach there'); return; }
+  const cost=reachableCells(s,pc.x,pc.y,dashMax)[x+','+y]; if(cost==null){ flashBanner('Out of range'); return; }
+  if(cost>(b.move||0)){ if(!dashAvail){ flashBanner('Too far — Dash needs your action'); return; } b.move=(b.move||0)+effSpeed(c); spendAction(c); qbLog('🏃 '+c.name+' dashes'); }
+  const fromX=pc.x, fromY=pc.y; b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; s.moveMode=false;
+  const provokers=s.monsters.filter(m=>m.hp>0 && !m.reactionUsed && leavesReach(fromX,fromY,x,y,m.x,m.y,1));
+  animateToken(null,(nx,ny)=>{ pc.x=nx; pc.y=ny; }, path, 100, ()=>{ save();
+    if(tdef&&tdef.deadly){ applyHp(c,-c.hp.cur); qbLog('💀 '+c.name+' fell into the void!'); }
+    else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); qbLog((tdef.e||'🔥')+' '+tdef.name+' — '+d+' damage'); }
+    pc.hpCur=c.hp.cur;
+    provokers.forEach(m=>qbMonsterOAonPc(m, pc));
+    qbCheckEnd(); render(); });
+}
+function qbPcAttack(mo){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle;
+  const all=qbPcAttacks(c); const inrange=all.filter(a=>qbInRange(pc,mo,a));
+  if(!inrange.length){ flashBanner('Out of range for your weapons — move closer'); return; }
+  // gate on the action/attack budget (same rule as attackFlow)
+  const full=extraAttacks(c)+1;
+  if((b.attacksLeft||0)<=0){ if(!hasAction(c)){ flashBanner('No attacks or actions left — end your turn'); return; } }
+  const go=(atk)=>{ if((b.attacksLeft||0)<=0){ if(!hasAction(c)){ flashBanner('No actions left'); return; } spendAction(c); b.attacksLeft=full; }
+    else if((b.attacksLeft||0)>=full){ if(!hasAction(c)){ flashBanner('No actions left'); return; } spendAction(c); }
+    b.attacksLeft=Math.max(0,(b.attacksLeft||0)-1); $('#modalRoot').innerHTML=''; qbResolveAttack(pc, mo, atk); };
+  if(inrange.length===1){ go(inrange[0]); return; }
+  $('#modalRoot').innerHTML=`<div class="modal" id="qbwModal"><div class="sheet"><div class="grip"></div><h2>⚔ Attack ${esc(mo.name)}</h2>
+    ${inrange.map((a,i)=>`<button class="btn block" data-qbw="${i}" style="margin-bottom:8px">${esc(a.name)} — ${esc(a.dmg)} ${esc(a.dt||'')} ${sgn(a.toHit)}</button>`).join('')}
+    <button class="btn ghost block" id="qbwCancel">Cancel</button></div></div>`;
+  $('#qbwCancel').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#qbwModal').onclick=e=>{ if(e.target.id==='qbwModal') $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('[data-qbw]').forEach(btn=>btn.onclick=()=>go(inrange[Number(btn.dataset.qbw)]));
+}
+function qbExit(){ QB=null; render(); }
+
 /* reconnect when a backgrounded player tab regains focus / network */
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && net && net.role==='player'){ try{ if(net.conn&&net.conn.open) return; }catch(e){} scheduleReconnect(); } });
 window.addEventListener('online',()=>{ if(net && net.role==='player'){ try{ if(net.conn&&net.conn.open) return; }catch(e){} scheduleReconnect(); } });
@@ -3976,7 +4238,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v70';
+const APP_VERSION='v71';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
