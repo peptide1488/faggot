@@ -3162,18 +3162,23 @@ function playerOnData(d){ if(!d) return;
 function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by)); }
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
 function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
-// Dijkstra over the grid: returns {"x,y":feetCost}. Walls/void block the path; mud costs double; you can path through but not end on occupied cells.
-function reachableCells(s, sx, sy, maxFeet){
+// Dijkstra over the grid: returns {cost:{"x,y":feet}, prev:{"x,y":"px,py"}}. Walls/void block; no diagonal corner-cutting; mud costs double.
+function dijkstra(s, sx, sy, maxFeet){
   const cols=s.map.cols, rows=s.map.rows, tiles=s.map.tiles||{}, K=(x,y)=>x+','+y;
   const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const t=tiles[K(x,y)]; return t!=='wall'&&t!=='void'; };
-  const cost={}; cost[K(sx,sy)]=0; const frontier=[[sx,sy]];
+  const cost={}, prev={}; cost[K(sx,sy)]=0; const frontier=[[sx,sy]];
   while(frontier.length){ frontier.sort((a,b)=>cost[K(a[0],a[1])]-cost[K(b[0],b[1])]); const [x,y]=frontier.shift(), cc=cost[K(x,y)];
     if(cc>=maxFeet) continue;
     for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){ if(!dx&&!dy) continue; const nx=x+dx, ny=y+dy; if(!passable(nx,ny)) continue;
+      if(dx&&dy && (!passable(x+dx,y) || !passable(x,y+dy))) continue;   // no squeezing through a diagonal wall corner
       const t=tiles[K(nx,ny)], step=(t==='mud'?10:5), nc=cc+step; if(nc>maxFeet) continue;
-      if(cost[K(nx,ny)]==null || nc<cost[K(nx,ny)]){ cost[K(nx,ny)]=nc; frontier.push([nx,ny]); } } }
-  return cost;
+      if(cost[K(nx,ny)]==null || nc<cost[K(nx,ny)]){ cost[K(nx,ny)]=nc; prev[K(nx,ny)]=K(x,y); frontier.push([nx,ny]); } } }
+  return {cost, prev};
 }
+function reachableCells(s, sx, sy, maxFeet){ return dijkstra(s,sx,sy,maxFeet).cost; }
+function pathTo(s, sx, sy, tx, ty, maxFeet){ const {cost,prev}=dijkstra(s,sx,sy,maxFeet); const K=(x,y)=>x+','+y; if(cost[K(tx,ty)]==null) return null;
+  const path=[]; let cur=K(tx,ty); while(cur && cur!==K(sx,sy)){ const [x,y]=cur.split(',').map(Number); path.unshift({x,y}); cur=prev[cur]; } return path; }
+function animateToken(get,set,path,step,done){ let i=0; (function go(){ if(i>=path.length){ done&&done(); return; } set(path[i].x,path[i].y); i++; render(); setTimeout(go, step||110); })(); }
 function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
 function spellRangeTiles(name){ const mc=parseSpellMechanics(name); if((mc.range||'')==='Touch') return 1; const m=String(mc.range||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; }
 function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
@@ -3265,14 +3270,14 @@ function renderPlayerBattle(c){
     const ter=terrainAt(s,x,y);
     if(ter==='wall'){ flashBanner('A wall blocks the way'); return; }
     if(ter==='void'){ flashBanner('You won’t step into the void'); return; }
+    const path=pathTo(s,me.x,me.y,x,y,b.move||0);
+    if(!path){ flashBanner('Can’t reach there — walls block the path or it’s too far'); return; }
     const rc=reachableCells(s,me.x,me.y,b.move||0), cost=rc[x+','+y];
-    if(cost==null){ flashBanner('Can’t reach there — walls block the path or it’s too far'); return; }
-    b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; me.x=x; me.y=y; save();
-    if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
-    net.moveMode=false;
-    if(ter==='lava'){ const d=lavaDmg(); applyHp(c,-d); flashBanner('🔥 Lava! '+d+' damage'); }
-    else if(ter==='mud') flashBanner('Mud — difficult terrain (½ speed)');
-    render();
+    b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; net.moveMode=false;
+    animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 110, ()=>{ save();
+      if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
+      if(ter==='lava'){ const d=lavaDmg(); applyHp(c,-d); flashBanner('🔥 Lava! '+d+' damage'); }
+      else if(ter==='mud') flashBanner('Mud — difficult terrain'); render(); });
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ b[el.dataset.pbt]=!b[el.dataset.pbt]; save(); render(); });
   { const mv=$('#pbMoveBtn'); if(mv) mv.onclick=()=>{ net.moveMode=!net.moveMode; render(); }; }
@@ -3592,7 +3597,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v51';
+const APP_VERSION='v52';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
