@@ -3283,19 +3283,26 @@ function renderDM(){
   </div>
   <div class="card">
     <div class="row between"><h2 style="margin:0">Battle</h2><div class="stepper"><button id="dmRD">−</button><div class="val">Round ${s.battle.round}</div><button id="dmRU">＋</button></div></div>
-    <button class="btn block" id="dmBattle" style="margin-top:10px;${s.battle.active?'background:var(--bad);border-color:var(--bad)':''}">${s.battle.active?'■ End battle (everyone)':'▶ Start battle (everyone)'}</button>
+    <button class="btn block" id="dmBattle" style="margin-top:10px;${s.battle.active?'background:var(--bad);border-color:var(--bad)':''}">${s.battle.active?'■ End battle (everyone)':'▶ Start battle (places tokens & rolls initiative)'}</button>
   </div>
-  <div class="card">
-    <h2>Turn Order <button class="btn sm" id="dmRollInit" style="float:right">🎲 Roll initiative</button></h2>
-    ${(s.order&&s.order.length)? s.order.map((o,i)=>`<div class="listrow" style="${i===s.turn?'background:rgba(77,106,44,.14);border-radius:8px':''}"><span style="flex:none;width:22px">${i===s.turn?'▶':''}</span><div class="nm"><b>${o.k==='m'?'🟥 ':'🟩 '}${esc(o.name)}</b></div><div class="val">${o.roll}</div></div>`).join('')+`<button class="btn block" id="dmNextT" style="margin-top:10px">▶ Next turn (${s.order[s.turn]?esc(s.order[s.turn].name):'—'})</button>` : '<div class="empty">Add players & monsters, then roll initiative.</div>'}
-  </div>
+  ${(s.order&&s.order.length)?(()=>{ const cur=s.order[s.turn]||{}; const curMon=cur.k==='m'?s.monsters.find(m=>m.id===cur.id):null;
+    return `<div class="card">
+      <div class="row between"><h2 style="margin:0">Turn Order</h2><button class="btn ghost sm" id="dmReroll">↻ Re-roll</button></div>
+      ${s.order.map((o,i)=>`<div class="listrow" style="${i===s.turn?'background:rgba(77,106,44,.14);border-radius:8px':''}"><span style="flex:none;width:22px">${i===s.turn?'▶':''}</span><div class="nm"><b>${o.k==='m'?'🟥 ':'🟩 '}${esc(o.name)}</b></div><div class="val">${o.roll}</div></div>`).join('')}
+      <div class="card" style="margin:10px 0 0;background:rgba(77,106,44,.10)">
+        <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Up now: ${esc(cur.name||'—')}</div>
+        ${curMon? `<div class="row2"><button class="btn" id="curAtk">⚔ ${esc(curMon.name)} attacks</button><button class="btn ghost" id="curMove">📍 Move it</button></div>`
+          : `<p class="muted" style="font-size:12.5px;margin:0">It's <b>${esc(cur.name||'a player')}</b>'s turn — they act on their own device.</p>`}
+        <button class="btn block" id="dmNextT" style="margin-top:8px">▶ Next turn →</button>
+      </div>
+    </div>`; })() : (s.battle.active?'<div class="card"><div class="empty">No combatants. Deploy monsters and have players join, then ↻ re-roll.</div></div>':'')}
   <div class="card">
     <h2>Players ${s.players.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${s.players.length}</span>`:''}</h2>
     ${s.players.length? s.players.map(p=>`<div class="spell"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
   </div>
   <div class="card">
     <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button></h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}</small></div><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}</small></div><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -3311,8 +3318,10 @@ function renderDM(){
   $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
   $('#dmRD').onclick=()=>{ s.battle.round=Math.max(1,s.battle.round-1); dmBroadcast(); render(); };
   $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; dmAutoPlace(); rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
-  { const ri=$('#dmRollInit'); if(ri) ri.onclick=rollInitiative; }
+  { const rr=$('#dmReroll'); if(rr) rr.onclick=rollInitiative; }
   { const nt=$('#dmNextT'); if(nt) nt.onclick=dmNextTurn; }
+  { const ca=$('#curAtk'); if(ca) ca.onclick=()=>{ const cur=s.order[s.turn]; const mo=cur&&s.monsters.find(m=>m.id===cur.id); if(mo) dmMonsterAttack(mo); }; }
+  { const cm=$('#curMove'); if(cm) cm.onclick=()=>{ const cur=s.order[s.turn]; if(cur){ net.sel='m'+cur.id; render(); flashBanner('Tap a map cell to move '+cur.name); } }; }
   app.querySelectorAll('[data-pdmg]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pdmg, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:-Math.abs(amt)}); });
   app.querySelectorAll('[data-pheal]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pheal, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:Math.abs(amt)}); });
   app.querySelectorAll('[data-mdmg]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mdmg); if(mo){ const amt=Number((app.querySelector('[data-mamt="'+mo.id+'"]')||{}).value)||1; mo.hp=Math.max(0,mo.hp-Math.abs(amt)); dmBroadcast(); render(); } });
@@ -3321,6 +3330,7 @@ function renderDM(){
   $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0}); dmBroadcast(); render(); };
   { const bb=$('#bestiaryBtn'); if(bb) bb.onclick=openBestiary; }
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
+  app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2); if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain, keep brush
@@ -3445,7 +3455,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v43';
+const APP_VERSION='v44';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
