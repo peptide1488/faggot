@@ -287,6 +287,8 @@
   @keyframes lavaglow{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
   .mcell.reach{box-shadow:inset 0 0 0 2px rgba(110,200,90,.9), inset 0 0 8px rgba(110,200,90,.5)!important;cursor:pointer}
   .mcell.reach::after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:rgba(150,230,120,.8)}
+  .mcell.reachdash{box-shadow:inset 0 0 0 2px rgba(220,90,60,.85), inset 0 0 8px rgba(220,90,60,.45)!important;cursor:pointer}
+  .mcell.reachdash::after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:rgba(240,120,90,.8)}
   .mcell.intarget{box-shadow:inset 0 0 0 2px var(--bad), inset 0 0 8px rgba(156,59,44,.6)!important;animation:pulse 1s ease-in-out infinite}
   @keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.3)}}
   .tok{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff;font-family:Georgia,serif;
@@ -3328,8 +3330,8 @@ function renderPlayerBattle(c){
   </div>
   <div class="card">
     <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button></h2>
-    ${mapGridHTML(s,false, net.moveMode?{reachCost:reachableCells(s,me.x,me.y,b.move||0)}:{})}
-    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?'Tap a glowing tile to move there ('+(b.move||0)+' ft left).':'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
+    ${mapGridHTML(s,false, net.moveMode?(()=>{ const dashAvail=!b.action, dashMax=(b.move||0)+(dashAvail?effSpeed(c):0); return {reachCost:reachableCells(s,me.x,me.y,dashMax), reachNormal:(b.move||0)}; })():{})}
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?('🟢 normal move ('+(b.move||0)+' ft)'+(!b.action?' · 🔴 Dash range (uses your action)':'')) :'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
   </div>
   <div class="card">
     <h2>Your turn</h2>
@@ -3357,9 +3359,14 @@ function renderPlayerBattle(c){
     const ter=terrainAt(s,x,y);
     if(ter==='wall'){ flashBanner('A wall blocks the way'); return; }
     if(ter==='void'){ flashBanner('You won’t step into the void'); return; }
-    const path=pathTo(s,me.x,me.y,x,y,b.move||0);
+    const dashAvail=!b.action, dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
+    const path=pathTo(s,me.x,me.y,x,y,dashMax);
     if(!path){ flashBanner('Can’t reach there — walls block the path or it’s too far'); return; }
-    const rc=reachableCells(s,me.x,me.y,b.move||0), cost=rc[x+','+y];
+    const cost=reachableCells(s,me.x,me.y,dashMax)[x+','+y];
+    if(cost==null){ flashBanner('Out of range'); return; }
+    if(cost>(b.move||0)){   // beyond normal speed → Dash (costs your action)
+      if(!dashAvail){ flashBanner('Too far — Dash needs your action (already used)'); return; }
+      b.move=(b.move||0)+effSpeed(c); b.action=true; logChange(c,'🏃 Dash (action) — extra movement'); }
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; net.moveMode=false;
     animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 110, ()=>{ save();
       if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
@@ -3484,7 +3491,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id); tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`+hpbar(pl.hpCur,pl.hpMax); }
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
-    if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=' reach'; }
+    if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=(opts.reachNormal!=null && fc>opts.reachNormal)?' reachdash':' reach'; }
     if(opts.rangeFrom && ter!=='wall'){ const rf=opts.rangeFrom, d=Math.max(Math.abs(rf.x-x),Math.abs(rf.y-y)); if(d>0 && d<=rf.tiles && losClear(s,rf.x,rf.y,x,y)) extra+=' reach'; }
     if(opts.blast){ const bl=opts.blast, d=Math.max(Math.abs(bl.x-x),Math.abs(bl.y-y)); if(d<=bl.r) extra+=' intarget'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
@@ -3714,7 +3721,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v58';
+const APP_VERSION='v59';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
