@@ -1492,15 +1492,17 @@ function spellSlots(c){
   if(table) (table[lvl]||[]).forEach((n,i)=>{ out[i+1]=n; });
   return out;
 }
-function spellLearnSelect(c, atLevel){
+function spellLearnSelect(c, atLevel, mode){   // mode: 'leveled' (no cantrips) | 'cantrips' | undefined (all)
   const known=new Set(c.spells.map(s=>s.name.toLowerCase()));
   const max=maxSpellLevel({cls:c.cls, level:atLevel});
-  const opts=[0,1,2,3,4,5,6,7,8,9].filter(l=>l<=max).map(l=>{
+  const levels=[0,1,2,3,4,5,6,7,8,9].filter(l=>l<=max).filter(l=> mode==='cantrips'?l===0 : mode==='leveled'?l>=1 : true);
+  const opts=levels.map(l=>{
     const list=classSpells(c).filter(s=>s.l===l && !known.has(s.n.toLowerCase()));
     if(!list.length) return '';
     return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${SCHOOL_ICON[s.s]} ${esc(s.n)}</option>`).join('')+`</optgroup>`;
   }).join('');
-  return `<select id="luSpell" style="flex:2"><option value="">— pick a spell —</option>${opts}</select>`;
+  const id = mode==='cantrips' ? 'luCantrip' : 'luSpell';
+  return `<select id="${id}" style="flex:2"><option value="">— pick a ${mode==='cantrips'?'cantrip':'spell'} —</option>${opts}</select>`;
 }
 // Skill proficiencies granted: class count + 2 (background).
 const CLASS_SKILLS_N = {Bard:3, Ranger:3, Rogue:4};
@@ -2016,6 +2018,10 @@ function wizSteps(c){ return WIZ_BASE.filter(s=>
 ); }
 const CANTRIPS_KNOWN_L1={Bard:2,Cleric:3,Druid:2,Sorcerer:4,Warlock:2,Wizard:3,Artificer:2};
 function cantripLimit(c){ return CANTRIPS_KNOWN_L1[c.cls]||0; }
+// Cantrips known at a given level: every caster gains +1 at L4 and +1 at L10 (Artificer at L10 & L14).
+function cantripsKnownAt(cls, level){ const base=CANTRIPS_KNOWN_L1[cls]||0; if(!base) return 0;
+  if(cls==='Artificer') return base+(level>=14?2:level>=10?1:0);
+  return base+(level>=10?2:level>=4?1:0); }
 function spell1Limit(c){
   const known={Bard:4,Sorcerer:2,Warlock:2,Wizard:6};
   if(known[c.cls]!=null) return known[c.cls];
@@ -2160,7 +2166,8 @@ function levelUp(){
   const needsSub = nl>=subclassLevel(c) && !c.subclass && (SUBCLASSES[c.cls]||[]).length>0;
   const hd=CLASS_HITDIE[c.cls]||8, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
   const learnCap = ({Wizard:2,Bard:1,Sorcerer:1,Warlock:1,Ranger:1})[c.cls] ?? 2;
-  let hpGain=null, asiMode='asi', learnedThisLevel=0, pendingFeat=null;
+  const newCantrips = isCaster(c) ? Math.max(0, cantripsKnownAt(c.cls, nl) - cantripsKnownAt(c.cls, c.level)) : 0;
+  let hpGain=null, asiMode='asi', learnedThisLevel=0, learnedCantrips=0, pendingFeat=null;
   $('#modalRoot').innerHTML=`
    <div class="modal" id="luModal"><div class="sheet">
      <div class="grip"></div>
@@ -2174,10 +2181,14 @@ function levelUp(){
      ${isAsi?`<div class="card" style="margin:0 0 12px"><h2>Ability Score Improvement</h2>
         <div class="seg" id="luSeg"><button class="on" data-asi="asi">+2 / +1×2</button><button data-asi="feat">Take a feat</button></div>
         <div id="luBody"></div></div>`:''}
-     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— up to ${learnCap} this level</span></h2>
-        <div class="addrow">${spellLearnSelect(c, nl)}<button class="btn sm" id="luLearn">Add</button></div>
+     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— ${learnCap} this level</span></h2>
+        <div class="addrow">${spellLearnSelect(c, nl, 'leveled')}<button class="btn sm" id="luLearn">Add</button></div>
         <div class="muted" id="luSpellDesc" style="font-size:12px;margin-top:6px;line-height:1.5"></div>
-        <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px"></div></div>`:''}
+        <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px">Spells learned: 0 / ${learnCap}. Pick one, tap Add, then pick another.</div>
+        ${newCantrips>0?`<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px"><div class="muted" style="font-size:12px;margin-bottom:6px">✨ New cantrip${newCantrips>1?'s':''} at level ${nl} — choose ${newCantrips}</div>
+          <div class="addrow">${spellLearnSelect(c, nl, 'cantrips')}<button class="btn sm" id="luLearnC">Add</button></div>
+          <div class="muted" id="luCantripMsg" style="font-size:12px;margin-top:6px">Cantrips learned: 0 / ${newCantrips}.</div></div>`:''}
+        </div>`:''}
      <button class="btn block" id="luApply">Apply level ${nl}</button>
    </div></div>`;
   const setHp=(v,m)=>{ hpGain=Math.max(1,v); $('#luHpMsg').textContent=m; };
@@ -2197,14 +2208,26 @@ function levelUp(){
   if(isAsi){ luBody(); $('#luSeg').querySelectorAll('[data-asi]').forEach(b=>b.onclick=()=>{ asiMode=b.dataset.asi; $('#luSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); luBody(); }); }
   { const ls=$('#luSpell'); if(ls) ls.addEventListener('change',e=>{ const n=(e.target.value||'').split('|')[0]; const d=$('#luSpellDesc'); if(d) d.textContent=n?(SPELL_DESC[n]||'No reference summary.'):''; }); }
   { const lb=$('#luLearn'); if(lb) lb.onclick=()=>{
-    if(learnedThisLevel>=learnCap){ $('#luLearnMsg').textContent='Reached this level’s limit ('+learnCap+'). Add more on the Spells tab.'; return; }
-    const sel=$('#luSpell'); if(!sel||!sel.value) return;
+    if(learnedThisLevel>=learnCap){ $('#luLearnMsg').textContent='Reached this level’s limit ('+learnCap+'/'+learnCap+'). Add more on the Spells tab.'; return; }
+    const sel=$('#luSpell'); if(!sel||!sel.value){ $('#luLearnMsg').textContent='Pick a spell from the list first.'; return; }
     const [n,l]=sel.value.split('|');
     if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
       c.spells.push({name:n,level:Number(l),prepared:false,notes:''});
       c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
       learnedThisLevel++;
-      $('#luLearnMsg').textContent='Learned: '+n+' ('+learnedThisLevel+'/'+learnCap+')';
+      $('#luLearnMsg').textContent= learnedThisLevel<learnCap ? ('Learned '+n+'. Now pick your next spell ('+learnedThisLevel+'/'+learnCap+').') : ('Learned '+n+'. Done ('+learnedThisLevel+'/'+learnCap+').');
+      const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
+    }
+  }; }
+  { const lc=$('#luLearnC'); if(lc) lc.onclick=()=>{
+    if(learnedCantrips>=newCantrips){ $('#luCantripMsg').textContent='Reached this level’s cantrip limit ('+newCantrips+'/'+newCantrips+').'; return; }
+    const sel=$('#luCantrip'); if(!sel||!sel.value){ $('#luCantripMsg').textContent='Pick a cantrip first.'; return; }
+    const [n,l]=sel.value.split('|');
+    if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
+      c.spells.push({name:n,level:0,prepared:false,notes:''});
+      c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
+      learnedCantrips++;
+      $('#luCantripMsg').textContent='Cantrips learned: '+learnedCantrips+' / '+newCantrips+'.';
       const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
     }
   }; }
@@ -4338,7 +4361,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v73';
+const APP_VERSION='v74';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
