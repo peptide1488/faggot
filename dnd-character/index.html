@@ -275,6 +275,7 @@
   .tok.mon{background:#9c3b2c;box-shadow:0 1px 3px rgba(0,0,0,.3)}
   .tok.pl{background:#3b5320;box-shadow:0 1px 3px rgba(0,0,0,.3)}
   .tok.sel{outline:3px solid var(--gold)}
+  .mnum{position:absolute;top:-2px;right:-2px;min-width:13px;height:13px;padding:0 2px;border-radius:7px;background:#1a1410;color:#f6efda;font-size:9px;font-weight:700;line-height:13px;text-align:center;box-shadow:0 0 0 1px rgba(255,255,255,.4)}
 
   /* cast spell animation overlay */
   .castfx{position:fixed;inset:0;z-index:60;pointer-events:none;display:grid;place-items:center}
@@ -3262,7 +3263,7 @@ function mapGridHTML(s, isDM){ const {cols,rows}=s.map; const tiles=s.map.tiles|
         + 'border-color:transparent;';
     }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
-    let tok=''; if(mo) tok=mo.sprite?`<span class="tok" style="background:none;box-shadow:none">${pixelArt(monsterSprite(mo.sprite),2)}</span>`:`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`;
+    let tok=''; if(mo){ const badge=mo.num?`<span class="mnum">${mo.num}</span>`:''; tok=(mo.sprite?`<span class="tok" style="background:none;box-shadow:none">${pixelArt(monsterSprite(mo.sprite),2)}</span>`:`<span class="tok mon ${net&&net.sel==='m'+mo.id?'sel':''}">${esc((mo.name[0]||'M').toUpperCase())}</span>`)+badge; }
     else if(pl) tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id)?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`;
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     cells+=`<div class="mcell ${(!isDM&&mo)?'tgt':''}" data-cell="${x},${y}" style="${style}" ${(!isDM&&mo)?`data-target="${mo.id}"`:''}>${tok}</div>`;
@@ -3330,9 +3331,8 @@ function renderDM(){
 }
 function deployMonster(m){ if(!net||net.role!=='dm') return;
   const same=net.session.monsters.filter(x=>x.base===m.n);
-  const nm=m.n+' '+(same.length+1);
-  if(same.length===1) same[0].name=same[0].base+' 1';   // retro-number the first when a second appears
-  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? nm : m.n, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk, init:m.init||0});
+  if(same.length===1){ same[0].name=same[0].base+' 1'; same[0].num=1; }   // retro-number the first when a second appears
+  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:0, y:0, sprite:m.sprite, atk:m.atk, init:m.init||0});
   dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
@@ -3445,7 +3445,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v42';
+const APP_VERSION='v43';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
