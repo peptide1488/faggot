@@ -757,7 +757,7 @@ function openMove(c){
 }
 function openQuickSpells(c){
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return; }
-  const list=c.spells.slice().sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
+  const list=castableSpells(c).sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
   $('#modalRoot').innerHTML=`<div class="modal" id="qsModal"><div class="sheet"><div class="grip"></div>
     <h2>✨ Cast a spell</h2>
     <input id="qsSearch" placeholder="Filter your spells…" autocomplete="off">
@@ -765,7 +765,7 @@ function openQuickSpells(c){
     <button class="btn ghost block" id="qsClose" style="margin-top:10px">Close</button>
   </div></div>`;
   const draw=()=>{ const q=($('#qsSearch').value||'').toLowerCase(); const f=list.filter(s=>s.name.toLowerCase().includes(q));
-    $('#qsList').innerHTML = f.length? f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${s.prepared?' · prepared':''}${isConcentration(s.name)?' · 🧠 conc':''}</small></div><button class="btn sm" data-qcast="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join('') : '<div class="empty">No spells. Add them on the Spells tab.</div>';
+    $('#qsList').innerHTML = f.length? f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${s.prepared?' · prepared':''}${isConcentration(s.name)?' · 🧠 conc':''}</small></div><button class="btn sm" data-qcast="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join('') : '<div class="empty">'+(isPrepCaster(c)?'No castable spells — 📋 Prepare some on the Spells tab.':'No spells. Add them on the Spells tab.')+'</div>';
     $('#qsList').querySelectorAll('[data-qcast]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.qcast.split('|'); const inBattle=net&&net.session&&net.session.battle.active; if(inBattle) openSpellTarget(c, a[0], Number(a[1])); else castModal(c, a[0], Number(a[1])); })); };
   $('#qsSearch').addEventListener('input',draw);
   $('#qsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
@@ -1003,6 +1003,9 @@ function preparedMax(c){ const l=Number(c.level)||1, m=mod(abil(c,c.spellAbility
   if(['Paladin','Artificer'].includes(c.cls)) return Math.max(1, m+Math.floor(l/2));
   return null; }
 function preparedCount(c){ return (c.spells||[]).filter(s=>s.prepared && (s.level||0)>0).length; }
+// A leveled spell is castable only if it's prepared (prep casters); cantrips & known-casters' spells are always castable.
+function spellPrepared(c, name){ const s=(c.spells||[]).find(x=>x.name.toLowerCase()===String(name||'').toLowerCase()); return s? !!s.prepared : true; }
+function castableSpells(c){ return (c.spells||[]).filter(s=> (s.level||0)===0 || !isPrepCaster(c) || s.prepared); }
 function applyClassDefaults(c){
   const sv=CLASS_SAVES[c.cls];
   if(sv){ c.saveProf={str:false,dex:false,con:false,int:false,wis:false,cha:false}; sv.forEach(s=>c.saveProf[s]=true); }
@@ -1316,6 +1319,7 @@ function canCast(c, name, level){
   if(typeof level==='undefined'){ level=name; name=''; }   // back-compat: canCast(c, level)
   level=Number(level)||0;
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
+  if(level>0 && name && isPrepCaster(c) && !spellPrepared(c,name)){ flashBanner(name+' isn’t prepared today — 📋 Prepare it first'); return false; }
   const ct=spellCastTime(name);
   if(c.battle){
     const b=c.battle;
@@ -4357,13 +4361,13 @@ function qbOpenAttack(c){ const s=QB, pc=s.players[0]; const foes=s.monsters.fil
 }
 // PC spellcasting in Quick Battle
 function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while raging'); return; }
-  const list=c.spells.slice().sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
+  const list=castableSpells(c).sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
   $('#modalRoot').innerHTML=`<div class="modal" id="qsModal"><div class="sheet"><div class="grip"></div>
     <h2>✨ Cast a spell</h2><input id="qsSearch" placeholder="Filter your spells…" autocomplete="off">
     <div id="qsList" style="margin-top:10px;max-height:56vh;overflow:auto"></div>
     <button class="btn ghost block" id="qsClose" style="margin-top:10px">Close</button></div></div>`;
   const draw=()=>{ const q=($('#qsSearch').value||'').toLowerCase(); const f=list.filter(s=>s.name.toLowerCase().includes(q));
-    $('#qsList').innerHTML=f.length?f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${spellCastTime(s.name)==='bonus'?' · bonus':''}${isConcentration(s.name)?' · 🧠':''}</small></div><button class="btn sm" data-qsc="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join(''):'<div class="empty">No spells. Add them on the Spells tab.</div>';
+    $('#qsList').innerHTML=f.length?f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${spellCastTime(s.name)==='bonus'?' · bonus':''}${isConcentration(s.name)?' · 🧠':''}</small></div><button class="btn sm" data-qsc="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join(''):'<div class="empty">'+(isPrepCaster(c)?'No castable spells — 📋 Prepare some on the Spells tab.':'No spells. Add them on the Spells tab.')+'</div>';
     $('#qsList').querySelectorAll('[data-qsc]').forEach(b=>b.onclick=()=>{ const a=b.dataset.qsc.split('|'); const name=a[0], lvl=Number(a[1]); const mc=parseSpellMechanics(name);
       if(mc.buff && !mc.dmg && !mc.heal && !mc.attack && !mc.save){ castModal(c,name,lvl); }   // self/ally buff → existing modal (spends action via castSpell)
       else qbSpellTarget(c,name,lvl); }); };
@@ -4437,7 +4441,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v79';
+const APP_VERSION='v80';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
