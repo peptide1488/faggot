@@ -2235,6 +2235,10 @@ function levelUp(){
   }; }
   $('#luModal').onclick=e=>{ if(e.target.id==='luModal') $('#modalRoot').innerHTML=''; };
   $('#luApply').onclick=()=>{
+    // require all this-level choices before applying
+    if(isCaster(c) && learnedThisLevel<learnCap){ flashBanner('Learn your '+learnCap+' spell'+(learnCap>1?'s':'')+' first ('+learnedThisLevel+'/'+learnCap+')'); return; }
+    if(newCantrips>0 && learnedCantrips<newCantrips){ flashBanner('Choose your new cantrip'+(newCantrips>1?'s':'')+' first ('+learnedCantrips+'/'+newCantrips+')'); return; }
+    if(isAsi && asiMode==='feat'){ const fv=$('#luFeat'); if(!fv||!fv.value){ flashBanner('Pick a feat first'); return; } }
     if(hpGain==null) hpGain=Math.max(1,avg+con);
     c.hp.max+=hpGain; c.hp.cur+=hpGain;
     if(needsSub){ const s=$('#luSub'); if(s) c.subclass=s.value; }
@@ -2845,6 +2849,27 @@ function addSpellTo(c, name, level){
   logChange(c, 'Learned '+name+' ('+lvlLabel(Number(level)||0)+')');
   save(); render();
 }
+// Prepared casters (Wizard/Cleric/Druid/Paladin/Artificer) choose which known spells are ready today.
+function openPrepare(c){
+  const max=preparedMax(c);
+  function draw(){
+    const known=(c.spells||[]).map((s,i)=>({s,i})).filter(o=>(o.s.level||0)>0).sort((a,b)=>(a.s.level-b.s.level)||a.s.name.localeCompare(b.s.name));
+    const cnt=preparedCount(c);
+    const body=`<h2>📋 Prepare Spells</h2>
+      <p class="muted" style="font-size:12.5px;margin:0 0 6px">${esc(c.cls)} prepares <b>${max}</b> spells per day (spell mod + ${c.cls==='Paladin'||c.cls==='Artificer'?'½ ':''}level). Cantrips are always ready and don't count.</p>
+      <div class="card" style="text-align:center;margin:0 0 10px;background:${cnt>max?'rgba(160,40,40,.12)':'rgba(63,125,54,.12)'}"><b style="color:${cnt>max?'var(--bad)':'var(--good)'}">${cnt} / ${max} prepared</b></div>
+      ${known.length? known.map(o=>`<label class="spell" style="cursor:pointer"><input type="checkbox" class="chk" data-pp="${o.i}" ${o.s.prepared?'checked':''}><span style="flex:none">${spellIcon(o.s.name)}</span><div class="nm"><b>${esc(o.s.name)}</b><small>${lvlLabel(o.s.level)}${isConcentration(o.s.name)?' · 🧠 conc':''}</small></div></label>`).join('') : '<div class="empty">No leveled spells in your spellbook yet — add some first.</div>'}
+      <button class="btn block" id="ppDone" style="margin-top:10px">Done</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="ppModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    const close=()=>{ $('#modalRoot').innerHTML=''; render(); };
+    $('#ppModal').onclick=e=>{ if(e.target.id==='ppModal') close(); };
+    $('#ppDone').onclick=close;
+    document.querySelectorAll('[data-pp]').forEach(el=>el.onchange=()=>{ const idx=Number(el.dataset.pp);
+      if(el.checked && preparedCount(c)>=max){ el.checked=false; flashBanner('At your prepared limit ('+max+') — unprepare one first'); return; }
+      c.spells[idx].prepared=el.checked; save(); draw(); });
+  }
+  draw();
+}
 function renderSpells(c){
   const dc = 8+profBonus(c)+mod(abil(c,c.spellAbility));
   const atk = profBonus(c)+mod(abil(c,c.spellAbility));
@@ -2881,12 +2906,12 @@ function renderSpells(c){
   ${effectsCard(c)}
 
   <div class="card">
-    <h2>${chev('spellbook')}Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ${isPrepCaster(c)?`Prepared ${preparedCount(c)}/${preparedMax(c)}`:'✓ = prepared'} · ⚡ = cast</span></h2>
-    ${isPrepCaster(c)?`<p class="muted" style="font-size:11.5px;margin:0 0 6px">Tick ✓ to prepare a spell. You can prepare about <b>${preparedMax(c)}</b> (spell mod + ${c.cls==='Paladin'||c.cls==='Artificer'?'½ ':''}level)${preparedCount(c)>preparedMax(c)?' — <span style="color:var(--bad)">over your limit</span>':''}.</p>`:''}
+    <h2>${chev('spellbook')}Spellbook <span class="muted" style="text-transform:none;font-size:11px">— ${c.spells.length} known${isPrepCaster(c)?` · prepared ${preparedCount(c)}/${preparedMax(c)}`:''} · ⚡ = cast</span>${isPrepCaster(c)?`<button class="btn ghost sm" id="prepBtn" style="float:right">📋 Prepare</button>`:''}</h2>
+    ${isPrepCaster(c)?`<p class="muted" style="font-size:11.5px;margin:0 0 6px">Your spellbook is everything you <i>know</i>; each day you <b>prepare</b> up to <b>${preparedMax(c)}</b> of them (📋 Prepare). Only prepared spells (and cantrips) can be cast.${preparedCount(c)>preparedMax(c)?' <span style="color:var(--bad)">Over your limit!</span>':''}</p>`:''}
     <div class="addrow">
       <select id="sp_pick" style="flex:2">
         <option value="">— add a ${esc(c.cls)} spell —</option>
-        ${[0,1,2,3,4,5,6,7,8,9].map(l=>{ const list=classSpells(c).filter(s=>s.l===l); if(!list.length) return ''; return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${SCHOOL_ICON[s.s]} ${esc(s.n)}</option>`).join('')+`</optgroup>`; }).join('')}
+        ${(()=>{ const known=new Set(c.spells.map(s=>s.name.toLowerCase())); const mx=maxSpellLevel(c); return [0,1,2,3,4,5,6,7,8,9].filter(l=>l<=mx).map(l=>{ const list=classSpells(c).filter(s=>s.l===l && !known.has(s.n.toLowerCase())); if(!list.length) return ''; return `<optgroup label="${l===0?'Cantrips':'Level '+l}">`+list.map(s=>`<option value="${esc(s.n)}|${s.l}">${SCHOOL_ICON[s.s]} ${esc(s.n)}</option>`).join('')+`</optgroup>`; }).join(''); })()}
         <option value="__custom__">+ Custom spell…</option>
       </select>
       <button class="btn sm" id="addSpell">Add</button>
@@ -2948,8 +2973,11 @@ function renderSpells(c){
     const name=$('#sp_name').value.trim(); if(!name) return;
     const lv=$('#sp_level').value; addSpellTo(c, name, lv==='Cantrip'?0:Number(lv));
   });
+  { const pb=$('#prepBtn'); if(pb) pb.onclick=()=>openPrepare(c); }
   app.querySelectorAll('[data-prep]').forEach(el=>el.addEventListener('change',e=>{
-    c.spells[Number(el.dataset.prep)].prepared=e.target.checked; save(); render();
+    const idx=Number(el.dataset.prep);
+    if(e.target.checked && isPrepCaster(c) && (c.spells[idx].level||0)>0 && preparedCount(c)>=preparedMax(c)){ e.target.checked=false; flashBanner('At your prepared limit ('+preparedMax(c)+') — unprepare one first'); return; }
+    c.spells[idx].prepared=e.target.checked; save(); render();
   }));
   app.querySelectorAll('[data-delspell]').forEach(el=>el.addEventListener('click',()=>{
     c.spells.splice(Number(el.dataset.delspell),1); save(); render();
@@ -4409,7 +4437,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v78';
+const APP_VERSION='v79';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
