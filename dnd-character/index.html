@@ -874,6 +874,7 @@ function attackFlow(c, atk){
     st.dmgTotal=total; st.phase='done'; sfx(atk.heal?'heal':'damage'); attackFx(atk.heal?'heal':(st.crit?'crit':'hit'));
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg'});
     if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total, dtype:atk.dt||atk.dtype||''}); }catch(e){} }
+    Events.emit({type:'attack', by:c.name, name:atk.name, hit:true, crit:st.crit, dmg:total, dtype:atk.dt||atk.dtype||'', ranged:(atk.tiles||1)>1});
     draw();
   }
   function draw(){
@@ -1345,6 +1346,7 @@ function castSpell(c, name, level){
     if(ct==='bonus'){ c.battle.bonus=true; c.battle.castBonusSpell=true; }
     else { spendAction(c); if(level>0) c.battle.castLeveledSpell=true; }
   }
+  Events.emit({type:'cast', by:c.name, name, level, castTime:ct});
   const tmpl=SPELL_EFFECTS[name]; sfx('cast'); castFx(name);
   const ba=(ct==='bonus')?' · bonus action':'';
   if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' [bonus action]':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')+ba); }
@@ -3399,6 +3401,7 @@ function dmOpportunityAttack(mo,p){
   const a=parseMonsterAttacks(mo.atk).filter(a=>a.hit!=null && (a.tiles||1)<=1)[0] || {name:'Attack',hit:0,dmg:'1d6'};   // melee only
   mo.reactionUsed=true;
   const ev=Engine.applyAction(sessionAdapter, {type:'attack', actorId:mo.id, targetId:p.id, atk:{name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:1}});
+  if(ev.hit && a.cond){ dmSend(p.id,{t:'cond',name:a.cond}); }
   sfx(ev.crit?'crit':ev.hit?'hit':'miss');
   pushRoll({label:'⚔ '+mo.name+' opportunity attack', total:ev.total, detail:'d20('+ev.d20+') +'+(a.hit||0)+' vs AC '+ev.ac+(ev.hit?' — '+ev.dmg+' dmg':' — miss'), crit:ev.crit?'crit':null, kind:'check'});
   flashBanner('⚔ Opportunity: '+mo.name+(ev.hit?' hits '+p.name+' for '+ev.dmg:' misses '+p.name));
@@ -3475,6 +3478,7 @@ function playerOnData(d){ if(!d) return;
     render();
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
   else if(d.t==='oachance'){ const c=playerChar(); if(c) playerOpportunityPrompt(c, d); }
+  else if(d.t==='cond'){ const c=playerChar(); if(c){ if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); flashBanner('🌀 '+d.name); } }
 }
 // A monster left this player's reach — offer one melee opportunity attack (uses the reaction).
 function playerOpportunityPrompt(c, d){
@@ -3641,7 +3645,7 @@ function renderPlayerBattle(c){
       if(provokers.length && net.conn){ try{ net.conn.send({t:'provoke', cid:clientId(), who:c.name, mons:provokers.map(m=>m.id)}); }catch(e){} logChange(c,'⚔ Provoked opportunity attack'+(provokers.length>1?'s':'')+' from '+provokers.map(m=>m.name).join(', ')); }
       if(fly){ flashBanner('🕊️ Flying over the terrain'); }
       else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); flashBanner((tdef.e||'🔥')+' '+tdef.name+'! '+d+' damage'); }
-      else if(tdef&&tdef.diff) flashBanner(tdef.name+' — difficult terrain'); render(); });
+      else if(tdef&&tdef.diff) flashBanner(tdef.name+' — difficult terrain'); Events.emit({type:'move', by:c.name, to:{x,y}, fly}); render(); });
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ const k=el.dataset.pbt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }
@@ -3882,6 +3886,7 @@ function renderDM(){
         mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
       if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } }
+      Events.emit({type:'move', id:mo.id, by:mo.name, to:{x:mo.x,y:mo.y}, fly:mfly});
       if(wasBattle){ const leaving=s.players.filter(p=>(p.hpCur||0)>0 && leavesReach(fromX,fromY,mo.x,mo.y,p.x,p.y,1)); leaving.forEach(p=>dmSend(p.id,{t:'oachance',mon:mo.id,name:mo.name,ac:mo.ac})); if(leaving.length) flashBanner('⚔ '+mo.name+' provokes opportunity attack'+(leaving.length>1?'s':'')+' from '+leaving.map(p=>p.name).join(', ')); }
     } }
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && ter==='wall'){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
@@ -3921,7 +3926,19 @@ function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim())
   let tiles=/reach/i.test(part)?2:1;
   if(/breath|cone|line/i.test(part)) tiles=6;
   else if(/bow|crossbow|sling|javelin|dart|spit|ray|bolt|hurl|thrown|web|net|stinger|spike/i.test(part)) tiles=24;
-  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, tiles, raw:part}; }); }
+  // a condition this attack inflicts on a hit (parity with spells imposing conditions on monsters)
+  let cond=null;
+  if(/prone/i.test(part)) cond='Prone';
+  else if(/paralyz/i.test(part)) cond='Paralyzed';
+  else if(/petrif/i.test(part)) cond='Petrified';
+  else if(/stun/i.test(part)) cond='Stunned';
+  else if(/grapple|constrict/i.test(part)) cond='Grappled';
+  else if(/restrain|\bweb\b/i.test(part)) cond='Restrained';
+  else if(/frighten|\bfear\b/i.test(part)) cond='Frightened';
+  else if(/blinded/i.test(part)) cond='Blinded';
+  else if(/charm/i.test(part)) cond='Charmed';
+  else if(/poisoned/i.test(part)) cond='Poisoned';
+  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, tiles, cond, raw:part}; }); }
 function dmMonsterAttack(mo){
   if(net.session.battle.active && mo.attacksLeft!=null && mo.attacksLeft<=0){ flashBanner(mo.name+' already attacked this turn — ▶ Next turn to reset'); return; }
   const atks=parseMonsterAttacks(mo.atk); if(!atks.length) atks.push({name:'Attack',hit:0,dmg:'1d6'});
@@ -3964,8 +3981,9 @@ function dmMonsterAttack(mo){
     { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.phase='res'; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
     { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; sfx('damage'); attackFx(st.d20===20?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, st.d20===20); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(st.d20===20?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
     const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
-    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
-    { const f=$('#maFull'); if(f) f.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(tgt().name+' takes '+st.dmg); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    const impose=()=>{ if(st.atk.cond){ dmSend(st.targetId,{t:'cond',name:st.atk.cond}); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); } };
+    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); impose(); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const f=$('#maFull'); if(f) f.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(tgt().name+' takes '+st.dmg); impose(); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); sessionAdapter.hurt(tgt(), half); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; st.consumed=false; draw(); }; }
   }
@@ -4061,6 +4079,12 @@ const BRAINS = {};   // name -> function(enc, unit) -> [intent]; intents: {type:
      Swapping who controls a unit = swapping one field. This is what lets
      player / DM / agent drive any combatant through the exact same path.
    ========================================================================= */
+// Combat event stream — the canonical feed of what happened, for logs/agents and the
+// future isometric renderer. Anything can subscribe via Events.on(fn); exposed globally.
+const Events = { log:[], subs:[],
+  emit(ev){ if(!ev) return ev; ev.ts=Date.now(); this.log.unshift(ev); if(this.log.length>250) this.log.pop(); this.subs.forEach(f=>{ try{ f(ev); }catch(e){} }); return ev; },
+  on(fn){ this.subs.push(fn); return ()=>{ this.subs=this.subs.filter(x=>x!==fn); }; } };
+try{ if(typeof window!=='undefined') window.GrimoireEvents=Events; }catch(e){}
 const Engine = {
   // pure d20 roll vs an AC (adapter-free). ac==null → hit unknown (caller prompts).
   roll(toHit, ac, face){ const d20=face!=null?face:rnd(20), total=d20+(toHit||0), crit=d20===20;
@@ -4079,7 +4103,10 @@ const Engine = {
     if(!a||!t||ad.hp(t)<=0) return {type:'attack', void:true, actorId, targetId};
     const r=Engine.hitResult(ad, actorId, targetId, atk, opts.face);
     let dmg=0, mult=1; if(r.hit){ dmg=Engine.rollDamage(atk, r.crit); mult=ad.damageMult?ad.damageMult(t, atk.dtype||atk.dt):1; dmg=Math.max(0,Math.round(dmg*mult)); if(opts.apply!==false) ad.hurt(t,dmg); }
-    return {type:'attack', actorId, targetId, atk, d20:r.d20, total:r.total, ac:r.ac, cover:r.cover, hit:r.hit, crit:r.crit, dmg, mult};
+    const ev={type:'attack', actorId, targetId, name:atk.name, from:a&&{x:a.x,y:a.y}, to:t&&{x:t.x,y:t.y}, ranged:(atk.tiles||1)>1, dtype:atk.dtype||atk.dt||'', d20:r.d20, total:r.total, ac:r.ac, cover:r.cover, hit:r.hit, crit:r.crit, dmg, mult};
+    Events.emit(ev);
+    if(r.hit && ad.hp(t)<=0) Events.emit({type:'death', unitId:targetId, at:t&&{x:t.x,y:t.y}});
+    return ev;
   },
   // single entry point any controller (UI/AI/agent) calls
   applyAction(ad, action){
@@ -4212,13 +4239,14 @@ function qbResolveAttack(att, tgt, atk, done){
   const glyph=(atk.tiles||1)>1?'➶':'✦'; mapProjectile(att.x,att.y,tgt.x,tgt.y,glyph); sfx('swing');
   const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});   // unified resolver
   setTimeout(()=>{
-    if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit'); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')'); }
+    if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit'); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
+      if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); } }
     else { sfx('miss'); attackFx('miss'); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
     qbCheckEnd(); save(); render(); done&&done();
   }, 280);
 }
 // ---- opportunity attacks ----
-function qbMonsterOAonPc(mo, pc){ if(mo.reactionUsed||mo.hp<=0) return; const a=parseMonsterAttacks(mo.atk).filter(x=>x.hit!=null && (x.tiles||1)<=1)[0]; if(!a) return; mo.reactionUsed=true; qbLog('⚔ Opportunity: '+mo.name); qbResolveAttack(mo, pc, {name:mo.name+' (opportunity)', toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:1}); }
+function qbMonsterOAonPc(mo, pc){ if(mo.reactionUsed||mo.hp<=0) return; const a=parseMonsterAttacks(mo.atk).filter(x=>x.hit!=null && (x.tiles||1)<=1)[0]; if(!a) return; mo.reactionUsed=true; qbLog('⚔ Opportunity: '+mo.name); qbResolveAttack(mo, pc, {name:mo.name+' (opportunity)', toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:1, dtype:a.dtype, cond:a.cond}); }
 function qbPcOAonMonster(pc, mo){ const c=pc.c; if(c.battle.reaction||c.hp.cur<=0) return; const melee=qbPcAttacks(c).filter(a=>a.melee); if(!melee.length) return; c.battle.reaction=true; qbLog('⚔ Opportunity: '+c.name); qbResolveAttack(pc, mo, melee[0]); }
 
 // ---- AI driver: ask the unit's brain for intents, execute them in sequence ----
@@ -4238,6 +4266,7 @@ function qbApplyIntent(u, it, done){
     const fromX=u.x, fromY=u.y; u.moveLeft=Math.max(0,(u.moveLeft||0)-cost);
     const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,1);
     animateToken(null,(nx,ny)=>{ u.x=nx; u.y=ny; }, path, 90, ()=>{ save();
+      Events.emit({type:'move', id:u.id, by:u.name, to:it.to, fly:ufly});
       if(provokePc) qbPcOAonMonster(pc, u);
       setTimeout(done, provokePc?500:0); });
     return; }
@@ -4247,7 +4276,7 @@ function qbApplyIntent(u, it, done){
 // ---- the built-in tactical brain ----
 BRAINS.tactical = function(qb, u){
   const foes=qb.players.filter(p=>p.c.hp.cur>0); if(!foes.length) return [];
-  const atks=parseMonsterAttacks(u.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:a.tiles||1})).filter(a=>true);
+  const atks=parseMonsterAttacks(u.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:a.tiles||1, dtype:a.dtype, cond:a.cond})).filter(a=>true);
   const usable=atks.length?atks:[{name:'Attack',toHit:0,dmg:'1d6',tiles:1}];
   const dist=f=>gridDist(u.x,u.y,f.x,f.y);
   const canHitFrom=(x,y,f,a)=>{ const d=gridDist(x,y,f.x,f.y); if(d>a.tiles) return false; if(a.tiles>1) return losClear(qb,x,y,f.x,f.y); return true; };
@@ -4346,6 +4375,7 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
     else if(tdef&&tdef.deadly){ applyHp(c,-c.hp.cur); qbLog('💀 '+c.name+' fell into the void!'); }
     else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); qbLog((tdef.e||'🔥')+' '+tdef.name+' — '+d+' damage'); }
     pc.hpCur=c.hp.cur;
+    Events.emit({type:'move', id:'pc', by:c.name, to:{x,y}, fly});
     provokers.forEach(m=>qbMonsterOAonPc(m, pc));
     qbCheckEnd(); render(); });
 }
@@ -4460,7 +4490,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v81';
+const APP_VERSION='v82';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
