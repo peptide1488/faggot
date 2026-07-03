@@ -3416,15 +3416,16 @@ const NAME_END =['ar','on','eth','wyn','ius','ra','din','gar','iel','os','ana','
 const NAME_SURNAME=['Stormborn','Ironheart','Blackwood','Brightblade','Shadowstep','Oakenshield','Stonefist','Emberfell','Frostbeard','Nightwhisper','Dawnstrider','Grimhollow','Silvervein','Thornwood','Ravenscar','Hollowbrook','Ashdown','Wolfsbane','Goldmane','Duskwalker','Highcliff','Stormvale','Briarheart','Coppervein','Mistwalker','Drakemoor'];
 function randName(race){ const soft=['Elf','Half-Elf','Fairy','Gnome','Aasimar','Tabaxi','Tiefling'].includes(race); const first=rndPick(soft?NAME_SOFT:NAME_HARD)+rndPick(NAME_END); return Math.random()<0.5 ? first+' '+rndPick(NAME_SURNAME) : first; }
 let rndAns={style:'melee',heritage:'common',vibe:'heroic'};
-function openRandomBuilder(){ rndAns={style:'melee',heritage:'common',vibe:'heroic'}; renderRandomBuilder(); }
+function openRandomBuilder(){ rndAns={style:'melee',heritage:'common',vibe:'heroic',power:'1'}; renderRandomBuilder(); }
 function renderRandomBuilder(){
   const Q=(key,label,opts)=>`<div class="field"><label>${label}</label><div class="seg" style="flex-wrap:wrap;gap:6px;background:none;border:0;padding:0">${opts.map(([v,l])=>`<button class="${rndAns[key]===v?'on':''}" data-rq="${key}" data-rv="${v}" style="flex:1 0 30%;background:${rndAns[key]===v?'var(--accent2)':'var(--panel2)'};border:1px solid var(--line);color:${rndAns[key]===v?'#f6efda':'var(--ink)'}">${l}</button>`).join('')}</div></div>`;
   $('#modalRoot').innerHTML=`<div class="modal" id="rndModal"><div class="sheet"><div class="grip"></div>
     <h2>🎲 Random Hero Forge</h2>
-    <p class="muted" style="font-size:13px;margin:0 0 14px">Answer three questions and we'll roll up a complete level-1 character — abilities, skills, spells and a pixel portrait.</p>
+    <p class="muted" style="font-size:13px;margin:0 0 14px">Answer four questions and we'll roll up a complete character — abilities, skills, spells and a pixel portrait.</p>
     ${Q('style','How do you like to fight?',[['melee','⚔️ Up close'],['ranged','🏹 At range'],['sneaky','🗡️ Sneaky'],['caster','✨ Spells'],['support','✚ Support']])}
     ${Q('heritage','What heritage calls to you?',[['common','🧑 Common'],['fae','🧝 Fae'],['stout','🪓 Stout'],['fierce','👹 Fierce'],['exotic','🐾 Exotic']])}
     ${Q('vibe','Pick a vibe',[['heroic','🛡️ Heroic'],['dark','🌑 Mysterious'],['wild','🍃 Wild'],['clever','📚 Clever'],['charming','🎭 Charming']])}
+    ${Q('power','How seasoned?',[['1','🌱 Level 1'],['5','⚔️ Level 5'],['10','🦁 Level 10'],['20','🐉 EPIC — Lv 20']])}
     <button class="btn block" id="rndForge" style="margin-top:6px">⚒ Forge my hero</button>
     <button class="btn ghost block" id="rndClose" style="margin-top:10px">Cancel</button>
   </div></div>`;
@@ -3439,7 +3440,7 @@ function forgeRandom(ans){
   let pool=(RND_RACE[ans.heritage]||RND_RACE.common).concat(RND_VIBE_RACE[ans.vibe]||[]).filter(r=>RACES.includes(r));
   c.race=rndPick(pool);
   c.background=rndPick(RND_BG[c.cls]||['Folk Hero']);
-  c.level=1; c.abilMethod='array';
+  c.level=Math.max(1,Math.min(20,Number(ans.power)||1)); c.abilMethod='array';
   applyClassDefaults(c);
   const prio=RND_PRIO[c.cls]||['str','con','dex','wis','cha','int'];
   prio.forEach((k,i)=>{ c.abilities[k]=STD_ARRAY[i]; });
@@ -3451,16 +3452,26 @@ function forgeRandom(ans){
   // resolve race/class choices so the sheet is complete (no "choices to make")
   if(c.race==='Half-Elf' || c.race==='Human (Variant)'){ prio.filter(k=>k!=='cha').slice(0,2).forEach(k=>c.asiBonus[k]=(c.asiBonus[k]||0)+1); c.raceDone=true; }
   if(c.race==='Dragonborn') c.dragon=rndPick(DRAGON_ANCESTRY);
-  if(FIGHTING_STYLE_LEVEL[c.cls] && FIGHTING_STYLE_LEVEL[c.cls]<=1) c.fightingStyle=rndPick(FIGHTING_STYLES[c.cls]);
+  if(FIGHTING_STYLE_LEVEL[c.cls] && FIGHTING_STYLE_LEVEL[c.cls]<=c.level) c.fightingStyle=rndPick(FIGHTING_STYLES[c.cls]);
   c.feats=[{name:rndPick(RND_FEATS_SIMPLE)}];   // always give a starting feat for a complete hero
+  // spend every ASI up to this level on the class's priority stats (+1 at a time, cap 20)
+  asiLevels(c).filter(l=>l<=c.level).forEach(()=>{ for(let n=0;n<2;n++){ const k=prio.find(k=>abil(c,k)<20); if(k) c.asiBonus[k]=(c.asiBonus[k]||0)+1; } });
   const eo=expertiseOwed(c); if(eo>0) SKILLS.filter(s=>c.skillProf[s[0]]).slice(0,eo).forEach(s=>c.skillExp[s[0]]=true);
-  // spells
+  // spells: cantrips at this level's count; at least one leveled spell of every castable
+  // level (an epic hero walks in with 9th-level magic), then fill to a class-typical count
   if(isCaster(c)){ c.spells=[];
-    shuffle(classSpells(c).filter(s=>s.l===0)).slice(0,cantripLimit(c)).forEach(s=>c.spells.push({name:s.n,level:0,prepared:false,notes:''}));
-    shuffle(classSpells(c).filter(s=>s.l===1)).slice(0,spell1Limit(c)).forEach(s=>c.spells.push({name:s.n,level:1,prepared:false,notes:''}));
+    shuffle(classSpells(c).filter(s=>s.l===0)).slice(0, cantripsKnownAt(c.cls,c.level)||cantripLimit(c)).forEach(s=>c.spells.push({name:s.n,level:0,prepared:false,notes:''}));
+    const maxL=maxSpellLevel(c);
+    const want = c.cls==='Wizard' ? Math.min(26, 4+2*c.level) : isPrepCaster(c) ? Math.max(spell1Limit(c), preparedMax(c)||0) : Math.min(15, c.level+3);
+    const picks=[], have=new Set();
+    for(let L=1;L<=maxL;L++){ const s=shuffle(classSpells(c).filter(x=>x.l===L))[0]; if(s&&!have.has(s.n)){ picks.push(s); have.add(s.n); } }
+    shuffle(classSpells(c).filter(s=>s.l>=1&&s.l<=maxL)).forEach(s=>{ if(picks.length<want && !have.has(s.n)){ picks.push(s); have.add(s.n); } });
+    picks.forEach(s=>c.spells.push({name:s.n,level:s.l,prepared:false,notes:''}));
+    if(isPrepCaster(c)){ let left=preparedMax(c)||0; c.spells.filter(s=>s.level>0).forEach(s=>{ if(left>0){ s.prepared=true; left--; } }); }   // walk in with the day's spells prepared
     c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
   }
   grantStartingGold(c); forgeEquip(c); addEssentials(c);
+  if(c.level>1) c.currency.gp=(c.currency.gp||0)+(c.level-1)*100;   // seasoned heroes carry more coin
   c.speed=defaultSpeed(c);
   const hp=autoHP(c)||c.hp.max; c.hp.max=hp; c.hp.cur=hp;
   c.name=randName(c.race);
@@ -3468,7 +3479,7 @@ function forgeRandom(ans){
   c.log=[]; logChange(c,'Forged by the Random Hero generator — '+(c.currency.gp||0)+' gp, gear equipped');
   DB.push(c); curId=c.id; localStorage.setItem(LS_CUR,curId);
   wiz=null; tab='char'; save(); render();
-  flashBanner('Forged '+c.name+' — '+c.race+' '+c.cls+'!');
+  flashBanner('Forged '+c.name+' — '+(c.level>=20?'🐉 EPIC ':c.level>1?'Lv '+c.level+' ':'')+c.race+' '+c.cls+'!');
 }
 
 /* ---- backup ---- */
@@ -4801,7 +4812,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v87';
+const APP_VERSION='v88';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

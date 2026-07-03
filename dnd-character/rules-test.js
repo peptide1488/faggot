@@ -244,6 +244,14 @@ T('teleport: Misty Step needs line of sight', teleportOk(tpS,tpMe,MS,6,0)===fals
 T('teleport: Dimension Door works sight-unseen', teleportOk(tpS,tpMe,DD,6,0)===true);
 T('teleport spells route to the picker, not enemy targeting', ['Misty Step','Dimension Door','Teleport','Teleportation Circle'].every(n=>SPELL_TELEPORT[n] && !spellTargetsEnemy(n)));
 
+/* ---- epic-level random forge ---- */
+forgeRandom({style:'caster', heritage:'common', vibe:'clever', power:'20'});
+const ep=cur();
+T('epic forge: level 20, prof +6, HP scaled', ep.level===20 && profBonus(ep)===6 && ep.hp.max>100);
+T('epic forge: knows a spell of its highest castable level', !isCaster(ep) || ep.spells.some(s=>s.level===maxSpellLevel(ep)));
+T('epic forge: all ASIs spent on stats (10 points)', Object.values(ep.asiBonus||{}).reduce((a,b)=>a+b,0)>=10);
+T('epic forge: prep casters within prepared cap', !isPrepCaster(ep) || preparedCount(ep)<=preparedMax(ep));
+
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
 const appVer=(src.match(/APP_VERSION='(v\d+)'/)||[])[1], swVer=(sw.match(/grimoire-(v\d+)/)||[])[1];
