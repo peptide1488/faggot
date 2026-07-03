@@ -56,6 +56,33 @@ Unseen Servant) in Quick Battle now writes a line to the visible Battle Log — 
 the slot and logged to the character sheet, but gave zero feedback in the log the player is
 actually watching, which read as "does nothing."
 
+### Coverage audit, part 2 (v93) — bespoke effects that aren't named conditions
+The first coverage pass only catches spells worded as a named PHB condition (Prone, Charmed,
+Frightened, etc.). A second, distinct failure shape: spells with a bespoke one-off rider —
+"next attack has advantage," "can't take reactions" — that was never a named condition to
+begin with, so it's invisible to that check too. Found and fixed:
+- **Shocking Grasp** — "the target can't take reactions" was never enforced. Also fixed a
+  real bug this exposed: the attack-spell path applied its `SPELL_COND` rider unconditionally,
+  even on a miss (`qbResolveAttack`'s `done` callback didn't pass hit/miss information back).
+  `done` now receives the resolved event so callers can gate on `ev.hit`.
+- **Chill Touch** — "the target can't recover HP this turn" was never tracked; now applied as
+  a visible condition tag on hit, same tier as existing bespoke tags (Hexed, Marked, Retching)
+  — informational, not separately enforced inside the heal path.
+
+**Documented, not fixed** — these need a genuine new mechanic (a reusable "advantage on your
+next attack roll" token, or an attack-blocking check), not a table row, and would be guessing
+at UX if rushed:
+- **True Strike, Guiding Bolt** — grant *advantage on a future attack roll*, not a condition on
+  an enemy. Nothing in this engine currently models a temporary advantage token.
+- **Sanctuary** — attackers need a Wis save to even target the warded creature. That requires a
+  pre-attack check in `attackFlow`/`qbResolveAttack`, not a post-cast condition.
+- **Magic Weapon** — buffs a specific weapon item to +1; needs per-item tracking, not a
+  creature condition.
+
+Another standing `rules-test.js` check covers this class the same way: any future spell worded
+with one of these bespoke phrases and missing from both `SPELL_COND` and `SPELL_EFFECTS` fails
+the suite unless it's in the exceptions list with a reason here.
+
 **Documented, not fixed** (need real new mechanics, not a missing table row — excluded from
 the coverage check with inline comments):
 - **Power Word Kill / Power Word Stun** — no-save, HP-threshold instant kill/stun. Nothing

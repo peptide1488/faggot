@@ -351,6 +351,23 @@ T('grease terrain is difficult and trips creatures', TERRAIN['grease'].diff===tr
   T('no undocumented AoE gaps: '+aoeGaps.join(', '), aoeGaps.length===0);
   T('no undocumented condition gaps: '+condGaps.join(', '), condGaps.length===0);
 }
+/* ---- coverage audit, part 2: bespoke one-off effects that aren't a named PHB
+   condition (e.g. "next attack has advantage", "can't take reactions") are a second
+   failure shape — SPELL_COND only models named conditions, so these silently vanish
+   too unless separately tracked. Same exceptions contract: add here only with an
+   AUDIT.md line saying why it needs new code instead of a table row. ---- */
+{ const BESPOKE_WORDS=/advantage on (its|your|their|the) next|disadvantage on (its|your|their|the) next|can'?t take reactions|next attack (has|roll)|can'?t recover hp/i;
+  const BESPOKE_EXCEPT=new Set(['True Strike','Guiding Bolt','Sanctuary','Magic Weapon']);
+  const allSpells2=Object.keys(SPELL_DESC);
+  const bespokeGaps=allSpells2.filter(n=>BESPOKE_WORDS.test(SPELL_DESC[n]) && !(n in SPELL_COND) && !(n in SPELL_EFFECTS) && !BESPOKE_EXCEPT.has(n));
+  T('no undocumented bespoke-effect gaps: '+bespokeGaps.join(', '), bespokeGaps.length===0);
+}
+/* ---- Shocking Grasp: rider effect only applies on a hit, not a miss ---- */
+T('Shocking Grasp cond is registered as No Reactions', SPELL_COND['Shocking Grasp'].c==='No Reactions');
+{ const moHit={id:'m1',name:'Goblin',hp:10,conds:[],reactionUsed:false};
+  qbApplyCond(moHit,'Shocking Grasp');
+  T('applying Shocking Grasp cond actually sets reactionUsed (not just a display tag)', moHit.reactionUsed===true && moHit.conds.some(c=>c.name==='No Reactions'));
+}
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');

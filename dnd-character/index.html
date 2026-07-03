@@ -1621,7 +1621,7 @@ const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necroti
 // collapsed to one centered r8 burst (matches its largest sphere, like Sleet Storm).
 const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1,'Meteor Swarm':8,'Color Spray':1,'Fear':2,'Sunbeam':1};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
-const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10}};
+const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10},'Shocking Grasp':{c:'No Reactions',r:1},'Chill Touch':{c:"Can't Heal",r:1}};
 // Dominate Person/Beast/Monster: a Dominated monster fights for the party — the Quick
 // Battle brain retargets its former allies, and the DM attack modal offers monsters
 // instead of players. (Simplification: no repeat save on damage; ends when rounds expire.)
@@ -4756,7 +4756,7 @@ function qbResolveAttack(att, tgt, atk, done){
     if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit'); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
       if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); } }
     else { sfx('miss'); attackFx('miss'); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
-    qbCheckEnd(); save(); render(); done&&done();
+    qbCheckEnd(); save(); render(); done&&done(ev);
   }, 280);
 }
 // ---- opportunity attacks ----
@@ -4953,7 +4953,8 @@ function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while ragin
   $('#qsSearch').addEventListener('input',draw); $('#qsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#qsModal').onclick=e=>{ if(e.target.id==='qsModal') $('#modalRoot').innerHTML=''; }; draw();
 }
-function qbApplyCond(mo,name){ const sc=SPELL_COND[name]; if(sc){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===sc.c)) mo.conds.push({name:sc.c,rounds:sc.r}); } }
+function qbApplyCond(mo,name){ const sc=SPELL_COND[name]; if(sc){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===sc.c)) mo.conds.push({name:sc.c,rounds:sc.r});
+  if(sc.c==='No Reactions') mo.reactionUsed=true; } }   // Shocking Grasp: actually blocks its opportunity attack, not just a display tag
 // paint temporary terrain (Grease, etc.) onto the tiles a blast covers; remembers what
 // was underneath so it can revert when the hazard expires (see qbExpireHazards)
 function qbPaintTerrain(s,ctr,aoeR,name,dc){ const st=SPELL_TERRAIN[name]; if(!st) return;
@@ -4992,7 +4993,7 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
     if(mc.dmg){ const tag=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; qbLog(name+' hits '+mo.name+' for '+ev.dmg+(ev.saved?' (saved — half)':'')+tag); }
     else qbLog(name+' on '+mo.name+(ev.saved?' — it saves, no effect':'')); };
   function resolveSingle(mo){ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
-    if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'0', tiles:tilesR, dtype:mc.dtype}, ()=>{ qbApplyCond(mo,name); finish(); }); }
+    if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'0', tiles:tilesR, dtype:mc.dtype}, (ev)=>{ if(ev&&ev.hit) qbApplyCond(mo,name); finish(); }); }
     else { mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':'✦');
       setTimeout(()=>{ const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0;
         const ev=Engine.castApply(qbAdapter, 'pc', mo.id, sp(dmgTotal));
@@ -5057,7 +5058,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v93';
+const APP_VERSION='v94';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
