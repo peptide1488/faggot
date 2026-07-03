@@ -677,9 +677,13 @@ function setEquipped(c, idx, on){
   if(it.kind==='armor'||it.kind==='shield'||(it.mods&&it.mods.ac)) flashBanner((on?'Equipped ':'Unequipped ')+it.name+' — AC now '+computeAC(c));
 }
 /* ---- battle mode: initiative, rounds, action tracking ---- */
-function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle={round:1, init:ini, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c)}; logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
+// THE per-turn resource reset, shared by every mode (solo battle, quick battle,
+// net play). Add new per-turn flags HERE and nowhere else.
+function freshTurnState(c){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0}; }
+function resetTurnState(c){ Object.assign(c.battle, freshTurnState(c)); }
+function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c)); logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
-function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.sneakUsed=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
+function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; resetTurnState(c);
   let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
   exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
   logChange(c,'▶ Round '+b.round+' — turn reset'+(exp.length?'; expired: '+exp.map(e=>e.name).join(', '):'')); save(); render(); flashBanner('Round '+b.round); }
@@ -791,21 +795,32 @@ function openSpellTarget(c, name, level){
   const seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
   const reach = seek ? reachableCells(s, me.x, me.y, tilesR*5) : null;
   const inRange=(x,y)=> seek ? reach[x+','+y]!=null : (gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
-  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && Math.max(Math.abs(mo.x-ctr.x),Math.abs(mo.y-ctr.y))<=aoeR);
-  const applyCond=(mo)=>{ const sc=SPELL_COND[name]; if(sc&&net.conn){ try{ net.conn.send({t:'moncond',mon:mo.id,cond:sc.c,rounds:sc.r}); }catch(e){} } };
+  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && gridDist(mo.x,mo.y,ctr.x,ctr.y)<=aoeR);
+  const dc0=8+profBonus(c)+mod(abil(c,c.spellAbility));
+  const sp=dmgTotal=>({name, dc:dc0, save:mc.save, dmgTotal, dtype:mc.dtype, cond:spellCondOf(name)});
   function resolveSingle(mo){
     mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':mc.dtype==='lightning'?'⚡':'✦');   // bolt flies to target on the map
     setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return; net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){try{net.conn.send({t:'target',mon:mo.id});}catch(e){}}
-      if(mc.attack) attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'0',dt:mc.dtype||''});
-      else if(mc.save) attackFlow(c,{name,spell:true,save:{ab:mc.save},dmg:mc.dmg||'0',dt:mc.dtype||''});
-      else if(mc.dmg){ const r=rollNotation(mc.dmg||'1d4')||{total:0,detail:''}; sfx('damage'); attackFx('hit'); pushRoll({label:name+' damage',total:r.total,detail:r.detail,kind:'dmg'}); if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total,dtype:mc.dtype||''});}catch(e){}} flashBanner(name+' hits '+mo.name+' for '+r.total); }
-      else { sfx('cast'); flashBanner(name+' on '+mo.name); }
-      applyCond(mo); }, 430); }
+      if(mc.attack){ attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'0',dt:mc.dtype||''}); return; }
+      const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0;
+      const ev=Engine.castApply(playerNetAdapter, 'me', mo.id, sp(dmgTotal));   // save auto-rolled (CR-scaled), half dmg / no condition on success
+      sfx(mc.dmg?'damage':'cast'); if(mc.dmg) attackFx('hit');
+      if(ev.save) pushRoll({label:mo.name+' '+String(ev.save).toUpperCase()+' save', total:ev.saveRoll, detail:'vs DC '+ev.dc+' — '+(ev.saved?'success':'fail'), kind:'check'});
+      if(mc.dmg) pushRoll({label:name+' damage', total:ev.dmg, detail:ev.saved?'saved — half':mc.dmg, kind:'dmg'});
+      flashBanner(mc.dmg ? name+' hits '+mo.name+' for '+ev.dmg+(ev.saved?' (saved — half)':'') : name+' on '+mo.name+(ev.saved?' — it saves, no effect':'')); }, 430); }
   function resolveBlast(ctr){ const aff=blastTargets(ctr);
-    // AoE has no allegiance (PHB) — flag any allies (or yourself) inside the area for the DM
-    const alliesIn=(s.players||[]).filter(p=>Math.max(Math.abs(p.x-ctr.x),Math.abs(p.y-ctr.y))<=aoeR);
+    // AoE has no allegiance (PHB) — you take real damage; other players are flagged for the DM
+    const alliesIn=(s.players||[]).filter(p=>p.id!==(net.peer&&net.peer.id) && gridDist(p.x,p.y,ctr.x,ctr.y)<=aoeR);
+    const selfIn=gridDist(me.x,me.y,ctr.x,ctr.y)<=aoeR;
     mapProjectile(me.x,me.y,ctr.x,ctr.y,'🔥'); setTimeout(()=>mapBurst(ctr.x,ctr.y,aoeR),300);   // bolt then explosion on the map
-    setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return; const dmg=mc.dmg?(rollNotation(mc.dmg)||{total:0,detail:''}):null; sfx('damage'); attackFx('crit'); if(dmg) pushRoll({label:name+' (blast)',total:dmg.total,detail:dmg.detail,kind:'dmg'}); aff.forEach(mo=>{ if(dmg&&net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:dmg.total,dtype:mc.dtype||''});}catch(e){}} applyCond(mo); }); flashBanner(name+' hits '+aff.length+(dmg?' for '+dmg.total:'')+(mc.save?' (saves halve — DM adjusts)':'')+(alliesIn.length?' · ⚠ '+alliesIn.map(p=>p.name).join(', ')+' caught in the area!':'')); if(alliesIn.length) logChange(c,'⚠ '+name+' also caught: '+alliesIn.map(p=>p.name).join(', ')); }, 750); }
+    setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
+      const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0; sfx('damage'); attackFx('crit');
+      if(dmgTotal) pushRoll({label:name+' (blast)',total:dmgTotal,detail:mc.dmg,kind:'dmg'});
+      let saves=0; aff.forEach(mo=>{ const ev=Engine.castApply(playerNetAdapter, 'me', mo.id, sp(dmgTotal)); if(ev.saved) saves++; });
+      if(selfIn && dmgTotal){ const ev=Engine.castApply(playerNetAdapter, 'me', 'me', Object.assign(sp(dmgTotal), {save:mc.save||'dex', cond:null}));
+        if(ev.dmg>0) logChange(c,'💥 Caught in own '+name+' — '+ev.dmg+' damage'+(ev.saved?' (saved — half)':'')); }
+      flashBanner(name+' hits '+aff.length+(dmgTotal?' for '+dmgTotal:'')+(mc.save&&saves?' · '+saves+' saved (half)':'')+(alliesIn.length?' · ⚠ '+alliesIn.map(p=>p.name).join(', ')+' caught in the area!':''));
+      if(alliesIn.length) logChange(c,'⚠ '+name+' also caught: '+alliesIn.map(p=>p.name).join(', ')); }, 750); }
   function draw(){
     let body=`<h2>✨ ${esc(name)}</h2>`;
     body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks (ignores walls)':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}${mc.save?' · '+String(mc.save).toUpperCase()+' save':''}</p>`;
@@ -1803,11 +1818,16 @@ function renderDiceLog(){
 
 /* ---- sound effects (Web Audio synth — no files, fully offline) ---- */
 let _ac=null, soundOn=(localStorage.getItem('grimoire.sound')!=='off');
-function audioCtx(){ if(!_ac){ try{ _ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } } if(_ac && _ac.state==='suspended') _ac.resume(); return _ac; }
-function tone(freq,dur,type,vol,when){ const a=audioCtx(); if(!a) return; const t=a.currentTime+(when||0);
+function audioCtx(){
+  if(_ac && _ac.state==='closed') _ac=null;   // browsers reclaim contexts mid-session — rebuild
+  if(!_ac){ try{ _ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
+  if(_ac.state!=='running'){ try{ _ac.resume(); }catch(e){} }   // 'suspended' + iOS 'interrupted'
+  return _ac; }
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden && _ac && _ac.state!=='running'){ try{ _ac.resume(); }catch(e){} } });
+function tone(freq,dur,type,vol,when){ const a=audioCtx(); if(!a) return; try{ const t=a.currentTime+(when||0);
   const o=a.createOscillator(), g=a.createGain(); o.type=type||'sine'; o.frequency.setValueAtTime(freq,t);
   g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol||0.18,t+0.012); g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
-  o.connect(g).connect(a.destination); o.start(t); o.stop(t+dur+0.03); }
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t+dur+0.03); }catch(e){} }
 function sfx(kind){ if(!soundOn) return; switch(kind){
   case 'click': tone(430,0.05,'triangle',0.10); break;
   case 'tab': tone(540,0.06,'triangle',0.10); break;
@@ -2292,10 +2312,11 @@ function levelUp(){
     const sel=$('#luSpell'); if(!sel||!sel.value){ $('#luLearnMsg').textContent='Pick a spell from the list first.'; return; }
     const [n,l]=sel.value.split('|');
     if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
-      c.spells.push({name:n,level:Number(l),prepared:false,notes:''});
+      const ns={name:n,level:Number(l),prepared:false,notes:''}; c.spells.push(ns);
+      const note=autoPrepare(c, ns);
       c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
       learnedThisLevel++;
-      $('#luLearnMsg').textContent= learnedThisLevel<learnCap ? ('Learned '+n+'. Now pick your next spell ('+learnedThisLevel+'/'+learnCap+').') : ('Learned '+n+'. Done ('+learnedThisLevel+'/'+learnCap+').');
+      $('#luLearnMsg').textContent= (learnedThisLevel<learnCap ? ('Learned '+n+note+'. Now pick your next spell ('+learnedThisLevel+'/'+learnCap+').') : ('Learned '+n+note+'. Done ('+learnedThisLevel+'/'+learnCap+').'));
       const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
     }
   }; }
@@ -2925,12 +2946,21 @@ function concentrationCheck(c, dmg){
 }
 
 /* ---------- SPELLS ---------- */
+// Adding a spell you chose means you intend to cast it — auto-prepare for prep casters
+// while there's room under the daily cap (PHB prep limit still enforced).
+function autoPrepare(c, s){ if(!isPrepCaster(c) || (s.level||0)===0) return '';
+  const cap=preparedMax(c);
+  if(cap!=null && preparedCount(c)>=cap) return ' — ⚠ not prepared (at cap '+preparedCount(c)+'/'+cap+')';
+  s.prepared=true; return ' (prepared)'; }
 function addSpellTo(c, name, level){
   name=String(name).trim(); if(!name) return;
   if(c.spells.some(s=>s.name.toLowerCase()===name.toLowerCase())){ flashBanner(name+' is already known'); return; }
-  c.spells.push({name, level:Number(level)||0, prepared:false, notes:''});
+  const s={name, level:Number(level)||0, prepared:false, notes:''};
+  c.spells.push(s);
+  const note=autoPrepare(c, s);
   c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name));
-  logChange(c, 'Learned '+name+' ('+lvlLabel(Number(level)||0)+')');
+  logChange(c, 'Learned '+name+' ('+lvlLabel(Number(level)||0)+')'+note);
+  flashBanner(name+' added'+note);
   save(); render();
 }
 // Prepared casters (Wizard/Cleric/Druid/Paladin/Artificer) choose which known spells are ready today.
@@ -3581,7 +3611,7 @@ function playerOnData(d){ if(!d) return;
       else if(!d.session.battle.active && c.battle){ c.battle=null; save(); }
       else if(c.battle){ const cur=d.session.order&&d.session.order[d.session.turn]; const myTurn=cur&&cur.id===net.peer.id;
         if((myTurn && !net.wasMyTurn) || (!d.session.order||!d.session.order.length) && c.battle.round!==d.session.battle.round){   // my turn started (or no initiative → round change) → reset resources
-          c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.actionsMax=actionsPerTurn(c); c.battle.actionsUsed=0; c.battle.surged=false; c.battle.sneakUsed=false; c.battle.castBonusSpell=false; c.battle.castLeveledSpell=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
+          c.battle.round=d.session.battle.round; resetTurnState(c); save(); }
         net.wasMyTurn=myTurn; }
     }
     render();
@@ -4180,12 +4210,15 @@ function renderNetBar(){
 const BRAINS = {};   // name -> function(enc, unit) -> [intent]; intents: {type:'move',to} | {type:'attack',targetId,atk}
 
 /* =========================================================================
-   UNIFIED COMBAT ENGINE (used by Quick Battle now; DM/player adopt it next).
+   UNIFIED COMBAT ENGINE (all modes: quick battle, DM side, player netplay).
    - Engine.applyAction(adapter, action) is the single pure resolver: it
      validates, rolls dice, mutates state via the adapter, and returns an
      `event` describing what happened (for UI/sound/log/agents).
-   - An `adapter` binds the engine to a concrete encounter (Quick Battle's
-     qbAdapter today; a session adapter later) — same logic, any state shape.
+   - Attacks resolve via Engine.attack; spells via Engine.castApply (per target:
+     save → half dmg / no condition on success → resist/vuln/imm → hurt).
+   - An `adapter` binds the engine to a concrete encounter — same logic, any
+     state shape: qbAdapter (quick battle), sessionAdapter (DM authoritative
+     state), playerNetAdapter (player device; mutates by net message).
    - CONTROLLERS decide a unit's actions each turn: `human` (actions come
      from the UI), `tactical` (built-in AI), `agent` (future LLM/remote).
      Swapping who controls a unit = swapping one field. This is what lets
@@ -4220,14 +4253,34 @@ const Engine = {
     if(r.hit && ad.hp(t)<=0) Events.emit({type:'death', unitId:targetId, at:t&&{x:t.x,y:t.y}});
     return ev;
   },
+  // per-target SPELL resolution — THE shared path for every mode. A save (if any)
+  // halves damage and blocks the condition (PHB), then resist/vuln/immunity applies,
+  // then damage lands via the adapter. sp={name,dc,save,dmgTotal,dtype,cond:{c,rounds}}.
+  // dmgTotal is pre-rolled by the caller so an AoE rolls once and each target saves.
+  castApply(ad, actorId, targetId, sp){
+    const t=ad.unit(targetId);
+    if(!t||ad.hp(t)<=0) return {type:'spell', void:true, actorId, targetId};
+    let saved=false, saveRoll=null;
+    if(sp.save){ const sb=ad.saveBonus?ad.saveBonus(t, sp.save):0; saveRoll=rnd(20)+sb; saved=saveRoll>=sp.dc; }
+    let dmg=0, mult=1;
+    if(sp.dmgTotal){ dmg=saved?Math.floor(sp.dmgTotal/2):sp.dmgTotal; mult=ad.damageMult?ad.damageMult(t, sp.dtype):1; dmg=Math.max(0,Math.round(dmg*mult)); if(dmg) ad.hurt(t,dmg,sp.dtype); }
+    if(sp.cond && !saved && ad.addCond) ad.addCond(t, sp.cond.c, sp.cond.rounds);
+    const ev={type:'spell', actorId, targetId, name:sp.name, save:sp.save||null, dc:sp.dc, saveRoll, saved, dmg, mult, dtype:sp.dtype||'', cond:(sp.cond&&!saved)?sp.cond.c:null, at:t&&{x:t.x,y:t.y}};
+    Events.emit(ev);
+    if(dmg && ad.hp(t)<=0) Events.emit({type:'death', unitId:targetId, at:t&&{x:t.x,y:t.y}});
+    return ev;
+  },
   // single entry point any controller (UI/AI/agent) calls
   applyAction(ad, action){
     switch(action.type){
       case 'attack': return Engine.attack(ad, action.actorId, action.targetId, action.atk);
+      case 'cast':   return Engine.castApply(ad, action.actorId, action.targetId, action.sp);
       default: return {type:action.type, void:true};
     }
   }
 };
+// SPELL_COND entry ({c,r}) → castApply's cond shape
+function spellCondOf(name){ const sc=SPELL_COND[name]; return sc?{c:sc.c, rounds:sc.r}:null; }
 const CONTROLLERS = {
   human:    { decide:null },                                  // actions come from the UI; engine waits
   tactical: { decide:(enc,u)=> (BRAINS.tactical||(()=>[]))(enc,u) },
@@ -4243,7 +4296,27 @@ const sessionAdapter = {
   hurt:(u,dmg)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); } else { dmSend(u.id,{t:'apply',delta:-dmg}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },
   cover:(a,t)=> (a&&t&&net&&net.session) ? coverBetween(net.session, a.x,a.y, t.x,t.y) : 0,
   damageMult:(t,dtype)=> (t&&t.hp!=null) ? monsterDmgMult(t,dtype) : 1,   // monsters carry .hp
+  saveBonus:(u,ab)=> u.hp!=null ? monsterSaveBonus(u) : 0,                // players roll their own saves
+  addCond:(u,cond,rounds)=>{ if(u.hp!=null){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); } else dmSend(u.id,{t:'cond',name:cond}); },
   name:u=>u.name
+};
+// Adapter for a PLAYER's device in a net session: reads the DM-broadcast mirror and
+// mutates BY MESSAGE — the DM's copy stays authoritative. Damage is sent raw with its
+// type and the DM applies resist/vuln/immunity on receipt (same protocol as weapon
+// attacks), so damageMult here stays 1. targetId 'me' = the local character.
+const playerNetAdapter = {
+  unit:id=>{ const s=net&&net.session; if(!s) return null;
+    if(id==='me'){ const c=playerChar(); return c?{me:true, c, id:'me'}:null; }
+    return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id); },
+  ac:u=> u.me?computeAC(u.c):(u.ac||10),
+  hp:u=> u.me ? u.c.hp.cur : (u.hp!=null?u.hp:u.hpCur),
+  hurt:(u,dmg,dtype)=>{ if(u.me){ applyHp(u.c,-dmg); playerHello(); }
+    else if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg);   // local echo; DM broadcast corrects it
+      if(net.conn){ try{ net.conn.send({t:'attack',mon:u.id,who:(playerChar()||{}).name,hit:true,dmg,dtype:dtype||''}); }catch(e){} } } },
+  saveBonus:(u,ab)=>{ if(u.me){ const c=u.c; return mod(abil(c,ab))+((c.saveProf&&c.saveProf[ab])?profBonus(c):0); }
+    return u.hp!=null?monsterSaveBonus(u):0; },
+  addCond:(u,cond,rounds)=>{ if(u.hp!=null && net.conn){ try{ net.conn.send({t:'moncond',mon:u.id,cond,rounds}); }catch(e){} } },
+  name:u=> u.me?u.c.name:u.name
 };
 function crToNum(cr){ const s=String(cr==null?0:cr); if(s.includes('/')){ const [a,b]=s.split('/').map(Number); return b?a/b:0; } return Number(s)||0; }
 function qbAC(u){ return u.side==='pc'?computeAC(u.c):u.ac; }
@@ -4258,7 +4331,10 @@ function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.c
 const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
   enemiesOf:u=> u.side==='pc'?QB.monsters.filter(m=>m.hp>0):QB.players.filter(p=>p.c.hp.cur>0), map:()=>QB.map,
   cover:(a,t)=> (a&&t) ? coverBetween(QB, a.x,a.y, t.x,t.y) : 0,
-  damageMult:(t,dtype)=> (t&&t.side==='mon') ? monsterDmgMult(t,dtype) : 1 };
+  damageMult:(t,dtype)=> (t&&t.side==='mon') ? monsterDmgMult(t,dtype) : 1,
+  saveBonus:(u,ab)=> u.side==='mon' ? monsterSaveBonus(u) : mod(abil(u.c,ab))+((u.c.saveProf&&u.c.saveProf[ab])?profBonus(u.c):0),
+  addCond:(u,cond,rounds)=>{ if(u.side==='mon'){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); }
+    else { if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } } };
 // the PC's usable attacks (weapons + custom), as generic atk objects
 function qbPcAttacks(c){ const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w);
@@ -4314,7 +4390,7 @@ function startQuickBattle(c, crMax, count){
   QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles)}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
   qbPlaceUnits();
   // battle resources for the PC (mirror startBattle without its render)
-  c.battle={round:1, init:rnd(20)+initiative(c), action:false,bonus:false,reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0};
+  c.battle=Object.assign({round:1, init:rnd(20)+initiative(c)}, freshTurnState(c));
   const order=[{k:'p',id:'pc',name:c.name,roll:c.battle.init}].concat(monsters.map(m=>({k:'m',id:m.id,name:m.name,roll:m.init})));
   order.sort((a,b)=>b.roll-a.roll); QB.order=order; QB.turn=0;
   qbLog('⚔ Battle begins — '+monsters.length+' enemies. Initiative: '+order.map(o=>o.name+' '+o.roll).join(', '));
@@ -4333,8 +4409,8 @@ function qbCurrent(){ return QB.order[QB.turn]; }
 function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
   if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=mo.speed||30; mo.reactionUsed=false; render();
     setTimeout(()=>qbRunBrain(mo), 500); }
-  else { const c=QB.players[0].c, b=c.battle;   // PC turn — refresh resources, then wait for input
-    b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.sneakUsed=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
+  else { const c=QB.players[0].c;   // PC turn — refresh resources, then wait for input
+    resetTurnState(c);
     let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
     exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
     QB.moveMode=false; save(); render(); }
@@ -4522,8 +4598,10 @@ function qbOpenAttack(c){ const s=QB, pc=s.players[0]; const foes=s.monsters.fil
 // PC spellcasting in Quick Battle
 function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while raging'); return; }
   const list=castableSpells(c).sort((a,b)=>((a.level||0)-(b.level||0))||a.name.localeCompare(b.name));
+  const unprepped=isPrepCaster(c)?(c.spells||[]).filter(s=>(s.level||0)>0 && !s.prepared).length:0;
   $('#modalRoot').innerHTML=`<div class="modal" id="qsModal"><div class="sheet"><div class="grip"></div>
     <h2>✨ Cast a spell</h2><input id="qsSearch" placeholder="Filter your spells…" autocomplete="off">
+    ${unprepped?`<p class="muted" style="font-size:12px;margin:8px 0 0">⚠ ${unprepped} known spell${unprepped>1?'s':''} hidden — not prepared. 📋 Prepare on the Spells tab (${preparedCount(c)}/${preparedMax(c)} prepared).</p>`:''}
     <div id="qsList" style="margin-top:10px;max-height:56vh;overflow:auto"></div>
     <button class="btn ghost block" id="qsClose" style="margin-top:10px">Close</button></div></div>`;
   const draw=()=>{ const q=($('#qsSearch').value||'').toLowerCase(); const f=list.filter(s=>s.name.toLowerCase().includes(q));
@@ -4544,28 +4622,25 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
   const dc0=8+profBonus(c)+mod(abil(c,c.spellAbility));
   const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && gridDist(mo.x,mo.y,ctr.x,ctr.y)<=aoeR);
   function finish(){ qbCheckEnd(); save(); render(); }
-  const rvNote=(mo,base)=>{ const m=monsterDmgMult(mo,mc.dtype); return {dmg:Math.max(0,Math.round(base*m)), tag:m===0?' — immune!':m===0.5?' (resisted)':m===2?' (vulnerable!)':''}; };
-  // save-based spells: the monster rolls vs your spell DC — success halves damage & blocks conditions (PHB)
-  const monSave=(mo)=>{ if(!mc.save) return false; const tot=rnd(20)+monsterSaveBonus(mo); const ok=tot>=dc0;
-    qbLog('🛡️ '+mo.name+' '+String(mc.save).toUpperCase()+' save '+tot+' vs DC '+dc0+' — '+(ok?'success':'fail')); return ok; };
+  const sp=dmgTotal=>({name, dc:dc0, save:mc.save, dmgTotal, dtype:mc.dtype, cond:spellCondOf(name)});
+  const logEv=(mo,ev)=>{ if(ev.save) qbLog('🛡️ '+mo.name+' '+String(ev.save).toUpperCase()+' save '+ev.saveRoll+' vs DC '+ev.dc+' — '+(ev.saved?'success':'fail'));
+    if(mc.dmg){ const tag=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; qbLog(name+' hits '+mo.name+' for '+ev.dmg+(ev.saved?' (saved — half)':'')+tag); }
+    else qbLog(name+' on '+mo.name+(ev.saved?' — it saves, no effect':'')); };
   function resolveSingle(mo){ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
     if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'0', tiles:tilesR, dtype:mc.dtype}, ()=>{ qbApplyCond(mo,name); finish(); }); }
     else { mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':'✦');
-      setTimeout(()=>{ const saved=monSave(mo);
-        if(mc.dmg){ const r=rollNotation(mc.dmg)||{total:0}; const a=rvNote(mo, saved?Math.floor(r.total/2):r.total); qbHurt(mo, a.dmg); sfx('damage'); attackFx('hit'); qbLog(name+' hits '+mo.name+' for '+a.dmg+(saved?' (saved — half)':'')+a.tag); }
-        else { sfx('cast'); qbLog(name+' on '+mo.name+(saved?' — it saves, no effect':'')); }
-        if(!saved) qbApplyCond(mo,name); finish(); }, 300); } }
+      setTimeout(()=>{ const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0;
+        const ev=Engine.castApply(qbAdapter, 'pc', mo.id, sp(dmgTotal));
+        sfx(mc.dmg?'damage':'cast'); if(mc.dmg) attackFx('hit'); logEv(mo,ev); finish(); }, 300); } }
   function resolveBlast(ctr){ const aff=blastTargets(ctr); $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
     mapProjectile(me.x,me.y,ctr.x,ctr.y,'🔥'); setTimeout(()=>mapBurst(ctr.x,ctr.y,aoeR),250);
-    setTimeout(()=>{ const r=mc.dmg?(rollNotation(mc.dmg)||{total:0}):null; sfx('damage'); attackFx('crit');
-      aff.forEach(mo=>{ const saved=monSave(mo);
-        if(r){ const a=rvNote(mo, saved?Math.floor(r.total/2):r.total); qbHurt(mo,a.dmg); }
-        if(!saved) qbApplyCond(mo,name); });
+    setTimeout(()=>{ const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0; sfx('damage'); attackFx('crit');
+      aff.forEach(mo=>{ logEv(mo, Engine.castApply(qbAdapter, 'pc', mo.id, sp(dmgTotal))); });
       // friendly fire: an area spell hits everything in it — including you (PHB: AoE has no allegiance)
-      if(r && gridDist(me.x,me.y,ctr.x,ctr.y)<=aoeR){ const ab=mc.save||'dex'; const sb=mod(abil(c,ab))+((c.saveProf&&c.saveProf[ab])?profBonus(c):0);
-        const tot=rnd(20)+sb, okd=tot>=dc0, take=okd?Math.floor(r.total/2):r.total;
-        if(take>0){ applyHp(c,-take); qbLog('💥 '+c.name+' is caught in the blast — '+take+' damage'+(okd?' (saved — half)':'')); } }
-      qbLog(name+' blasts '+aff.length+' enemies'+(r?' (rolled '+r.total+(mc.save?'; saves halve':'')+')':'')); finish(); }, 600); }
+      if(dmgTotal && gridDist(me.x,me.y,ctr.x,ctr.y)<=aoeR){
+        const ev=Engine.castApply(qbAdapter, 'pc', 'pc', Object.assign(sp(dmgTotal), {save:mc.save||'dex', cond:null}));
+        if(ev.dmg>0) qbLog('💥 '+c.name+' is caught in the blast — '+ev.dmg+' damage'+(ev.saved?' (saved — half)':'')); }
+      qbLog(name+' blasts '+aff.length+' enemies'+(dmgTotal?' (rolled '+dmgTotal+(mc.save?'; saves halve':'')+')':'')); finish(); }, 600); }
   function draw(){ let body=`<h2>✨ ${esc(name)}</h2><p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}</p>`;
     const opts=(aoeR&&center)?{rangeFrom:{x:me.x,y:me.y,tiles:tilesR},blast:{x:center.x,y:center.y,r:aoeR}}:(seek?{reachCost:reach}:{rangeFrom:{x:me.x,y:me.y,tiles:tilesR}});
     body+=mapGridHTML(s,false,opts);
@@ -4615,7 +4690,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v83';
+const APP_VERSION='v84';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

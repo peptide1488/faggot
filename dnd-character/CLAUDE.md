@@ -56,7 +56,10 @@ Rules logic:
 Combat / grid / multiplayer:
 - `function dijkstra` / `losClear` / `coverBetween` / `leavesReach` — grid math
   (Chebyshev distance, 1 tile = 5 ft, no diagonal corner-cutting)
-- `const Engine =` — unified attack resolver; `sessionAdapter` / `qbAdapter` — state bindings
+- `const Engine =` — unified resolver: `Engine.attack` (weapons) + `Engine.castApply`
+  (spells: save → half dmg / no condition on success → resist/vuln/imm). Adapters bind it
+  to each mode: `qbAdapter`, `sessionAdapter` (DM authoritative), `playerNetAdapter`
+  (player device — mutates by net message; DM applies RVI to incoming raw damage)
 - `BRAINS.tactical` — monster AI; `CONTROLLERS` — human/tactical/agent switch
 - `function dmHost` / `dmOnData` / `renderDM` — DM mode; `playerJoin`/`renderPlayerBattle` —
   player netplay; `openSpellTarget` — net spell targeting
@@ -70,9 +73,8 @@ UI (rarely rules-relevant): `render()` dispatcher, `renderSheet`, `renderCombat`
 
 ## Conventions
 - Battle state lives on `c.battle` {actionsUsed/Max, bonus, reaction, attacksLeft, move,
-  castBonusSpell, castLeveledSpell, sneakUsed, surged}; reset points: `battleNextTurn`,
-  `qbBeginTurn`, `playerOnData` turn reset, `startBattle`, `startQuickBattle` — if you add
-  a per-turn flag, reset it in ALL FIVE places.
+  castBonusSpell, castLeveledSpell, sneakUsed, surged}; ALL per-turn resets go through
+  `freshTurnState`/`resetTurnState` — add new per-turn flags there and nowhere else.
 - Characters are plain objects; `ensureFields` migrates old saves, `newCharacter` must
   initialize any field the code dereferences without a guard.
 - Monsters: `.hp/.max`; players in net sessions: `.hpCur/.hpMax` (adapters key off this).

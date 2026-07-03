@@ -24,7 +24,8 @@ global.requestAnimationFrame=f=>f();
 // consts inside eval stay block-scoped — re-export the data tables the tests assert on
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
-  'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;');
+  'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -157,6 +158,43 @@ T('Brown Bear multiattack 2 at +6', MONSTERS_5E.find(m=>m.n==='Brown Bear').atta
 T('Troll multiattack 3', MONSTERS_5E.find(m=>m.n==='Troll').attacks===3);
 T('every monster has init & attacks fields', MONSTERS_5E.every(m=>typeof m.init==='number' && typeof m.attacks==='number'));
 T('monsterSaveBonus CR-scaled', monsterSaveBonus({base:'Goblin'})===1 && monsterSaveBonus({base:'Young Red Dragon'})===6);
+
+/* ---- shared per-turn reset (one definition for all five reset points) ---- */
+const ts=newCharacter('TS'); ts.cls='Fighter'; ts.level=5; applyClassDefaults(ts);
+startBattle(ts);
+ts.battle.actionsUsed=1; ts.battle.bonus=true; ts.battle.attacksLeft=0; ts.battle.castBonusSpell=true;
+resetTurnState(ts);
+T('resetTurnState restores actions/bonus/attacks/spell flags', ts.battle.actionsUsed===0 && ts.battle.bonus===false && ts.battle.attacksLeft===extraAttacks(ts)+1 && ts.battle.castBonusSpell===false);
+T('startBattle seeds full turn state (moveUsed, castLeveledSpell)', ts.battle.moveUsed===0 && ts.battle.castLeveledSpell===false);
+
+/* ---- unified spell resolution: Engine.castApply ---- */
+function stubAd(over){ const t={id:'t1', hp:20, x:0, y:0}; return Object.assign({_t:t,
+  unit:id=>id==='t1'?t:null, ac:()=>12, hp:u=>u.hp, hurt:(u,d)=>{u.hp=Math.max(0,u.hp-d);},
+  saveBonus:()=>0, damageMult:()=>1, addCond:(u,cond)=>{u.cond=cond;}}, over||{}); }
+let ad=stubAd();
+let ev=Engine.castApply(ad,'me','t1',{name:'X', dc:100, save:'dex', dmgTotal:10, dtype:'fire', cond:{c:'Restrained',rounds:10}});
+T('castApply failed save: full damage + condition', ev.saved===false && ev.dmg===10 && ad._t.hp===10 && ad._t.cond==='Restrained');
+ad=stubAd();
+ev=Engine.castApply(ad,'me','t1',{name:'X', dc:-5, save:'dex', dmgTotal:10, dtype:'fire', cond:{c:'Restrained',rounds:10}});
+T('castApply successful save: half damage, condition blocked', ev.saved===true && ev.dmg===5 && ad._t.hp===15 && !ad._t.cond);
+ad=stubAd({damageMult:()=>0});
+ev=Engine.castApply(ad,'me','t1',{name:'X', dc:100, save:'dex', dmgTotal:10, dtype:'fire'});
+T('castApply respects immunity (0 damage)', ev.dmg===0 && ad._t.hp===20);
+ad=stubAd();
+ev=Engine.castApply(ad,'me','t1',{name:'X', dmgTotal:9});
+T('castApply no-save spell: full damage', ev.saved===false && ev.dmg===9 && ad._t.hp===11);
+T('castApply voids on dead target', Engine.castApply(stubAd({hp:()=>0}),'me','t1',{name:'X',dmgTotal:5}).void===true);
+T('spellCondOf maps SPELL_COND {c,r} shape', (()=>{ const sc=spellCondOf('Hold Person'); return sc && sc.c && sc.rounds>0; })());
+T('qbAdapter saves: monster CR-scaled, PC ability-based', qbAdapter.saveBonus({side:'mon',base:'Goblin'})===1 && qbAdapter.saveBonus({side:'pc',c},'dex')===2);
+
+/* ---- auto-prepare on deliberate add (prep casters) ---- */
+const ap=newCharacter('AP'); ap.cls='Wizard'; ap.level=20; ap.abilities={str:10,dex:10,con:10,int:20,wis:10,cha:10}; applyClassDefaults(ap);
+addSpellTo(ap,'Fireball',3);
+T('added spell auto-prepares under the cap', ap.spells.find(s=>s.name==='Fireball').prepared===true);
+T('auto-prepared spell shows in castable list', castableSpells(ap).some(s=>s.name==='Fireball'));
+const ap2=newCharacter('AP2'); ap2.cls='Wizard'; ap2.level=1; ap2.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10}; applyClassDefaults(ap2);
+addSpellTo(ap2,'Magic Missile',1); addSpellTo(ap2,'Sleep',1);
+T('prep cap respected: add beyond cap stays unprepared', ap2.spells.find(s=>s.name==='Magic Missile').prepared===true && ap2.spells.find(s=>s.name==='Sleep').prepared===false);
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');

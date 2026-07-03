@@ -163,3 +163,17 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   bonus dice per the description).
 - Monster save bonus is CR-derived, not per-ability.
 - Great Weapon Fighting rerolls and Protection-style reactions are table-adjudicated.
+
+## v84 — unified spell resolution (all modes)
+- Player spells now resolve through one path in every mode (`Engine.castApply`): target
+  rolls its save vs the caster's DC (monsters use the CR-derived bonus), success halves
+  damage and blocks the spell's condition, then resist/vuln/immunity applies.
+- Net play previously rolled **no** monster saves ("saves halve — DM adjusts") and applied
+  conditions even on a success — both fixed by the shared path. Damage is still sent raw
+  with its type and the DM host applies resist/vuln/imm on receipt (protocol unchanged).
+- AoE friendly fire in net play: the caster now takes real damage (own save, half on
+  success) like in Quick Battle. Other players in the blast are flagged for the DM — one
+  player's device can't mutate another player's sheet.
+- Deliberately adding a spell (Spells tab, level-up learn) auto-prepares it for prep
+  casters while under the daily cap; at the cap it stays unprepared and says so. The
+  Quick Battle spell picker now reports how many known spells are hidden as unprepared.
