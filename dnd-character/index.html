@@ -786,10 +786,15 @@ function openQuickSpells(c){
   $('#qsModal').onclick=e=>{ if(e.target.id==='qsModal') $('#modalRoot').innerHTML=''; };
   draw();
 }
+// Cast-menu routing: only spells that DO something to an enemy (attack roll, save,
+// damage, or an imposed condition) open map targeting. Heals, buffs and pure utility
+// (Teleport, Wish, Misty Step, Fog Cloud…) go to castModal — cast it, spend the slot,
+// narrate the effect. Used by BOTH net play and Quick Battle.
+function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !!(mc.attack||mc.save||mc.dmg||SPELL_COND[name]); }
 function openSpellTarget(c, name, level){
   level=Number(level)||0;
   const mc=scaleCantrip(c,name,parseSpellMechanics(name));
-  if(mc.buff && !mc.dmg && !mc.heal && !mc.attack && !mc.save){ castModal(c,name,level); return; }   // self/ally buff
+  if(!spellTargetsEnemy(name,mc)){ castModal(c,name,level); return; }   // heal/buff/utility (Teleport, Wish…) — no monster targeting
   if(!canCast(c,name,level)) return;
   const s=net.session, me=myMapPos(), tilesR=spellRangeTiles(name);
   const seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
@@ -4607,7 +4612,7 @@ function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while ragin
   const draw=()=>{ const q=($('#qsSearch').value||'').toLowerCase(); const f=list.filter(s=>s.name.toLowerCase().includes(q));
     $('#qsList').innerHTML=f.length?f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.name)}</span><div class="nm"><b>${esc(s.name)}</b><small>${lvlLabel(s.level||0)}${spellCastTime(s.name)==='bonus'?' · bonus':''}${isConcentration(s.name)?' · 🧠':''}</small></div><button class="btn sm" data-qsc="${esc(s.name)}|${s.level||0}">Cast</button></div>`).join(''):'<div class="empty">'+(isPrepCaster(c)?'No castable spells — 📋 Prepare some on the Spells tab.':'No spells. Add them on the Spells tab.')+'</div>';
     $('#qsList').querySelectorAll('[data-qsc]').forEach(b=>b.onclick=()=>{ const a=b.dataset.qsc.split('|'); const name=a[0], lvl=Number(a[1]); const mc=parseSpellMechanics(name);
-      if(mc.buff && !mc.dmg && !mc.heal && !mc.attack && !mc.save){ castModal(c,name,lvl); }   // self/ally buff → existing modal (spends action via castSpell)
+      if(!spellTargetsEnemy(name,mc)){ castModal(c,name,lvl); }   // heal/buff/utility → cast modal (spends action via castSpell)
       else qbSpellTarget(c,name,lvl); }); };
   $('#qsSearch').addEventListener('input',draw); $('#qsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#qsModal').onclick=e=>{ if(e.target.id==='qsModal') $('#modalRoot').innerHTML=''; }; draw();
@@ -4690,7 +4695,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v84';
+const APP_VERSION='v85';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
