@@ -32,6 +32,8 @@ Data tables (all near the top of the script):
 - `SPELL_EFFECTS` — trackable buffs {rounds (6s each), conc, mods{ac,speed,tempHp,…}}
 - `CONC_SPELLS` — concentration set; `SPELL_AOE` — blast radii in tiles (rulings in comment);
   `SPELL_COND` — conditions imposed; `BONUS_ACTION_SPELLS` / `REACTION_SPELLS` — cast times
+- `SPELL_TELEPORT` — teleport spells {tiles,los}; `teleportOk`/`openTeleportTarget` —
+  destination validity + shared picker (net play & Quick Battle commit via callback)
 - `MONSTERS_5E` — bestiary {n,cr,ac,hp,spd,init,attacks,atk,…}; `MONSTER_RVI` — resist/vuln/imm
 - `TERRAIN` — tile properties (solid/opaque/diff/dmg/deadly); `MAP_PRESETS` — battle maps
 

@@ -177,3 +177,14 @@ deterministic mechanics. Each is embedded in the in-app spell description.
 - Deliberately adding a spell (Spells tab, level-up learn) auto-prepares it for prep
   casters while under the daily cap; at the cap it stays unprepared and says so. The
   Quick Battle spell picker now reports how many known spells are hidden as unprepared.
+
+## v87 — teleportation spells are mechanical
+- Misty Step / Dimension Door / Teleport / Teleportation Circle open a destination picker
+  in battle (net play + Quick Battle) and actually move your token. Rulings: destination
+  must be an open tile (not solid/deadly terrain, unoccupied); Misty Step requires line of
+  sight ("a spot you can see"); Dimension Door and up work sight-unseen; teleporting never
+  provokes opportunity attacks and spends no movement (PHB); hazardous terrain (lava)
+  damages on arrival. Slot + action/bonus action spend via the normal castSpell path
+  (Misty Step is a bonus action). Table: `SPELL_TELEPORT`; validity: `teleportOk`.
+- Spells with no rolls/effect template (Wish, Fog Cloud…) now show a "📜 Narrative spell"
+  card in the cast modal so casting them visibly does what it can: spend + log + narrate.
