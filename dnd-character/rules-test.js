@@ -263,6 +263,23 @@ T('dominated monster attacks its former ally, not the player', domInts.length>0 
 const domInts2=BRAINS.tactical(domQB, domQB.monsters[1]);
 T('enemy monster fights back against the dominated one', domInts2.length>0 && domInts2[0].type==='attack' && domInts2[0].targetId==='g1');
 
+/* ---- conditions drive advantage/disadvantage on attacks (PHB) ---- */
+const S=a=>new Set(a);
+T('poisoned attacker → disadvantage', attackAdvantage(S(['Poisoned']),S([]),true).adv===-1);
+T('restrained target → advantage', attackAdvantage(S([]),S(['Restrained']),true).adv===1);
+T('prone target: melee adv, ranged dis', attackAdvantage(S([]),S(['Prone']),true).adv===1 && attackAdvantage(S([]),S(['Prone']),false).adv===-1);
+T('poisoned attacker vs restrained target cancels out', attackAdvantage(S(['Poisoned']),S(['Restrained']),true).adv===0);
+T('paralyzed target: advantage + melee auto-crit', (()=>{ const x=attackAdvantage(S([]),S(['Paralyzed']),true); return x.adv===1 && x.autoCrit; })());
+T('paralyzed target: no auto-crit at range', attackAdvantage(S([]),S(['Paralyzed']),false).autoCrit===false);
+T('invisible attacker → advantage', attackAdvantage(S(['Invisible']),S([]),true).adv===1);
+T('unitConds reads monster conds & PC conditions', unitConds({conds:[{name:'Prone'}]}).has('Prone') && unitConds({c:{conditions:{Poisoned:true}}}).has('Poisoned') && unitConds(null).size===0);
+{ // integration: adjacent paralyzed target → hit becomes a crit via Engine.hitResult
+  const t={id:'t1',hp:20,x:0,y:0,conds:[{name:'Paralyzed',rounds:10}]}, a={id:'a1',x:0,y:1};
+  const ad3={unit:id=>id==='t1'?t:(id==='a1'?a:null), ac:()=>10, hp:u=>u.hp, hurt:(u,d)=>{u.hp=Math.max(0,u.hp-d);}, damageMult:()=>1};
+  const r3=Engine.hitResult(ad3,'a1','t1',{toHit:10},15);
+  T('melee hit vs paralyzed auto-crits (adv reported)', r3.hit===true && r3.crit===true && r3.adv===1);
+}
+
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
 const appVer=(src.match(/APP_VERSION='(v\d+)'/)||[])[1], swVer=(sw.match(/grimoire-(v\d+)/)||[])[1];

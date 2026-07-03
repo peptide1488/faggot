@@ -195,3 +195,15 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   the attack modal offers fellow monsters as targets with a 🌀 Dominated note. A lone
   dominated survivor ends the battle as a win. Simplifications: no repeat save on damage;
   control lasts the tracked rounds (10) rather than scaling by spell level.
+
+## v90 — conditions have mechanical teeth (attack rolls)
+- `attackAdvantage` (applied inside `Engine.hitResult`, so every mode gets it): attacker
+  Poisoned/Prone/Restrained/Blinded/Frightened → disadvantage; attacker Invisible →
+  advantage; target Restrained/Blinded/Paralyzed/Stunned/Unconscious/Petrified → advantage;
+  target Prone → advantage in melee (within 5 ft), disadvantage at range. Net result is
+  sign()-ed (multiple sources don't stack, PHB). Melee hits vs Paralyzed/Unconscious
+  auto-crit. Advantage rolls 2d20 keep high/low; a manually entered die overrides it.
+- Players' conditions ride along in the hello message so the DM side sees them; condition
+  changes re-hello.
+- Simplifications: Frightened ignores source visibility; Incapacitated doesn't yet block
+  the action economy; saves are unaffected by conditions (attack rolls only).

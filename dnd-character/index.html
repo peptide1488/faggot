@@ -379,6 +379,31 @@ const SKILLS = [
 const CLASSES = ['Artificer','Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin','Ranger','Rogue','Sorcerer','Warlock','Wizard','Other'];
 const ALIGN = ['—','LG','NG','CG','LN','TN','CN','LE','NE','CE'];
 const CONDITIONS = ['Blinded','Charmed','Deafened','Frightened','Grappled','Incapacitated','Invisible','Paralyzed','Petrified','Poisoned','Prone','Restrained','Stunned','Unconscious'];
+// Conditions with mechanical teeth (PHB): net advantage/disadvantage on an attack roll
+// from the attacker's and target's conditions. melee = attacker within 5 ft.
+// Returns {adv:-1|0|1, autoCrit (Paralyzed/Unconscious target hit in melee), why:[..]}.
+function attackAdvantage(aC, tC, melee){
+  const A=n=>!!(aC&&aC.has(n)), T=n=>!!(tC&&tC.has(n));
+  let adv=0; const why=[];
+  if(A('Poisoned')){ adv--; why.push('you are poisoned'); }
+  if(A('Prone')){ adv--; why.push('you are prone'); }
+  if(A('Restrained')){ adv--; why.push('you are restrained'); }
+  if(A('Blinded')){ adv--; why.push('you are blinded'); }
+  if(A('Frightened')){ adv--; why.push('you are frightened'); }
+  if(A('Invisible')){ adv++; why.push('you are invisible'); }
+  ['Restrained','Blinded','Paralyzed','Stunned','Unconscious','Petrified'].forEach(cn=>{ if(T(cn)){ adv++; why.push('target '+cn.toLowerCase()); } });
+  if(T('Prone')){ adv+=melee?1:-1; why.push('target prone'+(melee?'':' (ranged)')); }
+  return {adv:Math.sign(adv), autoCrit: melee&&(T('Paralyzed')||T('Unconscious')), why};
+}
+// Set of condition names on any unit shape: monster/mirror {conds:[{name}| 'name']},
+// PC-backed unit {c} or {me}, or a raw character {conditions:{}}.
+function unitConds(u){
+  if(!u) return new Set();
+  if(u.c||u.me){ const ch=u.c||playerChar(); return new Set(Object.keys((ch&&ch.conditions)||{})); }
+  if(Array.isArray(u.conds)) return new Set(u.conds.map(x=>x&&x.name?x.name:x));
+  if(u.conditions) return new Set(Object.keys(u.conditions));
+  return new Set();
+}
 const RACES = ['Aarakocra','Aasimar','Bugbear','Centaur','Changeling','Dragonborn','Dwarf','Elf','Fairy','Firbolg','Genasi','Githyanki','Githzerai','Gnome','Goblin','Goliath','Half-Elf','Half-Orc','Halfling','Harengon','Hobgoblin','Human','Human (Variant)','Kalashtar','Kenku','Kobold','Leonin','Lizardfolk','Loxodon','Minotaur','Orc','Owlin','Satyr','Shifter','Simic Hybrid','Tabaxi','Tiefling','Tortle','Triton','Vedalken','Warforged','Yuan-Ti'];
 // Races that grant a feat at level 1 (the player still picks +1 to two abilities manually).
 const RACE_L1_FEAT = {'Human (Variant)':true};
@@ -937,10 +962,18 @@ function attackFlow(c, atk){
       }
     }
     let ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null, cover=0;
-    if(ac!=null && net&&net.session&&!atk.spell){ const me=myMapPos(); const mo=net.session.monsters.find(m=>m.id===net.targetMon.id); if(mo){ cover=coverBetween(net.session, me.x,me.y, mo.x,mo.y); ac+=cover; } }
-    const r=Engine.roll(toHit, ac, face); sfx('swing');   // unified d20 resolver
+    // condition-driven advantage: my conditions always count; the target's when known
+    let tSet=new Set(), melee=!(wref&&wref.type==='ranged');
+    if(net&&net.session&&net.targetMon){ const me=myMapPos(); const mo=net.session.monsters.find(m=>m.id===net.targetMon.id);
+      if(mo){ tSet=unitConds(mo); melee=gridDist(me.x,me.y,mo.x,mo.y)<=1;
+        if(ac!=null && !atk.spell){ cover=coverBetween(net.session, me.x,me.y, mo.x,mo.y); ac+=cover; } } }
+    const cx=attackAdvantage(new Set(Object.keys(c.conditions||{})), tSet, melee);
+    const r=Engine.roll(toHit, ac, face, cx.adv); sfx('swing');   // unified d20 resolver
+    if(cx.autoCrit && (r.hit||ac==null)) r.crit=true;   // Paralyzed/Unconscious target hit in melee
     const d20=r.d20; st.d20=d20; st.crit=r.crit; st.total=r.total;
-    pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit), crit:d20===20?'crit':d20===1?'fumble':null, kind:'check'});
+    const advTag=(face==null&&cx.adv)?((cx.adv>0?' · ADV':' · DIS')+' — '+cx.why.join(', ')):'';
+    if(advTag) flashBanner((cx.adv>0?'⬆ Advantage':'⬇ Disadvantage')+': '+cx.why.join(', '));
+    pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit)+advTag, crit:st.crit?'crit':d20===1?'fumble':null, kind:'check'});
     if(c.battle && !atk.spell && !atk.offhand && !atk.reaction){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); save(); }
     if(ac!=null){   // known target AC → auto-resolve, no Hit/Miss prompt
       const hit = r.hit;
@@ -2917,7 +2950,7 @@ function renderCombat(c){
   app.querySelectorAll('[data-cond]').forEach(el=>el.addEventListener('click',()=>{
     const k=el.dataset.cond;
     if(c.conditions[k]){ delete c.conditions[k]; logChange(c,'Cleared condition: '+k); } else { c.conditions[k]=true; logChange(c,'Gained condition: '+k); }
-    save(); render();
+    save(); render(); if(net&&net.role==='player') playerHello();   // conditions drive advantage — keep the DM's mirror current
   }));
   $('#exhUp').addEventListener('click',()=>{ c.exhaustion=Math.min(6,(c.exhaustion||0)+1); save(); render(); });
   $('#exhDown').addEventListener('click',()=>{ c.exhaustion=Math.max(0,(c.exhaustion||0)-1); save(); render(); });
@@ -3590,7 +3623,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[]});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
@@ -3672,7 +3705,7 @@ function playerJoin(code, charId){
 }
 function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c'+Math.random().toString(36).slice(2,10); localStorage.setItem('grimoire.cid',id); } return id; }
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
-function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c)}}); }catch(e){} }
+function playerHello(){ const c=playerChar(); if(!c||!net.conn) return; try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{})}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -3685,7 +3718,7 @@ function playerOnData(d){ if(!d) return;
     render();
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
   else if(d.t==='oachance'){ const c=playerChar(); if(c) playerOpportunityPrompt(c, d); }
-  else if(d.t==='cond'){ const c=playerChar(); if(c){ if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); flashBanner('🌀 '+d.name); } }
+  else if(d.t==='cond'){ const c=playerChar(); if(c){ if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
 }
 // A monster left this player's reach — offer one melee opportunity attack (uses the reaction).
 function playerOpportunityPrompt(c, d){
@@ -4227,7 +4260,7 @@ function dmMonsterAttack(mo){
     } else if(st.phase==='aim'){
       body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maRoll">🎲 Roll to hit (+${st.atk.hit||0}) vs AC ${t.ac}</button>`;
     } else {
-      const ac=st.ac!=null?st.ac:t.ac, isHit=st.total>=ac||st.d20===20, crit=st.d20===20;
+      const ac=st.ac!=null?st.ac:t.ac, crit=st.crit||st.d20===20, isHit=st.total>=ac||crit;
       body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:32px;font-weight:700;color:${isHit?'var(--good)':'var(--bad)'}">${st.total}</div><div class="muted">d20(${st.d20}) +${st.atk.hit||0} vs AC ${ac}${st.cover?' (+'+st.cover+' cover)':''} — ${crit?'💥 CRIT':isHit?'HIT':'MISS'}</div></div>`;
       if(isHit){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage${crit?' (crit ×2 dice)':''}</button>`;
         else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><button class="btn bad block" id="maApply">Apply ${st.dmg} to ${esc(t.name)}</button>`; }
@@ -4237,10 +4270,10 @@ function dmMonsterAttack(mo){
     $('#modalRoot').innerHTML=`<div class="modal" id="maModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
     $('#maModal').onclick=e=>{ if(e.target.id==='maModal') $('#modalRoot').innerHTML=''; };
     $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
-    { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; draw(); }; }
-    document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; draw(); });
-    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.phase='res'; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
-    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; sfx('damage'); attackFx(st.d20===20?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, st.d20===20); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(st.d20===20?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
+    { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; st.crit=false; draw(); }; }
+    document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; st.crit=false; draw(); });
+    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0, tiles:st.atk.tiles}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; const crit=st.crit||st.d20===20; sfx('damage'); attackFx(crit?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, crit); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(crit?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
     const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
     // apply through the Engine — the modal rolled interactively, so the pre-rolled d20 and
     // damage are passed in; the Engine mutates via the adapter and emits the event stream.
@@ -4251,7 +4284,7 @@ function dmMonsterAttack(mo){
       $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const f=$('#maFull'); if(f) f.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(false)); flashBanner(tgt().name+' takes '+ev.dmg+(ev.cond?' — 🌀 '+ev.cond:'')); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(true)); flashBanner(tgt().name+' takes '+ev.dmg+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
-    { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; st.consumed=false; draw(); }; }
+    { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; st.crit=false; st.consumed=false; draw(); }; }
   }
   draw();
 }
@@ -4356,14 +4389,26 @@ const Events = { log:[], subs:[],
 try{ if(typeof window!=='undefined') window.GrimoireEvents=Events; }catch(e){}
 const Engine = {
   // pure d20 roll vs an AC (adapter-free). ac==null → hit unknown (caller prompts).
-  roll(toHit, ac, face){ const d20=face!=null?face:rnd(20), total=d20+(toHit||0), crit=d20===20;
+  // adv: +1 roll twice take high, −1 take low (a manual `face` overrides advantage).
+  roll(toHit, ac, face, adv){ let d20;
+    if(face!=null) d20=face;
+    else if(adv){ const a=rnd(20), b=rnd(20); d20=adv>0?Math.max(a,b):Math.min(a,b); }
+    else d20=rnd(20);
+    const total=d20+(toHit||0), crit=d20===20;
     const hit = ac==null ? null : (crit||(d20!==1&&total>=ac)); return {d20, total, crit, hit}; },
-  // resolve a to-hit against a target via an adapter — no damage, no mutation. Adds cover to AC.
+  // resolve a to-hit against a target via an adapter — no damage, no mutation. Adds cover
+  // to AC and applies condition-driven advantage/disadvantage (+ auto-crit in melee vs
+  // Paralyzed/Unconscious). melee = within 5 ft when positions are known, else by range.
   hitResult(ad, actorId, targetId, atk, face){
     const t=ad.unit(targetId), a=ad.unit(actorId);
     const cover=(ad.cover && a && t) ? ad.cover(a,t) : 0;
     const ac=(t?ad.ac(t):(atk.targetAC||10)) + cover;
-    return Object.assign({ac, cover}, Engine.roll(atk.toHit, ac, face));
+    const dist=(a&&t&&a.x!=null&&t.x!=null)?gridDist(a.x,a.y,t.x,t.y):null;
+    const melee=dist!=null?dist<=1:!((atk.tiles||1)>1);
+    const cx=attackAdvantage(unitConds(a), unitConds(t), melee);
+    const r=Engine.roll(atk.toHit, ac, face, cx.adv);
+    if(cx.autoCrit && r.hit) r.crit=true;
+    return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why}, r);
   },
   rollDamage(atk, crit){ const base=atk.dmg||'1d6'; const note=crit?critNotation(base):base; return (rollNotation(note)||{total:0}).total; },
   // resolve one attack atomically → returns an event {type,actorId,targetId,hit,crit,dmg,total,ac,void?}
@@ -4829,7 +4874,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v89';
+const APP_VERSION='v90';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
