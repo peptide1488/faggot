@@ -25,7 +25,8 @@ global.requestAnimationFrame=f=>f();
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;');
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
+  'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -305,6 +306,51 @@ T('incapacitated monster loses its turn (brain returns nothing)', BRAINS.tactica
   ts9.battle.timeStopTurns=0;
   T('no banked turns → end turn passes normally', timeStopExtraTurn(ts9)===false); }
 T('AI narrator key defaults to unset', aiKey()==='');
+
+/* ---- Grease: real difficult terrain, not just a one-shot save (v92) ---- */
+T('Grease is registered as a terrain-painting spell', SPELL_TERRAIN['Grease'] && SPELL_TERRAIN['Grease'].terrain==='grease' && SPELL_TERRAIN['Grease'].rounds===10);
+T('grease terrain is difficult and trips creatures', TERRAIN['grease'].diff===true && TERRAIN['grease'].prone===true);
+{ const gs={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[]};
+  qbPaintTerrain(gs, {x:2,y:2}, 1, 'Grease', 13);
+  const painted=['1,1','2,1','3,1','1,2','2,2','3,2','1,3','2,3','3,3'].every(k=>gs.map.tiles[k]==='grease');
+  T('qbPaintTerrain covers the blast radius (3x3 for r1)', painted);
+  T('qbHazardAt finds the painted hazard and its save DC', qbHazardAt(gs,2,2) && qbHazardAt(gs,2,2).dc===13);
+  T('untouched tiles outside the blast stay unpainted', gs.map.tiles['0,0']===undefined);
+  gs.battle.round=11; qbExpireHazards(gs);
+  T('hazard reverts its tiles after its duration expires', Object.keys(gs.map.tiles).length===0 && gs.hazards.length===0);
+}
+{ const gs3={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[]};
+  qbPaintTerrain(gs3, {x:1,y:1}, 0, 'Grease', 999);   // DC 999 → always fails the save
+  const mo={name:'Goblin',x:1,y:1,base:'Goblin'};
+  qbCheckTerrainProne(gs3, mo, 1, 1, false);
+  T('a monster that fails its save falls prone on grease', mo.conds && mo.conds.some(c=>c.name==='Prone'));
+  const c=newCharacter('Slippy'); c.abilities.dex=10;
+  qbCheckTerrainProne(gs3, c, 1, 1, true);
+  T('a PC that fails its save falls prone on grease', c.conditions && c.conditions['Prone']===true);
+}
+{ const gs2={map:{cols:5,rows:5,tiles:{wall:'wall'}}, battle:{round:1}};
+  gs2.map.tiles['2,2']='wall';
+  qbPaintTerrain(gs2, {x:2,y:2}, 0, 'Grease', 13);
+  T('qbPaintTerrain does not overwrite solid terrain', gs2.map.tiles['2,2']==='wall');
+}
+
+/* ---- coverage audit: a spell described with area/condition language must have a
+   matching SPELL_AOE/SPELL_COND row, or it silently does nothing when cast (this is
+   exactly how Grease and Meteor Swarm broke — this test exists so the next one fails
+   loudly instead of being found by trial and error in a live battle). ---- */
+{ const AOE_WORDS=/(\d+)[- ]ft(?:\.|oot)?[- ](radius|sphere|cone|cube|line|square|cylinder)|radius (column|sphere)|(\d+)-ft (sphere|cone|cube|line|square|cylinder)/i;
+  const COND_WORDS=/\b(Blinded|Charmed|Deafened|Frightened|Grappled|Incapacitated|Paralyzed|Petrified|Poisoned|Prone|Restrained|Stunned|sicken|paralyze|charm|frighten|restrain)\b/i;
+  // Spells whose area/condition language is real but not modeled as a blast/save-condition
+  // in this engine (bigger new mechanics, or too small to need blast UI) — see AUDIT.md
+  // "Coverage audit (v92)". Adding a spell here must come with an AUDIT.md line explaining why.
+  const AOE_EXCEPT=new Set(['Fog Cloud','Darkness','Silence','Daylight','Gust of Wind','Antimagic Field','Cloud of Daggers']);
+  const COND_EXCEPT=new Set(['Unseen Servant','Calm Emotions','Invisibility','Lesser Restoration','See Invisibility','Clairvoyance','Arcane Eye','Greater Invisibility','Dream','Greater Restoration','Mislead','Telekinesis','Wall of Force','Eyebite','Heal','Holy Aura','Mind Blank','Power Word Stun']);
+  const allSpells=Object.keys(SPELL_DESC);
+  const aoeGaps=allSpells.filter(n=>AOE_WORDS.test(SPELL_DESC[n]) && !(n in SPELL_AOE) && !AOE_EXCEPT.has(n));
+  const condGaps=allSpells.filter(n=>COND_WORDS.test(SPELL_DESC[n]) && !(n in SPELL_COND) && !COND_EXCEPT.has(n));
+  T('no undocumented AoE gaps: '+aoeGaps.join(', '), aoeGaps.length===0);
+  T('no undocumented condition gaps: '+condGaps.join(', '), condGaps.length===0);
+}
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');

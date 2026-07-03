@@ -32,6 +32,39 @@ fighting styles, and monster data.
 - Spirit Guardians and Thunderwave are self-centered in the PHB — center them on your own tile.
 - Meteor Swarm was missing from SPELL_AOE entirely (fell through to a single-target cast). Its four 40-ft-radius impact points are collapsed to one centered r8 burst, same radius as Sleet Storm's largest sphere.
 
+### Coverage audit (v92) — spells that silently did nothing
+`SPELL_AOE`/`SPELL_COND` are hand-curated tables; a spell missing from both isn't an error,
+it just falls through to "no blast, no condition" with zero feedback. A one-time sweep of
+every `SPELL_DESC` entry for area/condition language turned up real no-ops beyond Grease and
+Meteor Swarm — all fixed:
+- **Charm Person / Animal Friendship** — Charmed condition was never applied on a failed save (Charmed 1 hr / 24 hr).
+- **Fear** — no AoE (single-target only, contradicting its 30-ft cone) and no Frightened condition. Added AoE r2 (cone-length ratio matching Burning Hands/Cone of Cold) + `SPELL_COND`.
+- **Color Spray** — no AoE and no Blinded condition; was a complete no-op like Grease/Meteor Swarm.
+- **Sunbeam** — dealt damage but never blinded on a failed save.
+- **Sleet Storm** — had an AoE but no save keyword in its description (so no save was ever rolled) and no Prone condition; reworded to state "Dex save" and added the condition.
+`rules-test.js` now runs a standing coverage check so a spell added with area/condition
+language in its description but missing from these tables **fails the test suite
+immediately** instead of shipping silently broken. Any future addition to the exceptions
+list needs a one-line reason here, same as the ones below.
+
+Also (v92→v93): **Grease** now paints real difficult terrain (`SPELL_TERRAIN`, `TERRAIN.grease`)
+that lasts 10 rounds (1 min) and reverts automatically — anyone who ends a move on it rolls a
+Dex save (DC = the caster's spell DC at cast time) or falls prone, checked for both the PC
+(`qbMovePc`) and monster movement (`qbApplyIntent`). Previously it only checked whoever was
+standing in the blast at the moment of casting. And: casting a narrative/utility spell (e.g.
+Unseen Servant) in Quick Battle now writes a line to the visible Battle Log — it always spent
+the slot and logged to the character sheet, but gave zero feedback in the log the player is
+actually watching, which read as "does nothing."
+
+**Documented, not fixed** (need real new mechanics, not a missing table row — excluded from
+the coverage check with inline comments):
+- **Power Word Kill / Power Word Stun** — no-save, HP-threshold instant kill/stun. Nothing
+  in the engine currently reads a threshold off SPELL_DESC; needs dedicated code, not a table entry.
+- **Eyebite** — DM/player picks one of three effects (frighten/poison-sicken/sleep) per target each turn; not a single fixed condition.
+- **Holy Aura** — the blind trigger is reactive (fires when a foe *hits* a warded ally), not on-cast; doesn't fit the save-on-cast model.
+- **Cloud of Daggers** — a 5-ft-cube zone is a single tile; direct single-target selection already covers it, no blast UI needed.
+- **Fog Cloud, Darkness, Silence, Daylight, Gust of Wind, Antimagic Field** — pure vision/utility auras with no damage or condition to apply in this engine; their radius is flavor only.
+
 ### Casting-time / action economy
 - **Reaction spells** implemented: Shield, Hellish Rebuke, Counterspell, Feather Fall, Absorb Elements now check & spend the **reaction**, not the action.
 - Bonus-action list gained Expeditious Retreat, Shillelagh, Divine Favor (all bonus-action casts in the PHB).
