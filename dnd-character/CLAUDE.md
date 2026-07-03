@@ -63,6 +63,10 @@ Combat / grid / multiplayer:
 - `BRAINS.tactical` — monster AI; `CONTROLLERS` — human/tactical/agent switch
 - `function dmHost` / `dmOnData` / `renderDM` — DM mode; `playerJoin`/`renderPlayerBattle` —
   player netplay; `openSpellTarget` — net spell targeting
+- `function saveCampaign` / `loadCampaign` / `mergeCampaignPlayers` / `campaignSnapshot` —
+  DM campaign persistence (localStorage `grimoire.campaigns`: map, monsters, party progress,
+  battle state, log). Join-then-pick: players connect first, load re-binds them by `cid`;
+  autosaves (debounced) in `dmBroadcast` while `net.campaign` is set
 - `startQuickBattle` / `qbSpellTarget` / `qbResolveAttack` — solo-vs-AI arena
   (`monsterSaveBonus` = CR-scaled saves; friendly fire lives in `resolveBlast`)
 - `parseMonsterAttacks` — parses bestiary `atk` strings (also load-bearing prose:

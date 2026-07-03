@@ -3551,7 +3551,8 @@ function dmOpportunityAttack(mo,p){
   flashBanner('⚔ Opportunity: '+mo.name+(ev.hit?' hits '+p.name+' for '+ev.dmg:' misses '+p.name));
   dmBroadcast(); render();
 }
-function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
+function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} });
+  if(net.campaign){ clearTimeout(net._cpT); net._cpT=setTimeout(()=>{ if(net&&net.role==='dm'&&net.campaign) saveCampaign(net.campaign,true); },1500); } }   // active campaign autosaves (debounced)
 function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.placed) return; p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ if(m.placed) return; m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
 function rollInitiative(){ const s=net.session; const o=[];
   s.players.forEach(p=>o.push({k:'p',id:p.id,name:p.name,roll:rnd(20)+(p.init||0)}));
@@ -3568,7 +3569,7 @@ function dmPrevTurn(){ const s=net.session; if(!s.order||!s.order.length) return
   let guard=0; do{ if((s.turn||0)===0){ s.turn=s.order.length-1; if(s.battle.round>1) s.battle.round--; } else s.turn--; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
   dmBroadcast(); render(); flashBanner('Back to '+(s.order[s.turn]?s.order[s.turn].name:'previous')); }
 function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
-function dmExit(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
+function dmExit(){ if(net&&net.campaign) saveCampaign(net.campaign,true); try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
 /* ---- Player join ---- */
 function openJoin(){
@@ -3908,6 +3909,41 @@ const MAP_PRESETS=(()=>{ const P={};
   return P; })();
 function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
 function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{}), height:Object.assign({},d.height||{})}; dmBroadcast(); render(); }
+
+/* ---- CAMPAIGNS: a saved DM session (map, monsters, party progress, battle state, log)
+   in localStorage 'grimoire.campaigns'. Flow is join-then-pick: players connect to the
+   room first, then the DM loads a campaign — connected players re-bind to their saved
+   party slot by cid. While a campaign is active it autosaves on every broadcast. ---- */
+function campaigns(){ try{ return JSON.parse(localStorage.getItem('grimoire.campaigns')||'{}'); }catch(e){ return {}; } }
+function campaignSnapshot(s){ return JSON.parse(JSON.stringify({battle:s.battle, map:s.map, monsters:s.monsters||[], players:(s.players||[]).map(p=>Object.assign({},p,{online:false})), order:s.order||[], turn:s.turn||0})); }
+function saveCampaign(name, quiet){ if(!net||net.role!=='dm'||!name) return;
+  const all=campaigns(), prev=all[name];
+  all[name]={name, created:prev?prev.created:Date.now(), updated:Date.now(), session:campaignSnapshot(net.session), log:rollLog.slice(0,40)};
+  try{ localStorage.setItem('grimoire.campaigns',JSON.stringify(all)); }catch(e){ flashBanner('Could not save campaign (storage full?)'); return; }
+  net.campaign=name; if(!quiet){ flashBanner('💾 Campaign saved: '+name); render(); } }
+// Re-bind connected players to their saved party slot by cid: the saved entry keeps its
+// map position/progress, the live entry wins identity + HP (the player's device owns HP).
+// Saved players not connected go offline; connected players not in the campaign append.
+// `remap` collects oldPeerId→newPeerId so the saved turn order can follow reconnects.
+function mergeCampaignPlayers(saved, live, remap){ remap=remap||{};
+  const out=(saved||[]).map(p=>Object.assign({},p,{online:false}));
+  (live||[]).forEach(lp=>{ const sp=lp.cid && out.find(p=>p.cid===lp.cid);
+    if(sp){ if(sp.id&&sp.id!==lp.id) remap[sp.id]=lp.id;
+      Object.assign(sp,{id:lp.id, online:lp.online!==false, name:lp.name, cls:lp.cls, level:lp.level, hpCur:lp.hpCur, hpMax:lp.hpMax, ac:lp.ac, init:lp.init}); }
+    else out.push(lp); });
+  return out; }
+function loadCampaign(name){ if(!net||net.role!=='dm') return; const cp=campaigns()[name]; if(!cp||!cp.session){ flashBanner('No such campaign'); return; }
+  const live=(net.session&&net.session.players)||[];
+  const s=JSON.parse(JSON.stringify(cp.session)), remap={};
+  s.players=mergeCampaignPlayers(s.players, live, remap);
+  (s.order||[]).forEach(o=>{ if(o.k==='p'&&remap[o.id]) o.id=remap[o.id]; });   // turn order follows reconnected peer ids
+  net.session={battle:s.battle||{active:false,round:1}, map:s.map||{cols:10,rows:8,tiles:{}}, monsters:s.monsters||[], players:s.players, order:s.order||[], turn:s.turn||0};
+  rollLog=(cp.log||[]).slice(0,40);   // restore the campaign's battle log
+  net.campaign=name; net.sel=null;
+  dmBroadcast(); render(); flashBanner('📜 Campaign loaded: '+name); }
+function deleteCampaign(name){ const all=campaigns(); delete all[name];
+  try{ localStorage.setItem('grimoire.campaigns',JSON.stringify(all)); }catch(e){}
+  if(net&&net.campaign===name) net.campaign=null; flashBanner('Campaign deleted: '+name); }
 function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
   const at=(x,y)=>tiles[x+','+y];
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
@@ -3952,6 +3988,11 @@ function renderDM(){
     <div style="font-family:Georgia,serif;font-size:36px;font-weight:700;color:var(--accent);text-align:center;letter-spacing:8px;margin:6px 0">${net.peer&&!net.peer.disconnected?net.code:'connecting…'}</div>
     <div class="muted" style="font-size:11.5px;text-align:center">${net.conns.length} player(s) connected</div>
   </div>
+  ${(()=>{ const all=campaigns(), names=Object.keys(all).sort((a,b)=>(all[b].updated||0)-(all[a].updated||0)); return `<div class="card">
+    <div class="row between"><h2 style="margin:0">📜 Campaign</h2>${net.campaign?`<span class="muted" style="font-size:11px;text-transform:none">▶ ${esc(net.campaign)} · autosaving</span>`:''}</div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">${net.campaign?'Map, monsters, party progress & battle log save automatically.':'Save this session — map, monsters, party progress & log — to continue another night. Players join first, then you load.'}</p>
+    <div class="addrow" style="margin-top:8px"><select id="cpSel" style="flex:2"><option value="">— saved campaigns —</option>${names.map(n=>`<option value="${esc(n)}" ${n===net.campaign?'selected':''}>${esc(n)} — ${new Date(all[n].updated||all[n].created||Date.now()).toLocaleDateString()}</option>`).join('')}</select><button class="btn sm" id="cpLoad">Load</button><button class="btn ghost sm" id="cpSave">💾 Save</button>${names.length?'<button class="del" id="cpDel" title="Delete selected campaign">✕</button>':''}</div>
+  </div>`; })()}
   <div class="card">
     <div class="row between"><h2 style="margin:0">Battle</h2><div class="stepper"><button id="dmRD">−</button><div class="val">Round ${s.battle.round}</div><button id="dmRU">＋</button></div></div>
     <button class="btn block" id="dmBattle" style="margin-top:10px;${s.battle.active?'background:var(--bad);border-color:var(--bad)':''}">${s.battle.active?'■ End battle (everyone)':'▶ Start battle (places tokens & rolls initiative)'}</button>
@@ -3994,7 +4035,12 @@ function renderDM(){
       ${rollLog.length? rollLog.slice(0,30).map(r=>`<div class="listrow" style="padding:4px 0"><span class="lr-total" style="min-width:30px">${r.total}</span><div class="nm" style="font-size:12px">${esc(r.label)}</div><div class="sub" style="white-space:nowrap;font-size:11px">${esc(String(r.detail||'').replace(/<[^>]+>/g,''))}</div></div>`).join('') : '<div class="empty" style="padding:8px 0">Monster attacks & player hits show here.</div>'}
     </div>
   </div>`;
-  $('#dmExit').onclick=()=>{ if(confirm('Exit DM mode and disconnect players?')) dmExit(); };
+  $('#dmExit').onclick=()=>{ if(confirm('Exit DM mode and disconnect players?'+(net.campaign?' (campaign "'+net.campaign+'" is saved)':''))) dmExit(); };
+  { const cs=$('#cpSave'); if(cs) cs.onclick=()=>{ const nm=prompt('Campaign name:', net.campaign||''); if(nm&&nm.trim()) saveCampaign(nm.trim()); }; }
+  { const cl=$('#cpLoad'); if(cl) cl.onclick=()=>{ const nm=$('#cpSel').value; if(!nm){ flashBanner('Pick a campaign to load'); return; }
+    if(confirm('Load "'+nm+'"? The current map, monsters & battle are replaced (connected players stay and re-join their saved spots).')) loadCampaign(nm); }; }
+  { const cd=$('#cpDel'); if(cd) cd.onclick=()=>{ const nm=$('#cpSel').value; if(!nm){ flashBanner('Pick a campaign to delete'); return; }
+    if(confirm('Delete campaign "'+nm+'"? This cannot be undone.')){ deleteCampaign(nm); render(); } }; }
   $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
   $('#dmRD').onclick=()=>{ s.battle.round=Math.max(1,s.battle.round-1); dmBroadcast(); render(); };
   $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
@@ -4029,12 +4075,12 @@ function renderDM(){
         if(cost>(mo.moveLeft||0)){ if(!dashAvail){ flashBanner(mo.name+' too far — needs its action to Dash'); return; } mo.moveLeft=(mo.moveLeft||0)+(mo.speed||30); mo.attacksLeft=0; flashBanner('🏃 '+mo.name+' Dashes (action used)'); }
         mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
-      if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } }
+      if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; Events.emit({type:'hazard', unitId:mo.id, terrain:ter, deadly:true}); flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); Events.emit({type:'hazard', unitId:mo.id, terrain:ter, dmg:d}); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } }
       Events.emit({type:'move', id:mo.id, by:mo.name, to:{x:mo.x,y:mo.y}, fly:mfly});
       if(wasBattle){ const leaving=s.players.filter(p=>(p.hpCur||0)>0 && leavesReach(fromX,fromY,mo.x,mo.y,p.x,p.y,1)); leaving.forEach(p=>dmSend(p.id,{t:'oachance',mon:mo.id,name:mo.name,ac:mo.ac})); if(leaving.length) flashBanner('⚔ '+mo.name+' provokes opportunity attack'+(leaving.length>1?'s':'')+' from '+leaving.map(p=>p.name).join(', ')); }
     } }
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && ter==='wall'){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
-      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } } } }
+      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, deadly:true}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, dmg:d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } } } }
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain & elevation?')){ s.map.tiles={}; s.map.height={}; dmBroadcast(); render(); } }; }
   { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
@@ -4128,10 +4174,15 @@ function dmMonsterAttack(mo){
     { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.phase='res'; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac, crit:st.d20===20?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
     { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; sfx('damage'); attackFx(st.d20===20?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, st.d20===20); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(st.d20===20?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
     const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
-    const impose=()=>{ if(st.atk.cond){ dmSend(st.targetId,{t:'cond',name:st.atk.cond}); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); } };
-    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(mo.name+' hits '+tgt().name+' for '+st.dmg); impose(); $('#modalRoot').innerHTML=''; useAtk(); }; }
-    { const f=$('#maFull'); if(f) f.onclick=()=>{ sessionAdapter.hurt(tgt(), Math.abs(st.dmg)); flashBanner(tgt().name+' takes '+st.dmg); impose(); $('#modalRoot').innerHTML=''; useAtk(); }; }
-    { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const half=Math.floor(st.dmg/2); sessionAdapter.hurt(tgt(), half); flashBanner(tgt().name+' takes '+half+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    // apply through the Engine — the modal rolled interactively, so the pre-rolled d20 and
+    // damage are passed in; the Engine mutates via the adapter and emits the event stream.
+    const saveSp=savedKnown=>({name:st.atk.name, dc:st.atk.dc?st.atk.dc.n:10, save:st.atk.dc?String(st.atk.dc.ab).toLowerCase():null, savedKnown, dmgTotal:Math.abs(st.dmg), cond:st.atk.cond?{c:st.atk.cond,rounds:10}:null});
+    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ const ev=Engine.attack(sessionAdapter, mo.id, st.targetId, {name:st.atk.name, toHit:st.atk.hit||0, dmg:st.atk.dmg||'1d6', tiles:st.atk.tiles}, {face:st.d20, dmgTotal:Math.abs(st.dmg)});
+      if(ev.hit){ flashBanner(mo.name+' hits '+tgt().name+' for '+ev.dmg); if(st.atk.cond){ dmSend(st.targetId,{t:'cond',name:st.atk.cond}); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); } }
+      else flashBanner(mo.name+' misses '+tgt().name);
+      $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const f=$('#maFull'); if(f) f.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(false)); flashBanner(tgt().name+' takes '+ev.dmg+(ev.cond?' — 🌀 '+ev.cond:'')); $('#modalRoot').innerHTML=''; useAtk(); }; }
+    { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(true)); flashBanner(tgt().name+' takes '+ev.dmg+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; st.consumed=false; draw(); }; }
   }
   draw();
@@ -4248,11 +4299,13 @@ const Engine = {
   },
   rollDamage(atk, crit){ const base=atk.dmg||'1d6'; const note=crit?critNotation(base):base; return (rollNotation(note)||{total:0}).total; },
   // resolve one attack atomically → returns an event {type,actorId,targetId,hit,crit,dmg,total,ac,void?}
+  // opts: {face: pre-rolled d20, dmgTotal: pre-rolled damage (interactive modals roll
+  // step-by-step, then commit through here so events/mutation stay unified), apply:false}
   attack(ad, actorId, targetId, atk, opts){ opts=opts||{};
     const a=ad.unit(actorId), t=ad.unit(targetId);
     if(!a||!t||ad.hp(t)<=0) return {type:'attack', void:true, actorId, targetId};
     const r=Engine.hitResult(ad, actorId, targetId, atk, opts.face);
-    let dmg=0, mult=1; if(r.hit){ dmg=Engine.rollDamage(atk, r.crit); mult=ad.damageMult?ad.damageMult(t, atk.dtype||atk.dt):1; dmg=Math.max(0,Math.round(dmg*mult)); if(opts.apply!==false) ad.hurt(t,dmg); }
+    let dmg=0, mult=1; if(r.hit){ dmg=(opts.dmgTotal!=null)?opts.dmgTotal:Engine.rollDamage(atk, r.crit); mult=ad.damageMult?ad.damageMult(t, atk.dtype||atk.dt):1; dmg=Math.max(0,Math.round(dmg*mult)); if(opts.apply!==false) ad.hurt(t,dmg); }
     const ev={type:'attack', actorId, targetId, name:atk.name, from:a&&{x:a.x,y:a.y}, to:t&&{x:t.x,y:t.y}, ranged:(atk.tiles||1)>1, dtype:atk.dtype||atk.dt||'', d20:r.d20, total:r.total, ac:r.ac, cover:r.cover, hit:r.hit, crit:r.crit, dmg, mult};
     Events.emit(ev);
     if(r.hit && ad.hp(t)<=0) Events.emit({type:'death', unitId:targetId, at:t&&{x:t.x,y:t.y}});
@@ -4266,7 +4319,8 @@ const Engine = {
     const t=ad.unit(targetId);
     if(!t||ad.hp(t)<=0) return {type:'spell', void:true, actorId, targetId};
     let saved=false, saveRoll=null;
-    if(sp.save){ const sb=ad.saveBonus?ad.saveBonus(t, sp.save):0; saveRoll=rnd(20)+sb; saved=saveRoll>=sp.dc; }
+    if(sp.savedKnown!=null){ saved=!!sp.savedKnown; }   // DM adjudicated the save off-app (player rolled a real die)
+    else if(sp.save){ const sb=ad.saveBonus?ad.saveBonus(t, sp.save):0; saveRoll=rnd(20)+sb; saved=saveRoll>=sp.dc; }
     let dmg=0, mult=1;
     if(sp.dmgTotal){ dmg=saved?Math.floor(sp.dmgTotal/2):sp.dmgTotal; mult=ad.damageMult?ad.damageMult(t, sp.dtype):1; dmg=Math.max(0,Math.round(dmg*mult)); if(dmg) ad.hurt(t,dmg,sp.dtype); }
     if(sp.cond && !saved && ad.addCond) ad.addCond(t, sp.cond.c, sp.cond.rounds);
@@ -4695,7 +4749,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v85';
+const APP_VERSION='v86';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
