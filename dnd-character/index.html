@@ -1475,7 +1475,11 @@ const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necroti
 // — center them on your own tile.
 const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
-const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10}};
+const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10}};
+// Dominate Person/Beast/Monster: a Dominated monster fights for the party — the Quick
+// Battle brain retargets its former allies, and the DM attack modal offers monsters
+// instead of players. (Simplification: no repeat save on damage; ends when rounds expire.)
+function isDominated(u){ return !!(u&&u.conds&&u.conds.some(x=>x.name==='Dominated')); }
 // Spells whose casting time is a bonus action (everything else defaults to an action).
 const BONUS_ACTION_SPELLS=new Set(['Healing Word','Mass Healing Word','Misty Step','Spiritual Weapon','Hex',"Hunter's Mark",'Shield of Faith','Sanctuary','Healing Spirit','Searing Smite','Wrathful Smite','Thunderous Smite','Branding Smite','Ensnaring Strike','Hail of Thorns','Zephyr Strike','Compelled Duel','Flame Blade','Magic Stone',"Hunter’s Mark",'Expeditious Retreat','Shillelagh','Divine Favor']);
 // Spells cast as a reaction (PHB): Shield & Hellish Rebuke (when hit), Counterspell (when a
@@ -4193,9 +4197,14 @@ function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim())
 function dmMonsterAttack(mo){
   if(net.session.battle.active && mo.attacksLeft!=null && mo.attacksLeft<=0){ flashBanner(mo.name+' already attacked this turn — ▶ Next turn to reset'); return; }
   const atks=parseMonsterAttacks(mo.atk); if(!atks.length) atks.push({name:'Attack',hit:0,dmg:'1d6'});
-  const players=net.session.players; if(!players.length){ flashBanner('No players connected to target'); return; }
+  // a Dominated monster is forced to attack its allies — offer monsters, not players
+  const dominated=isDominated(mo);
+  const players= dominated
+    ? net.session.monsters.filter(m=>m.hp>0&&m.id!==mo.id).map(m=>({id:m.id,name:m.name,ac:m.ac,hpCur:m.hp,hpMax:m.max,x:m.x,y:m.y}))
+    : net.session.players;
+  if(!players.length){ flashBanner(dominated?'No other monsters for '+mo.name+' to attack':'No players connected to target'); return; }
   const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0, consumed:false};
-  const tgt=()=>net.session.players.find(p=>p.id===st.targetId)||players[0];
+  const tgt=()=>players.find(p=>p.id===st.targetId)||players[0];
   // Making an attack (hit OR miss) spends one of the monster's attacks — identical to
   // the player rule. Each fresh attack in the sequence must commit before it can roll.
   const commitAttack=()=>{ if(!net.session.battle.active || mo.attacksLeft==null) return true;
@@ -4206,6 +4215,7 @@ function dmMonsterAttack(mo){
     if(inR.length && !inR.some(p=>p.id===st.targetId)) st.targetId=inR[0].id;
     const t=tgt(); const left=(net.session.battle.active&&mo.attacksLeft!=null)?mo.attacksLeft:null;
     let body=`<h2>⚔ ${esc(mo.name)} attacks${left!=null?` <span class="muted" style="font-size:12px;text-transform:none">— ${left}/${mo.attacks||1} attack${(mo.attacks||1)>1?'s':''} left</span>`:''}</h2>`;
+    if(dominated) body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">🌀 <b>Dominated</b> — it attacks its own allies while controlled.</p>`;
     body+=`<div class="field"><label>Attack</label><div class="chips">${atks.map((a,i)=>`<button class="chip ${st.atk===a?'on':''}" data-ma="${i}">${esc(a.name)}${a.hit!=null?' +'+a.hit:a.dc?' (DC'+a.dc.n+')':''}${a.tiles>1?' · '+(a.tiles*5)+'ft':''}</button>`).join('')}</div></div>`;
     if(!inR.length){ body+=`<div class="empty" style="padding:10px 0">No players within ${range*5} ft of ${esc(mo.name)} for ${esc(st.atk.name)} — 📍 move it closer or pick another attack.</div>`; }
     else { body+=`<div class="field"><label>Target (in range)</label><select id="maTgt">${inR.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax} · ${gridDist(mo.x,mo.y,p.x,p.y)*5}ft</option>`).join('')}</select></div>`;
@@ -4236,7 +4246,7 @@ function dmMonsterAttack(mo){
     // damage are passed in; the Engine mutates via the adapter and emits the event stream.
     const saveSp=savedKnown=>({name:st.atk.name, dc:st.atk.dc?st.atk.dc.n:10, save:st.atk.dc?String(st.atk.dc.ab).toLowerCase():null, savedKnown, dmgTotal:Math.abs(st.dmg), cond:st.atk.cond?{c:st.atk.cond,rounds:10}:null});
     { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ const ev=Engine.attack(sessionAdapter, mo.id, st.targetId, {name:st.atk.name, toHit:st.atk.hit||0, dmg:st.atk.dmg||'1d6', tiles:st.atk.tiles}, {face:st.d20, dmgTotal:Math.abs(st.dmg)});
-      if(ev.hit){ flashBanner(mo.name+' hits '+tgt().name+' for '+ev.dmg); if(st.atk.cond){ dmSend(st.targetId,{t:'cond',name:st.atk.cond}); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); } }
+      if(ev.hit){ flashBanner(mo.name+' hits '+tgt().name+' for '+ev.dmg); if(st.atk.cond){ const cu=sessionAdapter.unit(st.targetId); if(cu) sessionAdapter.addCond(cu, st.atk.cond, 10); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); } }
       else flashBanner(mo.name+' misses '+tgt().name);
       $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const f=$('#maFull'); if(f) f.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(false)); flashBanner(tgt().name+' takes '+ev.dmg+(ev.cond?' — 🌀 '+ev.cond:'')); $('#modalRoot').innerHTML=''; useAtk(); }; }
@@ -4446,7 +4456,9 @@ function qbLog(m){ QB.log.unshift({m, t:Date.now()}); if(QB.log.length>40) QB.lo
 function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); } }
 // adapter binding the unified Engine to Quick Battle's state
 const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
-  enemiesOf:u=> u.side==='pc'?QB.monsters.filter(m=>m.hp>0):QB.players.filter(p=>p.c.hp.cur>0), map:()=>QB.map,
+  enemiesOf:u=> u.side==='pc' ? QB.monsters.filter(m=>m.hp>0&&!isDominated(m))
+    : isDominated(u) ? QB.monsters.filter(m=>m.hp>0&&m.id!==u.id&&!isDominated(m))
+    : QB.players.filter(p=>p.c.hp.cur>0).concat(QB.monsters.filter(m=>m.hp>0&&m.id!==u.id&&isDominated(m))), map:()=>QB.map,
   cover:(a,t)=> (a&&t) ? coverBetween(QB, a.x,a.y, t.x,t.y) : 0,
   damageMult:(t,dtype)=> (t&&t.side==='mon') ? monsterDmgMult(t,dtype) : 1,
   saveBonus:(u,ab)=> u.side==='mon' ? monsterSaveBonus(u) : mod(abil(u.c,ab))+((u.c.saveProf&&u.c.saveProf[ab])?profBonus(u.c):0),
@@ -4461,7 +4473,7 @@ function qbPcAttacks(c){ const out=[];
   return out;
 }
 function qbInRange(att, tgt, atk){ const d=gridDist(att.x,att.y,tgt.x,tgt.y); if(d>(atk.tiles||1)) return false; if((atk.tiles||1)>1) return losClear(QB,att.x,att.y,tgt.x,tgt.y); return true; }
-function qbEnemiesAlive(){ return QB.monsters.some(m=>m.hp>0); }
+function qbEnemiesAlive(){ return QB.monsters.some(m=>m.hp>0 && !isDominated(m)); }   // your dominated pet doesn't keep the battle going
 function qbCheckEnd(){ if(!QB) return; if(QB.players[0].c.hp.cur<=0){ QB.over='lose'; } else if(!qbEnemiesAlive()){ QB.over='win'; } }
 
 function openQuickBattle(){
@@ -4580,14 +4592,19 @@ function qbApplyIntent(u, it, done){
 
 // ---- the built-in tactical brain ----
 BRAINS.tactical = function(qb, u){
-  const foes=qb.players.filter(p=>p.c.hp.cur>0); if(!foes.length) return [];
+  // a Dominated monster fights for the party: its foes are its former allies; normal
+  // monsters count dominated ones among their foes
+  const foes = isDominated(u)
+    ? qb.monsters.filter(m=>m.hp>0 && m.id!==u.id && !isDominated(m))
+    : qb.players.filter(p=>p.c.hp.cur>0).concat(qb.monsters.filter(m=>m.hp>0 && m.id!==u.id && isDominated(m)));
+  if(!foes.length) return [];
   const atks=parseMonsterAttacks(u.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:a.tiles||1, dtype:a.dtype, cond:a.cond})).filter(a=>true);
   const usable=atks.length?atks:[{name:'Attack',toHit:0,dmg:'1d6',tiles:1}];
   const dist=f=>gridDist(u.x,u.y,f.x,f.y);
   const canHitFrom=(x,y,f,a)=>{ const d=gridDist(x,y,f.x,f.y); if(d>a.tiles) return false; if(a.tiles>1) return losClear(qb,x,y,f.x,f.y); return true; };
   // 1) can we attack someone right now? prefer the lowest-HP foe we can hit
   let best=null;
-  foes.forEach(f=>usable.forEach(a=>{ if(canHitFrom(u.x,u.y,f,a)){ if(!best||f.c.hp.cur<best.f.c.hp.cur) best={f,a}; } }));
+  foes.forEach(f=>usable.forEach(a=>{ if(canHitFrom(u.x,u.y,f,a)){ if(!best||qbHP(f)<qbHP(best.f)) best={f,a}; } }));
   if(best){ const out=[]; for(let k=0;k<(u.attacksLeft||1);k++) out.push({type:'attack', targetId:best.f.id, atk:best.a}); return out; }
   // 2) move to a cell from which we can attack the nearest foe, then attack
   const ufly=monsterFlies(u);
@@ -4812,7 +4829,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v88';
+const APP_VERSION='v89';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

@@ -188,3 +188,10 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   (Misty Step is a bonus action). Table: `SPELL_TELEPORT`; validity: `teleportOk`.
 - Spells with no rolls/effect template (Wish, Fog Cloud…) now show a "📜 Narrative spell"
   card in the cast modal so casting them visibly does what it can: spend + log + narrate.
+
+## v89 — domination switches sides
+- Dominate Person / Beast / Monster (Wis save) impose **Dominated**: in Quick Battle the
+  monster's AI retargets its former allies (and enemies fight back against it); in DM mode
+  the attack modal offers fellow monsters as targets with a 🌀 Dominated note. A lone
+  dominated survivor ends the battle as a win. Simplifications: no repeat save on damage;
+  control lasts the tracked rounds (10) rather than scaling by spell level.

@@ -25,7 +25,7 @@ global.requestAnimationFrame=f=>f();
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;');
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -251,6 +251,17 @@ T('epic forge: level 20, prof +6, HP scaled', ep.level===20 && profBonus(ep)===6
 T('epic forge: knows a spell of its highest castable level', !isCaster(ep) || ep.spells.some(s=>s.level===maxSpellLevel(ep)));
 T('epic forge: all ASIs spent on stats (10 points)', Object.values(ep.asiBonus||{}).reduce((a,b)=>a+b,0)>=10);
 T('epic forge: prep casters within prepared cap', !isPrepCaster(ep) || preparedCount(ep)<=preparedMax(ep));
+
+/* ---- domination: controlled monsters switch sides ---- */
+T('all three Dominate spells impose Dominated', ['Dominate Person','Dominate Beast','Dominate Monster'].every(n=>{ const sc=spellCondOf(n); return sc && sc.c==='Dominated'; }));
+T('isDominated reads the condition', isDominated({conds:[{name:'Dominated',rounds:10}]}) && !isDominated({conds:[{name:'Prone',rounds:10}]}) && !isDominated({}));
+const domQB={players:[{id:'p1',side:'pc',x:0,y:0,c:{hp:{cur:10}}}], monsters:[
+  {id:'g1',side:'mon',hp:7,x:0,y:1,atk:'Scimitar +4 (1d6+2)',attacksLeft:1,conds:[{name:'Dominated',rounds:10}]},
+  {id:'o1',side:'mon',hp:15,x:0,y:2,atk:'Greataxe +5 (1d12+3)',attacksLeft:1}], map:{cols:5,rows:5,tiles:{}}};
+const domInts=BRAINS.tactical(domQB, domQB.monsters[0]);
+T('dominated monster attacks its former ally, not the player', domInts.length>0 && domInts[0].type==='attack' && domInts[0].targetId==='o1');
+const domInts2=BRAINS.tactical(domQB, domQB.monsters[1]);
+T('enemy monster fights back against the dominated one', domInts2.length>0 && domInts2[0].type==='attack' && domInts2[0].targetId==='g1');
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
