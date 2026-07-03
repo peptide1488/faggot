@@ -419,9 +419,9 @@ function bgInfo(name){ const b=BG_INFO[name]; if(!b){ showInfo(name||'Background
 // Core class features by level [level, name, summary]
 const CLASS_FEATURES = {
 Barbarian:[[1,'Rage','Bonus action: +damage, resistance to physical damage, advantage on Strength.'],[1,'Unarmored Defense','AC = 10 + Dex + Con when unarmored.'],[2,'Reckless Attack','Attack with advantage; foes get advantage on you too.'],[2,'Danger Sense','Advantage on Dex saves you can see.'],[3,'Primal Path','Your barbarian subclass.'],[5,'Extra Attack','Attack twice.'],[5,'Fast Movement','+10 ft speed in light/medium armor.']],
-Bard:[[1,'Bardic Inspiration','Bonus action: give an ally a d6 to add to a roll.'],[1,'Spellcasting','Cast bard spells (Charisma).'],[2,'Jack of All Trades','Half proficiency on non-proficient checks.'],[2,'Song of Rest','Allies heal extra on a short rest.'],[3,'Expertise','Double proficiency on two skills.'],[3,'Bard College','Your bard subclass.'],[5,'Font of Inspiration','Regain Inspiration on a short rest.']],
+Bard:[[1,'Bardic Inspiration','Bonus action: give an ally an inspiration die (d6; d8 at L5, d10 at L10, d12 at L15) to add to a roll.'],[1,'Spellcasting','Cast bard spells (Charisma).'],[2,'Jack of All Trades','Half proficiency on non-proficient checks.'],[2,'Song of Rest','Allies heal extra on a short rest.'],[3,'Expertise','Double proficiency on two skills.'],[3,'Bard College','Your bard subclass.'],[5,'Font of Inspiration','Regain Inspiration on a short rest.']],
 Cleric:[[1,'Spellcasting','Cast cleric spells (Wisdom).'],[1,'Divine Domain','Your cleric subclass and its features.'],[2,'Channel Divinity','Turn Undead + a domain effect, once per rest.'],[5,'Destroy Undead','Low-CR turned undead are destroyed.']],
-Druid:[[1,'Druidic','The secret druid language.'],[1,'Spellcasting','Cast druid spells (Wisdom).'],[2,'Wild Shape','Transform into a beast you have seen.'],[2,'Druid Circle','Your druid subclass.']],
+Druid:[[1,'Druidic','The secret druid language.'],[1,'Spellcasting','Cast druid spells (Wisdom).'],[2,'Wild Shape','Twice per short rest, become a beast you have seen: CR ≤ ¼ (no fly/swim) at L2, CR ≤ ½ (no fly) at L4, CR ≤ 1 at L8. Use the beast\'s stat block; revert at 0 HP with excess damage carrying over.'],[2,'Druid Circle','Your druid subclass.']],
 Fighter:[[1,'Fighting Style','A combat specialty bonus.'],[1,'Second Wind','Bonus action: heal 1d10 + level once per rest.'],[2,'Action Surge','One extra action, once per rest.'],[3,'Martial Archetype','Your fighter subclass.'],[5,'Extra Attack','Attack twice.']],
 Monk:[[1,'Unarmored Defense','AC = 10 + Dex + Wis when unarmored.'],[1,'Martial Arts','Dex for unarmed strikes; bonus unarmed strike.'],[2,'Ki','Flurry of Blows, Patient Defense, Step of the Wind.'],[2,'Unarmored Movement','+10 ft speed unarmored.'],[3,'Monastic Tradition','Your monk subclass.'],[3,'Deflect Missiles','Reaction to reduce ranged damage.'],[4,'Slow Fall','Reaction to reduce falling damage.'],[5,'Extra Attack','Attack twice.'],[5,'Stunning Strike','Spend ki to stun a creature you hit.']],
 Paladin:[[1,'Divine Sense','Detect celestials, fiends, undead.'],[1,'Lay on Hands','Healing pool equal to 5 × level.'],[2,'Fighting Style','A combat specialty bonus.'],[2,'Spellcasting','Cast paladin spells (Charisma).'],[2,'Divine Smite','Burn a slot for extra radiant on a hit.'],[3,'Sacred Oath','Your paladin subclass.'],[5,'Extra Attack','Attack twice.']],
@@ -628,8 +628,12 @@ function weaponProficient(c,w){
   if(w.cat==='Simple') return true;                                        // Cleric/Druid/Monk/Warlock/Artificer/Bard/Rogue have all simple
   const ex=WEAP_MARTIAL_EXTRA[cls]; return !!(ex && ex.includes(w.n));
 }
-function weaponToHit(c,w){ const ab=weaponAbil(c,w); return mod(abil(c,ab)) + (weaponProficient(c,w)?profBonus(c):0); }
-function weaponDmgBonus(c,w){ const ab=weaponAbil(c,w); let b=mod(abil(c,ab)); if(isRaging(c)&&w.type==='melee'&&ab==='str') b+=rageDamage(c); return b; }
+function weaponToHit(c,w){ const ab=weaponAbil(c,w); let b=mod(abil(c,ab)) + (weaponProficient(c,w)?profBonus(c):0);
+  if(c.fightingStyle==='Archery' && w.type==='ranged') b+=2;                          // Archery style: +2 ranged attack rolls
+  return b; }
+function weaponDmgBonus(c,w){ const ab=weaponAbil(c,w); let b=mod(abil(c,ab)); if(isRaging(c)&&w.type==='melee'&&ab==='str') b+=rageDamage(c);
+  if(c.fightingStyle==='Dueling' && w.type==='melee' && !/two-handed/.test(w.props||'')) b+=2;   // Dueling: +2 dmg, one-handed melee
+  return b; }
 // Two-weapon fighting: light melee weapons in hand (Dual Wielder loosens the "light" rule).
 function offhandWeapons(c){ return weaponItems(c).map(({it})=>weaponByName(it.name)).filter(w=>w&&w.type==='melee'&&(/light/.test(w.props||'')||(hasFeat(c,'Dual Wielder')&&!/(two-handed|heavy)/i.test(w.props||'')))); }
 function canOffhand(c){ return offhandWeapons(c).length>=2; }
@@ -637,7 +641,7 @@ function canOffhand(c){ return offhandWeapons(c).length>=2; }
 function offhandDmgBonus(c,w){ const ab=weaponAbil(c,w); const m=mod(abil(c,ab)); let b=(c.fightingStyle==='Two-Weapon Fighting')?m:Math.min(0,m); if(isRaging(c)&&w.type==='melee'&&ab==='str') b+=rageDamage(c); return b; }
 function offhandAtk(c,w){ const b=offhandDmgBonus(c,w); return {name:w.n+' (off-hand)', toHit:weaponToHit(c,w), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:'', offhand:true}; }
 // Concentration spells among our list (lowercased).
-const CONC_SPELLS=new Set(['true strike','bane','bless','detect magic','divine favor','entangle','faerie fire','fog cloud','hex',"hunter's mark",'protection from evil and good',"tasha's hideous laughter",'witch bolt','heroism','shield of faith','silent image','expeditious retreat','alter self','barkskin','blur','calm emotions','cloud of daggers','crown of madness','darkness','detect thoughts','enhance ability','enlarge/reduce','flaming sphere','gust of wind','heat metal','hold person','invisibility','levitate','locate object','magic weapon','moonbeam','pass without trace','ray of enfeeblement','silence','spider climb','spike growth','suggestion','web','beacon of hope','bestow curse','call lightning','clairvoyance','conjure animals','fear','fly','gaseous form','haste','hypnotic pattern','major image','protection from energy','sleet storm','slow','spirit guardians','stinking cloud','vampiric touch','wind wall','arcane eye','banishment','compulsion','confusion','conjure woodland beings','control water','dominate beast','greater invisibility','locate creature','phantasmal killer','polymorph','stoneskin','wall of fire','animate objects','cloudkill','conjure elemental','dispel evil and good','dominate person','hold monster','insect plague','mislead','modify memory','scrying','telekinesis','tree stride','wall of force','wall of stone','eyebite','find the path','globe of invulnerability','sunbeam','wall of ice','conjure celestial','delayed blast fireball','reverse gravity','animal shapes','antimagic field','dominate monster','earthquake','holy aura','maze','gate','storm of vengeance']);
+const CONC_SPELLS=new Set(['true strike','bane','bless','detect magic','divine favor','entangle','faerie fire','fog cloud','hex',"hunter's mark",'protection from evil and good',"tasha's hideous laughter",'witch bolt','heroism','shield of faith','silent image','expeditious retreat','alter self','barkskin','blur','calm emotions','cloud of daggers','crown of madness','darkness','detect thoughts','enhance ability','enlarge/reduce','flaming sphere','gust of wind','heat metal','hold person','invisibility','levitate','locate object','magic weapon','moonbeam','pass without trace','ray of enfeeblement','silence','spider climb','spike growth','suggestion','web','beacon of hope','bestow curse','call lightning','clairvoyance','conjure animals','fear','fly','gaseous form','haste','hypnotic pattern','major image','protection from energy','sleet storm','slow','spirit guardians','stinking cloud','vampiric touch','wind wall','arcane eye','banishment','compulsion','confusion','conjure woodland beings','control water','dominate beast','greater invisibility','locate creature','phantasmal killer','polymorph','stoneskin','wall of fire','animate objects','cloudkill','conjure elemental','dispel evil and good','dominate person','hold monster','insect plague','mislead','modify memory','scrying','telekinesis','tree stride','wall of force','wall of stone','eyebite','find the path','globe of invulnerability','sunbeam','wall of ice','conjure celestial','delayed blast fireball','reverse gravity','antimagic field','dominate monster','earthquake','holy aura','maze','gate','storm of vengeance']);
 function isConcentration(name){ return CONC_SPELLS.has((name||'').toLowerCase()); }
 // Extra attacks from class/level (number ON TOP of the first attack).
 function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
@@ -647,7 +651,11 @@ function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
 /* ---- action economy: most creatures get 1 action/turn, but some get more
    (Action Surge, special monster stat blocks, the c.extraActions override) ---- */
 function hasActionSurge(c){ return c && c.cls==='Fighter' && (Number(c.level)||1)>=2; }
-function actionsPerTurn(c){ let n=1 + (Number(c&&c.extraActions)||0); return Math.max(1,n); }
+function actionsPerTurn(c){ let n=1 + (Number(c&&c.extraActions)||0);
+  // Haste grants one extra action each turn (PHB: limited to Attack (one attack), Dash,
+  // Disengage, Hide, or Use an Object — honor that limit at the table).
+  if(c && (c.effects||[]).some(e=>e.name==='Haste')) n+=1;
+  return Math.max(1,n); }
 function actionsLeft(c){ const b=c&&c.battle; if(!b) return 1;
   const max=(b.actionsMax!=null?b.actionsMax:actionsPerTurn(c));
   const used=(b.actionsUsed!=null?b.actionsUsed:(b.action?1:0));   // legacy boolean fallback
@@ -669,9 +677,9 @@ function setEquipped(c, idx, on){
   if(it.kind==='armor'||it.kind==='shield'||(it.mods&&it.mods.ac)) flashBanner((on?'Equipped ':'Unequipped ')+it.name+' — AC now '+computeAC(c));
 }
 /* ---- battle mode: initiative, rounds, action tracking ---- */
-function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle={round:1, init:ini, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c)}; logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
+function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle={round:1, init:ini, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c)}; logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
-function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
+function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.sneakUsed=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
   let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
   exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
   logChange(c,'▶ Round '+b.round+' — turn reset'+(exp.length?'; expired: '+exp.map(e=>e.name).join(', '):'')); save(); render(); flashBanner('Round '+b.round); }
@@ -733,9 +741,11 @@ function isRaging(c){ return (c.effects||[]).some(e=>e.name==='Rage'); }
 function rageDamage(c){ const l=Number(c.level)||1; return l>=16?4:l>=9?3:2; }
 function toggleRage(c){
   if(isRaging(c)){ c.effects=(c.effects||[]).filter(e=>e.name!=='Rage'); logChange(c,'Rage ended'); save(); render(); return; }
+  // Rage is a bonus action (PHB) — in battle it needs and spends your bonus action.
+  if(c.battle){ if(c.battle.bonus){ flashBanner('Bonus action already used — Rage is a bonus action'); return; } c.battle.bonus=true; }
   // can't concentrate while raging — drop any concentration spell
   if(c.concentration&&c.concentration.active){ c.effects=(c.effects||[]).filter(e=>!e.conc); c.concentration={active:false,spell:''}; }
-  addEffect(c,'Rage',{rounds:100, note:'Half damage from b/p/s · +'+rageDamage(c)+' melee (STR) damage · advantage on STR · can’t cast/concentrate.'});
+  addEffect(c,'Rage',{rounds:10, note:'1 minute · Half damage from b/p/s · +'+rageDamage(c)+' melee (STR) damage · advantage on STR · can’t cast/concentrate.'});
   sfx('damage'); logChange(c,'🪓 RAGE! +'+rageDamage(c)+' melee damage, ½ physical damage, no spells'); save(); render(); flashBanner('🪓 RAGE!');
 }
 function openMove(c){
@@ -743,7 +753,7 @@ function openMove(c){
   $('#modalRoot').innerHTML=`<div class="modal" id="mvModal"><div class="sheet"><div class="grip"></div>
     <h2>🥾 Move</h2>
     <p class="muted" style="font-size:12px;margin:0 0 8px">Movement left: <b>${b.move} ft</b> · speed ${effSpeed(c)} ft.</p>
-    <div class="addrow"><input id="mvDist" type="number" placeholder="distance (ft)" inputmode="numeric"><select id="mvType"><option>Walk</option><option>Fly</option><option>Swim</option><option>Climb</option><option>Crawl (×2)</option><option>Difficult terrain (×2)</option></select></div>
+    <div class="addrow"><input id="mvDist" type="number" placeholder="distance (ft)" inputmode="numeric"><select id="mvType"><option>Walk</option><option>Fly</option><option>Swim (×2)</option><option>Climb (×2)</option><option>Crawl (×2)</option><option>Difficult terrain (×2)</option></select></div>
     <div class="addrow" style="margin-top:6px;flex-wrap:wrap">${[5,10,15,20,30].map(n=>`<button class="btn ghost sm" data-mvq="${n}">${n} ft</button>`).join('')}</div>
     <button class="btn block" id="mvGo" style="margin-top:10px">Move</button>
     <button class="btn ghost block" id="mvClose" style="margin-top:8px">Close</button>
@@ -774,7 +784,7 @@ function openQuickSpells(c){
 }
 function openSpellTarget(c, name, level){
   level=Number(level)||0;
-  const mc=parseSpellMechanics(name);
+  const mc=scaleCantrip(c,name,parseSpellMechanics(name));
   if(mc.buff && !mc.dmg && !mc.heal && !mc.attack && !mc.save){ castModal(c,name,level); return; }   // self/ally buff
   if(!canCast(c,name,level)) return;
   const s=net.session, me=myMapPos(), tilesR=spellRangeTiles(name);
@@ -786,14 +796,16 @@ function openSpellTarget(c, name, level){
   function resolveSingle(mo){
     mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':mc.dtype==='lightning'?'⚡':'✦');   // bolt flies to target on the map
     setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return; net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){try{net.conn.send({t:'target',mon:mo.id});}catch(e){}}
-      if(mc.attack) attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'1d6',dt:mc.dtype||''});
-      else if(mc.save) attackFlow(c,{name,spell:true,save:{ab:mc.save},dmg:mc.dmg||'1d6',dt:mc.dtype||''});
+      if(mc.attack) attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'0',dt:mc.dtype||''});
+      else if(mc.save) attackFlow(c,{name,spell:true,save:{ab:mc.save},dmg:mc.dmg||'0',dt:mc.dtype||''});
       else if(mc.dmg){ const r=rollNotation(mc.dmg||'1d4')||{total:0,detail:''}; sfx('damage'); attackFx('hit'); pushRoll({label:name+' damage',total:r.total,detail:r.detail,kind:'dmg'}); if(net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:r.total,dtype:mc.dtype||''});}catch(e){}} flashBanner(name+' hits '+mo.name+' for '+r.total); }
       else { sfx('cast'); flashBanner(name+' on '+mo.name); }
       applyCond(mo); }, 430); }
   function resolveBlast(ctr){ const aff=blastTargets(ctr);
+    // AoE has no allegiance (PHB) — flag any allies (or yourself) inside the area for the DM
+    const alliesIn=(s.players||[]).filter(p=>Math.max(Math.abs(p.x-ctr.x),Math.abs(p.y-ctr.y))<=aoeR);
     mapProjectile(me.x,me.y,ctr.x,ctr.y,'🔥'); setTimeout(()=>mapBurst(ctr.x,ctr.y,aoeR),300);   // bolt then explosion on the map
-    setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return; const dmg=mc.dmg?(rollNotation(mc.dmg)||{total:0,detail:''}):null; sfx('damage'); attackFx('crit'); if(dmg) pushRoll({label:name+' (blast)',total:dmg.total,detail:dmg.detail,kind:'dmg'}); aff.forEach(mo=>{ if(dmg&&net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:dmg.total,dtype:mc.dtype||''});}catch(e){}} applyCond(mo); }); flashBanner(name+' hits '+aff.length+(dmg?' for '+dmg.total:'')+(mc.save?' (saves halve — DM adjusts)':'')); }, 750); }
+    setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return; const dmg=mc.dmg?(rollNotation(mc.dmg)||{total:0,detail:''}):null; sfx('damage'); attackFx('crit'); if(dmg) pushRoll({label:name+' (blast)',total:dmg.total,detail:dmg.detail,kind:'dmg'}); aff.forEach(mo=>{ if(dmg&&net.conn){try{net.conn.send({t:'attack',mon:mo.id,who:c.name,hit:true,dmg:dmg.total,dtype:mc.dtype||''});}catch(e){}} applyCond(mo); }); flashBanner(name+' hits '+aff.length+(dmg?' for '+dmg.total:'')+(mc.save?' (saves halve — DM adjusts)':'')+(alliesIn.length?' · ⚠ '+alliesIn.map(p=>p.name).join(', ')+' caught in the area!':'')); if(alliesIn.length) logChange(c,'⚠ '+name+' also caught: '+alliesIn.map(p=>p.name).join(', ')); }, 750); }
   function draw(){
     let body=`<h2>✨ ${esc(name)}</h2>`;
     body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks (ignores walls)':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}${mc.save?' · '+String(mc.save).toUpperCase()+' save':''}</p>`;
@@ -831,6 +843,14 @@ function attackFlow(c, atk){
   const toHit=Number(atk.toHit)||0;
   const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
   const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
+  // Class riders on weapon hits (PHB): Rogue Sneak Attack (once/turn, finesse or ranged
+  // weapon, needs advantage or an adjacent ally) and Paladin Divine Smite (burn a slot,
+  // melee hit, 2d8 radiant + 1d8/extra slot level, max 5d8; dice double on a crit).
+  const wref=(!atk.spell)?weaponByName(String(atk.name||'').replace(/\s*\((off-hand|opportunity)\)$/,'')):null;
+  const sneakDice=Math.ceil((Number(c.level)||1)/2);
+  const canSneak=(c.cls==='Rogue') && !atk.spell && (!wref || wref.type==='ranged' || /finesse/.test(wref.props||''));
+  const smiteLvls=(c.cls==='Paladin' && (Number(c.level)||1)>=2 && !atk.spell && (!wref || wref.type==='melee'))
+    ? [1,2,3,4,5].filter(l=>{ const t=spellSlots(c)[l]||0; return t-Math.min(t,(c.slots[l]&&c.slots[l].used)||0)>0; }) : [];
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
     if(c.battle && atk.offhand){
@@ -871,6 +891,13 @@ function attackFlow(c, atk){
     let total, detail;
     if(manual!=null){ total=manual; detail='entered'+(st.crit?' (crit)':''); }
     else { const r=rollNotation(notation)||{total:0,detail:''}; total=r.total; detail=r.detail; }
+    // riders: Sneak Attack / Divine Smite chosen in the damage step
+    { const sk=document.getElementById('afSneak');
+      if(sk && sk.checked && !(c.battle&&c.battle.sneakUsed)){ const r=rollNotation((st.crit?sneakDice*2:sneakDice)+'d6');
+        if(r){ total+=r.total; detail+=' · sneak '+r.detail; if(c.battle){ c.battle.sneakUsed=true; } logChange(c,'🗡️ Sneak Attack +'+r.total); } }
+      const sm=document.getElementById('afSmite');
+      if(sm && sm.value){ const l=Number(sm.value), dice=Math.min(5,1+l)*(st.crit?2:1); const r=rollNotation(dice+'d8');
+        if(r){ total+=r.total; detail+=' · smite '+r.detail; if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1); logChange(c,'⚡ Divine Smite (L'+l+' slot) +'+r.total); } } }
     st.dmgTotal=total; st.phase='done'; sfx(atk.heal?'heal':'damage'); attackFx(atk.heal?'heal':(st.crit?'crit':'hit'));
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg'});
     if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total, dtype:atk.dt||atk.dtype||''}); }catch(e){} }
@@ -892,6 +919,8 @@ function attackFlow(c, atk){
         ${saveOnly?`<p style="text-align:center;margin:0 0 8px">🛡️ Target makes a <b>${(atk.save.ab||'').toUpperCase()} save vs your DC ${8+profBonus(c)+mod(abil(c,c.spellAbility))}</b></p>`:''}
         ${(st.crit&&!st.targetAC)?'<p style="text-align:center;color:var(--accent2);margin:0 0 8px"><b>💥 Critical hit — damage dice doubled!</b></p>':''}
         ${atk.vers?`<label class="pill" style="cursor:pointer;margin-bottom:8px"><input type="checkbox" id="af2h" ${st.twoH?'checked':''}> Two-handed (${esc(atk.vers)})</label>`:''}
+        ${(canSneak && st.hit!==false && !(c.battle&&c.battle.sneakUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afSneak"> 🗡️ Sneak Attack +${sneakDice}d6 <span class="muted" style="font-size:11px">(once/turn; needs advantage or an adjacent ally)</span></label>`:''}
+        ${smiteLvls.length?`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚡ Divine Smite</span><select id="afSmite" style="flex:1"><option value="">— no smite —</option>${smiteLvls.map(l=>`<option value="${l}">L${l} slot — +${Math.min(5,1+l)}d8 radiant</option>`).join('')}</select></div>`:''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
         <button class="btn block" id="afDmgAuto">🎲 Roll damage</button>
         <div class="addrow" style="margin-top:8px"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn ghost" id="afDmgUse">Use</button></div>`;
@@ -1004,6 +1033,9 @@ function preparedMax(c){ const l=Number(c.level)||1, m=mod(abil(c,c.spellAbility
   if(['Paladin','Artificer'].includes(c.cls)) return Math.max(1, m+Math.floor(l/2));
   return null; }
 function preparedCount(c){ return (c.spells||[]).filter(s=>s.prepared && (s.level||0)>0).length; }
+// Sorcerer Font of Magic (PHB): sorcery points = sorcerer level, from level 2; refresh on a long rest.
+function sorcMax(c){ return (c.cls==='Sorcerer' && (Number(c.level)||1)>=2) ? Number(c.level) : 0; }
+function sorcCur(c){ const m=sorcMax(c); if(!m) return 0; return Math.max(0, Math.min(m, c.sorcPts!=null?Number(c.sorcPts):m)); }
 // A leveled spell is castable only if it's prepared (prep casters); cantrips & known-casters' spells are always castable.
 function spellPrepared(c, name){ const s=(c.spells||[]).find(x=>x.name.toLowerCase()===String(name||'').toLowerCase()); return s? !!s.prepared : true; }
 function castableSpells(c){ return (c.spells||[]).filter(s=> (s.level||0)===0 || !isPrepCaster(c) || s.prepared); }
@@ -1196,7 +1228,13 @@ function armorDef(key){ return ARMOR.find(a=>a.key===key)||ARMOR[0]; }
 function computeAC(c){
   if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + effBonus(c,'ac') + gearBonus(c,'ac');
   const a=armorDef(c.armor||'none');
-  return a.base + Math.min(mod(abil(c,'dex')), a.dexCap) + (c.shield?2:0) + effBonus(c,'ac') + gearBonus(c,'ac');
+  const hasFx=n=>(c.effects||[]).some(e=>e.name===n);
+  let base = a.base + Math.min(mod(abil(c,'dex')), a.dexCap);
+  if(a.key==='none' && hasFx('Mage Armor')) base = 13 + mod(abil(c,'dex'));           // Mage Armor: 13 + DEX while unarmored
+  if(c.fightingStyle==='Defense' && a.key!=='none') base += 1;                        // Defense style: +1 AC while wearing armor
+  let ac = base + (c.shield?2:0) + effBonus(c,'ac') + gearBonus(c,'ac');
+  if(hasFx('Barkskin')) ac = Math.max(ac, 16);                                        // Barkskin: AC can't be below 16
+  return ac;
 }
 // Base walking speed by race (most are 30; small races 25; a few faster).
 const RACE_SPEED = {'Dwarf':25,'Halfling':25,'Gnome':25,'Kobold':30,'Tortle':30,'Aarakocra':25,'Centaur':40,'Minotaur':40,'Elf':30};
@@ -1227,16 +1265,16 @@ function spellIcon(name){ const m=spellMeta(name); return m?SCHOOL_ICON[m.s]:'�
 function lvlLabel(l){ return l===0?'Cantrip':({1:'1st',2:'2nd',3:'3rd'}[l]||l+'th')+' level'; }
 function spellDesc(name, level){ const m=spellMeta(name); return (m?SCHOOL_NAME[m.s]+' · ':'')+lvlLabel(m?m.l:level); }
 const SPELL_DESC={
-'Acid Splash':'Hurl acid; Dex save, 1d6 acid to one or two creatures.','Chill Touch':'Ghostly hand, 1d8 necrotic; target can\'t heal this turn.','Dancing Lights':'Create up to four movable floating lights.','Druidcraft':'Minor nature effects — weather hint, bloom, tiny sensory.','Eldritch Blast':'Ranged beam, 1d10 force (more beams as you level).','Fire Bolt':'Ranged fire mote, 1d10 fire; ignites objects.','Guidance':'Touch; add 1d4 to one ability check.','Light':'An object sheds bright light in 20 ft.','Mage Hand':'Spectral hand manipulates objects within 30 ft.','Mending':'Repair a single break or tear in an object.','Message':'Whisper a message to a creature within 120 ft.','Minor Illusion':'Create a small sound or image illusion.','Poison Spray':'Puff of poison; Con save, 1d12 poison.','Prestidigitation':'Minor tricks — clean, flavor, spark, trinket.','Produce Flame':'Flame for light or a 1d8 fire throw.','Ray of Frost':'Cold beam, 1d8 cold; −10 ft speed.','Resistance':'Touch; add 1d4 to one saving throw.','Sacred Flame':'Radiant flame, Dex save (ignores cover), 1d8.','Shillelagh':'Club/quarterstaff uses your spell stat, 1d8.','Shocking Grasp':'Touch, 1d8 lightning; no reactions.','Spare the Dying':'Touch a dying creature to stabilize it.','Thaumaturgy':'Minor divine effects — voice, flames, tremors.','Thorn Whip':'Vine lash, 1d6; pull target 10 ft closer.','True Strike':'Advantage on your next attack vs a target.','Vicious Mockery':'Insult; Wis save, 1d4 psychic + disadvantage.',
-'Alarm':'Ward an area to alert you when something enters.','Animal Friendship':'Charm a beast (Wis save) for 24 hours.','Bane':'Up to 3 foes subtract 1d4 from attacks and saves.','Bless':'Up to 3 allies add 1d4 to attacks and saves.','Burning Hands':'15-ft cone, Dex save, 3d6 fire.','Charm Person':'Charm a humanoid (Wis save) for an hour.','Color Spray':'Blind creatures (by HP) in a 15-ft cone.','Command':'One-word command a creature must obey (Wis save).','Comprehend Languages':'Understand any spoken or written language.','Create or Destroy Water':'Create or destroy up to 10 gallons of water.','Cure Wounds':'Touch heals 1d8 + spell mod HP.','Detect Magic':'Sense magic within 30 ft and its school.','Disguise Self':'Change your appearance (illusion) for an hour.','Divine Favor':'Your weapon attacks deal +1d4 radiant.','Entangle':'Plants restrain creatures in 20 ft (Str save).','Expeditious Retreat':'Bonus-action Dash each turn for 10 min.','Faerie Fire':'Outline foes; attacks vs them gain advantage.','False Life':'Gain 1d4+4 temporary HP.','Feather Fall':'Up to 5 falling creatures take no fall damage.','Find Familiar':'Summon a spirit familiar in animal form.','Fog Cloud':'A 20-ft sphere of heavily obscuring fog.','Goodberry':'Create 10 berries; each restores 1 HP.','Grease':'10-ft square is slippery (Dex save or prone).','Guiding Bolt':'Ranged 4d6 radiant; next attack has advantage.','Healing Word':'Bonus action, ranged heal 1d4 + mod.','Hellish Rebuke':'Reaction; attacker takes 2d10 fire (Dex save).','Heroism':'Immune to fear and gains temp HP each turn.','Hex':'Curse a foe: +1d6 necrotic, disadvantage on one ability.','Hunter\'s Mark':'Mark a target for +1d6 weapon damage.','Identify':'Learn an item\'s magic or a spell on a creature.','Inflict Wounds':'Melee spell attack, 3d10 necrotic.','Jump':'Target\'s jump distance triples.','Longstrider':'Target\'s speed +10 ft for an hour.','Mage Armor':'Unarmored target\'s AC becomes 13 + Dex.','Magic Missile':'Three darts, 1d4+1 force each, auto-hit.','Protection from Evil and Good':'Ward a creature vs certain creature types.','Purify Food and Drink':'Remove poison/disease from food and drink.','Ray of Sickness':'Ranged 2d8 poison; Con save or poisoned.','Sanctuary':'Attackers need a Wis save to target the warded creature.','Shield':'Reaction; +5 AC and block Magic Missile.','Shield of Faith':'A target gains +2 AC for 10 min.','Silent Image':'Create a movable illusory image.','Sleep':'Put creatures to sleep by total HP (5d8).','Speak with Animals':'Communicate with beasts for 10 min.','Tasha\'s Hideous Laughter':'A creature falls prone laughing (Wis save).','Thunderwave':'15-ft cube, Con save, 2d8 thunder + push.','Unseen Servant':'Invisible force does simple tasks for an hour.','Witch Bolt':'1d12 lightning, then repeat each turn.',
-'Aid':'Raise HP max and current HP of 3 creatures by 5.','Alter Self':'Change form — aquatic, looks, or natural weapons.','Animal Messenger':'Send a tiny beast to deliver a message.','Barkskin':'Target\'s AC can\'t be lower than 16.','Blindness/Deafness':'Blind or deafen a creature (Con save).','Blur':'Attackers have disadvantage against you.','Calm Emotions':'Suppress fear/charm or hostility in a group.','Cloud of Daggers':'Blades fill a 5-ft cube, 4d4 slashing.','Continual Flame':'A permanent heatless flame.','Crown of Madness':'Force a charmed creature to attack your choice.','Darkness':'A 15-ft sphere of magical darkness.','Darkvision':'Grant a creature 60-ft darkvision.','Detect Thoughts':'Read surface thoughts of creatures.','Enhance Ability':'Advantage on one ability\'s checks.','Enlarge/Reduce':'Double or halve a creature/object\'s size.','Flaming Sphere':'A rolling 2d6 fire sphere you move.','Gentle Repose':'Stave off decay and undeath on a corpse.','Gust of Wind':'60-ft line of wind pushes creatures.','Heat Metal':'Make metal red-hot, 2d8 fire and drop it.','Hold Person':'Paralyze a humanoid (Wis save each turn).','Invisibility':'A creature is invisible until it attacks/casts.','Knock':'Magically unlock something (loudly).','Lesser Restoration':'End a disease or one condition (blind/poison/etc).','Levitate':'Raise a creature/object up to 20 ft.','Locate Object':'Sense direction to a known object within 1000 ft.','Magic Weapon':'A nonmagical weapon becomes +1.','Mirror Image':'Three duplicates misdirect attacks.','Misty Step':'Bonus-action teleport 30 ft.','Moonbeam':'5-ft beam, 2d10 radiant, you move it.','Pass without Trace':'Your group gets +10 Stealth, no tracks.','Prayer of Healing':'Heal up to 6 creatures 2d8 + mod (10 min).','Protection from Poison':'Neutralize poison and grant resistance.','Ray of Enfeeblement':'Target deals half damage with Str attacks.','Rope Trick':'A rope leads to an extradimensional space.','Scorching Ray':'Three rays, 2d6 fire each.','See Invisibility':'See invisible creatures and the Ethereal.','Shatter':'10-ft sphere, Con save, 3d8 thunder.','Silence':'No sound in a 20-ft sphere.','Spider Climb':'Walk on walls and ceilings.','Spike Growth':'20 ft of spikes; 2d4 and difficult terrain.','Spiritual Weapon':'Bonus-action floating weapon, 1d8 + mod.','Suggestion':'Suggest a reasonable action (Wis save).','Web':'Fill a 20-ft cube with restraining webs.','Zone of Truth':'Creatures can\'t lie in 15 ft (Cha save).',
-'Animate Dead':'Raise a skeleton or zombie under your control.','Beacon of Hope':'Allies get save advantage and max healing.','Bestow Curse':'Curse a creature with a chosen drawback.','Blink':'Each turn you may vanish to the Ethereal.','Call Lightning':'Storm strikes for 3d10 lightning each turn.','Clairvoyance':'An invisible sensor sees/hears a distant place.','Conjure Animals':'Summon fey beasts to fight for you.','Counterspell':'Reaction to interrupt another\'s spell.','Create Food and Water':'Make food and water for many.','Daylight':'A 60-ft sphere of bright daylight.','Dispel Magic':'End spells on a creature, object, or area.','Fear':'Creatures in a 30-ft cone flee (Wis save).','Fireball':'20-ft sphere, Dex save, 8d6 fire.','Fly':'Grant a 60-ft flying speed.','Gaseous Form':'A creature becomes a misty cloud.','Haste':'+2 AC, double speed, and an extra action.','Hypnotic Pattern':'Charm/incapacitate with a pattern (Wis save).','Lightning Bolt':'100-ft line, Dex save, 8d6 lightning.','Magic Circle':'Cylinder that wards against creature types.','Major Image':'A detailed lasting illusion with sound/smell.','Mass Healing Word':'Bonus action; heal up to 6 creatures 1d4 + mod.','Meld into Stone':'Step into and hide within stone.','Nondetection':'Hide a target from divination and scrying.','Plant Growth':'Overgrow an area into difficult terrain.','Protection from Energy':'Resistance to one damage type (1 hr).','Remove Curse':'End all curses on a creature or item.','Revivify':'Revive a creature dead under a minute (1 HP).','Sending':'Send a 25-word message to anyone, anywhere.','Sleet Storm':'Freezing rain — difficult, blinding, prone.','Slow':'Up to 6 creatures get halved speed/actions.','Speak with Dead':'Ask a corpse five questions.','Spirit Guardians':'Spirits in 15 ft deal 3d8 and slow foes.','Stinking Cloud':'Nauseating gas makes foes lose actions.','Tongues':'Understand and be understood in any language.','Vampiric Touch':'Melee 3d6 necrotic; heal half.','Water Breathing':'Up to 10 creatures breathe underwater.','Water Walk':'Up to 10 creatures walk on liquids.','Wind Wall':'A wall of wind deflects and damages.',
-'Arcane Eye':'An invisible flying eye you see through.','Banishment':'Banish a creature to another plane (Cha save).','Blight':'8d8 necrotic to a creature (Con save).','Compulsion':'Force creatures to move a way you choose.','Confusion':'Creatures behave randomly each turn (Wis save).','Conjure Woodland Beings':'Summon fey to aid you.','Control Water':'Raise, part, or redirect water.','Death Ward':'First drop to 0 HP, the target stays at 1.','Dimension Door':'Teleport yourself (and one) up to 500 ft.','Divination':'A short answer about an event this week.','Dominate Beast':'Control a beast\'s actions (Wis save).','Fabricate':'Convert raw materials into finished objects.','Freedom of Movement':'Ignore difficult terrain and restraints.','Greater Invisibility':'Invisible even while attacking.','Guardian of Faith':'A spectral guardian deals 20 radiant.','Ice Storm':'2d8 bludgeoning + 4d6 cold; difficult terrain.','Locate Creature':'Sense direction to a known creature.','Phantasmal Killer':'A nightmare deals 4d10 psychic (Wis save).','Polymorph':'Transform a creature into a beast.','Stone Shape':'Reshape a stone object.','Stoneskin':'Resistance to nonmagical physical damage.','Wall of Fire':'A wall of flame deals 5d8 fire.',
-'Animate Objects':'Animate up to 10 objects to fight.','Awaken':'Give a beast or plant sentience and speech.','Cloudkill':'A 20-ft poison fog deals 5d8 and moves.','Commune':'Ask your deity three yes/no questions.','Commune with Nature':'Learn facts about the surrounding land.','Cone of Cold':'60-ft cone, Con save, 8d8 cold.','Conjure Elemental':'Summon an elemental to serve you.','Contact Other Plane':'Ask an entity five questions (risky).','Dispel Evil and Good':'Protect against and dismiss outsiders.','Dominate Person':'Control a humanoid\'s actions (Wis save).','Dream':'Shape a sleeping creature\'s dreams.','Flame Strike':'A column of 4d6 fire + 4d6 radiant.','Geas':'Compel a creature to obey for 30 days.','Greater Restoration':'End exhaustion, charm, petrify, curse, or reductions.','Hallow':'Imbue an area with protective effects.','Hold Monster':'Paralyze any creature (Wis save each turn).','Insect Plague':'A 20-ft swarm deals 4d10 and obscures.','Legend Lore':'Recall lore about a famous person/place/thing.','Mass Cure Wounds':'Heal up to 6 creatures 3d8 + mod.','Mislead':'Become invisible and control a double.','Modify Memory':'Reshape a creature\'s memory of an event.','Planar Binding':'Bind a summoned outsider into service.','Raise Dead':'Revive a creature dead up to 10 days.','Reincarnate':'Bring back the dead in a new body/race.','Scrying':'See and hear a specific creature anywhere.','Seeming':'Disguise the appearance of many creatures.','Telekinesis':'Move creatures and objects with your mind.','Teleportation Circle':'Open a portal to a known circle.','Tree Stride':'Step between trees of the same kind.','Wall of Force':'An invisible, nearly indestructible wall.','Wall of Stone':'Conjure a wall of stone.',
-'Chain Lightning':'A bolt arcs to up to 4 targets, 10d8 lightning.','Circle of Death':'A 60-ft sphere deals 8d6 necrotic.','Disintegrate':'10d6+40 force; dust if it drops the target.','Eyebite':'Each turn sicken, frighten, or sleep a foe.','Find the Path':'Know the shortest route to a known place.','Globe of Invulnerability':'Block spells of 5th level and lower.','Harm':'14d6 necrotic and lower the target\'s HP max.','Heal':'Restore 70 HP and end blind/deaf/disease.','Heroes\' Feast':'A feast grants HP, immunities, advantage (1 day).','Mass Suggestion':'Suggest an action to up to 12 creatures.','Sunbeam':'A 60-ft line, 6d8 radiant, blinds.','True Seeing':'See in dark, through illusions, into Ethereal.','Wall of Ice':'A wall of ice that damages those breaking through.','Word of Recall':'Teleport instantly to a chosen sanctuary.',
-'Conjure Celestial':'Summon a celestial to aid you.','Delayed Blast Fireball':'A fireball that grows until it detonates.','Etherealness':'Step into the Border Ethereal Plane.','Finger of Death':'7d8+30 necrotic; the slain rise as zombies.','Fire Storm':'Sheets of flame deal 7d10 fire.','Forcecage':'Trap creatures in an inescapable force cage.','Plane Shift':'Travel to another plane of existence.','Prismatic Spray':'Eight rays of varied damage/effects.','Regenerate':'Restore HP each turn; regrow limbs.','Resurrection':'Revive a creature dead up to a century.','Reverse Gravity':'Things fall upward in a cylinder.','Teleport':'Instantly travel a great distance (some risk).',
-'Animal Shapes':'Turn willing creatures into beasts.','Antimagic Field':'A 10-ft sphere suppresses magic.','Dominate Monster':'Control any creature (Wis save).','Earthquake':'Shake the ground — fissures, knockdowns.','Feeblemind':'Crush Int and Cha to 1 (4d6 psychic).','Holy Aura':'Allies get save advantage; foes may be blinded.','Maze':'Banish a creature into a labyrinth demiplane.','Mind Blank':'Immunity to psychic and mind-reading/charm.','Power Word Stun':'Stun a creature with 150 HP or fewer.','Sunburst':'A burst of sunlight, 12d6 radiant, blinds.',
-'Astral Projection':'Project yourself and others to the Astral Plane.','Foresight':'Advantage on everything; can\'t be surprised.','Gate':'Open a portal to another plane.','Mass Heal':'Distribute 700 HP of healing.','Meteor Swarm':'Meteors deal 20d6 fire + 20d6 bludgeoning.','Power Word Kill':'Slay a creature with 100 HP or fewer.','Time Stop':'Take several turns while time is frozen.','True Resurrection':'Revive the long-dead, fully restored.','Wish':'Duplicate any 8th-level spell or alter reality.','Storm of Vengeance':'A vast storm rains damage and effects.'
+'Acid Splash':'Hurl acid; Dex save, 1d6 acid to one or two creatures.','Chill Touch':'Ranged spell attack, 1d8 necrotic; the target can\'t recover HP this turn.','Dancing Lights':'Create up to four movable floating lights.','Druidcraft':'Minor nature effects — weather hint, bloom, tiny sensory.','Eldritch Blast':'Ranged beam, 1d10 force (more beams as you level).','Fire Bolt':'Ranged fire mote, 1d10 fire; ignites objects.','Guidance':'Touch; add 1d4 to one ability check.','Light':'An object sheds bright light in 20 ft.','Mage Hand':'Spectral hand within 30 ft (6 tiles); moves 30 ft/round, carries ≤10 lb; can\'t attack. Sleight of Hand vs Perception to go unnoticed.','Mending':'Repair a single break or tear in an object.','Message':'Whisper a message to a creature within 120 ft.','Minor Illusion':'Create a small sound or image illusion.','Poison Spray':'Puff of poison; Con save, 1d12 poison.','Prestidigitation':'Minor tricks — clean, flavor, spark, trinket.','Produce Flame':'Flame for light, or a ranged spell attack: 1d8 fire.','Ray of Frost':'Cold beam, 1d8 cold; −10 ft speed.','Resistance':'Touch; add 1d4 to one saving throw.','Sacred Flame':'Radiant flame, Dex save (ignores cover), 1d8.','Shillelagh':'Club/quarterstaff uses your spell stat, 1d8.','Shocking Grasp':'Melee spell attack, 1d8 lightning; the target can\'t take reactions.','Spare the Dying':'Touch a dying creature to stabilize it.','Thaumaturgy':'Minor divine effects — voice, flames, tremors.','Thorn Whip':'Melee spell attack (30 ft), 1d6 piercing; pull the target 10 ft closer.','True Strike':'Advantage on your next attack vs a target.','Vicious Mockery':'Insult; Wis save, 1d4 psychic + disadvantage.',
+'Alarm':'Ward an area to alert you when something enters.','Animal Friendship':'Charm a beast (Wis save) for 24 hours.','Bane':'Up to 3 foes subtract 1d4 from attacks and saves.','Bless':'Up to 3 allies add 1d4 to attacks and saves.','Burning Hands':'15-ft cone, Dex save, 3d6 fire.','Charm Person':'Charm a humanoid (Wis save) for an hour.','Color Spray':'Blind creatures (by HP) in a 15-ft cone.','Command':'One-word command a creature must obey (Wis save).','Comprehend Languages':'Understand any spoken or written language.','Create or Destroy Water':'Create or destroy up to 10 gallons of water.','Cure Wounds':'Touch heals 1d8 + spell mod HP.','Detect Magic':'Sense magic within 30 ft and its school.','Disguise Self':'Change your appearance (illusion) for an hour.','Divine Favor':'Your weapon attacks deal +1d4 radiant.','Entangle':'Plants restrain creatures in 20 ft (Str save).','Expeditious Retreat':'Bonus-action Dash each turn for 10 min.','Faerie Fire':'Dex save; outlined foes grant advantage to attacks against them.','False Life':'Gain 1d4+4 temporary HP.','Feather Fall':'Up to 5 falling creatures take no fall damage.','Find Familiar':'Summon a spirit familiar in animal form.','Fog Cloud':'A 20-ft sphere of heavily obscuring fog.','Goodberry':'Create 10 berries; each restores 1 HP.','Grease':'10-ft square is slippery (Dex save or prone).','Guiding Bolt':'Ranged 4d6 radiant; next attack has advantage.','Healing Word':'Bonus action, ranged heal 1d4 + mod.','Hellish Rebuke':'Reaction; attacker takes 2d10 fire (Dex save).','Heroism':'Immune to fear and gains temp HP each turn.','Hex':'Curse a foe: +1d6 necrotic, disadvantage on one ability.','Hunter\'s Mark':'Mark a target for +1d6 weapon damage.','Identify':'Learn an item\'s magic or a spell on a creature.','Inflict Wounds':'Melee spell attack, 3d10 necrotic.','Jump':'Target\'s jump distance triples.','Longstrider':'Target\'s speed +10 ft for an hour.','Mage Armor':'Unarmored target\'s AC becomes 13 + Dex.','Magic Missile':'Three darts, 3d4+3 force total; auto-hits a creature you can see.','Protection from Evil and Good':'Ward a creature vs certain creature types.','Purify Food and Drink':'Remove poison/disease from food and drink.','Ray of Sickness':'Ranged 2d8 poison; Con save or poisoned.','Sanctuary':'Attackers need a Wis save to target the warded creature.','Shield':'Reaction; +5 AC and block Magic Missile.','Shield of Faith':'A target gains +2 AC for 10 min.','Silent Image':'Create a movable illusory image.','Sleep':'Put the weakest creatures in the area to sleep, by their total HP — no save (undead & elves immune).','Speak with Animals':'Communicate with beasts for 10 min.','Tasha\'s Hideous Laughter':'A creature falls prone laughing (Wis save).','Thunderwave':'15-ft cube, Con save, 2d8 thunder + push.','Unseen Servant':'Invisible force does simple tasks for an hour.','Witch Bolt':'Ranged spell attack, 1d12 lightning; repeat the damage each turn while concentrating.',
+'Aid':'Raise HP max and current HP of 3 creatures by 5.','Alter Self':'Change form — aquatic, looks, or natural weapons.','Animal Messenger':'Send a tiny beast to deliver a message.','Barkskin':'Target\'s AC can\'t be lower than 16.','Blindness/Deafness':'Blind or deafen a creature (Con save).','Blur':'Attackers have disadvantage against you.','Calm Emotions':'Suppress fear/charm or hostility in a group.','Cloud of Daggers':'Blades fill a 5-ft cube, 4d4 slashing.','Continual Flame':'A permanent heatless flame.','Crown of Madness':'Force a charmed creature to attack your choice.','Darkness':'A 15-ft sphere of magical darkness.','Darkvision':'Grant a creature 60-ft darkvision.','Detect Thoughts':'Read surface thoughts of creatures.','Enhance Ability':'Advantage on one ability\'s checks.','Enlarge/Reduce':'Double or halve a creature/object\'s size.','Flaming Sphere':'A rolling 2d6 fire sphere you move.','Gentle Repose':'Stave off decay and undeath on a corpse.','Gust of Wind':'60-ft line of wind pushes creatures.','Heat Metal':'Make metal red-hot, 2d8 fire and drop it.','Hold Person':'Paralyze a humanoid (Wis save each turn).','Invisibility':'A creature is invisible until it attacks/casts.','Knock':'Magically unlock something (loudly).','Lesser Restoration':'End a disease or one condition (blind/poison/etc).','Levitate':'Raise a creature/object up to 20 ft.','Locate Object':'Sense direction to a known object within 1000 ft.','Magic Weapon':'A nonmagical weapon becomes +1.','Mirror Image':'Three duplicates misdirect attacks.','Misty Step':'Bonus-action teleport 30 ft.','Moonbeam':'5-ft radius column; Con save, 2d10 radiant each turn; you can move it.','Pass without Trace':'Your group gets +10 Stealth, no tracks.','Prayer of Healing':'Heal up to 6 creatures 2d8 + mod (10 min).','Protection from Poison':'Neutralize poison and grant resistance.','Ray of Enfeeblement':'Target deals half damage with Str attacks.','Rope Trick':'A rope leads to an extradimensional space.','Scorching Ray':'Three rays, 2d6 fire each.','See Invisibility':'See invisible creatures and the Ethereal.','Shatter':'10-ft sphere, Con save, 3d8 thunder.','Silence':'No sound in a 20-ft sphere.','Spider Climb':'Walk on walls and ceilings.','Spike Growth':'20 ft of spikes; 2d4 and difficult terrain.','Spiritual Weapon':'Bonus action: a floating weapon; melee spell attack, 1d8 + mod.','Suggestion':'Wis save. Suggest a reasonable-sounding act; ends if you or your allies harm the target.','Web':'Fill a 20-ft cube with webs; Dex save or restrained.','Zone of Truth':'Creatures can\'t lie in 15 ft (Cha save).',
+'Animate Dead':'Raise a skeleton or zombie under your control.','Beacon of Hope':'Allies get save advantage and max healing.','Bestow Curse':'Curse a creature with a chosen drawback.','Blink':'Each turn you may vanish to the Ethereal.','Call Lightning':'Storm cloud; Dex save, 3d10 lightning each turn you call it down.','Clairvoyance':'An invisible sensor sees/hears a distant place.','Conjure Animals':'Summon fey beasts to fight for you.','Counterspell':'Reaction; spells of 3rd level or lower are stopped automatically — for higher, make a spellcasting ability check, DC 10 + the spell\'s level.','Create Food and Water':'Make food and water for many.','Daylight':'A 60-ft sphere of bright daylight.','Dispel Magic':'End spells on a creature, object, or area.','Fear':'Creatures in a 30-ft cone flee (Wis save).','Fireball':'20-ft sphere, Dex save, 8d6 fire.','Fly':'Grant a 60-ft flying speed.','Gaseous Form':'A creature becomes a misty cloud.','Haste':'+2 AC, double speed, and an extra action.','Hypnotic Pattern':'Charm/incapacitate with a pattern (Wis save).','Lightning Bolt':'100-ft line, Dex save, 8d6 lightning.','Magic Circle':'Cylinder that wards against creature types.','Major Image':'A detailed lasting illusion with sound/smell.','Mass Healing Word':'Bonus action; heal up to 6 creatures 1d4 + mod.','Meld into Stone':'Step into and hide within stone.','Nondetection':'Hide a target from divination and scrying.','Plant Growth':'Overgrow an area into difficult terrain.','Protection from Energy':'Resistance to one damage type (1 hr).','Remove Curse':'End all curses on a creature or item.','Revivify':'Revive a creature dead under a minute (1 HP).','Sending':'Send a 25-word message to anyone, anywhere.','Sleet Storm':'Freezing rain — difficult, blinding, prone.','Slow':'Up to 6 creatures get halved speed/actions.','Speak with Dead':'Ask a corpse five questions.','Spirit Guardians':'Spirits in 15 ft of you; Wis save, 3d8 radiant, halves foes\' speed.','Stinking Cloud':'Nauseating gas makes foes lose actions.','Tongues':'Understand and be understood in any language.','Vampiric Touch':'Melee spell attack, 3d6 necrotic; you recover half the damage dealt.','Water Breathing':'Up to 10 creatures breathe underwater.','Water Walk':'Up to 10 creatures walk on liquids.','Wind Wall':'A wall of wind deflects and damages.',
+'Arcane Eye':'An invisible flying eye you see through.','Banishment':'Banish a creature to another plane (Cha save).','Blight':'8d8 necrotic to a creature (Con save).','Compulsion':'Force creatures to move a way you choose.','Confusion':'Creatures behave randomly each turn (Wis save).','Conjure Woodland Beings':'Summon fey to aid you.','Control Water':'Raise, part, or redirect water.','Death Ward':'First drop to 0 HP, the target stays at 1.','Dimension Door':'Teleport yourself (and one) up to 500 ft.','Divination':'A short answer about an event this week.','Dominate Beast':'Control a beast (Wis save); it repeats the save each time it takes damage.','Fabricate':'Convert raw materials into finished objects.','Freedom of Movement':'Ignore difficult terrain and restraints.','Greater Invisibility':'Invisible even while attacking.','Guardian of Faith':'A spectral guardian deals 20 radiant.','Ice Storm':'Dex save; 2d8 bludgeoning + 4d6 cold; difficult terrain.','Locate Creature':'Sense direction to a known creature.','Phantasmal Killer':'A nightmare deals 4d10 psychic (Wis save).','Polymorph':'Wis save (unwilling). Turn a creature into a beast of CR ≤ its level; reverts at 0 HP, excess damage carries over.','Stone Shape':'Reshape a stone object.','Stoneskin':'Resistance to nonmagical physical damage.','Wall of Fire':'A wall of flame; Dex save, 5d8 fire.',
+'Animate Objects':'Animate up to 10 objects to fight.','Awaken':'Give a beast or plant sentience and speech.','Cloudkill':'A 20-ft poison fog; Con save, 5d8 poison; it drifts each round.','Commune':'Ask your deity three yes/no questions.','Commune with Nature':'Learn facts about the surrounding land.','Cone of Cold':'60-ft cone, Con save, 8d8 cold.','Conjure Elemental':'Summon an elemental to serve you.','Contact Other Plane':'Ask an entity five questions (risky).','Dispel Evil and Good':'Protect against and dismiss outsiders.','Dominate Person':'Control a humanoid (Wis save); it repeats the save each time it takes damage.','Dream':'Shape a sleeping creature\'s dreams.','Flame Strike':'A column of holy fire; Dex save, 4d6 fire + 4d6 radiant.','Geas':'Compel a creature to obey for 30 days.','Greater Restoration':'End exhaustion, charm, petrify, curse, or reductions.','Hallow':'Imbue an area with protective effects.','Hold Monster':'Paralyze any creature (Wis save each turn).','Insect Plague':'A 20-ft swarm; Con save, 4d10 piercing; obscures the area.','Legend Lore':'Recall lore about a famous person/place/thing.','Mass Cure Wounds':'Heal up to 6 creatures 3d8 + mod.','Mislead':'Become invisible and control a double.','Modify Memory':'Reshape a creature\'s memory of an event.','Planar Binding':'Bind a summoned outsider into service.','Raise Dead':'Revive a creature dead up to 10 days.','Reincarnate':'Bring back the dead in a new body/race.','Scrying':'See and hear a specific creature anywhere.','Seeming':'Disguise the appearance of many creatures.','Telekinesis':'Range 60 ft (12 tiles). Creature: your spell-ability check vs its Strength — win to move it 30 ft (restrained). Object ≤1000 lb: move 30 ft/round.','Teleportation Circle':'Open a portal to a known circle.','Tree Stride':'Step between trees of the same kind.','Wall of Force':'An invisible, nearly indestructible wall.','Wall of Stone':'Conjure a wall of stone.',
+'Chain Lightning':'Arcs to up to 4 targets; Dex save, 10d8 lightning.','Circle of Death':'A 60-ft sphere; Con save, 8d6 necrotic.','Disintegrate':'10d6+40 force; dust if it drops the target.','Eyebite':'Each turn sicken, frighten, or sleep a foe.','Find the Path':'Know the shortest route to a known place.','Globe of Invulnerability':'Block spells of 5th level and lower.','Harm':'Con save; 14d6 necrotic and lowers the target\'s HP max.','Heal':'Restore 70 HP and end blind/deaf/disease.','Heroes\' Feast':'A feast grants HP, immunities, advantage (1 day).','Mass Suggestion':'Suggest an action to up to 12 creatures.','Sunbeam':'A 60-ft line; Con save, 6d8 radiant, blinds.','True Seeing':'See in dark, through illusions, into Ethereal.','Wall of Ice':'A wall of ice that damages those breaking through.','Word of Recall':'Teleport instantly to a chosen sanctuary.',
+'Conjure Celestial':'Summon a celestial to aid you.','Delayed Blast Fireball':'Dex save, 12d6 fire; grows each round the blast is delayed.','Etherealness':'Step into the Border Ethereal Plane.','Finger of Death':'Con save; 7d8+30 necrotic; the slain rise as zombies.','Fire Storm':'Sheets of flame; Dex save, 7d10 fire.','Forcecage':'Trap creatures in an inescapable force cage.','Plane Shift':'Travel to another plane of existence.','Prismatic Spray':'Eight rays of varied damage/effects.','Regenerate':'Restore HP each turn; regrow limbs.','Resurrection':'Revive a creature dead up to a century.','Reverse Gravity':'Things fall upward in a cylinder.','Teleport':'Instantly travel a great distance (some risk).',
+'Animal Shapes':'Turn willing creatures into beasts.','Antimagic Field':'A 10-ft sphere suppresses magic.','Dominate Monster':'Control any creature (Wis save); it repeats the save each time it takes damage.','Earthquake':'Shake the ground — fissures, knockdowns.','Feeblemind':'Int save; 4d6 psychic and crushes Int & Cha to 1.','Holy Aura':'Allies get save advantage; foes may be blinded.','Maze':'Banish a creature into a labyrinth demiplane.','Mind Blank':'Immunity to psychic and mind-reading/charm.','Power Word Stun':'Stun a creature with 150 HP or fewer.','Sunburst':'A burst of sunlight; Con save, 12d6 radiant, blinds.',
+'Astral Projection':'Project yourself and others to the Astral Plane.','Foresight':'Advantage on everything; can\'t be surprised.','Gate':'Open a portal to another plane.','Mass Heal':'Distribute 700 HP of healing.','Meteor Swarm':'Meteors fall; Dex save, 20d6 fire + 20d6 bludgeoning.','Power Word Kill':'Slay a creature with 100 HP or fewer.','Time Stop':'Take several turns while time is frozen.','True Resurrection':'Revive the long-dead, fully restored.','Wish':'Duplicate any spell of 8th level or lower safely. Any greater wish: DM adjudicates, and there\'s a 33% chance you can never cast Wish again.','Storm of Vengeance':'A vast storm rains damage and effects.'
 };
 function spellSummary(name){ return SPELL_DESC[name]||''; }
 
@@ -1262,11 +1300,11 @@ const SPELL_EFFECTS = {
   'Bane':{rounds:10, conc:true, note:'−1d4 to affected creatures’ attacks and saves.'},
   'Heroism':{rounds:10, conc:true, mods:{tempHp:0}, note:'Immune to fear; gain temp HP = spell mod each turn.'},
   'Divine Favor':{rounds:10, conc:true, note:'Your weapon hits deal +1d4 radiant.'},
-  "Hunter's Mark":{rounds:10, conc:true, note:'+1d6 damage to the marked target; track between targets.'},
-  'Hex':{rounds:10, conc:true, note:'+1d6 necrotic to the hexed target; it has disadvantage on one ability.'},
+  "Hunter's Mark":{rounds:600, conc:true, note:'+1d6 damage to the marked target; track between targets.'},
+  'Hex':{rounds:600, conc:true, note:'+1d6 necrotic to the hexed target; it has disadvantage on one ability.'},
   'False Life':{rounds:600, mods:{tempHp:5}, note:'Gain 1d4+4 temporary HP (≈5).'},
-  'Aid':{rounds:480, mods:{tempHp:5}, note:'HP maximum and current HP +5 for up to three creatures.'},
-  'Heroes\' Feast':{rounds:600, note:'+2d10 HP max, immune to poison & fright, advantage on WIS saves (24h).'},
+  'Aid':{rounds:4800, mods:{tempHp:5}, note:'HP maximum and current HP +5 for up to three creatures (8 hours).'},
+  'Heroes\' Feast':{rounds:14400, note:'+2d10 HP max, immune to poison & fright, advantage on WIS saves (24h).'},
   'Foresight':{rounds:4800, note:'Advantage on attacks, checks and saves; you can’t be surprised.'},
   'Death Ward':{rounds:4800, note:'The first time you’d drop to 0 HP, you drop to 1 instead.'},
   'Pass without Trace':{rounds:600, conc:true, note:'+10 to your group’s Stealth; can’t be tracked.'},
@@ -1291,6 +1329,9 @@ function fmtDuration(r){ if(r==null) return 'until removed'; if(r<=0) return 'ex
 function hasConcentration(c){ return (c.effects||[]).find(e=>e.conc); }
 function addEffect(c, name, tmpl){
   tmpl=tmpl||SPELL_EFFECTS[name]||{};
+  // Same-named effects don't stack (PHB: "the effects of the same spell cast multiple times
+  // don't combine") — recasting refreshes the effect instead of doubling its bonuses.
+  if((c.effects||[]).some(e=>e.name===name)){ c.effects=c.effects.filter(e=>e.name!==name); }
   if(tmpl.conc){ // one concentration spell at a time — drop the old one
     const old=hasConcentration(c);
     if(old){ c.effects=c.effects.filter(e=>!e.conc); logChange(c,'Lost concentration on '+old.name); }
@@ -1324,7 +1365,9 @@ function canCast(c, name, level){
   const ct=spellCastTime(name);
   if(c.battle){
     const b=c.battle;
-    if(ct==='bonus'){
+    if(ct==='reaction'){
+      if(b.reaction){ flashBanner('Reaction already used this round'); return false; }
+    } else if(ct==='bonus'){
       if(b.bonus){ flashBanner('Bonus action already used this turn'); return false; }
       if(b.castBonusSpell){ flashBanner('You already cast a bonus-action spell this turn'); return false; }
       if(b.castLeveledSpell){ flashBanner('Can’t cast a bonus-action spell after another spell this turn'); return false; }
@@ -1343,28 +1386,46 @@ function castSpell(c, name, level){
   const ct=spellCastTime(name);
   if(level>0){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
   if(c.battle){
-    if(ct==='bonus'){ c.battle.bonus=true; c.battle.castBonusSpell=true; }
+    if(ct==='reaction'){ c.battle.reaction=true; }
+    else if(ct==='bonus'){ c.battle.bonus=true; c.battle.castBonusSpell=true; }
     else { spendAction(c); if(level>0) c.battle.castLeveledSpell=true; }
   }
   Events.emit({type:'cast', by:c.name, name, level, castTime:ct});
-  const tmpl=SPELL_EFFECTS[name]; sfx('cast'); castFx(name);
-  const ba=(ct==='bonus')?' · bonus action':'';
-  if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' [bonus action]':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')+ba); }
-  else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' [bonus action]':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')+ba); }
+  let tmpl=SPELL_EFFECTS[name]; sfx('cast'); castFx(name);
+  // No effect template but the spell is concentration → still track it as a concentration
+  // effect, so casting it drops any previous concentration (one spell at a time, PHB).
+  if(!tmpl && isConcentration(name)) tmpl={rounds:null, conc:true, note:SPELL_DESC[name]||'Concentration — one such spell at a time.'};
+  const ba=(ct==='bonus')?' · bonus action':(ct==='reaction')?' · reaction':'';
+  if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' ['+ct+']':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')+ba); }
+  else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' ['+ct+']':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')+ba); }
   return true;
 }
 // Heuristically read mechanics out of a spell's one-line summary (attack? save? damage/heal dice?).
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
-// AoE spells: burst radius in tiles (5ft each). Cones/lines approximated as bursts.
-const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':2,'Burning Hands':3,'Cone of Cold':12,'Lightning Bolt':12,'Sleep':2,'Stinking Cloud':4,'Hypnotic Pattern':6,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':4,'Faerie Fire':4,'Spike Growth':4,'Moonbeam':1,'Entangle':4,'Grease':2};
+// AoE spells: burst radius in tiles (5 ft each), Chebyshev distance from center.
+// PHB shapes → grid rulings: sphere radius R ft = R/5 tiles. A cube of side S ≈ radius S/10
+// (Thunderwave 15-ft cube = r1, Web/Faerie Fire 20-ft cube = r2). Cones/lines are approximated
+// as bursts of equal AREA: 15-ft cone (Burning Hands) ≈ r1, 60-ft cone (Cone of Cold) ≈ r4,
+// 100-ft line (Lightning Bolt) ≈ r2. Spirit Guardians/Thunderwave are self-centered in the PHB
+// — center them on your own tile.
+const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
-const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:100},"Hunter's Mark":{c:'Marked',r:100},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Tasha\'s Hideous Laughter':{c:'Prone',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10}};
+const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10}};
 // Spells whose casting time is a bonus action (everything else defaults to an action).
-const BONUS_ACTION_SPELLS=new Set(['Healing Word','Mass Healing Word','Misty Step','Spiritual Weapon','Hex',"Hunter's Mark",'Shield of Faith','Sanctuary','Healing Spirit','Searing Smite','Wrathful Smite','Thunderous Smite','Branding Smite','Ensnaring Strike','Hail of Thorns','Zephyr Strike','Compelled Duel','Flame Blade','Magic Stone',"Hunter’s Mark"]);
-function spellCastTime(name){ return BONUS_ACTION_SPELLS.has(name)?'bonus':'action'; }
-// "Seeking" spells: auto-hit, no line of sight needed, range follows a path (curves around walls).
-const SPELL_SEEK=new Set(['magic missile']);
-function spellSeeks(name){ const n=(name||'').toLowerCase(); if(SPELL_SEEK.has(n)) return true; const mc=parseSpellMechanics(name); return !mc.attack && !mc.save && !!mc.dmg && !SPELL_AOE[name]; }
+const BONUS_ACTION_SPELLS=new Set(['Healing Word','Mass Healing Word','Misty Step','Spiritual Weapon','Hex',"Hunter's Mark",'Shield of Faith','Sanctuary','Healing Spirit','Searing Smite','Wrathful Smite','Thunderous Smite','Branding Smite','Ensnaring Strike','Hail of Thorns','Zephyr Strike','Compelled Duel','Flame Blade','Magic Stone',"Hunter’s Mark",'Expeditious Retreat','Shillelagh','Divine Favor']);
+// Spells cast as a reaction (PHB): Shield & Hellish Rebuke (when hit), Counterspell (when a
+// creature casts within 60 ft), Feather Fall (when falling), Absorb Elements (when taking damage).
+const REACTION_SPELLS=new Set(['Shield','Hellish Rebuke','Counterspell','Feather Fall','Absorb Elements']);
+function spellCastTime(name){ if(REACTION_SPELLS.has(name)) return 'reaction'; return BONUS_ACTION_SPELLS.has(name)?'bonus':'action'; }
+// 5e ruling: nothing "seeks" — even Magic Missile targets "a creature you can see", so every
+// spell needs line of sight on this grid. Magic Missile still auto-hits (no attack, no save).
+function spellSeeks(name){ return false; }
+// Cantrip damage scales with character level (PHB): ×2 dice at 5th, ×3 at 11th, ×4 at 17th.
+// (Eldritch Blast adds beams rather than dice — same total dice, resolved as one roll here.)
+function cantripTier(c){ const l=Number(c&&c.level)||1; return l>=17?4:l>=11?3:l>=5?2:1; }
+function multiplyDice(notation,k){ if(!notation||k<=1) return notation; const p=parseDice(notation);
+  let s=p.terms.map(t=>(t.sign<0?'-':'')+(t.n*k)+'d'+t.sides).join('+'); if(p.flat) s+=(p.flat>0?'+':'')+p.flat; return s||notation; }
+function scaleCantrip(c,name,mc){ const meta=spellMeta(name); if(meta&&meta.l===0&&mc&&mc.dmg) mc.dmg=multiplyDice(mc.dmg,cantripTier(c)); return mc; }
 function parseSpellMechanics(name){
   const eff=SPELL_EFFECTS[name], d=SPELL_DESC[name]||'';
   const out={attack:false, save:null, dmg:null, dtype:'', heal:null, buff:!!eff,
@@ -1375,18 +1436,21 @@ function parseSpellMechanics(name){
   else if(out.conc) out.duration='Concentration';
   if(eff) return out;   // self/ally buff — its dice (e.g. Bless +1d4) are described in the effect note
   const sv=d.match(/\b(Str|Dex|Con|Int|Wis|Cha)\s+save/i); if(sv) out.save=sv[1].toLowerCase();
-  const dm=d.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s*([a-z]+)?/i);
-  if(dm){ const dice=dm[1].replace(/\s+/g,''); const word=(dm[2]||'').toLowerCase();
+  // collect EVERY dice group (Ice Storm "2d8 bludgeoning + 4d6 cold" → 2d8+4d6); type from the first typed group
+  const groups=[...d.matchAll(/(\d+d\d+(?:\s*\+\s*\d+)?)\s*([a-z]+)?/gi)];
+  if(groups.length){ const dice=groups.map(g=>g[1].replace(/\s+/g,'')).join('+');
     if(/\b(heal|heals|restore|restores|regain|temporary)\b/i.test(d)) out.heal=dice; else out.dmg=dice;
-    if(DMG_TYPES.includes(word)) out.dtype=word; }
+    for(const g of groups){ const word=(g[2]||'').toLowerCase(); if(DMG_TYPES.includes(word)){ out.dtype=word; break; } } }
   if(!out.save && !out.heal && /\b(ranged|melee|spell attack|attack roll|beam|ray|rays|bolt)\b/i.test(d)) out.attack=true;
   return out;
 }
 function castModal(c, name, baseLevel){
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return; }
   baseLevel=Number(baseLevel)||0;
-  const meta=spellMeta(name), m=parseSpellMechanics(name), A=abilFullName;
+  const meta=spellMeta(name), m=scaleCantrip(c,name,parseSpellMechanics(name)), A=abilFullName;
   const dc=8+profBonus(c)+mod(abil(c,c.spellAbility)), atkB=profBonus(c)+mod(abil(c,c.spellAbility));
+  // healing spells that add your spellcasting modifier (e.g. Cure Wounds "1d8 + spell mod")
+  if(m.heal && /\bmod\b/i.test(SPELL_DESC[name]||'')){ const sm=mod(abil(c,c.spellAbility)); if(sm) m.heal+=sgn(sm); }
   const slots=spellSlots(c); let lvlOpts='';
   if(baseLevel>0){ for(let l=baseLevel;l<=9;l++){ const tot=slots[l]||0; if(tot){ const used=Math.min(tot,(c.slots[l]&&c.slots[l].used)||0), avail=tot-used; lvlOpts+=`<option value="${l}" ${avail<=0?'disabled':''}>Level ${l} — ${avail}/${tot} left</option>`; } } }
   const eff=SPELL_EFFECTS[name];
@@ -1478,9 +1542,10 @@ function classSpells(c, maxLevel){
   const lt=CLASS_LETTER[c.cls]; if(!lt) return [];
   return SPELLS.filter(s=> s.c.includes(lt) && (maxLevel==null || s.l<=maxLevel));
 }
-function maxSpellLevel(c){ // highest spell level the class can cast at this level (full-caster approximation)
+function maxSpellLevel(c){ // highest spell level castable at this class level (PHB tables)
   const lvl=Number(c.level)||1;
-  if(c.cls==='Paladin'||c.cls==='Ranger'||c.cls==='Artificer') return Math.min(5, Math.ceil(Math.max(1,lvl-1)/4)+1);
+  // half casters: 1st at L2 (Artificer L1), 2nd at 5, 3rd at 9, 4th at 13, 5th at 17
+  if(c.cls==='Paladin'||c.cls==='Ranger'||c.cls==='Artificer') return Math.min(5, Math.max(1, Math.ceil(lvl/4)));
   if(c.cls==='Warlock') return Math.min(5, Math.ceil(lvl/2));
   return Math.min(9, Math.ceil(lvl/2)); // full casters
 }
@@ -1517,7 +1582,12 @@ const CLASS_SKILLS_N = {Bard:3, Ranger:3, Rogue:4};
 function featSkillBonus(c){ let n=0; (c.feats||[]).forEach(f=>{ (FEAT_GRANTS[f.name||f]||[]).forEach(g=>{ if(g.t==='skill') n+=g.n; }); }); return n; }
 function hasFeat(c,name){ return (c.feats||[]).some(f=>(f.name||f)===name); }
 function featInitBonus(c){ return hasFeat(c,'Alert')?5:0; }   // Alert: +5 to initiative
-function initiative(c){ return mod(abil(c,'dex'))+Number(c.initMisc||0)+featInitBonus(c); }
+// Observant: +5 to passive Perception and passive Investigation.
+function passiveBonus(c,key){ return (hasFeat(c,'Observant')&&(key==='perception'||key==='investigation'))?5:0; }
+function passiveScore(c,key,ab){ return 10+skillBonus(c,key,ab,true)+passiveBonus(c,key); }
+// Initiative is a DEX check — Jack of All Trades applies to it too.
+function initiative(c){ const joat=(c.cls==='Bard'&&(Number(c.level)||1)>=2)?Math.floor(profBonus(c)/2):0;
+  return mod(abil(c,'dex'))+Number(c.initMisc||0)+featInitBonus(c)+joat; }
 function skillBudget(c){ return (CLASS_SKILLS_N[c.cls]||2) + 2 + featSkillBonus(c); }
 function skillCount(c){ return SKILLS.filter(([k])=>c.skillProf[k]).length; }
 // Average HP for the class/level: max die at L1, then per-level average, all + CON each level.
@@ -1564,6 +1634,7 @@ function newCharacter(name){
     spellAbility:'int', spells:[], slots,
     items:[], currency:{cp:0,sp:0,ep:0,gp:0,pp:0},
     conditions:{}, exhaustion:0, concentration:{active:false, spell:''},
+    effects:[],
     features:'', notes:'', log:[]
   };
 }
@@ -1812,8 +1883,8 @@ function searchProviders(c){
     {k:['hp','hit points','health','wounds','life'], t:'Hit Points', v:()=>c.hp.cur+' / '+c.hp.max+(c.hp.temp?' (+'+c.hp.temp+' temp)':''), n:()=>'Current / maximum HP.'},
     {k:['hit dice','hit die','short rest healing'], t:'Hit Dice', v:()=>{const hd=parseHitDice(c); return hd?(Math.max(0,hd.count-(c.hitDice.used||0))+' / '+hd.count+' · d'+hd.sides):'—';}, n:()=>'Spend on a short rest to heal (roll + CON each).'},
     {k:['proficiency','prof bonus','proficiency bonus'], t:'Proficiency Bonus', v:()=>sgn(pb), bd:'prof'},
-    {k:['passive perception','passive','perception passive','awareness','notice','spot'], t:'Passive Perception', v:()=>10+skillBonus(c,'perception','wis',true), n:()=>'10 + Perception, used without rolling. The DM compares hidden creatures’ Stealth to it.', bd:'passive:perception:wis'},
-    {k:['passive investigation','search passive'], t:'Passive Investigation', v:()=>10+skillBonus(c,'investigation','int',true), bd:'passive:investigation:int'},
+    {k:['passive perception','passive','perception passive','awareness','notice','spot'], t:'Passive Perception', v:()=>passiveScore(c,'perception','wis'), n:()=>'10 + Perception, used without rolling. The DM compares hidden creatures’ Stealth to it.', bd:'passive:perception:wis'},
+    {k:['passive investigation','search passive'], t:'Passive Investigation', v:()=>passiveScore(c,'investigation','int'), bd:'passive:investigation:int'},
     {k:['spell dc','save dc','spell save','spell save dc'], t:'Spell Save DC', v:()=>8+pb+sm, n:()=>'Enemies roll their save against this number.', bd:'spelldc'},
     {k:['spell attack','spell atk','to hit spell'], t:'Spell Attack Bonus', v:()=>sgn(pb+sm), bd:'spellatk'},
     {k:['level','character level'], t:'Level', v:()=>c.level+' '+esc(c.cls)},
@@ -1861,6 +1932,7 @@ function skillBonus(c, key, ab, exp){
   let b = mod(abil(c, ab));
   const pb = profBonus(c);
   if(c.skillProf[key]) b += pb;
+  else if(c.cls==='Bard' && (Number(c.level)||1)>=2) b += Math.floor(pb/2);   // Jack of All Trades: ½ prof on non-proficient checks
   if(exp && c.skillExp[key]) b += pb;
   return b;
 }
@@ -1890,7 +1962,7 @@ function statBreakdown(c, spec){
   else if(t==='prof'){ title='Proficiency Bonus'; if(c.profOverride!=='' && c.profOverride!=null && !isNaN(c.profOverride)){ lines=[{l:'Custom override', v:Number(c.profOverride)}]; } else { lines=[{l:'From level '+(c.level||1), v:profBonus(c)}]; } total=profBonus(c); }
   else if(t==='spelldc'){ title='Spell Save DC'; lines=[{l:'Base', v:8, raw:true},{l:'Proficiency', v:pb},{l:A(c.spellAbility)+' modifier', v:mod(abil(c,c.spellAbility))}]; total=8+pb+mod(abil(c,c.spellAbility)); raw=true; }
   else if(t==='spellatk'){ title='Spell Attack'; lines=[{l:'Proficiency', v:pb},{l:A(c.spellAbility)+' modifier', v:mod(abil(c,c.spellAbility))}]; total=pb+mod(abil(c,c.spellAbility)); }
-  else if(t==='passive'){ const nm=(SKILLS.find(s=>s[0]===a)||['',a])[1]; title='Passive '+nm; lines=[{l:'Base', v:10, raw:true},{l:A(b)+' modifier', v:mod(abil(c,b))}]; if(c.skillProf[a]) lines.push({l:'Proficiency', v:pb}); if(c.skillExp[a]) lines.push({l:'Expertise', v:pb}); total=10+skillBonus(c,a,b,true); raw=true; }
+  else if(t==='passive'){ const nm=(SKILLS.find(s=>s[0]===a)||['',a])[1]; title='Passive '+nm; lines=[{l:'Base', v:10, raw:true},{l:A(b)+' modifier', v:mod(abil(c,b))}]; if(c.skillProf[a]) lines.push({l:'Proficiency', v:pb}); if(c.skillExp[a]) lines.push({l:'Expertise', v:pb}); if(passiveBonus(c,a)) lines.push({l:'Observant feat', v:5}); total=passiveScore(c,a,b); raw=true; }
   return {title, lines, total, raw, note};
 }
 function showBreakdown(c, spec){
@@ -2368,8 +2440,8 @@ function renderSheet(c){
   <div class="card">
     <h2>Passive Senses</h2>
     <div class="tiles">
-      <div class="tile"><div class="lab">Passive Perception ${bd('passive:perception:wis')}</div><div class="big">${10+skillBonus(c,'perception','wis',true)}</div></div>
-      <div class="tile"><div class="lab">Passive Investigation ${bd('passive:investigation:int')}</div><div class="big">${10+skillBonus(c,'investigation','int',true)}</div></div>
+      <div class="tile"><div class="lab">Passive Perception ${bd('passive:perception:wis')}</div><div class="big">${passiveScore(c,'perception','wis')}</div></div>
+      <div class="tile"><div class="lab">Passive Investigation ${bd('passive:investigation:int')}</div><div class="big">${passiveScore(c,'investigation','int')}</div></div>
     </div>
     <p class="muted" style="font-size:11.5px;margin:10px 0 0">Not a skill — it's your Perception/Investigation used <b>without rolling</b>. 5e uses a fixed <b>10</b> in place of the d20, then adds your skill bonus. The DM compares it to a hidden creature's Stealth: ≤ your passive = you notice it automatically.</p>
   </div>
@@ -2531,8 +2603,8 @@ function renderAbil(c){
   <div class="card">
     <h2>Passive senses</h2>
     <div class="tiles">
-      <div class="tile"><div class="lab">Passive Perception</div><div class="big" id="pp">${10+skillBonus(c,'perception','wis',true)}</div></div>
-      <div class="tile"><div class="lab">Passive Investigation</div><div class="big" id="pi">${10+skillBonus(c,'investigation','int',true)}</div></div>
+      <div class="tile"><div class="lab">Passive Perception</div><div class="big" id="pp">${passiveScore(c,'perception','wis')}</div></div>
+      <div class="tile"><div class="lab">Passive Investigation</div><div class="big" id="pi">${passiveScore(c,'investigation','int')}</div></div>
     </div>
   </div>`;
 
@@ -2796,10 +2868,16 @@ function applyHp(c,delta){
     const before=c.hp.cur; c.hp.cur=Math.max(0,c.hp.cur-dmg);
     logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+' damage → '+c.hp.cur+' HP');
     if(raged) flashBanner('🪓 Rage — damage halved (physical)');
-    // damage while at 0 HP = failed death save(s); a crit/≥max-HP hit is two
-    if(wasAt0 && dmg>0){ const fails=dmg>=c.hp.max?2:1; c.death.fail=Math.min(3,(c.death.fail||0)+fails); logChange(c,'Hit at 0 HP — '+fails+' death-save failure'+(fails>1?'s':'')); }
-    // dropped to 0 → unconscious; instant death if damage ≥ max HP over current
-    if(before>0 && c.hp.cur===0){ c.conditions['Unconscious']=true; logChange(c,'Dropped to 0 HP — Unconscious'); flashBanner('Down! Roll death saves'); }
+    // damage while at 0 HP = a failed death save; if it equals/exceeds your max HP you die outright (PHB massive damage)
+    if(wasAt0 && dmg>0){
+      if(dmg>=c.hp.max){ c.death.fail=3; logChange(c,'💀 Massive damage at 0 HP — instant death'); flashBanner('💀 Dead — damage ≥ max HP'); }
+      else { c.death.fail=Math.min(3,(c.death.fail||0)+1); logChange(c,'Hit at 0 HP — 1 death-save failure'); }
+    }
+    // dropped to 0 → unconscious; instant death if the leftover damage ≥ your max HP (PHB)
+    if(before>0 && c.hp.cur===0){
+      if((dmg-before)>=c.hp.max){ c.death.fail=3; c.conditions['Unconscious']=true; logChange(c,'💀 Massive damage — instant death'); flashBanner('💀 Instant death — overkill ≥ max HP'); }
+      else { c.conditions['Unconscious']=true; logChange(c,'Dropped to 0 HP — Unconscious'); flashBanner('Down! Roll death saves'); }
+    }
   }else{
     c.hp.cur=Math.min(c.hp.max,c.hp.cur+delta);
     if(c.hp.cur>0){ if(c.conditions['Unconscious']) delete c.conditions['Unconscious']; c.death={succ:0,fail:0}; }   // healed above 0 → stable & conscious
@@ -2909,6 +2987,22 @@ function renderSpells(c){
     }).join(''); return rows || '<div class="empty">No spell slots at this level.</div>'; })()}
   </div>
 
+  ${(()=>{ // class casting resources (PHB): Arcane Recovery / Pact Magic / Font of Magic
+    if(c.cls==='Wizard'){ const budget=Math.ceil((Number(c.level)||1)/2); return `<div class="card"><h2>Arcane Recovery</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Once per day when you finish a short rest, recover spent slots with a combined level of ${budget} or less (no slot 6th level or higher).</p>
+      <button class="btn ghost block" id="arcRec" ${c.arcaneRecovered?'disabled style="opacity:.5"':''}>${c.arcaneRecovered?'✓ Used today — recharges on a long rest':'☾ Arcane Recovery (short rest)'}</button></div>`; }
+    if(c.cls==='Warlock') return `<div class="card"><h2>Pact Magic</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Pact slots recharge on a <b>short or long</b> rest.</p>
+      <button class="btn ghost block" id="pactRest">☾ Short rest — recover pact slots</button></div>`;
+    if(sorcMax(c)){ const mx=sorcMax(c), cur=sorcCur(c);
+      return `<div class="card"><h2>Sorcery Points <span class="muted" style="text-transform:none;font-size:11px">— Font of Magic</span></h2>
+      <div class="listrow"><div class="nm">Points</div><div class="stepper"><button id="spDown" ${cur<=0?'disabled':''}>−</button><div class="val" style="min-width:56px;text-align:center">${cur} / ${mx}</div><button id="spUp" ${cur>=mx?'disabled':''}>＋</button></div></div>
+      <div class="addrow" style="margin-top:8px;align-items:center"><select id="spConv" style="flex:1">${[1,2,3,4,5].filter(l=>(spellSlots(c)[l]||0)>0).map(l=>`<option value="${l}">Level ${l}</option>`).join('')}</select>
+        <button class="btn ghost sm" id="spSlotToPts">Slot → pts</button><button class="btn ghost sm" id="spPtsToSlot">Pts → slot</button></div>
+      <p class="muted" style="font-size:11px;margin:8px 0 0">Convert: spend a slot to gain points equal to its level, or spend points (L1 = 2, L2 = 3, L3 = 5, L4 = 6, L5 = 7) to recover a spent slot (up to 5th). Points refresh on a long rest.</p></div>`; }
+    return '';
+  })()}
+
   ${effectsCard(c)}
 
   <div class="card">
@@ -2947,15 +3041,30 @@ function renderSpells(c){
 
   $('#restBtn').addEventListener('click',()=>{
     for(let l=1;l<=9;l++) if(c.slots[l]) c.slots[l].used=0;
-    c.hp.cur=c.hp.max; c.death={succ:0,fail:0};
+    c.hp.cur=c.hp.max; c.hp.temp=0; c.death={succ:0,fail:0};   // temp HP ends when a long rest ends (PHB)
     const hd=parseHitDice(c);                 // long rest: regain half your hit dice
     if(hd) c.hitDice.used=Math.max(0,(c.hitDice.used||0)-Math.max(1,Math.floor(hd.count/2)));
     c.exhaustion=Math.max(0,(c.exhaustion||0)-1);  // a long rest removes 1 exhaustion
     c.actionSurgeUsed=false;   // Action Surge recharges on a long rest too
+    c.arcaneRecovered=false;   // Arcane Recovery is once per day
+    if(sorcMax(c)) c.sorcPts=sorcMax(c);   // sorcery points refresh
     logChange(c, 'Long rest — HP, slots & hit dice restored');
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
   });
+  { const ar=$('#arcRec'); if(ar) ar.onclick=()=>{ if(c.arcaneRecovered) return; let budget=Math.ceil((Number(c.level)||1)/2); const auto=spellSlots(c);
+    for(let l=5;l>=1;l--){ while(budget>=l && c.slots[l] && (c.slots[l].used||0)>0 && (auto[l]||0)>0){ c.slots[l].used--; budget-=l; } }
+    c.arcaneRecovered=true; logChange(c,'☾ Arcane Recovery — slots restored'); save(); render(); flashBanner('Arcane Recovery — slots restored'); }; }
+  { const pr=$('#pactRest'); if(pr) pr.onclick=()=>{ for(let l=1;l<=9;l++) if(c.slots[l]) c.slots[l].used=0; logChange(c,'☾ Short rest — pact slots recovered'); save(); render(); flashBanner('Pact slots recovered'); }; }
+  { const up=$('#spUp'), dn=$('#spDown'); if(up) up.onclick=()=>{ c.sorcPts=Math.min(sorcMax(c), sorcCur(c)+1); save(); render(); }; if(dn) dn.onclick=()=>{ c.sorcPts=Math.max(0, sorcCur(c)-1); save(); render(); }; }
+  { const st=$('#spSlotToPts'); if(st) st.onclick=()=>{ const l=Number(($('#spConv')||{}).value)||1; const t=spellSlots(c)[l]||0, u=Math.min(t,(c.slots[l]&&c.slots[l].used)||0);
+    if(t-u<=0){ flashBanner('No level '+l+' slot available to convert'); return; }
+    if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=u+1; c.sorcPts=Math.min(sorcMax(c), sorcCur(c)+l); logChange(c,'Font of Magic: L'+l+' slot → '+l+' sorcery points'); save(); render(); }; }
+  { const ps=$('#spPtsToSlot'); if(ps) ps.onclick=()=>{ const l=Number(($('#spConv')||{}).value)||1; const cost=({1:2,2:3,3:5,4:6,5:7})[l]; const t=spellSlots(c)[l]||0, u=Math.min(t,(c.slots[l]&&c.slots[l].used)||0);
+    if(!cost){ flashBanner('Only slots up to level 5'); return; }
+    if(sorcCur(c)<cost){ flashBanner('Need '+cost+' sorcery points'); return; }
+    if(u<=0){ flashBanner('No spent level '+l+' slot to recover'); return; }
+    c.slots[l].used=u-1; c.sorcPts=sorcCur(c)-cost; logChange(c,'Font of Magic: '+cost+' points → L'+l+' slot'); save(); render(); }; }
   app.querySelectorAll('[data-slotpip]').forEach(el=>el.addEventListener('click',()=>{
     const l=el.dataset.slotpip, n=Number(el.dataset.n);
     const total=spellSlots(c)[l]||0;
@@ -3472,7 +3581,7 @@ function playerOnData(d){ if(!d) return;
       else if(!d.session.battle.active && c.battle){ c.battle=null; save(); }
       else if(c.battle){ const cur=d.session.order&&d.session.order[d.session.turn]; const myTurn=cur&&cur.id===net.peer.id;
         if((myTurn && !net.wasMyTurn) || (!d.session.order||!d.session.order.length) && c.battle.round!==d.session.battle.round){   // my turn started (or no initiative → round change) → reset resources
-          c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.actionsMax=actionsPerTurn(c); c.battle.actionsUsed=0; c.battle.surged=false; c.battle.castBonusSpell=false; c.battle.castLeveledSpell=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
+          c.battle.round=d.session.battle.round; c.battle.action=false; c.battle.bonus=false; c.battle.reaction=false; c.battle.actionsMax=actionsPerTurn(c); c.battle.actionsUsed=0; c.battle.surged=false; c.battle.sneakUsed=false; c.battle.castBonusSpell=false; c.battle.castLeveledSpell=false; c.battle.attacksLeft=extraAttacks(c)+1; c.battle.move=effSpeed(c); c.battle.moveUsed=0; save(); }
         net.wasMyTurn=myTurn; }
     }
     render();
@@ -3681,41 +3790,41 @@ const MONSTER_PIX={
 function monsterSprite(k){ return MONSTER_PIX[k] || RACE_PIX[({goblin:'Goblin',orc:'Orc',human:'_default',lizardfolk:'Dragonborn'})[k]] || RACE_PIX._default; }
 // Curated SRD bestiary: {n, cr, ac, hp, spd, sprite, atk, desc}
 const MONSTERS_5E=[
-  {n:'Goblin',cr:'1/4',ac:15,hp:7,spd:30,sprite:'goblin',atk:'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Small, cowardly raiders that swarm in packs and flee when bloodied.'},
-  {n:'Hobgoblin',cr:'1/2',ac:18,hp:11,spd:30,sprite:'goblin',atk:'Longsword +3 (1d8+1)',desc:'Disciplined martial goblinoids; deadlier when allies are near.'},
-  {n:'Bugbear',cr:'1',ac:16,hp:27,spd:30,sprite:'goblin',atk:'Morningstar +4 (2d8+2)',desc:'Hulking goblinoid ambushers that hit hard on a surprise round.'},
-  {n:'Kobold',cr:'1/8',ac:12,hp:5,spd:30,sprite:'goblin',atk:'Dagger +4 (1d4+2)',desc:'Tiny draconic schemers; pack tactics give advantage in groups.'},
-  {n:'Orc',cr:'1/2',ac:13,hp:15,spd:30,sprite:'orc',atk:'Greataxe +5 (1d12+3)',desc:'Savage warriors that charge straight into melee.'},
-  {n:'Bandit',cr:'1/8',ac:12,hp:11,spd:30,sprite:'human',atk:'Scimitar +3 (1d6+1) · Crossbow +3 (1d8+1)',desc:'Common brigands and highway robbers.'},
-  {n:'Guard',cr:'1/8',ac:16,hp:11,spd:30,sprite:'human',atk:'Spear +3 (1d6+1)',desc:'Town watch and hired muscle.'},
-  {n:'Cultist',cr:'1/8',ac:12,hp:9,spd:30,sprite:'human',atk:'Scimitar +3 (1d6+1)',desc:'Fanatical devotees of dark powers.'},
-  {n:'Mage',cr:'6',ac:12,hp:40,spd:30,sprite:'human',atk:'Fireball (DC15, 8d6) · Magic Missile · Dagger +5',desc:'A trained spellcaster with shield, counterspell and big AoE.'},
-  {n:'Skeleton',cr:'1/4',ac:13,hp:13,spd:30,sprite:'skeleton',atk:'Shortsword +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Reanimated bones; vulnerable to bludgeoning, immune to poison.'},
-  {n:'Zombie',cr:'1/4',ac:8,hp:22,spd:20,sprite:'zombie',atk:'Slam +3 (1d6+1)',desc:'Shambling undead; Undead Fortitude can keep it up at 1 HP.'},
-  {n:'Ghoul',cr:'1',ac:12,hp:22,spd:30,sprite:'zombie',atk:'Claws +2 (2d4+2) · Bite +2 (2d6+2)',desc:'Ravenous undead; its claws can paralyze non-elves.'},
-  {n:'Specter',cr:'1',ac:12,hp:22,spd:0,sprite:'ghost',atk:'Life Drain +4 (3d6, lowers max HP)',desc:'Incorporeal undead that flies and passes through walls.'},
-  {n:'Ghost',cr:'4',ac:11,hp:45,spd:0,sprite:'ghost',atk:'Withering Touch +5 (4d6) · Horrifying Visage',desc:'A tormented spirit that can possess and age its victims.'},
-  {n:'Wraith',cr:'5',ac:13,hp:67,spd:0,sprite:'ghost',atk:'Life Drain +6 (4d8+3)',desc:'A powerful undead of pure malice that creates new specters.'},
-  {n:'Wolf',cr:'1/4',ac:13,hp:11,spd:40,sprite:'wolf',atk:'Bite +4 (2d4+2, knock prone)',desc:'Pack hunter; pack tactics grant advantage.'},
-  {n:'Dire Wolf',cr:'1',ac:14,hp:37,spd:50,sprite:'wolf',atk:'Bite +5 (2d6+3, knock prone)',desc:'A massive wolf the size of a horse.'},
-  {n:'Brown Bear',cr:'1',ac:11,hp:34,spd:40,sprite:'bear',atk:'Claws +5 (2d6+4) · Bite +5 (1d8+4)',desc:'Powerful beast with keen smell.'},
-  {n:'Giant Spider',cr:'1',ac:14,hp:26,spd:30,sprite:'spider',atk:'Bite +5 (1d8+3 + DC11 Con 2d8 poison) · Web',desc:'Climbs walls; restrains prey with webbing.'},
-  {n:'Giant Snake',cr:'1/4',ac:12,hp:13,spd:30,sprite:'snake',atk:'Bite +4 (1d6+2) · Constrict +4 (1d8+2)',desc:'A constrictor that grapples and crushes.'},
-  {n:'Poisonous Snake',cr:'1/8',ac:13,hp:2,spd:30,sprite:'snake',atk:'Bite +5 (1 + DC10 Con 2d4 poison)',desc:'Tiny but deadly venom.'},
-  {n:'Ogre',cr:'2',ac:11,hp:59,spd:40,sprite:'ogre',atk:'Greatclub +6 (2d8+4)',desc:'Dim-witted giant brute that smashes everything.'},
-  {n:'Troll',cr:'5',ac:15,hp:84,spd:30,sprite:'ogre',atk:'Claw +7 (2d6+4) · Bite +7 (1d6+4)',desc:'Regenerates 10 HP/turn unless hit by fire or acid.'},
-  {n:'Hill Giant',cr:'5',ac:13,hp:105,spd:40,sprite:'ogre',atk:'Greatclub +8 (3d8+5) · Rock +8 (3d10+5)',desc:'Enormous, gluttonous giant that hurls boulders.'},
-  {n:'Gray Ooze',cr:'1/2',ac:8,hp:22,spd:10,sprite:'slime',atk:'Pseudopod +3 (2d6+1 acid, corrodes metal)',desc:'Acidic sludge that mimics wet stone.'},
-  {n:'Gelatinous Cube',cr:'2',ac:6,hp:84,spd:15,sprite:'slime',atk:'Pseudopod +4 (3d6 acid) · Engulf',desc:'A transparent 10-ft cube that engulfs and dissolves.'},
-  {n:'Imp',cr:'1',ac:13,hp:10,spd:20,sprite:'demon',atk:'Sting +5 (1d4+3 + DC11 Con 3d6 poison)',desc:'Shape-shifting fiend; invisible, resists most damage.'},
-  {n:'Quasit',cr:'1',ac:13,hp:7,spd:40,sprite:'demon',atk:'Claws +4 (1d4+2 + DC10 Con poison)',desc:'Tiny demon that turns invisible and frightens.'},
-  {n:'Dretch',cr:'1/4',ac:11,hp:18,spd:20,sprite:'demon',atk:'Claws +2 (2d4) · Fetid Cloud',desc:'Lowly demon that fights in mobs and reeks.'},
-  {n:'Lizardfolk',cr:'1/2',ac:15,hp:22,spd:30,sprite:'lizardfolk',atk:'Spear +4 (1d6+2) · Bite +4 (1d6+2)',desc:'Cold, pragmatic reptilian hunters.'},
-  {n:'Wyvern',cr:'6',ac:13,hp:110,spd:'20/80 fly',sprite:'dragon',atk:'Stinger +7 (2d6+4 + DC15 Con 7d6 poison) · Bite +7',desc:'Lesser dragon-kin with a venomous tail.'},
-  {n:'Red Dragon Wyrmling',cr:'4',ac:17,hp:75,spd:'30/60 fly',sprite:'dragon',atk:'Bite +6 (1d10+4 + 1d6 fire) · Fire Breath (DC13 Dex, 7d6)',desc:'A young chromatic dragon with a fiery breath cone.'},
-  {n:'Young Red Dragon',cr:'10',ac:18,hp:178,spd:'40/80 fly',sprite:'dragon',atk:'Bite +10 (2d10+6 + 1d6 fire) · Fire Breath (DC17 Dex, 16d6)',desc:'A fearsome adolescent dragon; multiattack + recharge breath.'},
-  {n:'Gazer',cr:'1/2',ac:13,hp:13,spd:'10/30 fly',sprite:'eye',atk:'Bite +0 (1) · Eye Rays +4',desc:'A tiny aberration with four magical eye rays.'},
-  {n:'Beholder',cr:'13',ac:18,hp:180,spd:'0/20 fly',sprite:'eye',atk:'Bite +5 · Eye Rays (10 random) · Antimagic Cone',desc:'A floating sphere of eyes; its central eye negates magic.'}
+  {n:'Goblin',cr:'1/4',ac:15,hp:7,spd:30,init:2,attacks:1,sprite:'goblin',atk:'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Small, cowardly raiders that swarm in packs and flee when bloodied.'},
+  {n:'Hobgoblin',cr:'1/2',ac:18,hp:11,spd:30,init:1,attacks:1,sprite:'goblin',atk:'Longsword +3 (1d8+1)',desc:'Disciplined martial goblinoids; deadlier when allies are near.'},
+  {n:'Bugbear',cr:'1',ac:16,hp:27,spd:30,init:2,attacks:1,sprite:'goblin',atk:'Morningstar +4 (2d8+2)',desc:'Hulking goblinoid ambushers that hit hard on a surprise round.'},
+  {n:'Kobold',cr:'1/8',ac:12,hp:5,spd:30,init:2,attacks:1,sprite:'goblin',atk:'Dagger +4 (1d4+2)',desc:'Tiny draconic schemers; pack tactics give advantage in groups.'},
+  {n:'Orc',cr:'1/2',ac:13,hp:15,spd:30,init:1,attacks:1,sprite:'orc',atk:'Greataxe +5 (1d12+3)',desc:'Savage warriors that charge straight into melee.'},
+  {n:'Bandit',cr:'1/8',ac:12,hp:11,spd:30,init:1,attacks:1,sprite:'human',atk:'Scimitar +3 (1d6+1) · Crossbow +3 (1d8+1)',desc:'Common brigands and highway robbers.'},
+  {n:'Guard',cr:'1/8',ac:16,hp:11,spd:30,init:1,attacks:1,sprite:'human',atk:'Spear +3 (1d6+1)',desc:'Town watch and hired muscle.'},
+  {n:'Cultist',cr:'1/8',ac:12,hp:9,spd:30,init:1,attacks:1,sprite:'human',atk:'Scimitar +3 (1d6+1)',desc:'Fanatical devotees of dark powers.'},
+  {n:'Mage',cr:'6',ac:12,hp:40,spd:30,init:2,attacks:1,sprite:'human',atk:'Fireball (DC 14 Dex, 8d6) · Magic Missile (3d4+3, auto-hit) · Dagger +5 (1d4+2)',desc:'A trained spellcaster (spell DC 14) with shield, counterspell and big AoE.'},
+  {n:'Skeleton',cr:'1/4',ac:13,hp:13,spd:30,init:2,attacks:1,sprite:'skeleton',atk:'Shortsword +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Reanimated bones; vulnerable to bludgeoning, immune to poison.'},
+  {n:'Zombie',cr:'1/4',ac:8,hp:22,spd:20,init:-2,attacks:1,sprite:'zombie',atk:'Slam +3 (1d6+1)',desc:'Shambling undead; Undead Fortitude can keep it up at 1 HP.'},
+  {n:'Ghoul',cr:'1',ac:12,hp:22,spd:30,init:2,attacks:1,sprite:'zombie',atk:'Claws +4 (2d4+2, DC 10 Con or paralyzed) · Bite +2 (2d6+2)',desc:'Ravenous undead; its claws can paralyze non-elves.'},
+  {n:'Specter',cr:'1',ac:12,hp:22,spd:0,init:2,attacks:1,sprite:'ghost',atk:'Life Drain +4 (3d6, lowers max HP)',desc:'Incorporeal undead that flies and passes through walls.'},
+  {n:'Ghost',cr:'4',ac:11,hp:45,spd:0,init:1,attacks:1,sprite:'ghost',atk:'Withering Touch +5 (4d6+3) · Horrifying Visage (DC 13 Wis, frightened)',desc:'A tormented spirit that can possess and age its victims.'},
+  {n:'Wraith',cr:'5',ac:13,hp:67,spd:0,init:3,attacks:1,sprite:'ghost',atk:'Life Drain +6 (4d8+3)',desc:'A powerful undead of pure malice that creates new specters.'},
+  {n:'Wolf',cr:'1/4',ac:13,hp:11,spd:40,init:2,attacks:1,sprite:'wolf',atk:'Bite +4 (2d4+2, knock prone)',desc:'Pack hunter; pack tactics grant advantage.'},
+  {n:'Dire Wolf',cr:'1',ac:14,hp:37,spd:50,init:2,attacks:1,sprite:'wolf',atk:'Bite +5 (2d6+3, knock prone)',desc:'A massive wolf the size of a horse.'},
+  {n:'Brown Bear',cr:'1',ac:11,hp:34,spd:40,init:0,attacks:2,sprite:'bear',atk:'Bite +6 (1d8+4) · Claws +6 (2d6+4)',desc:'Powerful beast with keen smell; multiattack (bite + claws).'},
+  {n:'Giant Spider',cr:'1',ac:14,hp:26,spd:30,init:3,attacks:1,sprite:'spider',atk:'Bite +5 (1d8+3 + DC11 Con 2d8 poison) · Web (DC 11 Str, restrained)',desc:'Climbs walls; restrains prey with webbing.'},
+  {n:'Giant Snake',cr:'1/4',ac:12,hp:13,spd:30,init:2,attacks:1,sprite:'snake',atk:'Bite +4 (1d6+2) · Constrict +4 (1d8+2, grappled)',desc:'A constrictor that grapples and crushes.'},
+  {n:'Poisonous Snake',cr:'1/8',ac:13,hp:2,spd:30,init:3,attacks:1,sprite:'snake',atk:'Bite +5 (1 + DC10 Con 2d4 poison)',desc:'Tiny but deadly venom.'},
+  {n:'Ogre',cr:'2',ac:11,hp:59,spd:40,init:-1,attacks:1,sprite:'ogre',atk:'Greatclub +6 (2d8+4)',desc:'Dim-witted giant brute that smashes everything.'},
+  {n:'Troll',cr:'5',ac:15,hp:84,spd:30,init:1,attacks:3,sprite:'ogre',atk:'Claw +7 (2d6+4) · Bite +7 (1d6+4)',desc:'Multiattack (bite + 2 claws); regenerates 10 HP/turn unless hit by fire or acid.'},
+  {n:'Hill Giant',cr:'5',ac:13,hp:105,spd:40,init:-1,attacks:2,sprite:'ogre',atk:'Greatclub +8 (3d8+5) · Rock +8 (3d10+5)',desc:'Enormous, gluttonous giant; multiattack (2 greatclubs) or hurls boulders.'},
+  {n:'Gray Ooze',cr:'1/2',ac:8,hp:22,spd:10,init:-2,attacks:1,sprite:'slime',atk:'Pseudopod +3 (2d6+1 acid, corrodes metal)',desc:'Acidic sludge that mimics wet stone.'},
+  {n:'Gelatinous Cube',cr:'2',ac:6,hp:84,spd:15,init:-4,attacks:1,sprite:'slime',atk:'Pseudopod +4 (3d6 acid) · Engulf (DC 12 Dex)',desc:'A transparent 10-ft cube that engulfs and dissolves.'},
+  {n:'Imp',cr:'1',ac:13,hp:10,spd:20,init:3,attacks:1,sprite:'demon',atk:'Sting +5 (1d4+3 + DC11 Con 3d6 poison)',desc:'Shape-shifting fiend; invisible, resists most damage.'},
+  {n:'Quasit',cr:'1',ac:13,hp:7,spd:40,init:3,attacks:1,sprite:'demon',atk:'Claws +4 (1d4+2 + DC10 Con poison)',desc:'Tiny demon that turns invisible and frightens.'},
+  {n:'Dretch',cr:'1/4',ac:11,hp:18,spd:20,init:0,attacks:2,sprite:'demon',atk:'Bite +2 (1d6) · Claws +2 (2d4)',desc:'Lowly demon; multiattack (bite + claws); fights in reeking mobs.'},
+  {n:'Lizardfolk',cr:'1/2',ac:15,hp:22,spd:30,init:0,attacks:2,sprite:'lizardfolk',atk:'Spear +4 (1d6+2) · Bite +4 (1d6+2)',desc:'Cold, pragmatic reptilian hunters; multiattack (2 different attacks).'},
+  {n:'Wyvern',cr:'6',ac:13,hp:110,spd:'20/80 fly',init:0,attacks:2,sprite:'dragon',atk:'Bite +7 (2d6+4) · Stinger +7 (2d6+4 + DC15 Con 7d6 poison)',desc:'Lesser dragon-kin; multiattack (bite + stinger).'},
+  {n:'Red Dragon Wyrmling',cr:'4',ac:17,hp:75,spd:'30/60 fly',init:0,attacks:1,sprite:'dragon',atk:'Bite +6 (1d10+4 + 1d6 fire) · Fire Breath (DC13 Dex, 7d6)',desc:'A young chromatic dragon with a fiery breath cone (recharge 5-6).'},
+  {n:'Young Red Dragon',cr:'10',ac:18,hp:178,spd:'40/80 fly',init:0,attacks:3,sprite:'dragon',atk:'Bite +10 (2d10+6 + 1d6 fire) · Claw +10 (2d6+6) · Fire Breath (DC17 Dex, 16d6)',desc:'Multiattack (bite + 2 claws); breath recharges on 5-6.'},
+  {n:'Gazer',cr:'1/2',ac:13,hp:13,spd:'10/30 fly',init:3,attacks:2,sprite:'eye',atk:'Eye Rays +5 (1d6) · Bite +1 (1)',desc:'A tiny aberration; two random eye rays a turn.'},
+  {n:'Beholder',cr:'13',ac:18,hp:180,spd:'0/20 fly',init:2,attacks:3,sprite:'eye',atk:'Eye Rays +9 (3 of 10, ~4d8 each) · Bite +5 (4d6)',desc:'Fires three random eye rays a turn; its central-eye cone negates magic. Legendary: up to 3 extra rays between turns (DM adjudicates).'}
 ];
 // props: solid (impassable + blocks path), opaque (blocks line of sight), diff (difficult, ×2 move), dmg (dice on enter), deadly (instant down)
 const TERRAIN={
@@ -3920,6 +4029,9 @@ const MONSTER_RVI={
 };
 function monsterDmgMult(mo, dtype){ if(!mo||!dtype) return 1; const r=MONSTER_RVI[mo.base||mo.name]; if(!r) return 1; const d=String(dtype).toLowerCase();
   if((r.imm||[]).includes(d)) return 0; if((r.vuln||[]).includes(d)) return 2; if((r.res||[]).includes(d)) return 0.5; return 1; }
+// Monster saving-throw bonus, approximated from CR (tracks typical MM save spreads:
+// CR ¼ ≈ +1, CR 2 ≈ +2, CR 5 ≈ +3, CR 10 ≈ +6, CR 13 ≈ +7).
+function monsterSaveBonus(mo){ const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name)); const cr=crToNum(base?base.cr:1); return Math.min(9, 1+Math.floor(cr/2)); }
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
   const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
@@ -4198,11 +4310,11 @@ function startQuickBattle(c, crMax, count){
   const counts={};
   const monsters=chosen.map((m,i)=>{ counts[m.n]=(counts[m.n]||0)+1; const spd=(typeof m.spd==='number')?m.spd:(parseInt(m.spd)||30); const fly=/fly/i.test(String(m.spd||''));
     return {id:'qm'+i, side:'mon', base:m.n, name:m.n+(chosen.filter(x=>x.n===m.n).length>1?' '+counts[m.n]:''), num:chosen.filter(x=>x.n===m.n).length>1?counts[m.n]:0,
-      x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:1, attacksLeft:1, moveLeft:spd, reactionUsed:false, brain:'tactical', fly, init:rnd(20)}; });
+      x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:m.attacks||1, attacksLeft:m.attacks||1, moveLeft:spd, reactionUsed:false, brain:'tactical', fly, init:rnd(20)+(m.init||0)}; });
   QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles)}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
   qbPlaceUnits();
   // battle resources for the PC (mirror startBattle without its render)
-  c.battle={round:1, init:rnd(20)+initiative(c), action:false,bonus:false,reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0};
+  c.battle={round:1, init:rnd(20)+initiative(c), action:false,bonus:false,reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0};
   const order=[{k:'p',id:'pc',name:c.name,roll:c.battle.init}].concat(monsters.map(m=>({k:'m',id:m.id,name:m.name,roll:m.init})));
   order.sort((a,b)=>b.roll-a.roll); QB.order=order; QB.turn=0;
   qbLog('⚔ Battle begins — '+monsters.length+' enemies. Initiative: '+order.map(o=>o.name+' '+o.roll).join(', '));
@@ -4222,7 +4334,7 @@ function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
   if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=mo.speed||30; mo.reactionUsed=false; render();
     setTimeout(()=>qbRunBrain(mo), 500); }
   else { const c=QB.players[0].c, b=c.battle;   // PC turn — refresh resources, then wait for input
-    b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
+    b.action=false; b.bonus=false; b.reaction=false; b.actionsMax=actionsPerTurn(c); b.actionsUsed=0; b.surged=false; b.sneakUsed=false; b.castBonusSpell=false; b.castLeveledSpell=false; b.attacksLeft=extraAttacks(c)+1; b.move=effSpeed(c); b.moveUsed=0;
     let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
     exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
     QB.moveMode=false; save(); render(); }
@@ -4425,20 +4537,35 @@ function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while ragin
 function qbApplyCond(mo,name){ const sc=SPELL_COND[name]; if(sc){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===sc.c)) mo.conds.push({name:sc.c,rounds:sc.r}); } }
 function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.players[0];
   if(!canCast(c,name,level)) return;   // pre-check; castSpell re-checks + spends on confirm
-  const mc=parseSpellMechanics(name), tilesR=spellRangeTiles(name), seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
+  const mc=scaleCantrip(c,name,parseSpellMechanics(name)), tilesR=spellRangeTiles(name), seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
   const reach=seek?reachableCells(s,me.x,me.y,tilesR*5):null;
   const inRange=(x,y)=> seek?reach[x+','+y]!=null:(gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
   const spellAtk=profBonus(c)+mod(abil(c,c.spellAbility));
+  const dc0=8+profBonus(c)+mod(abil(c,c.spellAbility));
   const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && gridDist(mo.x,mo.y,ctr.x,ctr.y)<=aoeR);
   function finish(){ qbCheckEnd(); save(); render(); }
   const rvNote=(mo,base)=>{ const m=monsterDmgMult(mo,mc.dtype); return {dmg:Math.max(0,Math.round(base*m)), tag:m===0?' — immune!':m===0.5?' (resisted)':m===2?' (vulnerable!)':''}; };
+  // save-based spells: the monster rolls vs your spell DC — success halves damage & blocks conditions (PHB)
+  const monSave=(mo)=>{ if(!mc.save) return false; const tot=rnd(20)+monsterSaveBonus(mo); const ok=tot>=dc0;
+    qbLog('🛡️ '+mo.name+' '+String(mc.save).toUpperCase()+' save '+tot+' vs DC '+dc0+' — '+(ok?'success':'fail')); return ok; };
   function resolveSingle(mo){ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
-    if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'1d6', tiles:tilesR, dtype:mc.dtype}, ()=>{ qbApplyCond(mo,name); finish(); }); }
+    if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'0', tiles:tilesR, dtype:mc.dtype}, ()=>{ qbApplyCond(mo,name); finish(); }); }
     else { mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':'✦');
-      setTimeout(()=>{ if(mc.dmg){ const r=rollNotation(mc.dmg)||{total:0}; const a=rvNote(mo,r.total); qbHurt(mo, a.dmg); sfx('damage'); attackFx('hit'); qbLog(name+' hits '+mo.name+' for '+a.dmg+a.tag); } else { sfx('cast'); qbLog(name+' on '+mo.name); } qbApplyCond(mo,name); finish(); }, 300); } }
+      setTimeout(()=>{ const saved=monSave(mo);
+        if(mc.dmg){ const r=rollNotation(mc.dmg)||{total:0}; const a=rvNote(mo, saved?Math.floor(r.total/2):r.total); qbHurt(mo, a.dmg); sfx('damage'); attackFx('hit'); qbLog(name+' hits '+mo.name+' for '+a.dmg+(saved?' (saved — half)':'')+a.tag); }
+        else { sfx('cast'); qbLog(name+' on '+mo.name+(saved?' — it saves, no effect':'')); }
+        if(!saved) qbApplyCond(mo,name); finish(); }, 300); } }
   function resolveBlast(ctr){ const aff=blastTargets(ctr); $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
     mapProjectile(me.x,me.y,ctr.x,ctr.y,'🔥'); setTimeout(()=>mapBurst(ctr.x,ctr.y,aoeR),250);
-    setTimeout(()=>{ const r=mc.dmg?(rollNotation(mc.dmg)||{total:0}):null; sfx('damage'); attackFx('crit'); aff.forEach(mo=>{ if(r){ const a=rvNote(mo,r.total); qbHurt(mo,a.dmg); } qbApplyCond(mo,name); }); qbLog(name+' blasts '+aff.length+' enemies'+(r?' for ~'+r.total:'')); finish(); }, 600); }
+    setTimeout(()=>{ const r=mc.dmg?(rollNotation(mc.dmg)||{total:0}):null; sfx('damage'); attackFx('crit');
+      aff.forEach(mo=>{ const saved=monSave(mo);
+        if(r){ const a=rvNote(mo, saved?Math.floor(r.total/2):r.total); qbHurt(mo,a.dmg); }
+        if(!saved) qbApplyCond(mo,name); });
+      // friendly fire: an area spell hits everything in it — including you (PHB: AoE has no allegiance)
+      if(r && gridDist(me.x,me.y,ctr.x,ctr.y)<=aoeR){ const ab=mc.save||'dex'; const sb=mod(abil(c,ab))+((c.saveProf&&c.saveProf[ab])?profBonus(c):0);
+        const tot=rnd(20)+sb, okd=tot>=dc0, take=okd?Math.floor(r.total/2):r.total;
+        if(take>0){ applyHp(c,-take); qbLog('💥 '+c.name+' is caught in the blast — '+take+' damage'+(okd?' (saved — half)':'')); } }
+      qbLog(name+' blasts '+aff.length+' enemies'+(r?' (rolled '+r.total+(mc.save?'; saves halve':'')+')':'')); finish(); }, 600); }
   function draw(){ let body=`<h2>✨ ${esc(name)}</h2><p class="muted" style="font-size:12px;margin:0 0 8px">Range ${tilesR*5} ft${seek?' · 🧲 seeks':aoeR?' · 💥 '+(aoeR*5)+' ft blast · line of sight':' · line of sight'}${mc.dmg?' · '+esc(mc.dmg)+' '+esc(mc.dtype||''):''}</p>`;
     const opts=(aoeR&&center)?{rangeFrom:{x:me.x,y:me.y,tiles:tilesR},blast:{x:center.x,y:center.y,r:aoeR}}:(seek?{reachCost:reach}:{rangeFrom:{x:me.x,y:me.y,tiles:tilesR}});
     body+=mapGridHTML(s,false,opts);
@@ -4469,9 +4596,7 @@ document.addEventListener('click',e=>{
   const bdEl=e.target.closest('[data-bd]');
   if(bdEl){ const c=cur(); if(c) showBreakdown(c, bdEl.dataset.bd); return; }
   const rc=e.target.closest('[data-rollcheck]');
-  if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal');
-    const cc=cur(); if(cc&&cc.battle&&/attack/i.test(rc.dataset.label||'')){ if((cc.battle.attacksLeft||0) >= (extraAttacks(cc)+1)) spendAction(cc); cc.battle.attacksLeft=Math.max(0,cc.battle.attacksLeft-1); save(); render(); }
-    return; }
+  if(rc){ rollCheck(rc.dataset.label, Number(rc.dataset.bonus)||0, 'normal'); return; }   // pure roll — weapon attacks spend resources via attackFlow, spells via castSpell
   const rd=e.target.closest('[data-rolldmg]');
   if(rd){ rollDmg(rd.dataset.label, rd.dataset.notation); return; }
   const si=e.target.closest('[data-spellinfo]'); if(si){ spellInfo(si.dataset.spellinfo); return; }
@@ -4490,7 +4615,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v82';
+const APP_VERSION='v83';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
