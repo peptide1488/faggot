@@ -69,28 +69,77 @@ begin with, so it's invisible to that check too. Found and fixed:
   a visible condition tag on hit, same tier as existing bespoke tags (Hexed, Marked, Retching)
   — informational, not separately enforced inside the heal path.
 
-**Documented, not fixed** — these need a genuine new mechanic (a reusable "advantage on your
-next attack roll" token, or an attack-blocking check), not a table row, and would be guessing
-at UX if rushed:
-- **True Strike, Guiding Bolt** — grant *advantage on a future attack roll*, not a condition on
-  an enemy. Nothing in this engine currently models a temporary advantage token.
-- **Sanctuary** — attackers need a Wis save to even target the warded creature. That requires a
-  pre-attack check in `attackFlow`/`qbResolveAttack`, not a post-cast condition.
-- **Magic Weapon** — buffs a specific weapon item to +1; needs per-item tracking, not a
-  creature condition.
-
 Another standing `rules-test.js` check covers this class the same way: any future spell worded
 with one of these bespoke phrases and missing from both `SPELL_COND` and `SPELL_EFFECTS` fails
 the suite unless it's in the exceptions list with a reason here.
 
-**Documented, not fixed** (need real new mechanics, not a missing table row — excluded from
-the coverage check with inline comments):
-- **Power Word Kill / Power Word Stun** — no-save, HP-threshold instant kill/stun. Nothing
-  in the engine currently reads a threshold off SPELL_DESC; needs dedicated code, not a table entry.
-- **Eyebite** — DM/player picks one of three effects (frighten/poison-sicken/sleep) per target each turn; not a single fixed condition.
-- **Holy Aura** — the blind trigger is reactive (fires when a foe *hits* a warded ally), not on-cast; doesn't fit the save-on-cast model.
+**Not a bug — intentionally out of scope, no engine change needed:**
 - **Cloud of Daggers** — a 5-ft-cube zone is a single tile; direct single-target selection already covers it, no blast UI needed.
 - **Fog Cloud, Darkness, Silence, Daylight, Gust of Wind, Antimagic Field** — pure vision/utility auras with no damage or condition to apply in this engine; their radius is flavor only.
+
+### The "hard" gaps (v94) — implemented, not just documented
+The list above was originally written off as needing new mechanics rather than a table row.
+It turned out each one *did* fit the engine, once given a small dedicated hook rather than
+forcing it through `SPELL_COND`/`SPELL_AOE`:
+- **True Strike** — models the granted advantage as a self-applied `SPELL_EFFECTS` condition
+  (`'True Strike'`), read by `attackAdvantage`. Simplification: grants advantage on your very
+  next attack against *any* target, not only the one you named — this app has no notion of a
+  condition scoped to one specific enemy.
+- **Guiding Bolt** — reuses the exact same advantage mechanism as **Faerie Fire**. Turns out
+  Faerie Fire's whole purpose ("outlined foes grant advantage to attacks against them") was
+  *also* never wired into `attackAdvantage` — tagged as a condition but never read. Both are
+  fixed together: a `Faerie Fire` or `Guided` condition on a target now genuinely grants
+  attackers advantage.
+- **Sanctuary** — the cast stashes a save DC on the effect (`effects[].dc`); every monster
+  attack targeting the warded PC now rolls a Wis save in `qbApplyIntent` before the attack is
+  allowed to proceed, consuming the attack on a failure (matches "loses the attack" — this app
+  has no second ally target to redirect to in Quick Battle).
+- **Magic Weapon** — dynamic per-weapon choice menu (`SPELL_CHOICES['Magic Weapon']` is a
+  function of the caster, not a static list) sets `item.magicBonus`, read by `qbPcAttacks`.
+  Tracked as a normal concentration effect; ending/expiring it clears the item's bonus via
+  `clearItemEffect`. Scoped to Quick Battle's own attack list — the sheet/DM-session weapon
+  displays don't read `magicBonus` yet.
+- **Power Word Kill / Power Word Stun** — `POWER_WORD_HP` maps each spell to its HP threshold;
+  `powerWordResolve` is a pure no-save, no-attack-roll check against the target's current HP.
+  Routed to enemy targeting only inside Quick Battle (`spellTargetsEnemy` checks `QB.active`) —
+  other targeting paths (DM/player-net) still treat these as narrative.
+- **Eyebite** — reworded to state "Wis save" so it parses as a save spell; on targeting a foe,
+  `qbEyebiteChoice` opens a 3-option picker (Asleep/Frightened/Panicked+3d6 psychic+Poisoned).
+  `eyebiteResolve` rolls one save that gates the *whole* chosen effect (a success means nothing
+  happens at all — not half damage, unlike a normal save spell).
+- **Holy Aura** — the DC is stashed on cast, same as Sanctuary. The reactive half (hostile
+  attacker hits a warded creature → Con save or Blinded) is checked from `qbResolveAttack`'s
+  hit branch via the pure `holyAuraResolve`, since that's the only place that knows a hit
+  actually landed. Simplification: doesn't grant *advantage on saving throws* to warded allies —
+  that's a separate, unimplemented "advantage on all saves" mechanic this engine doesn't have
+  anywhere else either.
+
+All seven are QB-only (Quick Battle) unless noted otherwise above; the DM/session and
+player-net targeting paths (`openSpellTarget`, `attackFlow`) don't yet have the equivalent
+hooks for the ones that needed one (Sanctuary's attack-gate, Power Word's HP-threshold check,
+Eyebite's choice picker, Holy Aura's reactive trigger).
+
+### Restrained/Grappled zero your speed (v94)
+Web and Entangle correctly tagged the target `Restrained`, but nothing ever zeroed its
+movement — a restrained creature could still walk normally next turn. `speedBlocked(u)` now
+gates every place a turn's movement budget is granted: `freshTurnState` (PC), `qbBeginTurn`
+and `dmRefreshActor`/`rollInitiative` (monsters), and the Dash-grant paths in `qbMovePc` and
+`BRAINS.tactical` (Dashing while restrained still gives 0 speed, per RAW).
+
+### Concentration checks now pause Quick Battle (v94)
+`applyHp` → `concentrationCheck` opens a modal, but Quick Battle's AI turn loop
+(`qbRunBrain`/`qbNextTurn`) ran on independent timers with no idea a modal was open. Monster
+turns kept firing underneath the prompt, and each new hit spawned a **fresh, unrolled**
+concentration check on top of the one you hadn't answered yet — that's what looked like
+unlimited rerolls. `QB.paused` is now set while the modal is open and checked at both
+turn-to-turn (`qbNextTurn`) and intra-turn (`qbRunBrain`'s attack-to-attack `step()`) boundaries.
+
+### A self-buff's condition tag could outlive the buff (v94)
+`endEffect` (manual dismiss) and `advanceRound` (DM/session mode) both correctly cleared a
+condition tag (e.g. Invisibility → `Invisible`) when the backing effect expired — but Quick
+Battle's own inline per-round expiry in `qbBeginTurn` forgot that line, so an effect that timed
+out naturally during a QB battle left its condition permanently stuck on. Fixed to match the
+other two expiry paths.
 
 ### Casting-time / action economy
 - **Reaction spells** implemented: Shield, Hellish Rebuke, Counterspell, Feather Fall, Absorb Elements now check & spend the **reaction**, not the action.

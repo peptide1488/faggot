@@ -26,7 +26,8 @@ eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
-  'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;');
+  'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -275,7 +276,97 @@ T('poisoned attacker vs restrained target cancels out', attackAdvantage(S(['Pois
 T('paralyzed target: advantage + melee auto-crit', (()=>{ const x=attackAdvantage(S([]),S(['Paralyzed']),true); return x.adv===1 && x.autoCrit; })());
 T('paralyzed target: no auto-crit at range', attackAdvantage(S([]),S(['Paralyzed']),false).autoCrit===false);
 T('invisible attacker → advantage', attackAdvantage(S(['Invisible']),S([]),true).adv===1);
+T('Faerie Fire-outlined target grants advantage to attackers (was tagged but never checked)', attackAdvantage(S([]),S(['Faerie Fire']),true).adv===1);
+T('Guiding Bolt-guided target grants advantage to the next attacker', attackAdvantage(S([]),S(['Guided']),true).adv===1);
+T('True Strike gives the attacker advantage', attackAdvantage(S(['True Strike']),S([]),true).adv===1);
+T('Guiding Bolt is registered as the Guided condition', SPELL_COND['Guiding Bolt'].c==='Guided');
+
+/* ---- Sanctuary: attackers must beat a Wis save (DC stashed at cast time) or lose the attack ---- */
+{ const sc=newCharacter('Warded'); sc.cls='Cleric'; applyClassDefaults(sc); sc.spells=[{name:'Sanctuary',level:1,prepared:true}]; startBattle(sc);
+  castSpell(sc,'Sanctuary',1);
+  const se=sc.effects.find(e=>e.name==='Sanctuary');
+  T('casting Sanctuary stashes a save DC on the effect', se && typeof se.dc==='number');
+
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1}, monsters:[{id:'m1',name:'Goblin',x:0,y:0,hp:10,max:10,ac:12,attacksLeft:1}], players:[{id:'pc',side:'pc',name:sc.name,c:sc,x:1,y:0,hpCur:sc.hp.cur,hpMax:sc.hp.max}] });
+  se.dc=999;   // impossible DC → guaranteed fail
+  let syncFail=false; qbApplyIntent(getQB().monsters[0], {type:'attack',targetId:'pc',atk:{name:'Bite',toHit:4,dmg:'1d6'}}, ()=>{ syncFail=true; });
+  T('Sanctuary fail: attack fizzles immediately (done fires synchronously, no roll happens)', syncFail===true && getQB().monsters[0].attacksLeft===0);
+
+  getQB().monsters[0].attacksLeft=1; se.dc=-999;   // impossible-to-fail DC → guaranteed pass-through
+  let syncPass=false; qbApplyIntent(getQB().monsters[0], {type:'attack',targetId:'pc',atk:{name:'Bite',toHit:4,dmg:'1d6'}}, ()=>{ syncPass=true; });
+  T('Sanctuary pass: attack proceeds to normal resolution (deferred, not synchronous)', syncPass===false);
+  setQB(null);
+}
+
+/* ---- Magic Weapon: +1 lives on the item, not a generic character mod ---- */
+{ const mw=newCharacter('Enchanter'); mw.abilities.str=10; mw.items=[{name:'Club',kind:'weapon',qty:1,equipped:true}];
+  const opts=SPELL_CHOICES['Magic Weapon'](mw);
+  T('Magic Weapon offers one choice per carried weapon', opts.length===1 && /Club/.test(opts[0].t));
+  opts[0].f(mw);
+  T('applying Magic Weapon sets a +1 bonus on that item', mw.items[0].magicBonus===1);
+  T('Magic Weapon is tracked as a concentration effect', mw.concentration.active===true && mw.concentration.spell==='Magic Weapon');
+  const atk=qbPcAttacks(mw)[0];
+  T('the buffed weapon\'s attack reflects the +1 to-hit and damage', atk.toHit===weaponToHit(mw,weaponByName('Club'))+1 && /\+1$/.test(atk.dmg));
+  endEffect(mw, mw.effects[0].id);
+  T('ending the effect clears the item\'s magic bonus', !mw.items[0].magicBonus);
+}
+
+/* ---- Power Word Kill/Stun: HP-threshold, no save, no attack roll ---- */
+T('Power Word HP thresholds match the PHB', POWER_WORD_HP['Power Word Kill']===100 && POWER_WORD_HP['Power Word Stun']===150);
+{ const weakFoe={id:'w1',name:'Weakling',hp:40,conds:[]}, tankFoe={id:'t1',name:'Tank',hp:200,conds:[]};
+  const killMsg=powerWordResolve(weakFoe,'Power Word Kill');
+  T('Power Word Kill drops a low-HP target to 0', weakFoe.hp===0 && /drops dead/.test(killMsg));
+  const noEffectMsg=powerWordResolve(tankFoe,'Power Word Kill');
+  T('Power Word Kill has no effect above the HP threshold', tankFoe.hp===200 && /no effect/.test(noEffectMsg));
+  const stunFoe={id:'s1',name:'Stunned Target',hp:60,conds:[]};
+  const stunMsg=powerWordResolve(stunFoe,'Power Word Stun');
+  T('Power Word Stun imposes Stunned on a low-HP target (no HP loss)', stunFoe.hp===60 && stunFoe.conds.some(c=>c.name==='Stunned') && /is stunned/.test(stunMsg));
+}
+{ setQB({active:true}); T('Power Word Kill routes to enemy targeting only in Quick Battle', spellTargetsEnemy('Power Word Kill')===true); setQB(null);
+  T('Power Word Kill does not force enemy targeting outside Quick Battle', spellTargetsEnemy('Power Word Kill')===false);
+}
+
+/* ---- Eyebite: a single Wis save gates a player-chosen effect (sleep/frighten/panic) ---- */
+T('Eyebite parses as a Wis-save spell (routes to enemy targeting)', parseSpellMechanics('Eyebite').save==='wis');
+T('Eyebite has three player-chosen outcomes', EYEBITE_OPTIONS.length===3 && EYEBITE_OPTIONS.some(o=>o.key==='panic'));
+{ const foe={id:'e1',name:'Cultist',hp:20,conds:[]};
+  const resistMsg=eyebiteResolve(foe, EYEBITE_OPTIONS[0], 15, 20);   // roll beats DC → resists
+  T('Eyebite: a passed save means no effect at all (not half)', foe.conds.length===0 && /resists/.test(resistMsg));
+  const sleepMsg=eyebiteResolve(foe, EYEBITE_OPTIONS[0], 15, 2);     // roll fails DC → sleeps
+  T('Eyebite: a failed save applies the chosen condition', foe.conds.some(c=>c.name==='Asleep') && /fails/.test(sleepMsg));
+  const foe2={id:'e2',name:'Bandit',hp:20,max:20,ac:12,conds:[]};
+  setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1}, monsters:[foe2], players:[{id:'pc',side:'pc',name:'Hero',c:newCharacter('Hero'),x:0,y:0}]});
+  const panicMsg=eyebiteResolve(foe2, EYEBITE_OPTIONS[2], 15, 2);
+  T('Eyebite Panicked: failed save deals 3d6 psychic AND poisons', foe2.hp<20 && foe2.conds.some(c=>c.name==='Poisoned') && /Poisoned/.test(panicMsg));
+  setQB(null);
+}
+
+/* ---- Holy Aura: reactive trigger — an attacker who HITS the warded creature must save or be blinded ---- */
+{ const attacker={id:'m1',name:'Orc',conds:[]};
+  const resistMsg=holyAuraResolve(attacker, 15, 18);
+  T('Holy Aura: an attacker who makes its save is unaffected', attacker.conds.length===0 && /resists/.test(resistMsg));
+  const blindMsg=holyAuraResolve(attacker, 15, 3);
+  T('Holy Aura: an attacker who fails its save is blinded', attacker.conds.some(c=>c.name==='Blinded') && /blinds/.test(blindMsg));
+}
+{ const hc=newCharacter('Aura'); hc.cls='Cleric'; hc.level=17; applyClassDefaults(hc); hc.spells=[{name:'Holy Aura',level:8,prepared:true}]; startBattle(hc);
+  castSpell(hc,'Holy Aura',8);
+  const he=hc.effects.find(e=>e.name==='Holy Aura');
+  T('casting Holy Aura stashes a save DC on the effect (reused by qbResolveAttack)', he && typeof he.dc==='number');
+}
+
 T('unitConds reads monster conds & PC conditions', unitConds({conds:[{name:'Prone'}]}).has('Prone') && unitConds({c:{conditions:{Poisoned:true}}}).has('Poisoned') && unitConds(null).size===0);
+
+/* ---- Restrained/Grappled zero a creature's speed (Web/Entangle bug: cond applied but could still walk) ---- */
+T('speedBlocked reads Restrained/Grappled off a monster', speedBlocked({conds:[{name:'Restrained'}]})===true && speedBlocked({conds:[{name:'Prone'}]})===false);
+T('speedBlocked reads Restrained off a raw PC character', speedBlocked({conditions:{Restrained:true}})===true);
+{ const rc=newCharacter('Webbed'); rc.conditions={Restrained:true}; startBattle(rc);
+  T('a restrained PC gets 0 move at the start of its turn', rc.battle.move===0);
+}
+{ const rmo={id:'r1',name:'Spider Victim',hp:10,x:0,y:0,speed:30,atk:'Bite +4 (1d6+2)',moveLeft:0,conds:[{name:'Restrained',rounds:10}]};
+  const rqb={players:[{c:{hp:{cur:10}},x:9,y:9}], monsters:[rmo], map:{cols:10,rows:10,tiles:{}}};
+  const rints=BRAINS.tactical(rqb, rmo);
+  T('a restrained monster too far to attack proposes no move (Dash gives 0 speed too)', rints.length===0);
+}
 { // integration: adjacent paralyzed target → hit becomes a crit via Engine.hitResult
   const t={id:'t1',hp:20,x:0,y:0,conds:[{name:'Paralyzed',rounds:10}]}, a={id:'a1',x:0,y:1};
   const ad3={unit:id=>id==='t1'?t:(id==='a1'?a:null), ac:()=>10, hp:u=>u.hp, hurt:(u,d)=>{u.hp=Math.max(0,u.hp-d);}, damageMult:()=>1};
@@ -293,6 +384,18 @@ T('incapacitated monster loses its turn (brain returns nothing)', BRAINS.tactica
   T('Invisibility applies the Invisible condition', iv.conditions['Invisible']===true);
   endEffect(iv, iv.effects[0].id);
   T('ending Invisibility clears the condition', !iv.conditions['Invisible']); }
+{ const ts=newCharacter('TrueStriker'); addEffect(ts,'True Strike');
+  T('True Strike applies its self-condition', ts.conditions['True Strike']===true);
+  T('True Strike grants the caster advantage', attackAdvantage(unitConds(ts),S([]),true).adv===1);
+}
+{ // a self-buff condition that expires by round-countdown in QB (not manual endEffect)
+  // must also clear its condition tag — this was the Invisibility-never-clears bug.
+  const iv2=newCharacter('IV2'); addEffect(iv2,'Invisibility'); iv2.effects[0].rounds=1; startBattle(iv2);
+  setQB({active:true, paused:false, log:[], moveMode:true, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, players:[{id:'pc',side:'pc',name:iv2.name,c:iv2,x:0,y:0,hpCur:iv2.hp.cur,hpMax:iv2.hp.max,ac:10}], monsters:[]});
+  qbBeginTurn();
+  T('a naturally-expiring effect clears its condition tag in Quick Battle too', !iv2.conditions['Invisible'] && iv2.effects.length===0);
+  setQB(null);
+}
 { const wz=newCharacter('WZ'); wz.cls='Wizard'; wz.level=1; applyClassDefaults(wz);
   wishGrantFree('Fireball');
   T('Wish grant: unknown high-level spell castable without a slot', canCast(wz,'Fireball',3)===true && castSpell(wz,'Fireball',3)===true && ((wz.slots[3]&&wz.slots[3].used)||0)===0);
@@ -344,7 +447,7 @@ T('grease terrain is difficult and trips creatures', TERRAIN['grease'].diff===tr
   // in this engine (bigger new mechanics, or too small to need blast UI) — see AUDIT.md
   // "Coverage audit (v92)". Adding a spell here must come with an AUDIT.md line explaining why.
   const AOE_EXCEPT=new Set(['Fog Cloud','Darkness','Silence','Daylight','Gust of Wind','Antimagic Field','Cloud of Daggers']);
-  const COND_EXCEPT=new Set(['Unseen Servant','Calm Emotions','Invisibility','Lesser Restoration','See Invisibility','Clairvoyance','Arcane Eye','Greater Invisibility','Dream','Greater Restoration','Mislead','Telekinesis','Wall of Force','Eyebite','Heal','Holy Aura','Mind Blank','Power Word Stun']);
+  const COND_EXCEPT=new Set(['Unseen Servant','Calm Emotions','Invisibility','Lesser Restoration','See Invisibility','Clairvoyance','Arcane Eye','Greater Invisibility','Dream','Greater Restoration','Mislead','Telekinesis','Wall of Force','Eyebite','Heal','Holy Aura','Mind Blank']);
   const allSpells=Object.keys(SPELL_DESC);
   const aoeGaps=allSpells.filter(n=>AOE_WORDS.test(SPELL_DESC[n]) && !(n in SPELL_AOE) && !AOE_EXCEPT.has(n));
   const condGaps=allSpells.filter(n=>COND_WORDS.test(SPELL_DESC[n]) && !(n in SPELL_COND) && !COND_EXCEPT.has(n));
@@ -357,7 +460,7 @@ T('grease terrain is difficult and trips creatures', TERRAIN['grease'].diff===tr
    too unless separately tracked. Same exceptions contract: add here only with an
    AUDIT.md line saying why it needs new code instead of a table row. ---- */
 { const BESPOKE_WORDS=/advantage on (its|your|their|the) next|disadvantage on (its|your|their|the) next|can'?t take reactions|next attack (has|roll)|can'?t recover hp/i;
-  const BESPOKE_EXCEPT=new Set(['True Strike','Guiding Bolt','Sanctuary','Magic Weapon']);
+  const BESPOKE_EXCEPT=new Set(['Magic Weapon']);   // implemented via SPELL_CHOICES + item.magicBonus, not a SPELL_COND/SPELL_EFFECTS row
   const allSpells2=Object.keys(SPELL_DESC);
   const bespokeGaps=allSpells2.filter(n=>BESPOKE_WORDS.test(SPELL_DESC[n]) && !(n in SPELL_COND) && !(n in SPELL_EFFECTS) && !BESPOKE_EXCEPT.has(n));
   T('no undocumented bespoke-effect gaps: '+bespokeGaps.join(', '), bespokeGaps.length===0);
@@ -367,6 +470,19 @@ T('Shocking Grasp cond is registered as No Reactions', SPELL_COND['Shocking Gras
 { const moHit={id:'m1',name:'Goblin',hp:10,conds:[],reactionUsed:false};
   qbApplyCond(moHit,'Shocking Grasp');
   T('applying Shocking Grasp cond actually sets reactionUsed (not just a display tag)', moHit.reactionUsed===true && moHit.conds.some(c=>c.name==='No Reactions'));
+}
+
+/* ---- concentration check pauses the AI turn loop (was: battle kept running,
+   and a fresh hit re-opened a brand-new unrolled prompt on top of the unanswered one,
+   which looked like "unlimited rerolls") ---- */
+{ setQB({active:true, paused:false, log:[]});
+  const cc=newCharacter('Concentrator'); cc.concentration={active:true, spell:'Bless'}; cc.effects=[{name:'Bless',rounds:10,conc:true}];
+  concentrationCheck(cc, 10);
+  T('opening a concentration prompt pauses the QB turn loop', getQB().paused===true);
+  const turnBefore=42; getQB().turn=turnBefore; getQB().order=[{k:'p',id:'x'},{k:'m',id:'y'}]; getQB().battle={round:1};
+  qbNextTurn();
+  T('qbNextTurn does not advance the turn while paused (defers instead)', getQB().turn===turnBefore);
+  getQB().paused=false; setQB(null);
 }
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */

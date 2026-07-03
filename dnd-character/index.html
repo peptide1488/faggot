@@ -393,6 +393,9 @@ function attackAdvantage(aC, tC, melee){
   if(A('Invisible')){ adv++; why.push('you are invisible'); }
   ['Restrained','Blinded','Paralyzed','Stunned','Unconscious','Petrified'].forEach(cn=>{ if(T(cn)){ adv++; why.push('target '+cn.toLowerCase()); } });
   if(T('Prone')){ adv+=melee?1:-1; why.push('target prone'+(melee?'':' (ranged)')); }
+  if(T('Faerie Fire')){ adv++; why.push('target outlined by faerie fire'); }
+  if(T('Guided')){ adv++; why.push('target guided (Guiding Bolt)'); }
+  if(A('True Strike')){ adv++; why.push('true strike'); }
   return {adv:Math.sign(adv), autoCrit: melee&&(T('Paralyzed')||T('Unconscious')), why};
 }
 // Set of condition names on any unit shape: monster/mirror {conds:[{name}| 'name']},
@@ -404,6 +407,9 @@ function unitConds(u){
   if(u.conditions) return new Set(Object.keys(u.conditions));
   return new Set();
 }
+// Restrained/Grappled zero a creature's speed (PHB) — checked when a turn's movement
+// budget is granted, not baked into effSpeed() itself (that's used for reach/UI display too).
+function speedBlocked(u){ const s=unitConds(u); return s.has('Restrained')||s.has('Grappled'); }
 const RACES = ['Aarakocra','Aasimar','Bugbear','Centaur','Changeling','Dragonborn','Dwarf','Elf','Fairy','Firbolg','Genasi','Githyanki','Githzerai','Gnome','Goblin','Goliath','Half-Elf','Half-Orc','Halfling','Harengon','Hobgoblin','Human','Human (Variant)','Kalashtar','Kenku','Kobold','Leonin','Lizardfolk','Loxodon','Minotaur','Orc','Owlin','Satyr','Shifter','Simic Hybrid','Tabaxi','Tiefling','Tortle','Triton','Vedalken','Warforged','Yuan-Ti'];
 // Races that grant a feat at level 1 (the player still picks +1 to two abilities manually).
 const RACE_L1_FEAT = {'Human (Variant)':true};
@@ -704,7 +710,7 @@ function setEquipped(c, idx, on){
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 // THE per-turn resource reset, shared by every mode (solo battle, quick battle,
 // net play). Add new per-turn flags HERE and nowhere else.
-function freshTurnState(c){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0}; }
+function freshTurnState(c){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c), moveUsed:0}; }
 function resetTurnState(c){ Object.assign(c.battle, freshTurnState(c)); }
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c)); logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
@@ -815,7 +821,51 @@ function openQuickSpells(c){
 // damage, or an imposed condition) open map targeting. Teleportation spells open the
 // destination picker below. Everything else (Wish, Fog Cloud, heals, buffs…) goes to
 // castModal — cast it, spend the slot, narrate. Used by BOTH net play and Quick Battle.
-function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !!(mc.attack||mc.save||mc.dmg||SPELL_COND[name]); }
+// No save, no attack roll — an HP-threshold check decides the whole spell (PHB "Otherwise,
+// the spell has no effect"). Quick Battle only (see AUDIT.md); other targeting paths still
+// route these to the narrative modal.
+const POWER_WORD_HP={'Power Word Kill':100,'Power Word Stun':150};
+// Pure resolution (no dice, no save) — mutates the target, returns the log line.
+function powerWordResolve(mo, name){ const threshold=POWER_WORD_HP[name], curHp=mo.hp;
+  if(curHp>threshold) return name+' has no effect — '+mo.name+' has more than '+threshold+' HP';
+  if(name==='Power Word Kill'){ mo.hp=0; return '💀 '+name+' — '+mo.name+' ('+curHp+'/'+threshold+' HP) drops dead instantly'; }
+  qbApplyCond(mo,name); return '😵 '+name+' — '+mo.name+' ('+curHp+'/'+threshold+' HP) is stunned';
+}
+// Eyebite: re-targetable each turn, choose ONE of three effects per cast; a single Wis save
+// gates all of them (unlike a normal save spell, a success means no effect at all — not half).
+const EYEBITE_OPTIONS=[
+  {key:'sleep', label:'😴 Asleep', cond:'Asleep', rounds:10},
+  {key:'frighten', label:'😱 Frightened', cond:'Frightened', rounds:10},
+  {key:'panic', label:'😵 Panicked — 3d6 psychic + Poisoned', cond:'Poisoned', rounds:10, dmg:'3d6', dtype:'psychic'}
+];
+function eyebiteResolve(mo, opt, dc, roll){
+  if(roll>=dc) return mo.name+' resists Eyebite (Wis '+roll+' vs DC '+dc+')';
+  if(opt.dmg){ const d=(rollNotation(opt.dmg)||{total:0}).total; Engine.castApply(qbAdapter,'pc',mo.id,{name:'Eyebite', dc, dmgTotal:d, dtype:opt.dtype, savedKnown:false, cond:null}); }
+  mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===opt.cond)) mo.conds.push({name:opt.cond, rounds:opt.rounds});
+  return '👁 '+mo.name+' fails ('+roll+' vs DC '+dc+') — '+opt.cond+(opt.dmg?' + '+opt.dmg+' psychic':'');
+}
+// Holy Aura: reactive, not on-cast — triggers when a hostile attacker HITS the warded
+// creature (checked from qbResolveAttack's hit branch, since that's the only place that
+// knows an attack landed). Pure so it's testable without going through the real roll/timer.
+function holyAuraResolve(att, dc, roll){
+  if(roll>=dc) return att.name+' resists Holy Aura\'s light (Con '+roll+' vs DC '+dc+')';
+  att.conds=att.conds||[]; if(!att.conds.some(c=>c.name==='Blinded')) att.conds.push({name:'Blinded',rounds:10});
+  return '☀️ Holy Aura blinds '+att.name+' (Con '+roll+' vs DC '+dc+')';
+}
+function qbEyebiteChoice(mo, dc, doneLog){
+  $('#modalRoot').innerHTML=`<div class="modal" id="ebModal"><div class="sheet"><div class="grip"></div>
+    <h2>👁 Eyebite — choose an effect on ${esc(mo.name)}</h2>
+    ${EYEBITE_OPTIONS.map((o,i)=>`<button class="btn block" data-eb="${i}" style="margin-top:8px;text-align:left">${o.label}</button>`).join('')}
+    <button class="btn ghost block" id="ebCancel" style="margin-top:10px">Cancel</button></div></div>`;
+  $('#ebCancel').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#ebModal').onclick=e=>{ if(e.target.id==='ebModal') $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('#ebModal [data-eb]').forEach(b=>b.onclick=()=>{
+    const opt=EYEBITE_OPTIONS[Number(b.dataset.eb)]; $('#modalRoot').innerHTML='';
+    const roll=rnd(20)+monsterSaveBonus(mo);
+    doneLog(eyebiteResolve(mo, opt, dc, roll));
+  });
+}
+function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !!(mc.attack||mc.save||mc.dmg||SPELL_COND[name]||(QB&&QB.active&&POWER_WORD_HP[name]!=null)); }
 // Teleportation spells move your token on the battle map: range in tiles; los = the
 // destination must be a spot you can see (Misty Step). Dimension Door / Teleport /
 // Teleportation Circle work sight-unseen (PHB) — any open tile on the map.
@@ -1369,7 +1419,7 @@ const SPELL_DESC={
 'Animate Dead':'Raise a skeleton or zombie under your control.','Beacon of Hope':'Allies get save advantage and max healing.','Bestow Curse':'Curse a creature with a chosen drawback.','Blink':'Each turn you may vanish to the Ethereal.','Call Lightning':'Storm cloud; Dex save, 3d10 lightning each turn you call it down.','Clairvoyance':'An invisible sensor sees/hears a distant place.','Conjure Animals':'Summon fey beasts to fight for you.','Counterspell':'Reaction; spells of 3rd level or lower are stopped automatically — for higher, make a spellcasting ability check, DC 10 + the spell\'s level.','Create Food and Water':'Make food and water for many.','Daylight':'A 60-ft sphere of bright daylight.','Dispel Magic':'End spells on a creature, object, or area.','Fear':'Creatures in a 30-ft cone flee (Wis save).','Fireball':'20-ft sphere, Dex save, 8d6 fire.','Fly':'Grant a 60-ft flying speed.','Gaseous Form':'A creature becomes a misty cloud.','Haste':'+2 AC, double speed, and an extra action.','Hypnotic Pattern':'Charm/incapacitate with a pattern (Wis save).','Lightning Bolt':'100-ft line, Dex save, 8d6 lightning.','Magic Circle':'Cylinder that wards against creature types.','Major Image':'A detailed lasting illusion with sound/smell.','Mass Healing Word':'Bonus action; heal up to 6 creatures 1d4 + mod.','Meld into Stone':'Step into and hide within stone.','Nondetection':'Hide a target from divination and scrying.','Plant Growth':'Overgrow an area into difficult terrain.','Protection from Energy':'Resistance to one damage type (1 hr).','Remove Curse':'End all curses on a creature or item.','Revivify':'Revive a creature dead under a minute (1 HP).','Sending':'Send a 25-word message to anyone, anywhere.','Sleet Storm':'Freezing rain — difficult terrain, heavily obscured, Dex save or prone.','Slow':'Up to 6 creatures get halved speed/actions.','Speak with Dead':'Ask a corpse five questions.','Spirit Guardians':'Spirits in 15 ft of you; Wis save, 3d8 radiant, halves foes\' speed.','Stinking Cloud':'Nauseating gas makes foes lose actions.','Tongues':'Understand and be understood in any language.','Vampiric Touch':'Melee spell attack, 3d6 necrotic; you recover half the damage dealt.','Water Breathing':'Up to 10 creatures breathe underwater.','Water Walk':'Up to 10 creatures walk on liquids.','Wind Wall':'A wall of wind deflects and damages.',
 'Arcane Eye':'An invisible flying eye you see through.','Banishment':'Banish a creature to another plane (Cha save).','Blight':'8d8 necrotic to a creature (Con save).','Compulsion':'Force creatures to move a way you choose.','Confusion':'Creatures behave randomly each turn (Wis save).','Conjure Woodland Beings':'Summon fey to aid you.','Control Water':'Raise, part, or redirect water.','Death Ward':'First drop to 0 HP, the target stays at 1.','Dimension Door':'Teleport yourself (and one) up to 500 ft.','Divination':'A short answer about an event this week.','Dominate Beast':'Control a beast (Wis save); it repeats the save each time it takes damage.','Fabricate':'Convert raw materials into finished objects.','Freedom of Movement':'Ignore difficult terrain and restraints.','Greater Invisibility':'Invisible even while attacking.','Guardian of Faith':'A spectral guardian deals 20 radiant.','Ice Storm':'Dex save; 2d8 bludgeoning + 4d6 cold; difficult terrain.','Locate Creature':'Sense direction to a known creature.','Phantasmal Killer':'A nightmare deals 4d10 psychic (Wis save).','Polymorph':'Wis save (unwilling). Turn a creature into a beast of CR ≤ its level; reverts at 0 HP, excess damage carries over.','Stone Shape':'Reshape a stone object.','Stoneskin':'Resistance to nonmagical physical damage.','Wall of Fire':'A wall of flame; Dex save, 5d8 fire.',
 'Animate Objects':'Animate up to 10 objects to fight.','Awaken':'Give a beast or plant sentience and speech.','Cloudkill':'A 20-ft poison fog; Con save, 5d8 poison; it drifts each round.','Commune':'Ask your deity three yes/no questions.','Commune with Nature':'Learn facts about the surrounding land.','Cone of Cold':'60-ft cone, Con save, 8d8 cold.','Conjure Elemental':'Summon an elemental to serve you.','Contact Other Plane':'Ask an entity five questions (risky).','Dispel Evil and Good':'Protect against and dismiss outsiders.','Dominate Person':'Control a humanoid (Wis save); it repeats the save each time it takes damage.','Dream':'Shape a sleeping creature\'s dreams.','Flame Strike':'A column of holy fire; Dex save, 4d6 fire + 4d6 radiant.','Geas':'Compel a creature to obey for 30 days.','Greater Restoration':'End exhaustion, charm, petrify, curse, or reductions.','Hallow':'Imbue an area with protective effects.','Hold Monster':'Paralyze any creature (Wis save each turn).','Insect Plague':'A 20-ft swarm; Con save, 4d10 piercing; obscures the area.','Legend Lore':'Recall lore about a famous person/place/thing.','Mass Cure Wounds':'Heal up to 6 creatures 3d8 + mod.','Mislead':'Become invisible and control a double.','Modify Memory':'Reshape a creature\'s memory of an event.','Planar Binding':'Bind a summoned outsider into service.','Raise Dead':'Revive a creature dead up to 10 days.','Reincarnate':'Bring back the dead in a new body/race.','Scrying':'See and hear a specific creature anywhere.','Seeming':'Disguise the appearance of many creatures.','Telekinesis':'Range 60 ft (12 tiles). Creature: your spell-ability check vs its Strength — win to move it 30 ft (restrained). Object ≤1000 lb: move 30 ft/round.','Teleportation Circle':'Open a portal to a known circle.','Tree Stride':'Step between trees of the same kind.','Wall of Force':'An invisible, nearly indestructible wall.','Wall of Stone':'Conjure a wall of stone.',
-'Chain Lightning':'Arcs to up to 4 targets; Dex save, 10d8 lightning.','Circle of Death':'A 60-ft sphere; Con save, 8d6 necrotic.','Disintegrate':'10d6+40 force; dust if it drops the target.','Eyebite':'Each turn sicken, frighten, or sleep a foe.','Find the Path':'Know the shortest route to a known place.','Globe of Invulnerability':'Block spells of 5th level and lower.','Harm':'Con save; 14d6 necrotic and lowers the target\'s HP max.','Heal':'Restore 70 HP and end blind/deaf/disease.','Heroes\' Feast':'A feast grants HP, immunities, advantage (1 day).','Mass Suggestion':'Suggest an action to up to 12 creatures.','Sunbeam':'A 60-ft line; Con save, 6d8 radiant, blinds.','True Seeing':'See in dark, through illusions, into Ethereal.','Wall of Ice':'A wall of ice that damages those breaking through.','Word of Recall':'Teleport instantly to a chosen sanctuary.',
+'Chain Lightning':'Arcs to up to 4 targets; Dex save, 10d8 lightning.','Circle of Death':'A 60-ft sphere; Con save, 8d6 necrotic.','Disintegrate':'10d6+40 force; dust if it drops the target.','Eyebite':'Wis save or (your choice) a foe sleeps, is frightened, or takes 3d6 psychic and is poisoned.','Find the Path':'Know the shortest route to a known place.','Globe of Invulnerability':'Block spells of 5th level and lower.','Harm':'Con save; 14d6 necrotic and lowers the target\'s HP max.','Heal':'Restore 70 HP and end blind/deaf/disease.','Heroes\' Feast':'A feast grants HP, immunities, advantage (1 day).','Mass Suggestion':'Suggest an action to up to 12 creatures.','Sunbeam':'A 60-ft line; Con save, 6d8 radiant, blinds.','True Seeing':'See in dark, through illusions, into Ethereal.','Wall of Ice':'A wall of ice that damages those breaking through.','Word of Recall':'Teleport instantly to a chosen sanctuary.',
 'Conjure Celestial':'Summon a celestial to aid you.','Delayed Blast Fireball':'Dex save, 12d6 fire; grows each round the blast is delayed.','Etherealness':'Step into the Border Ethereal Plane.','Finger of Death':'Con save; 7d8+30 necrotic; the slain rise as zombies.','Fire Storm':'Sheets of flame; Dex save, 7d10 fire.','Forcecage':'Trap creatures in an inescapable force cage.','Plane Shift':'Travel to another plane of existence.','Prismatic Spray':'Eight rays of varied damage/effects.','Regenerate':'Restore HP each turn; regrow limbs.','Resurrection':'Revive a creature dead up to a century.','Reverse Gravity':'Things fall upward in a cylinder.','Teleport':'Instantly travel a great distance (some risk).',
 'Animal Shapes':'Turn willing creatures into beasts.','Antimagic Field':'A 10-ft sphere suppresses magic.','Dominate Monster':'Control any creature (Wis save); it repeats the save each time it takes damage.','Earthquake':'Shake the ground — fissures, knockdowns.','Feeblemind':'Int save; 4d6 psychic and crushes Int & Cha to 1.','Holy Aura':'Allies get save advantage; foes may be blinded.','Maze':'Banish a creature into a labyrinth demiplane.','Mind Blank':'Immunity to psychic and mind-reading/charm.','Power Word Stun':'Stun a creature with 150 HP or fewer.','Sunburst':'A burst of sunlight; Con save, 12d6 radiant, blinds.',
 'Astral Projection':'Project yourself and others to the Astral Plane.','Foresight':'Advantage on everything; can\'t be surprised.','Gate':'Open a portal to another plane.','Mass Heal':'Distribute 700 HP of healing.','Meteor Swarm':'Meteors fall; Dex save, 20d6 fire + 20d6 bludgeoning.','Power Word Kill':'Slay a creature with 100 HP or fewer.','Time Stop':'Take several turns while time is frozen.','True Resurrection':'Revive the long-dead, fully restored.','Wish':'Duplicate any spell of 8th level or lower safely. Any greater wish: DM adjudicates, and there\'s a 33% chance you can never cast Wish again.','Storm of Vengeance':'A vast storm rains damage and effects.'
@@ -1410,7 +1460,10 @@ const SPELL_EFFECTS = {
   'Invisibility':{rounds:600, conc:true, cond:'Invisible', note:'Invisible until you attack or cast a spell.'},
   'Darkvision':{rounds:4800, note:'Gain 60-ft darkvision.'},
   'Protection from Energy':{rounds:600, conc:true, note:'Resistance to one chosen damage type.'},
-  'Freedom of Movement':{rounds:600, note:'Ignore difficult terrain; immune to restrain/paralyze on movement.'}
+  'Freedom of Movement':{rounds:600, note:'Ignore difficult terrain; immune to restrain/paralyze on movement.'},
+  'True Strike':{rounds:2, cond:'True Strike', note:'Advantage on your next attack roll (simplification: any target, not just the one you watched — this app doesn\'t track per-target advantage grants).'},
+  'Sanctuary':{rounds:10, note:'Attackers need a Wis save (DC = your spell DC) to target you, or they lose the attack.'},
+  'Holy Aura':{rounds:10, note:'Hostile creatures that hit you must save (Con, DC = your spell DC) or be blinded. (Simplification: doesn\'t grant advantage on saves — see AUDIT.md.)'}
 };
 function effBonus(c, key){ let n=0; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods[key]) n+=e.mods[key]; }); return n; }
 function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods.speedMul) m*=e.mods.speedMul; }); return m; }
@@ -1446,14 +1499,19 @@ function endEffect(c, id){
   c.effects=c.effects.filter(x=>x.id!==id);
   if(e.conc && c.concentration && c.concentration.spell===e.name) c.concentration={active:false,spell:''};
   if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond];
+  clearItemEffect(c,e);
   logChange(c,'Ended '+e.name); save(); render();
 }
+// Magic Weapon's bonus lives on the item, not a character condition — clear it the same
+// way a condition-bearing effect gets cleared, wherever an effect expires.
+function clearItemEffect(c, e){ if(e.itemIdx!=null && c.items && c.items[e.itemIdx]){ delete c.items[e.itemIdx].magicBonus; delete c.items[e.itemIdx].magicWeaponEffect; } }
 function advanceRound(c){
   let expired=[];
   (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds-=1; if(e.rounds<=0) expired.push(e); } });
   c.effects=(c.effects||[]).filter(e=>e.rounds==null || e.rounds>0);
   expired.forEach(e=>{ if(e.conc && c.concentration && c.concentration.spell===e.name) c.concentration={active:false,spell:''};
-    if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond]; });
+    if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond];
+    clearItemEffect(c,e); });
   if(expired.length) logChange(c,'Expired: '+expired.map(e=>e.name).join(', '));
   save(); render();
   flashBanner(expired.length?('Round advanced — expired: '+expired.map(e=>e.name).join(', ')):'Round advanced');
@@ -1499,7 +1557,9 @@ function castSpell(c, name, level){
   // effect, so casting it drops any previous concentration (one spell at a time, PHB).
   if(!tmpl && isConcentration(name)) tmpl={rounds:null, conc:true, note:SPELL_DESC[name]||'Concentration — one such spell at a time.'};
   const ba=(ct==='bonus')?' · bonus action':(ct==='reaction')?' · reaction':'';
-  if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' ['+ct+']':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')+ba); }
+  if(tmpl){ addEffect(c, name, tmpl);
+    if(name==='Sanctuary'||name==='Holy Aura'){ const e=c.effects[c.effects.length-1]; e.dc=8+profBonus(c)+mod(abil(c,c.spellAbility)); }   // attackers must beat this save (Sanctuary: to target you; Holy Aura: after hitting you, or be blinded)
+    logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' ['+ct+']':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')+ba); }
   else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' ['+ct+']':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')+ba); }
   // Oddball spells resolve AFTER the cast: Time Stop grants extra turns; spells in
   // SPELL_CHOICES open a multiple-choice outcome menu; other pure-narrative spells
@@ -1532,8 +1592,20 @@ const SPELL_CHOICES={
   ],
   'Augury':[{t:'🔮 Read the omens', f:c=>spellOracle(c,'Augury',['Weal — good fortune','Woe — bad fortune','Weal and woe — both','No omen'])}],
   'Divination':[{t:'🔮 Ask your question of the gods', f:c=>spellOracle(c,'Divination',['A clear, truthful omen','A cryptic but true sign','The gods answer in riddles'])}],
-  'Commune':[{t:'🔮 Ask three yes/no questions', f:c=>{ const a=[1,2,3].map(i=>'Q'+i+': '+rndPick(['Yes','No','Unclear'])).join(' · '); logChange(c,'Commune — '+a); flashBanner('🔮 '+a); }}]
+  'Commune':[{t:'🔮 Ask three yes/no questions', f:c=>{ const a=[1,2,3].map(i=>'Q'+i+': '+rndPick(['Yes','No','Unclear'])).join(' · '); logChange(c,'Commune — '+a); flashBanner('🔮 '+a); }}],
+  // dynamic: one option per weapon you're carrying (can't know which until we see the character)
+  'Magic Weapon': c=>{ const ws=weaponItems(c); return ws.length? ws.map(({it,i})=>({t:'⚔️ '+esc(it.name), f:cc=>applyMagicWeapon(cc,i)})) : [{t:'— No weapons in your inventory —', f:()=>flashBanner('Add a weapon on the Items tab first')}]; }
 };
+// Magic Weapon: +1 to hit/damage on one carried weapon, tracked like any other concentration
+// effect. The bonus itself lives on the item (it.magicBonus), not a generic character mod,
+// since weaponToHit/weaponDmgBonus work off the weapon catalog entry, not the inventory item.
+function applyMagicWeapon(c, idx){ const it=c.items&&c.items[idx]; if(!it) return;
+  const old=hasConcentration(c); if(old){ (c.effects||[]).filter(e=>e.conc).forEach(e=>clearItemEffect(c,e)); c.effects=(c.effects||[]).filter(e=>!e.conc); logChange(c,'Lost concentration on '+old.name); }
+  it.magicBonus=1; it.magicWeaponEffect=true;
+  c.concentration={active:true, spell:'Magic Weapon'};
+  c.effects.push({id:Date.now()+'-mw', name:'Magic Weapon', source:'Magic Weapon', rounds:600, conc:true, cond:null, mods:{}, note:it.name+' is a +1 weapon while you concentrate.', itemIdx:idx});
+  logChange(c,'Cast Magic Weapon on '+it.name); save(); render(); flashBanner('⚔️ '+it.name+' is now magical (+1)!');
+}
 function spellOracle(c,name,opts){ const r=rndPick(opts); logChange(c,name+' — '+r); flashBanner('🔮 '+r); }
 // route a cast (e.g. a Wish-duplicated spell) through the right UI for the current mode
 function routeCast(c,name,lvl){
@@ -1541,7 +1613,7 @@ function routeCast(c,name,lvl){
   else if(net && net.role==='player' && net.session && net.session.battle && net.session.battle.active) openSpellTarget(c,name,lvl);
   else castModal(c,name,lvl);
 }
-function openSpellChoices(c,name){ const opts=SPELL_CHOICES[name]||[];
+function openSpellChoices(c,name){ const raw=SPELL_CHOICES[name]; const opts=(typeof raw==='function')?raw(c):(raw||[]);
   $('#modalRoot').innerHTML=`<div class="modal" id="scModal"><div class="sheet"><div class="grip"></div>
     <h2>✨ ${esc(name)} — choose the outcome</h2>
     ${opts.map((o,i)=>`<button class="btn block" data-sc="${i}" style="margin-top:8px;text-align:left">${o.t}</button>`).join('')}
@@ -1621,7 +1693,7 @@ const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necroti
 // collapsed to one centered r8 burst (matches its largest sphere, like Sleet Storm).
 const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1,'Meteor Swarm':8,'Color Spray':1,'Fear':2,'Sunbeam':1};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
-const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10},'Shocking Grasp':{c:'No Reactions',r:1},'Chill Touch':{c:"Can't Heal",r:1}};
+const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10},'Shocking Grasp':{c:'No Reactions',r:1},'Chill Touch':{c:"Can't Heal",r:1},'Guiding Bolt':{c:'Guided',r:1},'Power Word Stun':{c:'Stunned',r:10}};
 // Dominate Person/Beast/Monster: a Dominated monster fights for the party — the Quick
 // Battle brain retargets its former allies, and the DM attack modal offers monsters
 // instead of players. (Simplification: no repeat save on damage; ends when rounds expire.)
@@ -1631,7 +1703,7 @@ function isDominated(u){ return !!(u&&u.conds&&u.conds.some(x=>x.name==='Dominat
 const INCAP_CONDS=['Paralyzed','Stunned','Unconscious','Petrified','Asleep','Banished'];
 function isIncapacitated(u){ const s=unitConds(u); return INCAP_CONDS.some(n=>s.has(n)) || Array.from(s).some(n=>/incapacitated/i.test(n)); }
 // Spells whose casting time is a bonus action (everything else defaults to an action).
-const BONUS_ACTION_SPELLS=new Set(['Healing Word','Mass Healing Word','Misty Step','Spiritual Weapon','Hex',"Hunter's Mark",'Shield of Faith','Sanctuary','Healing Spirit','Searing Smite','Wrathful Smite','Thunderous Smite','Branding Smite','Ensnaring Strike','Hail of Thorns','Zephyr Strike','Compelled Duel','Flame Blade','Magic Stone',"Hunter’s Mark",'Expeditious Retreat','Shillelagh','Divine Favor']);
+const BONUS_ACTION_SPELLS=new Set(['Healing Word','Mass Healing Word','Misty Step','Spiritual Weapon','Hex',"Hunter's Mark",'Shield of Faith','Sanctuary','Healing Spirit','Searing Smite','Wrathful Smite','Thunderous Smite','Branding Smite','Ensnaring Strike','Hail of Thorns','Zephyr Strike','Compelled Duel','Flame Blade','Magic Stone',"Hunter’s Mark",'Expeditious Retreat','Shillelagh','Divine Favor','Magic Weapon']);
 // Spells cast as a reaction (PHB): Shield & Hellish Rebuke (when hit), Counterspell (when a
 // creature casts within 60 ft), Feather Fall (when falling), Absorb Elements (when taking damage).
 const REACTION_SPELLS=new Set(['Shield','Hellish Rebuke','Counterspell','Feather Fall','Absorb Elements']);
@@ -3118,6 +3190,7 @@ function applyHp(c,delta){
 // When a concentrating caster takes damage, they must make a CON save (DC = max 10 or half the damage) or lose the spell.
 function concentrationCheck(c, dmg){
   if(!(c.concentration && c.concentration.active)) return;
+  if(QB&&QB.active) QB.paused=true;   // hold the AI turn loop until this save is answered — a fresh hit otherwise re-opens a brand-new unrolled prompt on top of this one
   const dc=Math.max(10, Math.floor(dmg/2));
   const conBonus=mod(abil(c,'con'))+((c.saveProf&&c.saveProf.con)?profBonus(c):0);
   const adv=hasFeat(c,'War Caster');   // War Caster grants advantage on concentration saves
@@ -3138,7 +3211,7 @@ function concentrationCheck(c, dmg){
     }
     body+=`<button class="btn ghost block" id="ccClose" style="margin-top:8px">Close</button>`;
     $('#modalRoot').innerHTML=`<div class="modal" id="ccModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
-    const close=()=>{ $('#modalRoot').innerHTML=''; };
+    const close=()=>{ $('#modalRoot').innerHTML=''; if(QB&&QB.active) QB.paused=false; };
     $('#ccClose').onclick=close; $('#ccModal').onclick=e=>{ if(e.target.id==='ccModal') close(); };
     const resolve=(face)=>{ const r1=face!=null?face:rnd(20), r2=rnd(20); const d20=(adv&&face==null)?Math.max(r1,r2):r1;
       st.d20=d20; st.total=d20+conBonus; st.ok=st.total>=dc; st.rolled=true;
@@ -3774,8 +3847,8 @@ function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.pla
 function rollInitiative(){ const s=net.session; const o=[];
   s.players.forEach(p=>o.push({k:'p',id:p.id,name:p.name,roll:rnd(20)+(p.init||0)}));
   s.monsters.forEach(m=>o.push({k:'m',id:m.id,name:m.name,roll:rnd(20)+(m.init||0)}));
-  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>{ m.attacksLeft=m.attacks||1; m.moveLeft=m.speed||30; m.reactionUsed=false; }); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
-function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo){ mo.attacksLeft=mo.attacks||1; mo.moveLeft=mo.speed||30; mo.reactionUsed=false; } } }
+  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>{ m.attacksLeft=m.attacks||1; m.moveLeft=speedBlocked(m)?0:(m.speed||30); m.reactionUsed=false; }); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
+function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo){ mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; } } }
 function orderDead(o){ if(o.k!=='m') return false; const mo=net.session.monsters.find(m=>m.id===o.id); return mo&&mo.hp<=0; }
 function tickMonsterConds(){ const s=net.session; (s.monsters||[]).forEach(mo=>{ if(mo.conds){ mo.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); mo.conds=mo.conds.filter(x=>x.rounds==null||x.rounds>0); } }); }
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; tickMonsterConds(); dmBroadcast(); render(); return; }
@@ -4663,8 +4736,8 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
     else { if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } } };
 // the PC's usable attacks (weapons + custom), as generic atk objects
 function qbPcAttacks(c){ const out=[];
-  weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w);
-    out.push({name:it.name, toHit:weaponToHit(c,w), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}); });
+  weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w)+(it.magicBonus||0);
+    out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w)+(it.magicBonus||0), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}); });
   (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0; out.push({name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:'', tiles:1, melee:true}); });
   if(!out.length) out.push({name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
   return out;
@@ -4733,15 +4806,16 @@ function qbPlaceUnits(){ const s=QB, cols=s.map.cols, rows=s.map.rows;
 }
 function qbCurrent(){ return QB.order[QB.turn]; }
 function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
-  if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=mo.speed||30; mo.reactionUsed=false; render();
+  if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; render();
     setTimeout(()=>qbRunBrain(mo), 500); }
   else { const c=QB.players[0].c;   // PC turn — refresh resources, then wait for input
     resetTurnState(c);
     let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
-    exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
+    exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''};
+      if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond]; });   // e.g. Invisibility naturally timing out — endEffect() already does this for manual dismissal, this path covers the round-countdown expiry
     QB.moveMode=false; save(); render(); }
 }
-function qbNextTurn(){ if(!QB) return; if(QB.over){ render(); return; }
+function qbNextTurn(){ if(!QB) return; if(QB.paused){ setTimeout(qbNextTurn,200); return; } if(QB.over){ render(); return; }
   let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0){ QB.battle.round++; QB.monsters.forEach(m=>{ if(m.conds){ m.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); m.conds=m.conds.filter(x=>x.rounds==null||x.rounds>0); } }); qbExpireHazards(QB); } guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
   qbBeginTurn();
 }
@@ -4754,7 +4828,8 @@ function qbResolveAttack(att, tgt, atk, done){
   const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});   // unified resolver
   setTimeout(()=>{
     if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit'); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
-      if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); } }
+      if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); }
+      if(tgt.side==='pc' && att.side==='mon'){ const ha=(tgt.c.effects||[]).find(e=>e.name==='Holy Aura'); if(ha) qbLog(holyAuraResolve(att, ha.dc, rnd(20)+monsterSaveBonus(att))); } }
     else { sfx('miss'); attackFx('miss'); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
     qbCheckEnd(); save(); render(); done&&done(ev);
   }, 280);
@@ -4767,14 +4842,21 @@ function qbPcOAonMonster(pc, mo){ const c=pc.c; if(c.battle.reaction||c.hp.cur<=
 function qbRunBrain(u){ if(!QB||QB.over){ return; }
   if(isIncapacitated(u)){ qbLog('🌀 '+u.name+' is incapacitated — it loses its turn'); setTimeout(qbNextTurn,400); return; }
   const brain=BRAINS[u.brain]||BRAINS.tactical; let intents=[]; try{ intents=brain(QB,u)||[]; }catch(e){ intents=[]; }
-  let i=0; (function step(){ if(!QB||QB.over||qbHP(u)<=0||!qbEnemiesAlive()){ if(QB&&!QB.over) setTimeout(qbNextTurn,400); else render(); return; }
+  let i=0; (function step(){ if(QB&&QB.paused){ setTimeout(step,200); return; }
+    if(!QB||QB.over||qbHP(u)<=0||!qbEnemiesAlive()){ if(QB&&!QB.over) setTimeout(qbNextTurn,400); else render(); return; }
     if(i>=intents.length){ setTimeout(qbNextTurn,400); return; }
     qbApplyIntent(u, intents[i++], ()=>setTimeout(step, 260));
   })();
 }
 function qbApplyIntent(u, it, done){
-  if(it.type==='attack'){ const tgt=qbUnitById(it.targetId); if(!tgt||qbHP(tgt)<=0||(u.attacksLeft||0)<=0){ done(); return; } u.attacksLeft--; qbResolveAttack(u, tgt, it.atk, done); return; }
-  if(it.type==='move'){ const ufly=monsterFlies(u); const path=pathTo(QB, u.x,u.y, it.to.x, it.to.y, (u.moveLeft||0)+(it.dash?(u.speed||30):0), ufly);
+  if(it.type==='attack'){ const tgt=qbUnitById(it.targetId); if(!tgt||qbHP(tgt)<=0||(u.attacksLeft||0)<=0){ done(); return; }
+    const sanc=tgt.side==='pc' && (tgt.c.effects||[]).find(e=>e.name==='Sanctuary');
+    if(sanc){ u.attacksLeft--; const roll=rnd(20)+monsterSaveBonus(u);
+      if(roll<sanc.dc){ qbLog('🛡️ '+u.name+' can’t bring itself to attack '+tgt.name+' — Sanctuary holds (Wis '+roll+' vs DC '+sanc.dc+')'); done(); return; }
+      qbLog('🛡️ '+u.name+' fights through Sanctuary (Wis '+roll+' vs DC '+sanc.dc+')'); }
+    else u.attacksLeft--;
+    qbResolveAttack(u, tgt, it.atk, done); return; }
+  if(it.type==='move'){ if(speedBlocked(u)){ done(); return; } const ufly=monsterFlies(u); const path=pathTo(QB, u.x,u.y, it.to.x, it.to.y, (u.moveLeft||0)+(it.dash?(u.speed||30):0), ufly);
     if(!path){ done(); return; }
     const cost=reachableCells(QB,u.x,u.y,(u.moveLeft||0)+(it.dash?(u.speed||30):0),ufly)[it.to.x+','+it.to.y]; if(cost==null){ done(); return; }
     if(it.dash){ u.moveLeft=(u.moveLeft||0)+(u.speed||30); u.attacksLeft=0; qbLog('🏃 '+u.name+' dashes'); }
@@ -4818,7 +4900,8 @@ BRAINS.tactical = function(qb, u){
   let stepTo=null, bestD=dist(target);
   Object.keys(reach).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return; const d=gridDist(x,y,target.x,target.y); if(d<bestD){ bestD=d; stepTo={x,y}; } });
   if(stepTo) return [{type:'move', to:stepTo}];
-  // truly stuck within normal move → Dash toward the foe
+  // truly stuck within normal move → Dash toward the foe (Restrained/Grappled: speed is 0, Dash gives nothing)
+  if(speedBlocked(u)) return [];
   const reachD=reachableCells(qb, u.x, u.y, (u.moveLeft||0)+(u.speed||30), ufly); let dashTo=null, dd=dist(target);
   Object.keys(reachD).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y)) return; const d=gridDist(x,y,target.x,target.y); if(d<dd){ dd=d; dashTo={x,y}; } });
   if(dashTo) return [{type:'move', to:dashTo, dash:true}];
@@ -4887,8 +4970,8 @@ function renderQuickBattle(){
 function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isFlying(c);
   if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)||(pc.x===x&&pc.y===y)) return;
   const ter=(s.map.tiles||{})[x+','+y], tdef=TERRAIN[ter]; if(tdef&&tdef.solid && !(fly&&ter==='void')){ flashBanner('Blocked by terrain'); return; }
-  const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
-  const path=pathTo(s,pc.x,pc.y,x,y,dashMax,fly); if(!path){ flashBanner('Can’t reach there'); return; }
+  const dashAvail=hasAction(c) && !speedBlocked(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
+  const path=pathTo(s,pc.x,pc.y,x,y,dashMax,fly); if(!path){ flashBanner(speedBlocked(c)?'Restrained — speed is 0':'Can’t reach there'); return; }
   const cost=reachableCells(s,pc.x,pc.y,dashMax,fly)[x+','+y]; if(cost==null){ flashBanner('Out of range'); return; }
   if(cost>(b.move||0)){ if(!dashAvail){ flashBanner('Too far — Dash needs your action'); return; } b.move=(b.move||0)+effSpeed(c); spendAction(c); qbLog('🏃 '+c.name+' dashes'); }
   const fromX=pc.x, fromY=pc.y; b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; s.moveMode=false;
@@ -4993,6 +5076,8 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
     if(mc.dmg){ const tag=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; qbLog(name+' hits '+mo.name+' for '+ev.dmg+(ev.saved?' (saved — half)':'')+tag); }
     else qbLog(name+' on '+mo.name+(ev.saved?' — it saves, no effect':'')); };
   function resolveSingle(mo){ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
+    if(POWER_WORD_HP[name]!=null){ qbLog(powerWordResolve(mo,name)); qbCheckEnd(); finish(); return; }
+    if(name==='Eyebite'){ qbEyebiteChoice(mo, dc0, msg=>{ qbLog(msg); qbCheckEnd(); finish(); }); return; }
     if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'0', tiles:tilesR, dtype:mc.dtype}, (ev)=>{ if(ev&&ev.hit) qbApplyCond(mo,name); finish(); }); }
     else { mapProjectile(me.x,me.y,mo.x,mo.y, mc.dtype==='fire'?'🔥':mc.dtype==='cold'?'❄️':'✦');
       setTimeout(()=>{ const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0;
@@ -5058,7 +5143,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v94';
+const APP_VERSION='v95';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
