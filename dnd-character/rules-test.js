@@ -25,7 +25,7 @@ global.requestAnimationFrame=f=>f();
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;');
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -279,6 +279,30 @@ T('unitConds reads monster conds & PC conditions', unitConds({conds:[{name:'Pron
   const r3=Engine.hitResult(ad3,'a1','t1',{toHit:10},15);
   T('melee hit vs paralyzed auto-crits (adv reported)', r3.hit===true && r3.crit===true && r3.adv===1);
 }
+
+/* ---- oddball spells: Wish, Time Stop, incapacitation, invisibility ---- */
+T('Wish offers a multiple-choice outcome menu', Array.isArray(SPELL_CHOICES['Wish']) && SPELL_CHOICES['Wish'].length===4 && !!SPELL_CHOICES['Augury']);
+T('isIncapacitated: Asleep/laughter yes, Prone no', isIncapacitated({conds:[{name:'Asleep'}]}) && isIncapacitated({conds:[{name:'Incapacitated (prone, laughing)'}]}) && !isIncapacitated({conds:[{name:'Prone'}]}));
+T('incapacitated monster loses its turn (brain returns nothing)', BRAINS.tactical(domQB, {id:'z1',side:'mon',hp:9,x:0,y:3,atk:'Bite +3 (1d6)',attacksLeft:1,conds:[{name:'Paralyzed',rounds:10}]}).length===0);
+{ const sleeper={side:'mon',hp:10,conds:[{name:'Asleep',rounds:10}]}; qbHurt(sleeper,3);
+  T('damage wakes a sleeping monster', sleeper.hp===7 && sleeper.conds.length===0); }
+{ const iv=newCharacter('IV'); iv.cls='Wizard'; addEffect(iv,'Invisibility');
+  T('Invisibility applies the Invisible condition', iv.conditions['Invisible']===true);
+  endEffect(iv, iv.effects[0].id);
+  T('ending Invisibility clears the condition', !iv.conditions['Invisible']); }
+{ const wz=newCharacter('WZ'); wz.cls='Wizard'; wz.level=1; applyClassDefaults(wz);
+  wishGrantFree('Fireball');
+  T('Wish grant: unknown high-level spell castable without a slot', canCast(wz,'Fireball',3)===true && castSpell(wz,'Fireball',3)===true && ((wz.slots[3]&&wz.slots[3].used)||0)===0);
+  T('Wish grant is consumed after one cast', canCast(wz,'Fireball',3)===false); }
+{ const ts9=newCharacter('TS9'); ts9.cls='Wizard'; ts9.level=20; ts9.abilities={str:10,dex:10,con:10,int:18,wis:10,cha:10}; applyClassDefaults(ts9);
+  ts9.spells=[{name:'Time Stop',level:9,prepared:true}]; startBattle(ts9);
+  castSpell(ts9,'Time Stop',9);
+  T('Time Stop banks 1-4 extra turns', ts9.battle.timeStopTurns>=1 && ts9.battle.timeStopTurns<=4);
+  ts9.battle.timeStopTurns=2; ts9.battle.actionsUsed=1;
+  T('ending the turn during Time Stop resets resources instead of passing', timeStopExtraTurn(ts9)===true && ts9.battle.timeStopTurns===1 && ts9.battle.actionsUsed===0);
+  ts9.battle.timeStopTurns=0;
+  T('no banked turns → end turn passes normally', timeStopExtraTurn(ts9)===false); }
+T('AI narrator key defaults to unset', aiKey()==='');
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');

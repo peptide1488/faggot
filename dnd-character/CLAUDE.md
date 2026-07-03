@@ -34,6 +34,11 @@ Data tables (all near the top of the script):
   `SPELL_COND` — conditions imposed; `BONUS_ACTION_SPELLS` / `REACTION_SPELLS` — cast times
 - `SPELL_TELEPORT` — teleport spells {tiles,los}; `teleportOk`/`openTeleportTarget` —
   destination validity + shared picker (net play & Quick Battle commit via callback)
+- `SPELL_CHOICES`/`openSpellChoices` — oddball-spell outcome menus (Wish/oracles);
+  `wishGrantFree`/`wishFreeName` — Wish free-cast bypass in canCast/castSpell;
+  `timeStopTurns`/`timeStopExtraTurn` — Time Stop extra turns (hooked in all 3 end-turn paths);
+  `isIncapacitated`/`INCAP_CONDS` — turn-skipping conditions; `aiKey`/`aiNarrate` — AI Narrator
+  (user's Anthropic key in localStorage `grimoire.aikey`, calls claude-opus-4-8 from browser)
 - `MONSTERS_5E` — bestiary {n,cr,ac,hp,spd,init,attacks,atk,…}; `MONSTER_RVI` — resist/vuln/imm
 - `TERRAIN` — tile properties (solid/opaque/diff/dmg/deadly); `MAP_PRESETS` — battle maps
 

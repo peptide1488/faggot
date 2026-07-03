@@ -708,7 +708,7 @@ function freshTurnState(c){ return {action:false, bonus:false, reaction:false, a
 function resetTurnState(c){ Object.assign(c.battle, freshTurnState(c)); }
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c)); logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
-function battleNextTurn(c){ if(!c.battle) return; const b=c.battle; b.round++; resetTurnState(c);
+function battleNextTurn(c){ if(!c.battle) return; if(timeStopExtraTurn(c)) return; const b=c.battle; b.round++; resetTurnState(c);
   let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
   exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
   logChange(c,'▶ Round '+b.round+' — turn reset'+(exp.length?'; expired: '+exp.map(e=>e.name).join(', '):'')); save(); render(); flashBanner('Round '+b.round); }
@@ -1406,8 +1406,8 @@ const SPELL_EFFECTS = {
   'Foresight':{rounds:4800, note:'Advantage on attacks, checks and saves; you can’t be surprised.'},
   'Death Ward':{rounds:4800, note:'The first time you’d drop to 0 HP, you drop to 1 instead.'},
   'Pass without Trace':{rounds:600, conc:true, note:'+10 to your group’s Stealth; can’t be tracked.'},
-  'Greater Invisibility':{rounds:10, conc:true, note:'You’re invisible even when you attack or cast.'},
-  'Invisibility':{rounds:600, conc:true, note:'Invisible until you attack or cast a spell.'},
+  'Greater Invisibility':{rounds:10, conc:true, cond:'Invisible', note:'You’re invisible even when you attack or cast.'},
+  'Invisibility':{rounds:600, conc:true, cond:'Invisible', note:'Invisible until you attack or cast a spell.'},
   'Darkvision':{rounds:4800, note:'Gain 60-ft darkvision.'},
   'Protection from Energy':{rounds:600, conc:true, note:'Resistance to one chosen damage type.'},
   'Freedom of Movement':{rounds:600, note:'Ignore difficult terrain; immune to restrain/paralyze on movement.'}
@@ -1436,21 +1436,24 @@ function addEffect(c, name, tmpl){
     c.concentration={active:true, spell:name};
   }
   c.effects.push({ id:Date.now()+'-'+Math.random().toString(36).slice(2,6), name, source:name,
-    rounds:(tmpl.rounds!=null?tmpl.rounds:null), conc:!!tmpl.conc,
+    rounds:(tmpl.rounds!=null?tmpl.rounds:null), conc:!!tmpl.conc, cond:tmpl.cond||null,
     mods:Object.assign({},tmpl.mods||{}), note:tmpl.note||SPELL_DESC[name]||'' });
+  if(tmpl.cond){ if(!c.conditions) c.conditions={}; c.conditions[tmpl.cond]=true; }   // e.g. Invisibility → Invisible (drives attack advantage)
   if(tmpl.mods && tmpl.mods.tempHp){ c.hp.temp=Math.max(Number(c.hp.temp)||0, tmpl.mods.tempHp); } // temp HP takes the higher, doesn't stack
 }
 function endEffect(c, id){
   const e=(c.effects||[]).find(x=>x.id===id); if(!e) return;
   c.effects=c.effects.filter(x=>x.id!==id);
   if(e.conc && c.concentration && c.concentration.spell===e.name) c.concentration={active:false,spell:''};
+  if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond];
   logChange(c,'Ended '+e.name); save(); render();
 }
 function advanceRound(c){
   let expired=[];
   (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds-=1; if(e.rounds<=0) expired.push(e); } });
   c.effects=(c.effects||[]).filter(e=>e.rounds==null || e.rounds>0);
-  expired.forEach(e=>{ if(e.conc && c.concentration && c.concentration.spell===e.name) c.concentration={active:false,spell:''}; });
+  expired.forEach(e=>{ if(e.conc && c.concentration && c.concentration.spell===e.name) c.concentration={active:false,spell:''};
+    if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond]; });
   if(expired.length) logChange(c,'Expired: '+expired.map(e=>e.name).join(', '));
   save(); render();
   flashBanner(expired.length?('Round advanced — expired: '+expired.map(e=>e.name).join(', ')):'Round advanced');
@@ -1458,6 +1461,7 @@ function advanceRound(c){
 function canCast(c, name, level){
   if(typeof level==='undefined'){ level=name; name=''; }   // back-compat: canCast(c, level)
   level=Number(level)||0;
+  if(name && wishFreeName===name) return true;   // Wish-duplicated spell: no slot, no prep, no action cost
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
   if(level>0 && name && isPrepCaster(c) && !spellPrepared(c,name)){ flashBanner(name+' isn’t prepared today — 📋 Prepare it first'); return false; }
   const ct=spellCastTime(name);
@@ -1481,9 +1485,10 @@ function canCast(c, name, level){
 function castSpell(c, name, level){
   level=Number(level)||0;
   if(!canCast(c,name,level)) return false;
+  const free=(name && wishFreeName===name); if(free) wishFreeName=null;   // Wish duplication: consume the grant
   const ct=spellCastTime(name);
-  if(level>0){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
-  if(c.battle){
+  if(level>0 && !free){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
+  if(c.battle && !free){
     if(ct==='reaction'){ c.battle.reaction=true; }
     else if(ct==='bonus'){ c.battle.bonus=true; c.battle.castBonusSpell=true; }
     else { spendAction(c); if(level>0) c.battle.castLeveledSpell=true; }
@@ -1496,8 +1501,115 @@ function castSpell(c, name, level){
   const ba=(ct==='bonus')?' · bonus action':(ct==='reaction')?' · reaction':'';
   if(tmpl){ addEffect(c, name, tmpl); logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' ['+ct+']':'')); save(); render(); flashBanner('Cast '+name+(tmpl.conc?' · concentrating':'')+ba); }
   else { logChange(c,'Cast '+name+(level?' (L'+level+')':'')+(ba?' ['+ct+']':'')); save(); render(); flashBanner('Cast '+name+(level?' — slot spent':'')+ba); }
+  // Oddball spells resolve AFTER the cast: Time Stop grants extra turns; spells in
+  // SPELL_CHOICES open a multiple-choice outcome menu; other pure-narrative spells
+  // offer the AI narrator (premium, user-supplied key).
+  if(name==='Time Stop' && c.battle){ const n=rnd(4)+1; c.battle.timeStopTurns=(n-1); save(); flashBanner('⏳ Time Stop — '+n+' turns in a row!'); logChange(c,'⏳ Time Stop — '+n+' turns in a row'); }
+  else if(SPELL_CHOICES[name]){ setTimeout(()=>openSpellChoices(c,name),80); }
+  else if(aiKey() && !tmpl && !spellTargetsEnemy(name) && !SPELL_TELEPORT[name]){
+    const m0=parseSpellMechanics(name);
+    if(!m0.attack && !m0.dmg && !m0.heal && !m0.save) setTimeout(()=>openAINarrate(c,name),80);
+  }
   return true;
 }
+// If a Time Stop turn is banked, ending the turn resets your resources instead of
+// passing play — enemies don't act between your turns. Used by all three end-turn paths.
+function timeStopExtraTurn(c){ const b=c&&c.battle; if(!b||!(b.timeStopTurns>0)) return false;
+  b.timeStopTurns--; resetTurnState(c); save(); render();
+  flashBanner('⏳ Time Stop — extra turn!'+(b.timeStopTurns>0?' ('+b.timeStopTurns+' more banked)':' (last one)')); return true; }
+/* ============ ODDBALL SPELLS (Wish, Divination, Time Stop…) ============
+   Two resolution tiers: a mechanical multiple-choice menu (SPELL_CHOICES, free),
+   and the AI Narrator (premium — the user's own Anthropic API key, stored only on
+   this device) which adjudicates a plain-language attempt like a DM. */
+let wishFreeName=null;                                   // spell granted a free cast by Wish
+function wishGrantFree(name){ wishFreeName=name; }
+const SPELL_CHOICES={
+  'Wish':[
+    {t:'🌠 Duplicate any spell of 8th level or lower', f:c=>wishSpellPicker(c)},
+    {t:'💖 Restore yourself — full HP, all conditions cleared', f:c=>{ c.hp.cur=c.hp.max; c.conditions={}; c.death={succ:0,fail:0}; logChange(c,'Wish — fully restored'); save(); render(); flashBanner('💖 Fully restored!'); }},
+    {t:'💰 Conjure riches — 25,000 gp appears', f:c=>{ c.currency.gp=(c.currency.gp||0)+25000; logChange(c,'Wish — 25,000 gp appears'); save(); render(); flashBanner('💰 +25,000 gp'); }},
+    {t:'📜 Something greater — narrate it with the DM', f:c=>{ logChange(c,'Wish — narrated with the DM'); flashBanner('📜 Logged — speak your wish'); }}
+  ],
+  'Augury':[{t:'🔮 Read the omens', f:c=>spellOracle(c,'Augury',['Weal — good fortune','Woe — bad fortune','Weal and woe — both','No omen'])}],
+  'Divination':[{t:'🔮 Ask your question of the gods', f:c=>spellOracle(c,'Divination',['A clear, truthful omen','A cryptic but true sign','The gods answer in riddles'])}],
+  'Commune':[{t:'🔮 Ask three yes/no questions', f:c=>{ const a=[1,2,3].map(i=>'Q'+i+': '+rndPick(['Yes','No','Unclear'])).join(' · '); logChange(c,'Commune — '+a); flashBanner('🔮 '+a); }}]
+};
+function spellOracle(c,name,opts){ const r=rndPick(opts); logChange(c,name+' — '+r); flashBanner('🔮 '+r); }
+// route a cast (e.g. a Wish-duplicated spell) through the right UI for the current mode
+function routeCast(c,name,lvl){
+  if(QB && !QB.over){ if(spellTargetsEnemy(name)) qbSpellTarget(c,name,lvl); else castModal(c,name,lvl); }
+  else if(net && net.role==='player' && net.session && net.session.battle && net.session.battle.active) openSpellTarget(c,name,lvl);
+  else castModal(c,name,lvl);
+}
+function openSpellChoices(c,name){ const opts=SPELL_CHOICES[name]||[];
+  $('#modalRoot').innerHTML=`<div class="modal" id="scModal"><div class="sheet"><div class="grip"></div>
+    <h2>✨ ${esc(name)} — choose the outcome</h2>
+    ${opts.map((o,i)=>`<button class="btn block" data-sc="${i}" style="margin-top:8px;text-align:left">${o.t}</button>`).join('')}
+    ${aiKey()?`<div class="field" style="margin-top:14px"><label>🔮 AI Narrator — or describe what you attempt</label>
+      <textarea id="scAI" rows="2" placeholder="I wish that…"></textarea>
+      <button class="btn ghost block" id="scAIGo" style="margin-top:6px">🔮 Resolve with AI</button></div>`
+      :`<p class="muted" style="font-size:11px;margin-top:12px">🔮 Add an AI Narrator key in ⚙ App &amp; Data to resolve spells in plain language.</p>`}
+    <button class="btn ghost block" id="scClose" style="margin-top:10px">Close</button></div></div>`;
+  $('#scClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#scModal').onclick=e=>{ if(e.target.id==='scModal') $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('#scModal [data-sc]').forEach(b=>b.onclick=()=>{ const o=opts[Number(b.dataset.sc)]; $('#modalRoot').innerHTML=''; if(o) o.f(c); });
+  { const g=$('#scAIGo'); if(g) g.onclick=()=>{ const t=($('#scAI').value||'').trim(); if(!t){ flashBanner('Describe what you attempt'); return; } openAINarrate(c,name,t); }; }
+}
+function wishSpellPicker(c){
+  $('#modalRoot').innerHTML=`<div class="modal" id="wishModal"><div class="sheet"><div class="grip"></div>
+    <h2>🌠 Wish — duplicate a spell</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Any spell of 8th level or lower — no slot spent, no components, you don't need to know it.</p>
+    <input id="wishSearch" placeholder="Search all spells…" autocomplete="off">
+    <div id="wishList" style="margin-top:10px;max-height:52vh;overflow:auto"></div>
+    <button class="btn ghost block" id="wishClose" style="margin-top:10px">Cancel</button></div></div>`;
+  const draw=()=>{ const q=($('#wishSearch').value||'').toLowerCase();
+    const f=SPELLS.filter(s=>s.l<=8 && s.n.toLowerCase().includes(q)).slice(0,60);
+    $('#wishList').innerHTML=f.map(s=>`<div class="spell"><span style="flex:none">${spellIcon(s.n)}</span><div class="nm"><b>${esc(s.n)}</b><small>${lvlLabel(s.l)}</small></div><button class="btn sm" data-wc="${esc(s.n)}|${s.l}">Cast</button></div>`).join('')||'<div class="empty">No matches.</div>';
+    $('#wishList').querySelectorAll('[data-wc]').forEach(b=>b.onclick=()=>{ const a=b.dataset.wc.split('|'); $('#modalRoot').innerHTML='';
+      wishGrantFree(a[0]); logChange(c,'🌠 Wish duplicates '+a[0]); routeCast(c, a[0], Number(a[1])); }); };
+  $('#wishSearch').addEventListener('input',draw);
+  $('#wishClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#wishModal').onclick=e=>{ if(e.target.id==='wishModal') $('#modalRoot').innerHTML=''; };
+  draw();
+}
+/* ---- AI Narrator (premium): the user's own Anthropic API key, kept in localStorage
+   on this device only. Calls the Messages API directly from the browser. ---- */
+function aiKey(){ try{ return localStorage.getItem('grimoire.aikey')||''; }catch(e){ return ''; } }
+function openAINarrate(c,name,prefill){
+  $('#modalRoot').innerHTML=`<div class="modal" id="ainModal"><div class="sheet"><div class="grip"></div>
+    <h2>🔮 ${esc(name)} — AI Narrator</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Describe what you attempt; the narrator adjudicates it like a DM, within what ${esc(name)} can do in 5e.</p>
+    <textarea id="ainText" rows="3" placeholder="What do you do with it?">${esc(prefill||'')}</textarea>
+    <div id="ainOut" class="card" style="display:none;margin-top:10px;font-size:13.5px;white-space:pre-wrap"></div>
+    <button class="btn block" id="ainGo" style="margin-top:8px">🔮 Resolve</button>
+    <button class="btn ghost block" id="ainClose" style="margin-top:10px">Skip</button></div></div>`;
+  $('#ainClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#ainModal').onclick=e=>{ if(e.target.id==='ainModal') $('#modalRoot').innerHTML=''; };
+  $('#ainGo').onclick=()=>{ const t=($('#ainText').value||'').trim(); if(!t){ flashBanner('Describe what you attempt'); return; } aiNarrate(c,name,t); };
+  if(prefill) aiNarrate(c,name,prefill);
+}
+async function aiNarrate(c,name,attempt){
+  const key=aiKey(); if(!key){ flashBanner('No AI Narrator key set'); return; }
+  const out=$('#ainOut'), go=$('#ainGo');
+  if(out){ out.style.display='block'; out.textContent='🔮 Consulting the fates…'; }
+  if(go) go.disabled=true;
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{ method:'POST', headers:{
+        'content-type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true' },
+      body:JSON.stringify({ model:'claude-opus-4-8', max_tokens:400,
+        system:'You are a fair, vivid Dungeon Master adjudicating a D&D 5e spell for a player. Stay strictly within what the named spell can do by the rules. Answer in 2-4 sentences of narration, then if there are concrete mechanical consequences (damage, healing, gold, conditions, costs), list them on separate lines starting with "•".',
+        messages:[{role:'user', content:c.name+' (level '+c.level+' '+c.cls+') casts '+name+((SPELL_DESC[name])?' — "'+SPELL_DESC[name]+'"':'')+'. They attempt: "'+attempt+'". Adjudicate the outcome.'}] }) });
+    const j=await res.json();
+    if(j && j.content && j.content.length){ const txt=j.content.filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
+      if(out) out.textContent=txt||'(the narrator is silent)';
+      if(txt){ logChange(c,'🔮 '+name+': '+txt); save(); } }
+    else if(j && j.error){ if(out) out.textContent='⚠ '+(j.error.message||j.error.type||'API error'); }
+    else if(out) out.textContent='⚠ Unexpected response';
+  }catch(e){ if(out) out.textContent='⚠ Request failed — check your connection and key'; }
+  if(go) go.disabled=false;
+}
+
 // Heuristically read mechanics out of a spell's one-line summary (attack? save? damage/heal dice?).
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 // AoE spells: burst radius in tiles (5 ft each), Chebyshev distance from center.
@@ -1513,6 +1625,10 @@ const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyze
 // Battle brain retargets its former allies, and the DM attack modal offers monsters
 // instead of players. (Simplification: no repeat save on damage; ends when rounds expire.)
 function isDominated(u){ return !!(u&&u.conds&&u.conds.some(x=>x.name==='Dominated')); }
+// Conditions that cost a creature its whole turn (Sleep, Hold Person/Monster, Banishment,
+// Tasha's laughter…): the QB brain skips it and the DM attack button refuses.
+const INCAP_CONDS=['Paralyzed','Stunned','Unconscious','Petrified','Asleep','Banished'];
+function isIncapacitated(u){ const s=unitConds(u); return INCAP_CONDS.some(n=>s.has(n)) || Array.from(s).some(n=>/incapacitated/i.test(n)); }
 // Spells whose casting time is a bonus action (everything else defaults to an action).
 const BONUS_ACTION_SPELLS=new Set(['Healing Word','Mass Healing Word','Misty Step','Spiritual Weapon','Hex',"Hunter's Mark",'Shield of Faith','Sanctuary','Healing Spirit','Searing Smite','Wrathful Smite','Thunderous Smite','Branding Smite','Ensnaring Strike','Hail of Thorns','Zephyr Strike','Compelled Duel','Flame Blade','Magic Stone',"Hunter’s Mark",'Expeditious Retreat','Shillelagh','Divine Favor']);
 // Spells cast as a reaction (PHB): Shield & Hellish Rebuke (when hit), Counterspell (when a
@@ -2972,6 +3088,7 @@ function applyHp(c,delta){
   let concDmg=0;
   if(delta<0){
     let dmg=-delta; const wasAt0=c.hp.cur<=0;
+    if(c.conditions && c.conditions['Asleep']){ delete c.conditions['Asleep']; logChange(c,'Woken by damage'); }   // damage wakes sleepers (PHB)
     const raged=isRaging(c)&&dmg>0; if(raged) dmg=Math.floor(dmg/2);   // Rage: resistance to b/p/s (halved)
     concDmg=dmg;   // damage taken (after resistance) drives the concentration DC, even if temp HP absorbs it
     if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
@@ -3555,6 +3672,7 @@ function openAppMenu(){
       <button class="btn ghost" id="mnExport">⬇ Export backup</button>
       <button class="btn ghost" id="mnImport">⬆ Import backup</button>
     </div>
+    <button class="btn ghost block" id="mnAI" style="margin-top:10px">🔮 AI Narrator ${aiKey()?'— connected ✓':'— add API key'}</button>
     <input type="file" id="mnImportFile" accept="application/json" style="display:none">
     <div style="height:1px;background:var(--line);margin:16px 0"></div>
     <button class="btn bad block" id="mnReset">🗑 Reset app — delete ALL data</button>
@@ -3564,6 +3682,9 @@ function openAppMenu(){
   $('#menuModal').onclick=e=>{ if(e.target.id==='menuModal') close(); };
   $('#mnClose').onclick=close;
   $('#mnNew').onclick=()=>{ close(); createCharacterFlow(); };
+  { const ai=$('#mnAI'); if(ai) ai.onclick=()=>{ const k=prompt('🔮 AI Narrator — paste your Anthropic API key.\nStored only on this device; used to adjudicate narrative spells (Wish, Divination…) in plain language.\nLeave blank to disconnect.', aiKey());
+    if(k==null) return; try{ if(k.trim()) localStorage.setItem('grimoire.aikey',k.trim()); else localStorage.removeItem('grimoire.aikey'); }catch(e){}
+    flashBanner(k.trim()?'🔮 AI Narrator connected':'AI Narrator disconnected'); close(); }; }
   $('#mnRandom').onclick=()=>{ close(); openRandomBuilder(); };
   $('#mnLog').onclick=()=>{ close(); openLog(); };
   $('#mnHost').onclick=()=>{ close(); dmHost(); };
@@ -3896,7 +4017,7 @@ function renderPlayerBattle(c){
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
   { const rg=$('#pbRage'); if(rg) rg.onclick=()=>toggleRage(c); }
-  { const et=$('#pbEndTurn'); if(et) et.onclick=()=>{ if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} } net.moveMode=false; flashBanner('Turn ended'); }; }
+  { const et=$('#pbEndTurn'); if(et) et.onclick=()=>{ if(timeStopExtraTurn(c)) return; if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} } net.moveMode=false; flashBanner('Turn ended'); }; }
   { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
   { const hh=$('#pbHeal'); if(hh) hh.onclick=()=>applyHp(c,Math.abs(Number($('#pbAmt').value)||0)); }
   { const ds=$('#pbDeath'); if(ds) ds.onclick=()=>rollDeathSave(c); }
@@ -4230,6 +4351,7 @@ function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim())
 function dmMonsterAttack(mo){
   if(net.session.battle.active && mo.attacksLeft!=null && mo.attacksLeft<=0){ flashBanner(mo.name+' already attacked this turn — ▶ Next turn to reset'); return; }
   const atks=parseMonsterAttacks(mo.atk); if(!atks.length) atks.push({name:'Attack',hit:0,dmg:'1d6'});
+  if(isIncapacitated(mo)){ flashBanner('🌀 '+mo.name+' is incapacitated — it loses its action'); return; }
   // a Dominated monster is forced to attack its allies — offer monsters, not players
   const dominated=isDominated(mo);
   const players= dominated
@@ -4465,7 +4587,7 @@ const sessionAdapter = {
   unit:id=>{ const s=net&&net.session; if(!s) return null; return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id||p.cid===id); },
   ac:u=>u.ac,
   hp:u=> u.hp!=null ? u.hp : u.hpCur,
-  hurt:(u,dmg)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); } else { dmSend(u.id,{t:'apply',delta:-dmg}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },
+  hurt:(u,dmg)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } else { dmSend(u.id,{t:'apply',delta:-dmg}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },   // damage wakes sleepers
   cover:(a,t)=> (a&&t&&net&&net.session) ? coverBetween(net.session, a.x,a.y, t.x,t.y) : 0,
   damageMult:(t,dtype)=> (t&&t.hp!=null) ? monsterDmgMult(t,dtype) : 1,   // monsters carry .hp
   saveBonus:(u,ab)=> u.hp!=null ? monsterSaveBonus(u) : 0,                // players roll their own saves
@@ -4498,7 +4620,7 @@ function qbReach(u){ if(u.side==='pc'){ return 1; } const a=parseMonsterAttacks(
 function qbAlive(u){ return qbHP(u)>0; }
 function qbUnitById(id){ return QB.players.find(p=>p.id===id)||QB.monsters.find(m=>m.id===id); }
 function qbLog(m){ QB.log.unshift({m, t:Date.now()}); if(QB.log.length>40) QB.log.pop(); }
-function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); } }
+function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } }   // damage wakes sleepers (PHB)
 // adapter binding the unified Engine to Quick Battle's state
 const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
   enemiesOf:u=> u.side==='pc' ? QB.monsters.filter(m=>m.hp>0&&!isDominated(m))
@@ -4593,7 +4715,7 @@ function qbNextTurn(){ if(!QB) return; if(QB.over){ render(); return; }
   let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0){ QB.battle.round++; QB.monsters.forEach(m=>{ if(m.conds){ m.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); m.conds=m.conds.filter(x=>x.rounds==null||x.rounds>0); } }); } guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
   qbBeginTurn();
 }
-function qbEndPcTurn(){ const o=qbCurrent(); if(o&&o.k==='p'){ QB.moveMode=false; qbNextTurn(); } }
+function qbEndPcTurn(){ const o=qbCurrent(); if(o&&o.k==='p'){ const c=QB.players[0].c; if(timeStopExtraTurn(c)) return; QB.moveMode=false; qbNextTurn(); } }
 
 // ---- attack resolution (shared by PC, AI, opportunity attacks) ----
 function qbResolveAttack(att, tgt, atk, done){
@@ -4613,6 +4735,7 @@ function qbPcOAonMonster(pc, mo){ const c=pc.c; if(c.battle.reaction||c.hp.cur<=
 
 // ---- AI driver: ask the unit's brain for intents, execute them in sequence ----
 function qbRunBrain(u){ if(!QB||QB.over){ return; }
+  if(isIncapacitated(u)){ qbLog('🌀 '+u.name+' is incapacitated — it loses its turn'); setTimeout(qbNextTurn,400); return; }
   const brain=BRAINS[u.brain]||BRAINS.tactical; let intents=[]; try{ intents=brain(QB,u)||[]; }catch(e){ intents=[]; }
   let i=0; (function step(){ if(!QB||QB.over||qbHP(u)<=0||!qbEnemiesAlive()){ if(QB&&!QB.over) setTimeout(qbNextTurn,400); else render(); return; }
     if(i>=intents.length){ setTimeout(qbNextTurn,400); return; }
@@ -4637,6 +4760,7 @@ function qbApplyIntent(u, it, done){
 
 // ---- the built-in tactical brain ----
 BRAINS.tactical = function(qb, u){
+  if(isIncapacitated(u)) return [];   // Asleep/Paralyzed/Banished… — it loses the turn
   // a Dominated monster fights for the party: its foes are its former allies; normal
   // monsters count dominated ones among their foes
   const foes = isDominated(u)
@@ -4874,7 +4998,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v90';
+const APP_VERSION='v91';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

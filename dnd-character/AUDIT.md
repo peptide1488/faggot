@@ -207,3 +207,17 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   changes re-hello.
 - Simplifications: Frightened ignores source visibility; Incapacitated doesn't yet block
   the action economy; saves are unaffected by conditions (attack rolls only).
+
+## v91 — oddball spells become playable
+- **Wish**: post-cast choice menu — duplicate any spell ≤8th (cast free via `wishGrantFree`,
+  no slot/prep/action, one use), full self-restore, +25,000 gp, or narrate. **Time Stop**:
+  1d4+1 turns in a row (`timeStopTurns` banked on `c.battle`; End Turn resets resources
+  instead of passing — all three battle modes). Augury/Commune/Divination roll real omens.
+- **Incapacitation has teeth**: Asleep/Paralyzed/Stunned/Petrified/Unconscious/Banished
+  (and Tasha's laughter) monsters lose their turns (QB brain skips, DM attack refuses);
+  damage wakes Asleep (players and monsters). Invisibility/Greater Invisibility apply the
+  Invisible condition (v90 advantage) and clear it when the effect ends.
+- **AI Narrator (premium)**: user-supplied Anthropic API key (localStorage, this device
+  only, ⚙ App & Data); narrative spells offer a plain-language attempt box; claude-opus-4-8
+  adjudicates DM-style within 5e limits. Simplifications: Time Stop doesn't end early on
+  affecting others; invisibility doesn't break on attacking; Wish carries no stress cost.
