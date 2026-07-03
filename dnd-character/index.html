@@ -1617,10 +1617,11 @@ const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necroti
 // (Thunderwave 15-ft cube = r1, Web/Faerie Fire 20-ft cube = r2). Cones/lines are approximated
 // as bursts of equal AREA: 15-ft cone (Burning Hands) ≈ r1, 60-ft cone (Cone of Cold) ≈ r4,
 // 100-ft line (Lightning Bolt) ≈ r2. Spirit Guardians/Thunderwave are self-centered in the PHB
-// — center them on your own tile.
-const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1};
+// — center them on your own tile. Meteor Swarm's four 40-ft-radius impact points are
+// collapsed to one centered r8 burst (matches its largest sphere, like Sleet Storm).
+const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1,'Meteor Swarm':8};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
-const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10}};
+const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1}};
 // Dominate Person/Beast/Monster: a Dominated monster fights for the party — the Quick
 // Battle brain retargets its former allies, and the DM attack modal offers monsters
 // instead of players. (Simplification: no repeat save on damage; ends when rounds expire.)
@@ -4410,6 +4411,31 @@ function dmMonsterAttack(mo){
   }
   draw();
 }
+// read-only character sheet for Quick Battle — mid-combat reference, no editing
+function openQbSheet(c){
+  const abils=ABILITIES.map(([k,nm])=>`<div class="tile"><div class="lab">${nm.slice(0,3).toUpperCase()}</div><div class="big">${sgn(mod(abil(c,k)))}</div><div class="muted" style="font-size:11px">${abil(c,k)}</div></div>`).join('');
+  const saves=ABILITIES.map(([k,nm])=>{ const prof=!!c.saveProf[k]; return `<div class="listrow"><span class="profdot ${prof?'on':''}"></span><div class="nm">${nm}</div><div class="val">${sgn(mod(abil(c,k))+(prof?profBonus(c):0))}</div></div>`; }).join('');
+  const profSkills=SKILLS.filter(([key])=>c.skillProf[key]||c.skillExp[key]);
+  const equipped=(c.items||[]).filter(it=>it.equipped);
+  const ct=RACE_TRAITS[c.race]||[], cf=(CLASS_FEATURES[c.cls]||[]).filter(f=>f[0]<=(Number(c.level)||1));
+  const sheet=`<div class="modal" id="qbsModal"><div class="sheet"><div class="grip"></div>
+    <h2 style="margin:0">${esc(c.name)}</h2>
+    <div class="muted" style="font-size:12px;margin:2px 0 10px">Level ${c.level} ${esc(c.race||'')} ${esc(c.cls)}${c.subclass?' · '+esc(c.subclass):''}</div>
+    <div class="grid3" style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:10px">${abils}</div>
+    <div class="field"><label>Saving Throws</label>${saves}</div>
+    <div class="field"><label>Proficient Skills</label>${profSkills.length?profSkills.map(([key,nm,ab])=>`<div class="listrow"><div class="nm">${nm}${c.skillExp[key]?' ◆':''}</div><div class="val">${sgn(skillBonus(c,key,ab,true))}</div></div>`).join(''):'<div class="empty" style="padding:6px 0">None</div>'}</div>
+    ${c.feats.length?`<div class="field"><label>Feats</label><div class="muted" style="font-size:13px">${c.feats.map(f=>esc(f.name||f)).join(', ')}</div></div>`:''}
+    ${equipped.length?`<div class="field"><label>Equipped</label><div class="muted" style="font-size:13px">${equipped.map(it=>esc(it.name)).join(', ')}</div></div>`:''}
+    ${(ct.length||cf.length)?`<div class="field"><label>Features &amp; Traits</label>
+      ${ct.map(t=>`<div class="spell"><div class="nm"><b>${esc(t[0])}</b><small>${esc(t[1])}</small></div></div>`).join('')}
+      ${cf.map(f=>`<div class="spell"><div class="nm"><b>${esc(f[1])} <span class="sub">Lv ${f[0]}</span></b><small>${esc(f[2])}</small></div></div>`).join('')}
+    </div>`:''}
+    <button class="btn ghost block" id="qbsClose" style="margin-top:10px">Close</button>
+  </div></div>`;
+  $('#modalRoot').innerHTML=sheet;
+  $('#qbsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#qbsModal').onclick=e=>{ if(e.target.id==='qbsModal') $('#modalRoot').innerHTML=''; };
+}
 function openMonsterSheet(mo){
   const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name))||{};
   const atks=parseMonsterAttacks(mo.atk);
@@ -4803,7 +4829,7 @@ function renderQuickBattle(){
   const moveOpts = (myTurn&&s.moveMode)?{reachCost:reachableCells(s,pc.x,pc.y,dashMax,isFlying(c)), reachNormal:(b.move||0)}:{};
   app.innerHTML=`
   <div class="card" style="border:2px solid var(--accent2)">
-    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Quick Battle</h2><button class="btn ghost sm" id="qbExit" style="color:var(--bad)">Exit</button></div>
+    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Quick Battle</h2><div class="addrow" style="gap:6px"><button class="btn ghost sm" id="qbSheet">📜 Sheet</button><button class="btn ghost sm" id="qbExit" style="color:var(--bad)">Exit</button></div></div>
     <div class="muted" style="font-size:12px;margin-top:6px">Round ${s.battle.round} · ${s.over?(s.over==='win'?'🏆 Victory!':'💀 Defeated'):(myTurn?'Your turn':'⏳ '+esc(o?o.name:'…')+'…')}</div>
     <div class="addrow" style="gap:5px;flex-wrap:wrap;margin-top:8px">${s.order.map((it,i)=>{ const u=qbUnitById(it.id); const dead=u&&!qbAlive(u); return `<span class="pill" style="${i===s.turn?'background:var(--accent2);color:#fff;':''}${dead?'opacity:.4;text-decoration:line-through':''}">${it.k==='m'?'🟥':'🟩'} ${esc(it.name)} <b>${it.roll}</b></span>`; }).join('')}</div>
   </div>
@@ -4841,6 +4867,7 @@ function renderQuickBattle(){
     </div>
   </div>`;
   $('#qbExit').onclick=qbExit;
+  $('#qbSheet').onclick=()=>openQbSheet(c);
   { const a=$('#qbAgain'); if(a) a.onclick=()=>{ QB=null; openQuickBattle(); }; }
   { const d=$('#qbDone'); if(d) d.onclick=qbExit; }
   { const mv=$('#qbMove'); if(mv&&myTurn) mv.onclick=()=>{ s.moveMode=!s.moveMode; render(); }; }
@@ -4998,7 +5025,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v91';
+const APP_VERSION='v92';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

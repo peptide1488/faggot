@@ -51,6 +51,7 @@ T('multiplyDice 3d4+3 ×2 = 6d4+3 (flat not doubled)', multiplyDice('3d4+3',2)==
 let mc=parseSpellMechanics('Fireball'); T('Fireball: Dex save, 8d6 fire', mc.save==='dex'&&mc.dmg==='8d6'&&mc.dtype==='fire');
 T('Fireball AoE = 4 tiles (20 ft)', SPELL_AOE['Fireball']===4);
 T('Cone of Cold AoE = 4 (equal-area burst)', SPELL_AOE['Cone of Cold']===4);
+T('Meteor Swarm has an AoE burst (was single-target)', SPELL_AOE['Meteor Swarm']===8);
 mc=parseSpellMechanics('Chill Touch'); T('Chill Touch is an attack (not a heal)', mc.attack===true&&mc.dmg==='1d8'&&!mc.heal);
 mc=parseSpellMechanics('Vampiric Touch'); T('Vampiric Touch is an attack for 3d6', mc.attack===true&&mc.dmg==='3d6');
 mc=parseSpellMechanics('Cure Wounds'); T('Cure Wounds heals 1d8', mc.heal==='1d8'&&!mc.dmg);
@@ -185,6 +186,7 @@ ev=Engine.castApply(ad,'me','t1',{name:'X', dmgTotal:9});
 T('castApply no-save spell: full damage', ev.saved===false && ev.dmg===9 && ad._t.hp===11);
 T('castApply voids on dead target', Engine.castApply(stubAd({hp:()=>0}),'me','t1',{name:'X',dmgTotal:5}).void===true);
 T('spellCondOf maps SPELL_COND {c,r} shape', (()=>{ const sc=spellCondOf('Hold Person'); return sc && sc.c && sc.rounds>0; })());
+T('Grease imposes Prone on a failed save (was a no-op)', (()=>{ const sc=spellCondOf('Grease'); return sc && sc.c==='Prone'; })());
 T('qbAdapter saves: monster CR-scaled, PC ability-based', qbAdapter.saveBonus({side:'mon',base:'Goblin'})===1 && qbAdapter.saveBonus({side:'pc',c},'dex')===2);
 
 /* ---- auto-prepare on deliberate add (prep casters) ---- */
