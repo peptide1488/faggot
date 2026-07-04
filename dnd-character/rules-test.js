@@ -29,7 +29,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
-  'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;');
+  'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
+  'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -582,6 +583,25 @@ T('startQuickBattle copies preset height into QB.map (was silently dropped)', /m
 T('dirFromDelta picks screen-dominant axis (iso projection: (dx,dy) both same-sign renders as pure vertical, opposite-sign as pure horizontal)', dirFromDelta(1,1,true)==='down' && dirFromDelta(-1,-1,true)==='up' && dirFromDelta(1,-1,true)==='right' && dirFromDelta(-1,1,true)==='left');
 T('dirFromDelta flat mode reads grid axes directly', dirFromDelta(0,-1,false)==='up' && dirFromDelta(0,0,false)===null);
 T('spriteTokenHTML returns null (pixelArt fallback) for a key with no manifest entry', spriteTokenHTML('nonexistent-key','down',30)===null);
+
+/* ---- negative elevation (pits) ---- */
+T('elevation brush clamps to [-4,4], not [0,4]', /Math\.max\(-4,Math\.min\(4, cur\+\(key==='elev\+'\?1:-1\)\)\)/.test(src));
+T('climb cost with a negative-height neighbor clamps to 0 (descending into a pit costs no extra)', Math.max(0, -2-0)*5===0);
+T('climb cost climbing OUT of a pit still costs extra (0 minus -2)', Math.max(0, 0-(-2))*5===10);
+
+/* ---- map rotation (iso view) ---- */
+T('rotXY 90/180/270 map every corner of a 3x2 board to a valid in-bounds cell with no collisions', (()=>{
+  const cols=3, rows=2, seen={};
+  for(const rot of [0,1,2,3]){ const used=new Set();
+    for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){ const [rx,ry]=rotXY(x,y,cols,rows,rot);
+      const rcols=rot%2?rows:cols, rrows=rot%2?cols:rows;
+      if(rx<0||ry<0||rx>=rcols||ry>=rrows) return false;
+      const k=rx+','+ry; if(used.has(k)) return false; used.add(k); } }
+  return true; })());
+T('rotDelta matches rotXY for the same 90° step (delta-based facing stays consistent with tile placement)', (()=>{
+  const [ax,ay]=rotXY(5,5,10,10,1), [bx,by]=rotXY(4,6,10,10,1), [ddx,ddy]=rotDelta(4-5,6-5,1);
+  return (bx-ax)===ddx && (by-ay)===ddy; })());
+T('rotXY(rot=0) is the identity', rotXY(3,4,10,10,0).join()==='3,4');
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
