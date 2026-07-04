@@ -8,6 +8,7 @@ token until a matching file is present and loads successfully.
 - `sprites/characters/<class-lowercased>.png` — e.g. `wizard.png`, `fighter.png`
 - `sprites/monsters/<key>.png` — key matches the monster's `sprite` field in `MONSTER_PIX` (index.html), e.g. `goblin.png`, `skeleton.png`
 - `sprites/effects/` — reserved for spell/attack effect sheets (not wired up yet)
+- `sprites/tiles/<terrain-key>.png` — small (~12x12px) repeating texture swatches for terrain diamonds in iso view; wired directly in index.html CSS (`.mapgrid.iso .mcell.ter-<key>`), not through `SPRITE_MANIFEST`
 
 ## Sheet format
 A grid of square frames: **4 columns × 4 rows**. Each row is a facing direction
@@ -26,4 +27,7 @@ If your sheet's rows are ordered differently, pass a custom `dirOrder`, e.g.
 `['down','right','up','left']`.
 
 Currently wired: `fighter` (knight), and monsters `skeleton`/`zombie`/`spider`/`ogre`/`demon`/
-`slime`/`goblin` — all from RPG Paper Maker's Basic Resources (user-owned license).
+`slime`/`goblin` — all from RPG Paper Maker's Basic Resources (user-owned license). Terrain
+tiles `grass`/`sand`/`stone`/`water`/`wood` are also real texture swatches from the same pack's
+Autotiles sheet, small crops meant to tile (`background-repeat`), not full autotile sheets.
+Other terrain keys (mud, snow, lava, etc.) keep their original flat CSS-gradient look.
