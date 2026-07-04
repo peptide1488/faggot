@@ -33,7 +33,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
-  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;');
+  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
+  'globalThis.mapGridHTML=mapGridHTML;globalThis.heightAt=heightAt;globalThis.setIsoView=v=>{isoView=v;};globalThis.setMapRotation=v=>{mapRotation=v;};');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -646,6 +647,25 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   T('neither test sheet exceeds the bounding box on either axis', tallW<=DECOR_MAX_W && wideH<=DECOR_MAX_H);
   delete DECOR_MANIFEST.__test_tall; delete DECOR_MANIFEST.__test_wide;
   decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
+})();
+
+/* ---- battle map: real CSS 3D isometric scene (replaces the old 2D rotate+squash fake) ---- */
+(function(){
+  setIsoView(true); setMapRotation(0);
+  const s={map:{cols:3,rows:3,tiles:{'1,1':'wall'},height:{},decor:{}}, monsters:[], players:[]};
+  const html=mapGridHTML(s, true, {});
+  T('iso mode emits a real 3D scene wrapper with a camera rotateX+rotateZ transform', /class="scene3d"[^>]*transform:rotateX\(60deg\) rotateZ\(45deg\)/.test(html));
+  T('every cell still gets a data-cell so click targeting/cellCenter work unchanged', (html.match(/data-cell="/g)||[]).length===9);
+  T("a plain wall with no explicit elevation still stands: exactly one south3d + one east3d face (the only tile with any height)", (html.match(/side3d south3d/g)||[]).length===1 && (html.match(/side3d east3d/g)||[]).length===1);
+  T('the wall\'s side faces carry the wall terrain texture class', /side3d south3d ter-wall/.test(html) && /side3d east3d ter-wall/.test(html));
+  setMapRotation(2);
+  const html2=mapGridHTML(s, true, {});
+  T('map rotation is a real 90°-step camera yaw (camR=45+rot*90), not the old coordinate-remap hack', /rotateZ\(225deg\)/.test(html2));
+  setMapRotation(0);
+  setIsoView(false);
+  const topdown=mapGridHTML(s,true,{});
+  setIsoView(true);
+  T('top-down mode is untouched by the 3D rewrite — plain CSS grid, no 3D scene', topdown.includes('grid-template-columns') && !topdown.includes('scene3d'));
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

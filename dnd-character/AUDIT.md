@@ -331,3 +331,51 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   only, ⚙ App & Data); narrative spells offer a plain-language attempt box; claude-opus-4-8
   adjudicates DM-style within 5e limits. Simplifications: Time Stop doesn't end early on
   affecting others; invisibility doesn't break on attacking; Wish carries no stress cost.
+
+## v114 — battle map: real CSS 3D isometric (not rules, but load-bearing rendering notes)
+The isometric battle grid (`mapGridHTML`) used to fake the diamond-tile look with a 2D
+`rotate(45deg) scaleY(.5)` trick, and elevated tiles (walls, hills) with `clip-path`-cut flat
+textures pretending to be 3D side faces. Both were replaced with a real CSS 3D scene
+(`transform-style:preserve-3d`, no `perspective` — orthographic/parallel projection so tile
+size stays constant with depth, matching classic dimetric game projection, not a camera with
+a vanishing point). Gameplay logic (pathing, LoS, targeting) is untouched; this is a
+render-layer rewrite only.
+- **Axes**: world X = column, world Z = row/depth, world Y = height (CSS convention: +Y is
+  down, so a tile's own `translate3d` Y-component is its elevation level directly — no sign
+  flip needed against the existing `heightAt()` convention).
+- **Floor tile**: a flat div folded into the ground plane via `rotateX(90deg)` with
+  `transform-origin:top`. Tiles tile edge-to-edge with zero gaps — a bug worked around for a
+  full session under the 2D approach — because folding is exact, not an approximation.
+- **Elevated tile (wall or raised terrain)**: the tile's own `translate3d` Y is the elevation
+  in pixels (positive = raised); the top face is just the plain floor fold at that height, and
+  two more faces (south, east — the only two that can ever face this fixed camera) hang down
+  from it to ground level. **Two non-obvious fixes were required** to get here, both confirmed
+  empirically against real screenshots rather than derived analytically up front:
+  1. A raised tile initially rendered *behind* its flat neighbors (only a sliver peeking through
+     gaps) even though the geometry looked right in isolation. Root cause: the sign of "up" was
+     backwards for depth-sorting purposes — CSS's true 3D depth sort (not z-index, which is
+     ignored for elements sharing a `preserve-3d` ancestor) needs positive local Y to also mean
+     "closer to this specific camera," not just "visually higher." Flipping the sign fixed both
+     the depth order and the screen position simultaneously.
+  2. The east face (using `rotateY(90deg)`) needed an extra `translateZ(T/2)` that the south
+     face (no rotation) didn't. Cause: `transform-origin:top` only pins the Y-origin to the
+     tile's edge; the X-origin defaults to 50% (center), which is irrelevant for a pure
+     `rotateX` fold but becomes the rotation pivot for `rotateY` — so the east face was
+     rotating around its own horizontal center, not its edge, landing half a tile short.
+  3. Pits (negative elevation) don't get interior wall faces yet — a recessed hole's visible
+     interior faces are on the *far* side from the camera, which is different geometry from a
+     raised block's near faces, not just a sign flip. Deferred; pits currently just sink and
+     darken (`brightness` filter) with no true depth.
+- **Tokens/decor are billboards**: positioned absolutely inside a full-tile wrapper
+  (`.isoContent`) that counter-rotates by the scene's own camera rotation
+  (`rotateZ(-camR) rotateX(-60deg)`, reverse order, negated angles — a true matrix inverse of
+  the scene's `rotateX(60) rotateZ(camR)`, so composition is provably identity), keeping
+  sprites upright and camera-facing regardless of tile position or map rotation.
+- **Map rotation** (`mapRotation`, 0–3) is now a real camera yaw (`camR = 45 + rot*90`
+  degrees on the scene), not the old coordinate-remap hack (`rotXY`) — `rotXY`/`rotDelta` still
+  exist and are unchanged, but only for picking a unit's walk-cycle sprite frame, a separate
+  concern from tile positioning.
+- **Walls default to standing 2 levels tall** even with no explicit elevation painted (purely
+  visual — they're impassable/opaque via `TERRAIN.wall`'s flags either way), same as the
+  original v112 behavior; this was reverted to flat for one session while the clip-path
+  approach was broken, then restored once the real 3D cuboid made it render correctly.
