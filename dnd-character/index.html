@@ -4366,14 +4366,14 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
     const hpbar=(cur,mx)=>{ if(!mx) return ''; const p=Math.max(0,Math.min(100,Math.round(cur/mx*100))); const cl=p<=25?'crit':p<=50?'low':''; return `<span class="hpbar ${cl}"><i style="width:${p}%"></i></span>`; };
     let tok=''; if(mo){ const dead=mo.hp<=0;
-      const sheet=iso&&mo.sprite?spriteTokenHTML(mo.sprite,mo.facing,30):null;
+      const sheet=iso&&mo.sprite?spriteTokenHTML(mo.sprite,mo.facing,44):null;
       const inner=sheet||(mo.sprite?pixelArt(monsterSprite(mo.sprite),2):esc((mo.name[0]||'M').toUpperCase()));
       const tcls='tok '+(mo.sprite?'':'mon')+(net&&net.sel==='m'+mo.id?' sel':'')+(dead?' deadtok':'');
       const tstyle=(mo.sprite?'background:none;box-shadow:none;':'')+(dead?'filter:grayscale(1) brightness(.55);transform:rotate(90deg);opacity:.65;':'');
       const condMark=(!dead&&mo.conds&&mo.conds.length)?`<span class="condmark" title="${esc(mo.conds.map(x=>x.name).join(', '))}">🌀</span>`:'';
       tok=(sheet?`<span class="${dead?'deadtok':''}" style="${dead?'filter:grayscale(1) brightness(.55);opacity:.65;':''}">${sheet}</span>`:`<span class="${tcls}" style="${tstyle}">${inner}</span>`)+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')+condMark+hpbar(mo.hp,mo.max)); }
     else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id);
-      const plCls=pl.cls||(pl.c&&pl.c.cls); const sheet=iso&&plCls?spriteTokenHTML(plCls.toLowerCase(),pl.facing,30):null;
+      const plCls=pl.cls||(pl.c&&pl.c.cls); const sheet=iso&&plCls?spriteTokenHTML(plCls.toLowerCase(),pl.facing,44):null;
       tok=(sheet?`<span>${sheet}</span>`:`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`)+hpbar(pl.hpCur,pl.hpMax); }
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
@@ -5332,7 +5332,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v110';
+const APP_VERSION='v111';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
