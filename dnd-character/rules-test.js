@@ -20,6 +20,7 @@ global.window=global; global.addEventListener=()=>{};
 try{ global.navigator={}; }catch(e){}   // Node ≥21 exposes a read-only navigator — the built-in one is fine
 global.confirm=()=>true; global.alert=()=>{}; global.prompt=()=>null;
 global.requestAnimationFrame=f=>f();
+global.MutationObserver=class{observe(){}disconnect(){}};
 
 // consts inside eval stay block-scoped — re-export the data tables the tests assert on
 eval(src.replace('"use strict";','')+

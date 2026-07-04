@@ -267,8 +267,9 @@
     padding:calc(env(safe-area-inset-top) + 8px) 12px 8px;display:flex;align-items:center;gap:10px;font-size:13px}
   .netbar .code{font-family:Georgia,serif;font-weight:700;letter-spacing:2px}
   .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
-  .mapwrap{overflow:auto;border-radius:12px;padding:6px;background:#b8a274;
+  .mapwrap{overflow:auto;border-radius:12px;padding:6px;background:#b8a274;cursor:grab;touch-action:none;
     box-shadow:inset 0 0 18px rgba(60,42,20,.35), 0 2px 8px rgba(0,0,0,.18)}
+  .mapwrap:active{cursor:grabbing}
   .mapgrid{display:grid;gap:0;min-width:max-content;
     background:
       repeating-linear-gradient(0deg,rgba(40,28,12,.20) 0 1px,transparent 1px 36px),
@@ -2149,6 +2150,23 @@ function attackFx(kind){ const el=document.createElement('div'); el.className='c
   const map={hit:{ic:'💥',col:'rgba(200,80,40,.5)'}, crit:{ic:'💥',col:'rgba(240,180,60,.6)'}, miss:{ic:'💨',col:'rgba(160,160,160,.35)'}, heal:{ic:'✨',col:'rgba(80,180,90,.45)'}, slash:{ic:'⚔️',col:'rgba(210,210,220,.4)'}}[kind]||{ic:'⚔️',col:'rgba(200,80,40,.5)'};
   el.innerHTML=`<div class="glow" style="background:radial-gradient(circle,${map.col},transparent 60%)"></div><div class="ic">${map.ic}</div>`;
   document.body.appendChild(el); setTimeout(()=>el.remove(),700); }
+// Click-drag/touch panning for the battle map — scrollbars alone are an easy-to-miss way to
+// navigate a big tactical grid. Only starts scrolling past a small movement threshold so an
+// ordinary tap/click on a tile (move/attack/target) still fires normally. Wired via a
+// MutationObserver (below) rather than from each of mapGridHTML's 7+ call sites, since a
+// .mapwrap can appear from any of them (DM view, player view, quick battle, spell-target and
+// teleport modals, ...).
+function wireMapPan(el){ if(el._panWired) return; el._panWired=true;
+  let sx=0, sy=0, sl=0, st=0, dragging=false, moved=false;
+  el.addEventListener('pointerdown', e=>{ dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sl=el.scrollLeft; st=el.scrollTop; });
+  el.addEventListener('pointermove', e=>{ if(!dragging) return; const dx=e.clientX-sx, dy=e.clientY-sy;
+    if(!moved && Math.abs(dx)<6 && Math.abs(dy)<6) return; moved=true;
+    el.scrollLeft=sl-dx; el.scrollTop=st-dy; });
+  const stop=()=>{ dragging=false; };
+  el.addEventListener('pointerup', stop); el.addEventListener('pointercancel', stop); el.addEventListener('pointerleave', stop);
+}
+new MutationObserver(()=>document.querySelectorAll('.mapwrap').forEach(wireMapPan))
+  .observe(document.body, {childList:true, subtree:true});
 /* ---- on-map effects: projectiles & explosions ---- */
 function curMapGrid(){ return document.querySelector('#stModal .mapgrid, #qstModal .mapgrid, #atkModal .mapgrid, #smModal .mapgrid') || document.querySelector('.mapgrid'); }
 function cellCenter(grid,x,y){ const cell=grid.querySelector('[data-cell="'+x+','+y+'"]'); if(!cell) return null; const g=grid.getBoundingClientRect(), c=cell.getBoundingClientRect(); return {x:c.left-g.left+c.width/2, y:c.top-g.top+c.height/2}; }
@@ -4411,7 +4429,13 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
   // composition is provably identity (worked out on paper + confirmed against screenshots).
   const camR=45+rot*90;
   const stageW=(cols+rows)*T3D*0.72+220, stageH=(cols+rows)*T3D*0.55+320;
-  const originX=stageW/2, originY=110;
+  // Both axes must center on stageW/2, stageH/2 — the projected grid is symmetric around the
+  // scene's own (centered) origin on BOTH axes, not just horizontal. A fixed originY here once
+  // read as fine on a small test grid but cut off the top of any real (15x10+) map: content
+  // rendered above the container's own top edge is outside the reachable scroll range (you
+  // can't scroll to a negative offset), so it was just permanently invisible, not merely
+  // off-screen. See the derivation in AUDIT.md v114 if this needs adjusting again.
+  const originX=stageW/2, originY=stageH/2;
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
     const ter=at(x,y), td=ter&&TERRAIN[ter]; let topStyle='';
     if(td&&td.c){
