@@ -32,7 +32,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
-  'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;');
+  'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
+  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_W=DECOR_W;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -630,6 +631,20 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   T('a 128x128, 4-col sheet renders at frameSize(32)×SPRITE_ZOOM', Math.abs(bigW-32*SPRITE_ZOOM)<0.01);
   delete SPRITE_MANIFEST.__test_big; delete SPRITE_MANIFEST.__test_small;
   spriteReady.delete('__test_big'); spriteReady.delete('__test_small');
+})();
+
+/* ---- decor sprites keep their native aspect ratio instead of being squashed into a fixed square ---- */
+(function(){
+  DECOR_MANIFEST.__test_tall={file:'x', nativeW:96, nativeH:360};
+  DECOR_MANIFEST.__test_wide={file:'y', nativeW:96, nativeH:72};
+  decorReady.add('__test_tall'); decorReady.add('__test_wide');
+  const tall=decorTokenHTML('__test_tall'), wide=decorTokenHTML('__test_wide');
+  const tallW=Number(tall.match(/width:([\d.]+)px/)[1]), tallH=Number(tall.match(/height:([\d.]+)px/)[1]);
+  const wideW=Number(wide.match(/width:([\d.]+)px/)[1]), wideH=Number(wide.match(/height:([\d.]+)px/)[1]);
+  T('decor width is pinned to DECOR_W regardless of native size', tallW===DECOR_W && wideW===DECOR_W);
+  T('decor height derives from the sprite\'s own aspect ratio, not a fixed square', Math.abs(tallH-DECOR_W*(360/96))<0.01 && Math.abs(wideH-DECOR_W*(72/96))<0.01);
+  delete DECOR_MANIFEST.__test_tall; delete DECOR_MANIFEST.__test_wide;
+  decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

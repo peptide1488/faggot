@@ -4226,12 +4226,17 @@ const DECOR_MANIFEST={
 const decorReady=new Set(), decorChecking=new Set();
 function ensureDecorProbe(key){ const e=DECOR_MANIFEST[key]; if(!e||decorReady.has(key)||decorChecking.has(key)) return;
   decorChecking.add(key); const img=new Image();
-  img.onload=()=>{ decorReady.add(key); decorChecking.delete(key); render(); };
+  img.onload=()=>{ e.nativeW=img.naturalWidth; e.nativeH=img.naturalHeight; decorReady.add(key); decorChecking.delete(key); render(); };
   img.onerror=()=>{ decorChecking.delete(key); };
   img.src=e.file; }
-function decorTokenHTML(key, wPx, hPx){ const e=DECOR_MANIFEST[key]; if(!e) return '';
+// width pinned to a token-scale baseline, height derived from the sprite's own aspect ratio —
+// forcing both to a fixed square (old behaviour) squashed the tall tree / wide bush into a
+// smeared, indistinct blob instead of a recognizable shape.
+const DECOR_W=48;
+function decorTokenHTML(key){ const e=DECOR_MANIFEST[key]; if(!e) return '';
   if(!decorReady.has(key)){ ensureDecorProbe(key); return ''; }
-  return `<div style="width:${wPx}px;height:${hPx}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:100% 100%;image-rendering:pixelated"></div>`; }
+  const w=DECOR_W, h=DECOR_W*(e.nativeH/e.nativeW);
+  return `<div style="width:${w}px;height:${h}px;align-self:end;background-image:url('${e.file}');background-repeat:no-repeat;background-size:100% 100%;image-rendering:pixelated"></div>`; }
 // Curated SRD bestiary: {n, cr, ac, hp, spd, sprite, atk, desc}
 const MONSTERS_5E=[
   {n:'Goblin',cr:'1/4',ac:15,hp:7,spd:30,init:2,attacks:1,sprite:'goblin',atk:'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Small, cowardly raiders that swarm in packs and flee when bloodied.'},
@@ -4443,7 +4448,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
         riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 100%,0% ${bp}%,0% 0%,100% ${dp}%);z-index:${z}"></div>`;
       }
     }
-    const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey,40,40):'';
+    const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey):'';
     const inner=iso?`<div class="isoContent">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
     cells+=riser+`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
   }
@@ -5374,7 +5379,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v113';
+const APP_VERSION='v114';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
