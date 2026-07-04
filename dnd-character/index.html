@@ -277,10 +277,11 @@
     box-shadow:inset 0 0 0 1px rgba(40,28,12,.25)}
   .mcell{width:36px;height:36px;display:grid;place-items:center;position:relative;cursor:pointer;background:transparent}
   /* isometric mode: absolutely-positioned diamond tiles (rotate+squash trick), content counter-rotated to stay upright */
-  .mapgrid.iso{position:relative;background:none;box-shadow:none;min-width:0}
+  .mapgrid.iso{position:relative;background:none;box-shadow:none;min-width:0;isolation:isolate}
   .mapgrid.iso .mcell{position:absolute;width:40px;height:40px;transform:scaleY(.5) rotate(45deg);box-shadow:inset 0 0 0 1px rgba(40,28,12,.35)}
   .mapgrid.iso .mcell:not([class*="ter-"]){background:linear-gradient(145deg,#efe3c4,#dccba0)}
   .mapgrid.iso .isoContent{position:absolute;inset:0;transform:rotate(-45deg) scaleY(2);display:grid;place-items:center}
+  .mapgrid.iso .isoRiser{position:absolute;width:56px;background:linear-gradient(180deg,rgba(70,54,36,.6),rgba(30,22,15,.85));box-shadow:inset 0 0 0 1px rgba(0,0,0,.3)}
   /* terrain tiles */
   .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
   .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
@@ -4287,9 +4288,13 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     const hgt=heightAt(s,x,y);
     if(hgt>0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(255,255,255,${(hgt*0.10).toFixed(2)}), 0 ${hgt+1}px ${hgt*2}px rgba(0,0,0,.28);`; }
     const elevBadge = hgt>0 ? `<span class="elevbadge">▲${hgt}</span>` : '';
-    if(iso){ const sx=(x-y)*ISO_X+offX-20, sy=(x+y)*ISO_Y-hgt*ISO_ELEV+ISO_PAD-20; style+=`left:${sx}px;top:${sy}px;z-index:${(x+y)*10+hgt};`; }
+    let riser='';
+    if(iso){ const cx=(x-y)*ISO_X+offX, cyLift=(x+y)*ISO_Y-hgt*ISO_ELEV+ISO_PAD;
+      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(x+y)*10+hgt};`;
+      if(hgt>0) riser=`<div class="isoRiser" style="left:${cx-28}px;top:${cyLift+ISO_Y}px;height:${hgt*ISO_ELEV}px;z-index:${(x+y)*10+hgt-1}"></div>`;
+    }
     const inner=iso?`<div class="isoContent">${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
-    cells+=`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
+    cells+=riser+`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
   }
   return iso
     ? `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px">${cells}</div></div>`
@@ -5212,7 +5217,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v99';
+const APP_VERSION='v100';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
