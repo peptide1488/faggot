@@ -27,7 +27,13 @@ If your sheet's rows are ordered differently, pass a custom `dirOrder`, e.g.
 `['down','right','up','left']`.
 
 Currently wired: `fighter` (knight), and monsters `skeleton`/`zombie`/`spider`/`ogre`/`demon`/
-`slime`/`goblin` — all from RPG Paper Maker's Basic Resources (user-owned license). Terrain
-tiles `grass`/`sand`/`stone`/`water`/`wood` are also real texture swatches from the same pack's
-Autotiles sheet, small crops meant to tile (`background-repeat`), not full autotile sheets.
-Other terrain keys (mud, snow, lava, etc.) keep their original flat CSS-gradient look.
+`slime`/`goblin`/`ghost`(fantom)/`wolf`(dog-black)/`human`(villager1) — all from RPG Paper
+Maker's Basic Resources (user-owned license). Terrain tiles `grass`/`sand`/`stone`/`water`/
+`wood`/`snow`/`ice`/`lava` are also real texture swatches from the same pack's Autotiles
+sheets, small crops meant to tile (`background-repeat`), not full autotile sheets. Other
+terrain keys (mud, rubble, void, etc.) keep their original flat CSS-gradient look.
+
+Only 1 of 13 classes (Fighter) has a sprite — the rest is a taste call on which named RPG
+Paper Maker hero should represent which D&D class, left for the user to decide and wire in.
+Use the exact-class picker in Random Hero Forge to reliably test a specific wired class/monster
+combo rather than relying on random rolls.
