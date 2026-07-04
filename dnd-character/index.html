@@ -4237,7 +4237,11 @@ const DECOR_MAX_W=48, DECOR_MAX_H=72;
 function decorTokenHTML(key){ const e=DECOR_MANIFEST[key]; if(!e) return '';
   if(!decorReady.has(key)){ ensureDecorProbe(key); return ''; }
   const scale=Math.min(DECOR_MAX_W/e.nativeW, DECOR_MAX_H/e.nativeH), w=e.nativeW*scale, h=e.nativeH*scale;
-  return `<div style="width:${w}px;height:${h}px;align-self:end;background-image:url('${e.file}');background-repeat:no-repeat;background-size:100% 100%;image-rendering:pixelated"></div>`; }
+  // isoContent is display:grid with no explicit template, so decorHTML/tok/elevBadge (three
+  // unpositioned siblings) don't reliably share one cell — align-self on its own wasn't enough.
+  // Taking this out of grid flow with explicit absolute positioning removes that ambiguity: it
+  // anchors to the tile's bottom-center no matter how the grid auto-places its grid-flow siblings.
+  return `<div style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:${w}px;height:${h}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:100% 100%;image-rendering:pixelated"></div>`; }
 // Curated SRD bestiary: {n, cr, ac, hp, spd, sprite, atk, desc}
 const MONSTERS_5E=[
   {n:'Goblin',cr:'1/4',ac:15,hp:7,spd:30,init:2,attacks:1,sprite:'goblin',atk:'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Small, cowardly raiders that swarm in packs and flee when bloodied.'},
@@ -4287,16 +4291,16 @@ const TERRAIN={
   mud:   {name:'Mud',    c:'#7a5a32', e:'', diff:true},
   rubble:{name:'Rubble', c:'#9a8c74', e:'', diff:true},
   water: {name:'Water',  c:'#3a6ea5', e:'', diff:true},
-  brush: {name:'Brush',  c:'#4d6b2c', e:'🌿', diff:true, opaque:true},
+  brush: {name:'Brush',  c:'#4d6b2c', e:'', diff:true, opaque:true},
   fog:   {name:'Fog',    c:'#c8ccd0', e:'', opaque:true},
   ice:   {name:'Ice',    c:'#bfe3f0', e:''},
   acid:  {name:'Acid',   c:'#7fbf3a', e:'', dmg:'2d6'},
-  caltrops:{name:'Caltrops', c:'#8a7a6a', e:'✦', diff:true, dmg:'1d4'},
-  lava:  {name:'Lava',   c:'#d2521f', e:'🔥', dmg:'6d10'},
-  wall:  {name:'Wall',   c:'#5a4a36', e:'🧱', solid:true, opaque:true},
+  caltrops:{name:'Caltrops', c:'#8a7a6a', e:'', diff:true, dmg:'1d4'},
+  lava:  {name:'Lava',   c:'#d2521f', e:'', dmg:'6d10'},
+  wall:  {name:'Wall',   c:'#5a4a36', e:'', solid:true, opaque:true},
   void:  {name:'Void',   c:'#15110b', e:'', solid:true, deadly:true},
-  grease:{name:'Grease', c:'#5c6b2e', e:'🛢️', diff:true, prone:true},
-  web:{name:'Web', c:'#c9c2a6', e:'🕸️', diff:true, restrain:true}
+  grease:{name:'Grease', c:'#5c6b2e', e:'', diff:true, prone:true},
+  web:{name:'Web', c:'#c9c2a6', e:'', diff:true, restrain:true}
 };
 // Decorations: a paintable layer independent of terrain (a tree can stand on grass, sand, etc.)
 // — unlike TERRAIN, which is one choice per tile. Affects movement/LoS the same way terrain does.
@@ -4432,7 +4436,10 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       const visHgt = ter==='wall' ? Math.max(hgt,2) : hgt;
       const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-visHgt*ISO_ELEV+ISO_PAD;
       style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+visHgt};`;
-      const wallFace = ter==='wall' ? `background-image:url('sprites/tiles/wall.png');background-size:cover;` : '';
+      // Tiled to match the top face's repeat (.ter-wall in CSS) — background-size:cover stretched
+      // the whole small swatch into one blown-up, mismatched-looking smear per face instead of
+      // a consistent brick course.
+      const wallFace = ter==='wall' ? `background-image:url('sprites/tiles/wall.png');background-repeat:repeat;background-size:24px 24px;` : '';
       // Two slanted faces per elevated/sunken tile, extending from the diamond's own edge to
       // ground level, drawn unconditionally on every non-flat tile — adjacent same-height
       // tiles' faces land in the exact same screen rect as their neighbor's opposite face
