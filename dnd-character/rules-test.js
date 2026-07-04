@@ -31,7 +31,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
-  'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;');
+  'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
+  'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -617,6 +618,19 @@ T('rotXY(rot=0) is the identity', rotXY(3,4,10,10,0).join()==='3,4');
 T('decorAt returns empty string for an undecorated cell, not undefined/null', decorAt({map:{decor:{}}},0,0)==='');
 T('startQuickBattle copies preset decor into QB.map (same pattern as height)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height\|\|\{\}\), decor:Object\.assign\(\{\},map\.decor/.test(src));
 T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_PRESETS['Open Field'].decor||{}).length>0 && Object.keys(MAP_PRESETS['Tavern'].decor||{}).length>0);
+
+/* ---- unified sprite scale: render size derives from each sheet's real resolution, not a fixed box ---- */
+(function(){
+  SPRITE_MANIFEST.__test_big={file:'x', cols:4, rows:4, nativeW:128, nativeH:128};
+  SPRITE_MANIFEST.__test_small={file:'y', cols:4, rows:4, nativeW:64, nativeH:64};
+  spriteReady.add('__test_big'); spriteReady.add('__test_small');
+  const big=spriteTokenHTML('__test_big','down'), small=spriteTokenHTML('__test_small','down');
+  const bigW=Number(big.match(/width:([\d.]+)px/)[1]), smallW=Number(small.match(/width:([\d.]+)px/)[1]);
+  T('a 128x128 sheet renders at exactly double the width of a 64x64 sheet (same zoom factor, not a fixed box)', Math.abs(bigW/smallW-2)<0.01);
+  T('a 128x128, 4-col sheet renders at frameSize(32)×SPRITE_ZOOM', Math.abs(bigW-32*SPRITE_ZOOM)<0.01);
+  delete SPRITE_MANIFEST.__test_big; delete SPRITE_MANIFEST.__test_small;
+  spriteReady.delete('__test_big'); spriteReady.delete('__test_small');
+})();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

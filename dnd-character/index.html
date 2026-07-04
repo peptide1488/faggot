@@ -4195,21 +4195,28 @@ const spriteReady=new Set(), spriteChecking=new Set();
 function spriteEntry(key){ return SPRITE_MANIFEST[key]||null; }
 function ensureSpriteProbe(key){ const e=spriteEntry(key); if(!e||spriteReady.has(key)||spriteChecking.has(key)) return;
   spriteChecking.add(key); const img=new Image();
-  img.onload=()=>{ spriteReady.add(key); spriteChecking.delete(key); render(); };
+  img.onload=()=>{ e.nativeW=img.naturalWidth; e.nativeH=img.naturalHeight; spriteReady.add(key); spriteChecking.delete(key); render(); };
   img.onerror=()=>{ spriteChecking.delete(key); };   // stays on the pixelArt fallback forever, no retry storm
   img.src=e.file; }
+// One shared px-per-native-pixel zoom so different sheet resolutions (a 64x64 goblin sheet vs
+// a 128x128 knight sheet) render at their correct RELATIVE size instead of being force-fit into
+// an identical box — a goblin should look smaller than a knight, not the same size.
+const SPRITE_ZOOM=1.375;
 // Which screen direction a grid movement step reads as, matching whatever axis dominates
 // visually — iso mode projects (dx,dy) diagonally, flat mode is a direct grid read.
 function dirFromDelta(dx,dy,iso){ if(!dx&&!dy) return null;
   const sx=iso?(dx-dy):dx, sy=iso?(dx+dy):dy;
   return Math.abs(sx)>=Math.abs(sy) ? (sx>0?'right':'left') : (sy>0?'down':'up'); }
 // idle-frame token markup for a unit if a real sheet is loaded for its key; null → caller falls back to pixelArt
-function spriteTokenHTML(key, facing, sizePx){ const e=spriteEntry(key); if(!e) return null;
+function spriteTokenHTML(key, facing){ const e=spriteEntry(key); if(!e) return null;
   if(!spriteReady.has(key)){ ensureSpriteProbe(key); return null; }   // kicks off the load; falls back to pixelArt until it resolves
   const cols=e.cols||4, rows=e.rows||4, dirOrder=e.dirOrder||SPRITE_DIR_ORDER, row=Math.max(0,dirOrder.indexOf(facing||'down'));
   // idle = column 0; CSS background-position % is (index/(count-1))*100, not a plain per-frame fraction
   const posY=rows>1?(row/(rows-1)*100):0;
-  return `<div style="width:${sizePx}px;height:${sizePx}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:${cols*100}% ${rows*100}%;background-position:0% ${posY}%;image-rendering:pixelated"></div>`; }
+  // render at the sheet's real frame size × a shared zoom, not a fixed box — keeps a 64x64
+  // monster sheet visibly smaller than a 128x128 one instead of stretching both to match
+  const frameW=(e.nativeW||cols*32)/cols, frameH=(e.nativeH||rows*32)/rows, w=frameW*SPRITE_ZOOM, h=frameH*SPRITE_ZOOM;
+  return `<div style="width:${w}px;height:${h}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:${cols*100}% ${rows*100}%;background-position:0% ${posY}%;image-rendering:pixelated"></div>`; }
 
 // ---- decoration sprites (trees/bushes) — static, no directional facing needed ----
 const DECOR_MANIFEST={
@@ -4391,14 +4398,14 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
     const hpbar=(cur,mx)=>{ if(!mx) return ''; const p=Math.max(0,Math.min(100,Math.round(cur/mx*100))); const cl=p<=25?'crit':p<=50?'low':''; return `<span class="hpbar ${cl}"><i style="width:${p}%"></i></span>`; };
     let tok=''; if(mo){ const dead=mo.hp<=0;
-      const sheet=iso&&mo.sprite?spriteTokenHTML(mo.sprite,mo.facing,44):null;
+      const sheet=iso&&mo.sprite?spriteTokenHTML(mo.sprite,mo.facing):null;
       const inner=sheet||(mo.sprite?pixelArt(monsterSprite(mo.sprite),2):esc((mo.name[0]||'M').toUpperCase()));
       const tcls='tok '+(mo.sprite?'':'mon')+(net&&net.sel==='m'+mo.id?' sel':'')+(dead?' deadtok':'');
       const tstyle=(mo.sprite?'background:none;box-shadow:none;':'')+(dead?'filter:grayscale(1) brightness(.55);transform:rotate(90deg);opacity:.65;':'');
       const condMark=(!dead&&mo.conds&&mo.conds.length)?`<span class="condmark" title="${esc(mo.conds.map(x=>x.name).join(', '))}">🌀</span>`:'';
       tok=(sheet?`<span class="${dead?'deadtok':''}" style="${dead?'filter:grayscale(1) brightness(.55);opacity:.65;':''}">${sheet}</span>`:`<span class="${tcls}" style="${tstyle}">${inner}</span>`)+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')+condMark+hpbar(mo.hp,mo.max)); }
     else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id);
-      const plCls=pl.cls||(pl.c&&pl.c.cls); const sheet=iso&&plCls?spriteTokenHTML(plCls.toLowerCase(),pl.facing,44):null;
+      const plCls=pl.cls||(pl.c&&pl.c.cls); const sheet=iso&&plCls?spriteTokenHTML(plCls.toLowerCase(),pl.facing):null;
       tok=(sheet?`<span>${sheet}</span>`:`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`)+hpbar(pl.hpCur,pl.hpMax); }
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
@@ -5367,7 +5374,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v112';
+const APP_VERSION='v113';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
