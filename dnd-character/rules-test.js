@@ -30,7 +30,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
-  'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;');
+  'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
+  'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -602,6 +603,20 @@ T('rotDelta matches rotXY for the same 90° step (delta-based facing stays consi
   const [ax,ay]=rotXY(5,5,10,10,1), [bx,by]=rotXY(4,6,10,10,1), [ddx,ddy]=rotDelta(4-5,6-5,1);
   return (bx-ax)===ddx && (by-ay)===ddy; })());
 T('rotXY(rot=0) is the identity', rotXY(3,4,10,10,0).join()==='3,4');
+
+/* ---- decorations: paintable layer independent of terrain, blocks movement/LoS like TERRAIN ---- */
+(function(){
+  const s={map:{cols:5,rows:5,tiles:{},height:{},decor:{'2,2':'tree'}}, monsters:[], players:[]};
+  T('a solid tree blocks pathfinding through its cell', dijkstra(s,0,2,100,false).cost['2,2']==null);
+  T('a solid tree blocks line of sight', losClear(s,0,2,4,2)===false);
+  const s2={map:{cols:5,rows:5,tiles:{},height:{},decor:{'2,2':'bush'}}, monsters:[], players:[]};
+  T('a non-solid bush does NOT block pathfinding (only difficult terrain)', dijkstra(s2,0,2,100,false).cost['2,2']!=null);
+  T('a bush still blocks line of sight (opaque)', losClear(s2,0,2,4,2)===false);
+  T('DECOR.tree/bush have the expected solid/opaque/diff flags', DECOR.tree.solid===true && DECOR.tree.opaque===true && DECOR.bush.solid!==true && DECOR.bush.opaque===true && DECOR.bush.diff===true);
+})();
+T('decorAt returns empty string for an undecorated cell, not undefined/null', decorAt({map:{decor:{}}},0,0)==='');
+T('startQuickBattle copies preset decor into QB.map (same pattern as height)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height\|\|\{\}\), decor:Object\.assign\(\{\},map\.decor/.test(src));
+T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_PRESETS['Open Field'].decor||{}).length>0 && Object.keys(MAP_PRESETS['Tavern'].decor||{}).length>0);
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

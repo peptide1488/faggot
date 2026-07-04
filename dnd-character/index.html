@@ -3981,6 +3981,7 @@ function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by))
 // Opportunity attack trigger: a mover leaves an enemy's reach when it starts within reach and ends outside it.
 function leavesReach(fromX,fromY,toX,toY,ex,ey,reach){ reach=reach||1; return gridDist(fromX,fromY,ex,ey)<=reach && gridDist(toX,toY,ex,ey)>reach; }
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
+function decorAt(s,x,y){ return (s.map&&s.map.decor&&s.map.decor[x+','+y])||''; }
 function heightAt(s,x,y){ return (s.map&&s.map.height&&s.map.height[x+','+y])||0; }   // elevation level (0 default); each level = 5 ft
 // Flight: lets a creature cross chasms/void and ignore ground hazards & difficult/elevation cost.
 const FLYING_RACES=new Set(['Aarakocra','Owlin','Fairy']);
@@ -3991,13 +3992,14 @@ function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
 function dijkstra(s, sx, sy, maxFeet, fly){
   const cols=s.map.cols, rows=s.map.rows, tiles=s.map.tiles||{}, K=(x,y)=>x+','+y;
   // Flyers cross void (chasms) but still can't pass through walls; they ignore difficult terrain & climb cost.
-  const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const tk=tiles[K(x,y)], td=TERRAIN[tk]; if(td&&td.solid) return fly && tk==='void'; return true; };
+  const passable=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false; const tk=tiles[K(x,y)], td=TERRAIN[tk]; if(td&&td.solid) return fly && tk==='void';
+    const dd=DECOR[decorAt(s,x,y)]; if(dd&&dd.solid) return false; return true; };
   const cost={}, prev={}; cost[K(sx,sy)]=0; const frontier=[[sx,sy]];
   while(frontier.length){ frontier.sort((a,b)=>cost[K(a[0],a[1])]-cost[K(b[0],b[1])]); const [x,y]=frontier.shift(), cc=cost[K(x,y)];
     if(cc>=maxFeet) continue;
     for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){ if(!dx&&!dy) continue; const nx=x+dx, ny=y+dy; if(!passable(nx,ny)) continue;
       if(dx&&dy && (!passable(x+dx,y) || !passable(x,y+dy))) continue;   // no squeezing through a diagonal wall corner
-      const td=TERRAIN[tiles[K(nx,ny)]], climb=fly?0:Math.max(0, heightAt(s,nx,ny)-heightAt(s,x,y))*5, step=fly?5:((td&&td.diff?10:5)+climb), nc=cc+step; if(nc>maxFeet) continue;
+      const td=TERRAIN[tiles[K(nx,ny)]], dd=DECOR[decorAt(s,nx,ny)], isDiff=(td&&td.diff)||(dd&&dd.diff), climb=fly?0:Math.max(0, heightAt(s,nx,ny)-heightAt(s,x,y))*5, step=fly?5:((isDiff?10:5)+climb), nc=cc+step; if(nc>maxFeet) continue;
       if(cost[K(nx,ny)]==null || nc<cost[K(nx,ny)]){ cost[K(nx,ny)]=nc; prev[K(nx,ny)]=K(x,y); frontier.push([nx,ny]); } } }
   return {cost, prev};
 }
@@ -4005,7 +4007,7 @@ function reachableCells(s, sx, sy, maxFeet, fly){ return dijkstra(s,sx,sy,maxFee
 // Bresenham line of sight — a wall between attacker and target blocks the shot.
 function losClear(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{}; let dx=Math.abs(x1-x0), dy=Math.abs(y1-y0), sx=x0<x1?1:-1, sy=y0<y1?1:-1, err=dx-dy, x=x0, y=y0, guard=0;
   while(!(x===x1&&y===y1) && guard++<999){ const e2=2*err; if(e2>-dy){ err-=dy; x+=sx; } if(e2<dx){ err+=dy; y+=sy; }
-    if(x===x1&&y===y1) break; const td=TERRAIN[tiles[x+','+y]]; if(td&&td.opaque) return false; }
+    if(x===x1&&y===y1) break; const td=TERRAIN[tiles[x+','+y]], dd=DECOR[decorAt(s,x,y)]; if((td&&td.opaque)||(dd&&dd.opaque)) return false; }
   return true; }
 // Cover between attacker and target: opaque/solid terrain in the way = three-quarters (+5),
 // an intervening creature = half (+2). Returns the AC bonus the target gets.
@@ -4013,7 +4015,7 @@ function coverBetween(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{};
   let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy,x=x0,y=y0,guard=0,cover=0;
   while(!(x===x1&&y===y1)&&guard++<999){ const e2=2*err; if(e2>-dy){err-=dy;x+=sx;} if(e2<dx){err+=dy;y+=sy;}
     if(x===x1&&y===y1) break;
-    const td=TERRAIN[tiles[x+','+y]]; if(td&&(td.solid||td.opaque)){ cover=Math.max(cover,5); continue; }
+    const td=TERRAIN[tiles[x+','+y]], dd=DECOR[decorAt(s,x,y)]; if((td&&(td.solid||td.opaque))||(dd&&(dd.solid||dd.opaque))){ cover=Math.max(cover,5); continue; }
     const occ=(s.monsters||[]).some(m=>m.hp>0&&m.x===x&&m.y===y) || (s.players||[]).some(p=>p.x===x&&p.y===y);
     if(occ) cover=Math.max(cover,2); }
   return cover; }
@@ -4208,6 +4210,21 @@ function spriteTokenHTML(key, facing, sizePx){ const e=spriteEntry(key); if(!e) 
   // idle = column 0; CSS background-position % is (index/(count-1))*100, not a plain per-frame fraction
   const posY=rows>1?(row/(rows-1)*100):0;
   return `<div style="width:${sizePx}px;height:${sizePx}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:${cols*100}% ${rows*100}%;background-position:0% ${posY}%;image-rendering:pixelated"></div>`; }
+
+// ---- decoration sprites (trees/bushes) — static, no directional facing needed ----
+const DECOR_MANIFEST={
+  tree:{file:'sprites/decor/tree.png'},
+  bush:{file:'sprites/decor/bush.png'},
+};
+const decorReady=new Set(), decorChecking=new Set();
+function ensureDecorProbe(key){ const e=DECOR_MANIFEST[key]; if(!e||decorReady.has(key)||decorChecking.has(key)) return;
+  decorChecking.add(key); const img=new Image();
+  img.onload=()=>{ decorReady.add(key); decorChecking.delete(key); render(); };
+  img.onerror=()=>{ decorChecking.delete(key); };
+  img.src=e.file; }
+function decorTokenHTML(key, wPx, hPx){ const e=DECOR_MANIFEST[key]; if(!e) return '';
+  if(!decorReady.has(key)){ ensureDecorProbe(key); return ''; }
+  return `<div style="width:${wPx}px;height:${hPx}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:100% 100%;image-rendering:pixelated"></div>`; }
 // Curated SRD bestiary: {n, cr, ac, hp, spd, sprite, atk, desc}
 const MONSTERS_5E=[
   {n:'Goblin',cr:'1/4',ac:15,hp:7,spd:30,init:2,attacks:1,sprite:'goblin',atk:'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Small, cowardly raiders that swarm in packs and flee when bloodied.'},
@@ -4268,6 +4285,12 @@ const TERRAIN={
   grease:{name:'Grease', c:'#5c6b2e', e:'🛢️', diff:true, prone:true},
   web:{name:'Web', c:'#c9c2a6', e:'🕸️', diff:true, restrain:true}
 };
+// Decorations: a paintable layer independent of terrain (a tree can stand on grass, sand, etc.)
+// — unlike TERRAIN, which is one choice per tile. Affects movement/LoS the same way terrain does.
+const DECOR={
+  tree:{name:'Tree', solid:true, opaque:true},
+  bush:{name:'Bush', solid:false, opaque:true, diff:true}
+};
 // Spells that paint temporary terrain onto the battle map (Quick Battle only): the
 // tiles a blast covers become this TERRAIN key for `rounds` (6s each), then revert.
 const SPELL_TERRAIN={'Grease':{terrain:'grease', rounds:10}, 'Web':{terrain:'web', rounds:600}};
@@ -4278,20 +4301,22 @@ const MAP_PRESETS=(()=>{ const P={};
   const rect=(t,x0,y0,x1,y1,k)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) t[x+','+y]=k; };
   const put=(t,a,k)=>a.forEach(([x,y])=>t[x+','+y]=k);
   const hrect=(ht,x0,y0,x1,y1,lvl)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) ht[x+','+y]=lvl; };
-  (function field(){ const w=15,h=10,t={},ht={}; fill(t,w,h,'grass');
+  (function field(){ const w=15,h=10,t={},ht={},dc={}; fill(t,w,h,'grass');
     rect(t,10,1,13,4,'water'); rect(t,2,6,4,8,'mud'); rect(t,6,7,9,9,'sand');
     put(t,[[5,3],[6,3],[5,4],[12,7],[13,7]],'brush'); put(t,[[8,2],[3,1],[11,8]],'wall');
     hrect(ht,0,0,2,2,1); ht['1,1']=2;   // small hill, corner high ground
-    P['Open Field']={cols:w,rows:h,tiles:t,height:ht}; })();
+    put(dc,[[4,2],[7,1],[2,4],[9,3],[14,5],[1,7]],'tree'); put(dc,[[6,2],[11,6],[3,3]],'bush');
+    P['Open Field']={cols:w,rows:h,tiles:t,height:ht,decor:dc}; })();
   (function dungeon(){ const w=15,h=11,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h);
     for(let y=1;y<h-1;y++) if(y!==5) t['7,'+y]='wall'; for(let x=1;x<7;x++) if(x!==3) t[x+',5']='wall'; for(let x=7;x<w-1;x++) if(x!==10) t[x+',6']='wall';
     put(t,[[2,2],[3,2]],'rubble'); rect(t,11,2,12,3,'fog'); put(t,[[4,8],[5,8]],'acid'); put(t,[[10,2]],'brush');
     hrect(ht,11,7,12,8,1);   // raised dais in the back chamber
     P['Dungeon']={cols:w,rows:h,tiles:t,height:ht}; })();
-  (function tavern(){ const w=13,h=10,t={},ht={}; fill(t,w,h,'wood'); box(t,w,h); delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood';
+  (function tavern(){ const w=13,h=10,t={},ht={},dc={}; fill(t,w,h,'wood'); box(t,w,h); delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood';
     for(let x=1;x<5;x++) t[x+',2']='wall'; put(t,[[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]],'wall'); t[(w-2)+',1']='lava'; put(t,[[1,8],[11,8]],'brush');
     hrect(ht,5,7,7,8,1);   // the stage
-    P['Tavern']={cols:w,rows:h,tiles:t,height:ht}; })();
+    put(dc,[[2,6],[10,6]],'bush');   // potted greenery by the walls
+    P['Tavern']={cols:w,rows:h,tiles:t,height:ht,decor:dc}; })();
   (function castle(){ const w=15,h=12,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h); t['6,'+(h-1)]='stone'; t['7,'+(h-1)]='stone';
     for(let x=5;x<10;x++){ t[x+',3']='wall'; t[x+',8']='wall'; } for(let y=3;y<=8;y++){ t['5,'+y]='wall'; t['9,'+y]='wall'; } delete t['7,8']; t['7,8']='stone';
     rect(t,1,1,1,h-2,'water'); rect(t,w-2,1,w-2,h-2,'water'); put(t,[[2,2],[12,2],[2,9],[12,9]],'wall');
@@ -4313,7 +4338,7 @@ const MAP_PRESETS=(()=>{ const P={};
     P['Frozen Lake']={cols:w,rows:h,tiles:t,height:ht}; })();
   return P; })();
 function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
-function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{}), height:Object.assign({},d.height||{})}; dmBroadcast(); render(); }
+function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{}), height:Object.assign({},d.height||{}), decor:Object.assign({},d.decor||{})}; dmBroadcast(); render(); }
 
 /* ---- CAMPAIGNS: a saved DM session (map, monsters, party progress, battle state, log)
    in localStorage 'grimoire.campaigns'. Flow is join-then-pick: players connect to the
@@ -4387,25 +4412,32 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     else if(hgt<0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(0,0,0,${(-hgt*0.14).toFixed(2)}), inset 0 ${-hgt}px ${-hgt*3}px rgba(0,0,0,.35);`; }
     const elevBadge = hgt!==0 ? `<span class="elevbadge">${hgt>0?'▲':'▼'}${Math.abs(hgt)}</span>` : '';
     let riser='';
-    if(iso){ const [rx,ry]=rotXY(x,y,cols,rows,rot); const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-hgt*ISO_ELEV+ISO_PAD;
-      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+hgt};`;
+    if(iso){ const [rx,ry]=rotXY(x,y,cols,rows,rot);
+      // Walls render as a standing 2-level block regardless of real elevation data (they're
+      // already impassable either way, so this is purely visual) — makes them read as an
+      // actual obstacle instead of a flat brick-textured floor tile.
+      const visHgt = ter==='wall' ? Math.max(hgt,2) : hgt;
+      const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-visHgt*ISO_ELEV+ISO_PAD;
+      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+visHgt};`;
+      const wallFace = ter==='wall' ? `background-image:url('sprites/tiles/wall.png');background-size:cover;` : '';
       // Two slanted faces per elevated/sunken tile, extending from the diamond's own edge to
       // ground level, drawn unconditionally on every non-flat tile — adjacent same-height
       // tiles' faces land in the exact same screen rect as their neighbor's opposite face
       // (left of one == right of the next, in both grid directions), so a run of tiles reads
       // as one continuous wall/pit-edge instead of per-tile gaps; taller/deeper neighbours
       // simply paint over the redundant portion via normal z-order.
-      if(hgt>0){ const z=(rx+ry)*10+hgt-1, fh=hgt*ISO_ELEV, tot=ISO_Y+fh, bp=(ISO_Y/tot*100).toFixed(1), dp=(fh/tot*100).toFixed(1);
+      if(visHgt>0){ const z=(rx+ry)*10+visHgt-1, fh=visHgt*ISO_ELEV, tot=ISO_Y+fh, bp=(ISO_Y/tot*100).toFixed(1), dp=(fh/tot*100).toFixed(1);
         // raised block: south-west/south-east faces extend DOWN from the diamond's bottom edge to ground
-        riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 0%,100% ${bp}%,100% 100%,0% ${dp}%);z-index:${z}"></div>`;
-        riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 0%,0% ${bp}%,0% 100%,100% ${dp}%);z-index:${z}"></div>`;
-      } else if(hgt<0){ const z=(rx+ry)*10-hgt+50, depth=-hgt*ISO_ELEV, tot=ISO_Y+depth, bp=(100-(ISO_Y/tot*100)).toFixed(1), dp=(100-(depth/tot*100)).toFixed(1), boxTop=cyLift-ISO_Y-depth;
+        riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 0%,100% ${bp}%,100% 100%,0% ${dp}%);z-index:${z};${wallFace}"></div>`;
+        riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 0%,0% ${bp}%,0% 100%,100% ${dp}%);z-index:${z};${wallFace}"></div>`;
+      } else if(visHgt<0){ const z=(rx+ry)*10-visHgt+50, depth=-visHgt*ISO_ELEV, tot=ISO_Y+depth, bp=(100-(ISO_Y/tot*100)).toFixed(1), dp=(100-(depth/tot*100)).toFixed(1), boxTop=cyLift-ISO_Y-depth;
         // pit: north-west/north-east interior walls extend UP from the diamond's top edge to ground
         riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 100%,100% ${bp}%,100% 0%,0% ${dp}%);z-index:${z}"></div>`;
         riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 100%,0% ${bp}%,0% 0%,100% ${dp}%);z-index:${z}"></div>`;
       }
     }
-    const inner=iso?`<div class="isoContent">${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
+    const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey,40,40):'';
+    const inner=iso?`<div class="isoContent">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
     cells+=riser+`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
   }
   return iso
@@ -4459,6 +4491,7 @@ function renderDM(){
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
     <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Elevation:</span><button class="chip ${net.sel==='t:elev+'?'on':''}" data-place="t:elev+">⬆ Raise</button><button class="chip ${net.sel==='t:elev-'?'on':''}" data-place="t:elev-">⬇ Lower</button></div>
+    <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Decorate:</span>${Object.keys(DECOR).map(k=>`<button class="chip ${net.sel==='d:'+k?'on':''}" data-place="d:${k}">${DECOR[k].name}</button>`).join('')}<button class="chip ${net.sel==='d:erase'?'on':''}" data-place="d:erase">✕ Erase</button></div>
     <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">🟥 ${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">🟩 ${esc(p.name)}</button>`).join('')}</div>
     <div class="addrow" style="margin-top:8px"><select id="mPreset" style="flex:2"><option value="">— load a map —</option><optgroup label="Presets">${Object.keys(MAP_PRESETS).map(k=>`<option value="p:${esc(k)}">${esc(k)}</option>`).join('')}</optgroup>${Object.keys(savedMaps()).length?`<optgroup label="Saved">${Object.keys(savedMaps()).map(n=>`<option value="s:${esc(n)}">💾 ${esc(n)}</option>`).join('')}</optgroup>`:''}</select><button class="btn sm" id="mLoad">Load</button><button class="btn ghost sm" id="mSave">💾 Save</button></div>
     <button class="btn ghost sm block" id="mClear" style="margin-top:8px">Clear all terrain</button>
@@ -4503,6 +4536,8 @@ function renderDM(){
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2);
       if(key==='elev+'||key==='elev-'){ if(!s.map.height) s.map.height={}; const cur=s.map.height[x+','+y]||0; const nh=Math.max(-4,Math.min(4, cur+(key==='elev+'?1:-1))); if(nh) s.map.height[x+','+y]=nh; else delete s.map.height[x+','+y]; dmBroadcast(); render(); return; }
       if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain/elevation, keep brush
+    if(net.sel.slice(0,2)==='d:'){ const key=net.sel.slice(2); if(!s.map.decor) s.map.decor={};
+      if(key==='erase') delete s.map.decor[x+','+y]; else s.map.decor[x+','+y]=key; dmBroadcast(); render(); return; }
     const ter=terrainAt(s,x,y);
     if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ const fromX=mo.x, fromY=mo.y, wasBattle=s.battle.active, mfly=monsterFlies(mo);
       if(s.battle.active){ const tdef0=TERRAIN[ter]; if(tdef0&&tdef0.solid && !(mfly&&ter==='void')){ flashBanner((ter==='void'?'Void blocks ':'Wall blocks ')+mo.name); return; }
@@ -4519,9 +4554,9 @@ function renderDM(){
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && ter==='wall'){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
       if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, deadly:true}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, dmg:d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } } } }
     net.sel=null; dmBroadcast(); render(); });
-  { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain & elevation?')){ s.map.tiles={}; s.map.height={}; dmBroadcast(); render(); } }; }
+  { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain & elevation?')){ s.map.tiles={}; s.map.height={}; s.map.decor={}; dmBroadcast(); render(); } }; }
   { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
-  { const ms=$('#mSave'); if(ms) ms.onclick=()=>{ const nm=prompt('Save current map as:'); if(!nm) return; const all=savedMaps(); all[nm]={cols:s.map.cols,rows:s.map.rows,tiles:Object.assign({},s.map.tiles||{}),height:Object.assign({},s.map.height||{})}; try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(e){} flashBanner('Map saved: '+nm); render(); }; }
+  { const ms=$('#mSave'); if(ms) ms.onclick=()=>{ const nm=prompt('Save current map as:'); if(!nm) return; const all=savedMaps(); all[nm]={cols:s.map.cols,rows:s.map.rows,tiles:Object.assign({},s.map.tiles||{}),height:Object.assign({},s.map.height||{}),decor:Object.assign({},s.map.decor||{})}; try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(e){} flashBanner('Map saved: '+nm); render(); }; }
   $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
 }
 function deployMonster(m){ if(!net||net.role!=='dm') return;
@@ -4970,7 +5005,7 @@ function startQuickBattle(c, crMax, count){
   const monsters=chosen.map((m,i)=>{ counts[m.n]=(counts[m.n]||0)+1; const spd=(typeof m.spd==='number')?m.spd:(parseInt(m.spd)||30); const fly=/fly/i.test(String(m.spd||''));
     return {id:'qm'+i, side:'mon', base:m.n, name:m.n+(chosen.filter(x=>x.n===m.n).length>1?' '+counts[m.n]:''), num:chosen.filter(x=>x.n===m.n).length>1?counts[m.n]:0,
       x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:m.attacks||1, attacksLeft:m.attacks||1, moveLeft:spd, reactionUsed:false, brain:'tactical', fly, init:rnd(20)+(m.init||0)}; });
-  QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles), height:Object.assign({},map.height||{})}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
+  QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles), height:Object.assign({},map.height||{}), decor:Object.assign({},map.decor||{})}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
   qbPlaceUnits();
   // battle resources for the PC (mirror startBattle without its render)
   c.battle=Object.assign({round:1, init:rnd(20)+initiative(c)}, freshTurnState(c));
@@ -5332,7 +5367,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v111';
+const APP_VERSION='v112';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
