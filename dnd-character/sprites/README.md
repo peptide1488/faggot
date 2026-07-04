@@ -25,6 +25,5 @@ wizard:{file:'sprites/characters/wizard.png', cols:4, rows:4, dirOrder:SPRITE_DI
 If your sheet's rows are ordered differently, pass a custom `dirOrder`, e.g.
 `['down','right','up','left']`.
 
-Note: any PNGs you add here are git-ignored by default (see `.gitignore`) so third-party art
-never gets committed by accident — remove that rule yourself once you've confirmed you're
-allowed to redistribute a given asset pack.
+Currently wired: `fighter` (knight), and monsters `skeleton`/`zombie`/`spider`/`ogre`/`demon`/
+`slime`/`goblin` — all from RPG Paper Maker's Basic Resources (user-owned license).

@@ -4158,8 +4158,14 @@ function monsterSprite(k){ return MONSTER_PIX[k] || RACE_PIX[({goblin:'Goblin',o
 // asset pack uses the same convention — verify visually against the real file and adjust.
 const SPRITE_DIR_ORDER=['down','left','right','up'];
 const SPRITE_MANIFEST={
-  // wizard:{file:'sprites/characters/wizard.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  // goblin:{file:'sprites/monsters/goblin.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  fighter:{file:'sprites/characters/fighter.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  skeleton:{file:'sprites/monsters/skeleton.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  zombie:{file:'sprites/monsters/zombie.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  spider:{file:'sprites/monsters/spider.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  ogre:{file:'sprites/monsters/ogre.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  demon:{file:'sprites/monsters/demon.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  slime:{file:'sprites/monsters/slime.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  goblin:{file:'sprites/monsters/goblin.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
 };
 const spriteReady=new Set(), spriteChecking=new Set();
 function spriteEntry(key){ return SPRITE_MANIFEST[key]||null; }
@@ -5294,7 +5300,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v104';
+const APP_VERSION='v105';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
