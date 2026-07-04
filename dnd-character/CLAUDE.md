@@ -23,7 +23,12 @@ usage burns tokens fast. Follow this order:
    multi-line comment block per test when fixing several similar/repetitive spells in one
    pass — one shared comment above the batch is enough.
 5. **Version hygiene:** bump `APP_VERSION` in index.html AND the `CACHE` string in sw.js
-   together (a test enforces this). Bump once per session/PR, not once per fix within it.
+   together (a test enforces this — regex allows decimals, e.g. `v115.1`). Bump once per
+   session/PR, not once per fix — but if you push a follow-up fix later in the same session
+   after the user has already checked the version number once, bump the decimal (`v115` →
+   `v115.1`) rather than leaving it unchanged: the user has no other way to tell a fresh push
+   landed vs. a stale cache, and "still shows the same version" reads as "my fix didn't
+   deploy" even when it did.
 6. **Test-run hygiene:** after an edit, run `node rules-test.js 2>&1 | tail -3` for a
    pass/fail summary — don't dump the full ~190-line test log into context. Only widen to
    `| grep -B2 FAIL` (or read the file) when something actually fails. Batch related edits

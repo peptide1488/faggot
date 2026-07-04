@@ -577,7 +577,7 @@ T('Shocking Grasp cond is registered as No Reactions', SPELL_COND['Shocking Gras
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
-const appVer=(src.match(/APP_VERSION='(v\d+)'/)||[])[1], swVer=(sw.match(/grimoire-(v\d+)/)||[])[1];
+const appVer=(src.match(/APP_VERSION='(v[\d.]+)'/)||[])[1], swVer=(sw.match(/grimoire-(v[\d.]+)/)||[])[1];
 T('sw.js cache version matches APP_VERSION ('+appVer+')', appVer && appVer===swVer);
 
 /* ---- map elevation (isometric renderer content) ---- */
