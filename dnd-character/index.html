@@ -5009,7 +5009,7 @@ function renderQuickBattle(){
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'🟢 normal move · 🔴 Dash (uses action). Tap a tile.':'⚔ Attack a monster in range, ✨ cast a spell, or 🥾 Move. You can also tap a 🟥 monster directly.'):'⏳ Waiting for '+esc(o?o.name:'…')+'…'}</p>
   </div>
   <div class="card">
-    <h2>Battlefield</h2>
+    <h2>Battlefield <button class="btn ghost sm" id="qbIsoBtn" style="float:right">${isoView?'⬜ Top-down':'🧊 Isometric'}</button></h2>
     ${mapGridHTML(s,false,moveOpts)}
   </div>`}
   <div class="card">
@@ -5023,6 +5023,7 @@ function renderQuickBattle(){
   { const a=$('#qbAgain'); if(a) a.onclick=()=>{ QB=null; openQuickBattle(); }; }
   { const d=$('#qbDone'); if(d) d.onclick=qbExit; }
   { const mv=$('#qbMove'); if(mv&&myTurn) mv.onclick=()=>{ s.moveMode=!s.moveMode; render(); }; }
+  { const iv=$('#qbIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
   { const at=$('#qbAttack'); if(at&&myTurn) at.onclick=()=>qbOpenAttack(c); }
   { const ca=$('#qbCast'); if(ca&&myTurn) ca.onclick=()=>qbOpenSpells(c); }
   { const en=$('#qbEnd'); if(en&&myTurn) en.onclick=qbEndPcTurn; }
