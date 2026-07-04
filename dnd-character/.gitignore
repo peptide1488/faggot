@@ -1,0 +1,5 @@
+# Third-party sprite art the user drops in locally — never committed by default (see sprites/README.md)
+sprites/**/*.png
+sprites/**/*.jpg
+sprites/**/*.jpeg
+!sprites/**/.gitkeep

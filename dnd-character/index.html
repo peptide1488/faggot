@@ -4001,7 +4001,10 @@ function coverBetween(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{};
   return cover; }
 function pathTo(s, sx, sy, tx, ty, maxFeet, fly){ const {cost,prev}=dijkstra(s,sx,sy,maxFeet,fly); const K=(x,y)=>x+','+y; if(cost[K(tx,ty)]==null) return null;
   const path=[]; let cur=K(tx,ty); while(cur && cur!==K(sx,sy)){ const [x,y]=cur.split(',').map(Number); path.unshift({x,y}); cur=prev[cur]; } return path; }
-function animateToken(get,set,path,step,done){ let i=0; (function go(){ if(i>=path.length){ done&&done(); return; } set(path[i].x,path[i].y); i++; render(); setTimeout(go, step||110); })(); }
+function animateToken(get,set,path,step,done,unit){ let i=0, px=unit?unit.x:null, py=unit?unit.y:null;
+  (function go(){ if(i>=path.length){ done&&done(); return; }
+    if(unit){ const nx=path[i].x, ny=path[i].y, d=dirFromDelta(nx-(px==null?nx:px), ny-(py==null?ny:py), isoView); if(d) unit.facing=d; px=nx; py=ny; }
+    set(path[i].x,path[i].y); i++; render(); setTimeout(go, step||110); })(); }
 function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
 function spellRangeTiles(name){ const mc=parseSpellMechanics(name); if((mc.range||'')==='Touch') return 1; const m=String(mc.range||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; }
 function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
@@ -4108,7 +4111,7 @@ function renderPlayerBattle(c){
       if(provokers.length && net.conn){ try{ net.conn.send({t:'provoke', cid:clientId(), who:c.name, mons:provokers.map(m=>m.id)}); }catch(e){} logChange(c,'⚔ Provoked opportunity attack'+(provokers.length>1?'s':'')+' from '+provokers.map(m=>m.name).join(', ')); }
       if(fly){ flashBanner('🕊️ Flying over the terrain'); }
       else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); flashBanner((tdef.e||'🔥')+' '+tdef.name+'! '+d+' damage'); }
-      else if(tdef&&tdef.diff) flashBanner(tdef.name+' — difficult terrain'); Events.emit({type:'move', by:c.name, to:{x,y}, fly}); render(); });
+      else if(tdef&&tdef.diff) flashBanner(tdef.name+' — difficult terrain'); Events.emit({type:'move', by:c.name, to:{x,y}, fly}); render(); }, me);
   }));
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ const k=el.dataset.pbt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }
@@ -4143,6 +4146,40 @@ const MONSTER_PIX={
   eye:["............","...oooo.....","..oeeeeo....",".oeeeeeeo...",".oeppppeo...",".oepxxpeo...",".oeppppeo...",".oeeeeeeo...","..oeeeeo....","...oooo.....","............","............"]
 };
 function monsterSprite(k){ return MONSTER_PIX[k] || RACE_PIX[({goblin:'Goblin',orc:'Orc',human:'_default',lizardfolk:'Dragonborn'})[k]] || RACE_PIX._default; }
+
+// ---- real sprite-sheet support (opt-in, iso view only) ----
+// Drop PNGs into ./sprites/characters/<key>.png (by class, lowercased) or
+// ./sprites/monsters/<key>.png (matching a MONSTER_PIX/mo.sprite key) and they're picked
+// up automatically — no code change needed. Nothing here works without those files present;
+// every character/monster keeps rendering its existing pixelArt token until a matching file
+// loads successfully. Expected sheet layout (matches RPG Maker/RPG Paper Maker "walk" sheets):
+// a grid of square frames, `dirRows` rows (top→bottom = facing down/left/right/up by default),
+// `cols` columns = walk-cycle frames. Row order is configurable per-entry since not every
+// asset pack uses the same convention — verify visually against the real file and adjust.
+const SPRITE_DIR_ORDER=['down','left','right','up'];
+const SPRITE_MANIFEST={
+  // wizard:{file:'sprites/characters/wizard.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  // goblin:{file:'sprites/monsters/goblin.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+};
+const spriteReady=new Set(), spriteChecking=new Set();
+function spriteEntry(key){ return SPRITE_MANIFEST[key]||null; }
+function ensureSpriteProbe(key){ const e=spriteEntry(key); if(!e||spriteReady.has(key)||spriteChecking.has(key)) return;
+  spriteChecking.add(key); const img=new Image();
+  img.onload=()=>{ spriteReady.add(key); spriteChecking.delete(key); render(); };
+  img.onerror=()=>{ spriteChecking.delete(key); };   // stays on the pixelArt fallback forever, no retry storm
+  img.src=e.file; }
+// Which screen direction a grid movement step reads as, matching whatever axis dominates
+// visually — iso mode projects (dx,dy) diagonally, flat mode is a direct grid read.
+function dirFromDelta(dx,dy,iso){ if(!dx&&!dy) return null;
+  const sx=iso?(dx-dy):dx, sy=iso?(dx+dy):dy;
+  return Math.abs(sx)>=Math.abs(sy) ? (sx>0?'right':'left') : (sy>0?'down':'up'); }
+// idle-frame token markup for a unit if a real sheet is loaded for its key; null → caller falls back to pixelArt
+function spriteTokenHTML(key, facing, sizePx){ const e=spriteEntry(key); if(!e) return null;
+  if(!spriteReady.has(key)){ ensureSpriteProbe(key); return null; }   // kicks off the load; falls back to pixelArt until it resolves
+  const cols=e.cols||4, rows=e.rows||4, dirOrder=e.dirOrder||SPRITE_DIR_ORDER, row=Math.max(0,dirOrder.indexOf(facing||'down'));
+  // idle = column 0; CSS background-position % is (index/(count-1))*100, not a plain per-frame fraction
+  const posY=rows>1?(row/(rows-1)*100):0;
+  return `<div style="width:${sizePx}px;height:${sizePx}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:${cols*100}% ${rows*100}%;background-position:0% ${posY}%;image-rendering:pixelated"></div>`; }
 // Curated SRD bestiary: {n, cr, ac, hp, spd, sprite, atk, desc}
 const MONSTERS_5E=[
   {n:'Goblin',cr:'1/4',ac:15,hp:7,spd:30,init:2,attacks:1,sprite:'goblin',atk:'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)',desc:'Small, cowardly raiders that swarm in packs and flee when bloodied.'},
@@ -4299,12 +4336,16 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
     const hpbar=(cur,mx)=>{ if(!mx) return ''; const p=Math.max(0,Math.min(100,Math.round(cur/mx*100))); const cl=p<=25?'crit':p<=50?'low':''; return `<span class="hpbar ${cl}"><i style="width:${p}%"></i></span>`; };
-    let tok=''; if(mo){ const dead=mo.hp<=0; const inner=mo.sprite?pixelArt(monsterSprite(mo.sprite),2):esc((mo.name[0]||'M').toUpperCase());
+    let tok=''; if(mo){ const dead=mo.hp<=0;
+      const sheet=iso&&mo.sprite?spriteTokenHTML(mo.sprite,mo.facing,30):null;
+      const inner=sheet||(mo.sprite?pixelArt(monsterSprite(mo.sprite),2):esc((mo.name[0]||'M').toUpperCase()));
       const tcls='tok '+(mo.sprite?'':'mon')+(net&&net.sel==='m'+mo.id?' sel':'')+(dead?' deadtok':'');
       const tstyle=(mo.sprite?'background:none;box-shadow:none;':'')+(dead?'filter:grayscale(1) brightness(.55);transform:rotate(90deg);opacity:.65;':'');
       const condMark=(!dead&&mo.conds&&mo.conds.length)?`<span class="condmark" title="${esc(mo.conds.map(x=>x.name).join(', '))}">🌀</span>`:'';
-      tok=`<span class="${tcls}" style="${tstyle}">${inner}</span>`+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')+condMark+hpbar(mo.hp,mo.max)); }
-    else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id); tok=`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`+hpbar(pl.hpCur,pl.hpMax); }
+      tok=(sheet?`<span class="${dead?'deadtok':''}" style="${dead?'filter:grayscale(1) brightness(.55);opacity:.65;':''}">${sheet}</span>`:`<span class="${tcls}" style="${tstyle}">${inner}</span>`)+(dead?`<span class="mnum" style="background:#9c3b2c">💀</span>`:(mo.num?`<span class="mnum">${mo.num}</span>`:'')+condMark+hpbar(mo.hp,mo.max)); }
+    else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id);
+      const plCls=pl.cls||(pl.c&&pl.c.cls); const sheet=iso&&plCls?spriteTokenHTML(plCls.toLowerCase(),pl.facing,30):null;
+      tok=(sheet?`<span>${sheet}</span>`:`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`)+hpbar(pl.hpCur,pl.hpMax); }
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
     if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=(opts.reachNormal!=null && fc>opts.reachNormal)?' reachdash':' reach'; }
@@ -4971,7 +5012,7 @@ function qbApplyIntent(u, it, done){
       if(!ufly) qbCheckTerrainProne(QB,u,it.to.x,it.to.y,false);
       Events.emit({type:'move', id:u.id, by:u.name, to:it.to, fly:ufly});
       if(provokePc) qbPcOAonMonster(pc, u);
-      setTimeout(done, provokePc?500:0); });
+      setTimeout(done, provokePc?500:0); }, u);
     return; }
   done();
 }
@@ -5090,7 +5131,7 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
     pc.hpCur=c.hp.cur;
     Events.emit({type:'move', id:'pc', by:c.name, to:{x,y}, fly});
     provokers.forEach(m=>qbMonsterOAonPc(m, pc));
-    qbCheckEnd(); render(); });
+    qbCheckEnd(); render(); }, pc);
 }
 function qbPcAttack(mo){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle;
   const all=qbPcAttacks(c); const inrange=all.filter(a=>qbInRange(pc,mo,a));
@@ -5253,7 +5294,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v103';
+const APP_VERSION='v104';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
