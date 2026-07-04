@@ -6,15 +6,29 @@ Single-file PWA (deliberate design — do NOT split it): all logic and data live
 
 ## Efficiency protocol — read this before reading code
 
-1. **Run `node rules-test.js` first.** 66 assertions covering slots, action economy,
+index.html is dense (~5,200 lines, but each line is long/minified-style), so naive Read/Grep
+usage burns tokens fast. Follow this order:
+
+1. **Run `node rules-test.js` first.** 190+ assertions covering slots, action economy,
    concentration, AC, death rules, fighting styles, parsing, monster data. If it passes,
    the rules core is sound — only read code relevant to the actual task.
-2. **Never read index.html top-to-bottom.** Grep for the anchors below and read ±50 lines.
+2. **Never read index.html top-to-bottom.** Grep for the anchors below. Once grep shows you
+   the exact line, prefer editing that line directly over a `Read` of a wide surrounding
+   range — reserve `Read` for cases where you genuinely need the neighboring logic to
+   understand control flow, not as a reflex after every grep.
 3. `AUDIT.md` records every 5e ruling and known simplification — consult it before
    re-deriving rules ("is X intentional?" is usually answered there).
 4. **Every rules change gets a test** appended to `rules-test.js` (pattern: `T('name', cond)`).
+   Keep new tests to one line where the existing style already does that; don't add a
+   multi-line comment block per test when fixing several similar/repetitive spells in one
+   pass — one shared comment above the batch is enough.
 5. **Version hygiene:** bump `APP_VERSION` in index.html AND the `CACHE` string in sw.js
-   together (a test enforces this). Bump on every user-visible change so the PWA updates.
+   together (a test enforces this). Bump once per session/PR, not once per fix within it.
+6. **Test-run hygiene:** after an edit, run `node rules-test.js 2>&1 | tail -3` for a
+   pass/fail summary — don't dump the full ~190-line test log into context. Only widen to
+   `| grep -B2 FAIL` (or read the file) when something actually fails. Batch related edits
+   for one task and verify once at the end, rather than re-running the whole suite after
+   every micro-edit.
 
 ## Section map (grep anchors → what lives there)
 

@@ -276,6 +276,11 @@
       linear-gradient(145deg,#efe3c4,#dccba0);
     box-shadow:inset 0 0 0 1px rgba(40,28,12,.25)}
   .mcell{width:36px;height:36px;display:grid;place-items:center;position:relative;cursor:pointer;background:transparent}
+  /* isometric mode: absolutely-positioned diamond tiles (rotate+squash trick), content counter-rotated to stay upright */
+  .mapgrid.iso{position:relative;background:none;box-shadow:none;min-width:0}
+  .mapgrid.iso .mcell{position:absolute;width:40px;height:40px;transform:scaleY(.5) rotate(45deg);box-shadow:inset 0 0 0 1px rgba(40,28,12,.35)}
+  .mapgrid.iso .mcell:not([class*="ter-"]){background:linear-gradient(145deg,#efe3c4,#dccba0)}
+  .mapgrid.iso .isoContent{position:absolute;inset:0;transform:rotate(-45deg) scaleY(2);display:grid;place-items:center}
   /* terrain tiles */
   .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
   .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
@@ -3794,6 +3799,8 @@ function importData(e){
 /* ============ DM / MULTIPLAYER (WebRTC via PeerJS) ============ */
 let net=null;   // {role:'dm'|'player', ...}
 let QB=null;    // Quick Battle (solo vs AI) state, see the Quick Battle section
+let isoView=localStorage.getItem('grimoire.iso')==='1';   // display pref: isometric vs top-down battle grid
+function toggleIsoView(){ isoView=!isoView; localStorage.setItem('grimoire.iso', isoView?'1':'0'); render(); }
 function loadPeer(cb){ if(window.Peer) return cb();
   const s=document.createElement('script'); s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
   s.onload=()=>cb(); s.onerror=()=>flashBanner('No internet — multiplayer needs a connection'); document.head.appendChild(s); }
@@ -4045,7 +4052,7 @@ function renderPlayerBattle(c){
     ${hasActionSurge(c)?`<button class="btn ghost sm block" data-pbt="surge" style="margin-top:8px${c.actionSurgeUsed?';opacity:.5':''}" ${c.actionSurgeUsed?'disabled':''}>⚡ ${c.actionSurgeUsed?'Action Surge spent (rest to recharge)':'Action Surge (+1 action)'}</button>`:''}
   </div>
   <div class="card">
-    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button></h2>
+    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button><button class="btn ghost sm" id="pbIsoBtn" style="float:right;margin-right:6px">${isoView?'⬜ Top-down':'🧊 Isometric'}</button></h2>
     ${mapGridHTML(s,false, net.moveMode?(()=>{ const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0); return {reachCost:reachableCells(s,me.x,me.y,dashMax,isFlying(c)), reachNormal:(b.move||0)}; })():{})}
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?('🟢 normal move ('+(b.move||0)+' ft)'+(hasAction(c)?' · 🔴 Dash range (uses your action)':'')) :'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
   </div>
@@ -4097,6 +4104,7 @@ function renderPlayerBattle(c){
     else b[k]=!b[k];
     save(); render(); });
   { const mv=$('#pbMoveBtn'); if(mv) mv.onclick=()=>{ net.moveMode=!net.moveMode; render(); }; }
+  { const iv=$('#pbIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
   { const rg=$('#pbRage'); if(rg) rg.onclick=()=>toggleRage(c); }
@@ -4248,8 +4256,10 @@ function loadCampaign(name){ if(!net||net.role!=='dm') return; const cp=campaign
 function deleteCampaign(name){ const all=campaigns(); delete all[name];
   try{ localStorage.setItem('grimoire.campaigns',JSON.stringify(all)); }catch(e){}
   if(net&&net.campaign===name) net.campaign=null; flashBanner('Campaign deleted: '+name); }
+const ISO_X=28, ISO_Y=14, ISO_ELEV=12, ISO_PAD=90; // isometric diamond step (px) + top pad for elevation/overflow
 function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
   const at=(x,y)=>tiles[x+','+y];
+  const iso=isoView, offX=(rows-1)*ISO_X+20, stageW=(cols-1+rows-1)*ISO_X+80, stageH=(cols-1+rows-1)*ISO_Y+80+ISO_PAD;
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
     const ter=at(x,y), td=ter&&TERRAIN[ter]; let style='';
     if(td&&td.c){
@@ -4277,9 +4287,13 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     const hgt=heightAt(s,x,y);
     if(hgt>0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(255,255,255,${(hgt*0.10).toFixed(2)}), 0 ${hgt+1}px ${hgt*2}px rgba(0,0,0,.28);`; }
     const elevBadge = hgt>0 ? `<span class="elevbadge">▲${hgt}</span>` : '';
-    cells+=`<div class="mcell${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}${elevBadge}</div>`;
+    if(iso){ const sx=(x-y)*ISO_X+offX-20, sy=(x+y)*ISO_Y-hgt*ISO_ELEV+ISO_PAD-20; style+=`left:${sx}px;top:${sy}px;z-index:${(x+y)*10+hgt};`; }
+    const inner=iso?`<div class="isoContent">${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
+    cells+=`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
   }
-  return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
+  return iso
+    ? `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px">${cells}</div></div>`
+    : `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
 }
 
 /* ---- DM dashboard (full screen) ---- */
@@ -4322,7 +4336,7 @@ function renderDM(){
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
-    <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span></h2>
+    <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span><button class="btn ghost sm" id="dmIsoBtn" style="float:right">${isoView?'⬜ Top-down':'🧊 Isometric'}</button></h2>
     ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0); return {reachCost:reachableCells(s,mo.x,mo.y,dashMax,monsterFlies(mo)), reachNormal:(mo.moveLeft||0)}; })():{})}
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
@@ -4348,6 +4362,7 @@ function renderDM(){
   $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
   $('#dmRD').onclick=()=>{ s.battle.round=Math.max(1,s.battle.round-1); dmBroadcast(); render(); };
   $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
+  { const iv=$('#dmIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
   { const rr=$('#dmReroll'); if(rr) rr.onclick=rollInitiative; }
   { const nt=$('#dmNextT'); if(nt) nt.onclick=dmNextTurn; }
   { const pt=$('#dmPrevT'); if(pt) pt.onclick=dmPrevTurn; }
@@ -4579,7 +4594,7 @@ function openBestiary(){
 /* ---- player session map (modal) ---- */
 function openSessionMap(){ if(!net||!net.session){ flashBanner('Not in a game'); return; } const s=net.session;
   $('#modalRoot').innerHTML=`<div class="modal" id="smModal"><div class="sheet"><div class="grip"></div>
-    <h2>🗺 ${net.session.battle.active?'Battle — Round '+s.battle.round:'Map'}</h2>
+    <h2>🗺 ${net.session.battle.active?'Battle — Round '+s.battle.round:'Map'}<button class="btn ghost sm" id="smIsoBtn" style="float:right">${isoView?'⬜ Top-down':'🧊 Isometric'}</button></h2>
     ${mapGridHTML(s,false)}
     <p class="muted" style="font-size:12px;margin:8px 0 4px">Tap a monster to attack it.</p>
     ${s.monsters.length? s.monsters.map(mo=>`<div class="spell"><span class="tok mon" style="flex:none">${esc((mo.name[0]||'M').toUpperCase())}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp>0?mo.hp+'/'+mo.max:'down'}</small></div><button class="btn sm" data-attackmon="${mo.id}">⚔ Attack</button></div>`).join('') : '<div class="empty">No monsters on the field.</div>'}
@@ -4587,6 +4602,7 @@ function openSessionMap(){ if(!net||!net.session){ flashBanner('Not in a game');
   </div></div>`;
   $('#smClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#smModal').onclick=e=>{ if(e.target.id==='smModal') $('#modalRoot').innerHTML=''; };
+  { const iv=$('#smIsoBtn'); if(iv) iv.onclick=()=>{ toggleIsoView(); openSessionMap(); }; }
   document.querySelectorAll('[data-attackmon]').forEach(b=>b.onclick=()=>{ const mo=s.monsters.find(m=>m.id===b.dataset.attackmon); if(!mo) return;
     net.targetMon={id:mo.id,name:mo.name,ac:mo.ac}; if(net.conn){ try{ net.conn.send({t:'target',mon:mo.id}); }catch(e){} }
     $('#modalRoot').innerHTML=''; const c=playerChar(); if(c) openAttack(c); flashBanner('Targeting '+mo.name+' (AC '+mo.ac+')'); });
@@ -5195,7 +5211,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v97';
+const APP_VERSION='v98';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
