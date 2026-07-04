@@ -4203,24 +4203,40 @@ const MAP_PRESETS=(()=>{ const P={};
   const box=(t,w,h)=>{ for(let x=0;x<w;x++){t[x+',0']='wall';t[x+','+(h-1)]='wall';} for(let y=0;y<h;y++){t['0,'+y]='wall';t[(w-1)+','+y]='wall';} };
   const rect=(t,x0,y0,x1,y1,k)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) t[x+','+y]=k; };
   const put=(t,a,k)=>a.forEach(([x,y])=>t[x+','+y]=k);
-  (function field(){ const w=15,h=10,t={}; fill(t,w,h,'grass');
+  const hrect=(ht,x0,y0,x1,y1,lvl)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) ht[x+','+y]=lvl; };
+  (function field(){ const w=15,h=10,t={},ht={}; fill(t,w,h,'grass');
     rect(t,10,1,13,4,'water'); rect(t,2,6,4,8,'mud'); rect(t,6,7,9,9,'sand');
-    put(t,[[5,3],[6,3],[5,4],[12,7],[13,7]],'brush'); put(t,[[8,2],[3,1],[11,8]],'wall'); P['Open Field']={cols:w,rows:h,tiles:t}; })();
-  (function dungeon(){ const w=15,h=11,t={}; fill(t,w,h,'stone'); box(t,w,h);
+    put(t,[[5,3],[6,3],[5,4],[12,7],[13,7]],'brush'); put(t,[[8,2],[3,1],[11,8]],'wall');
+    hrect(ht,0,0,2,2,1); ht['1,1']=2;   // small hill, corner high ground
+    P['Open Field']={cols:w,rows:h,tiles:t,height:ht}; })();
+  (function dungeon(){ const w=15,h=11,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h);
     for(let y=1;y<h-1;y++) if(y!==5) t['7,'+y]='wall'; for(let x=1;x<7;x++) if(x!==3) t[x+',5']='wall'; for(let x=7;x<w-1;x++) if(x!==10) t[x+',6']='wall';
-    put(t,[[2,2],[3,2]],'rubble'); rect(t,11,2,12,3,'fog'); put(t,[[4,8],[5,8]],'acid'); put(t,[[10,2]],'brush'); P['Dungeon']={cols:w,rows:h,tiles:t}; })();
-  (function tavern(){ const w=13,h=10,t={}; fill(t,w,h,'wood'); box(t,w,h); delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood';
-    for(let x=1;x<5;x++) t[x+',2']='wall'; put(t,[[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]],'wall'); t[(w-2)+',1']='lava'; put(t,[[1,8],[11,8]],'brush'); P['Tavern']={cols:w,rows:h,tiles:t}; })();
-  (function castle(){ const w=15,h=12,t={}; fill(t,w,h,'stone'); box(t,w,h); t['6,'+(h-1)]='stone'; t['7,'+(h-1)]='stone';
+    put(t,[[2,2],[3,2]],'rubble'); rect(t,11,2,12,3,'fog'); put(t,[[4,8],[5,8]],'acid'); put(t,[[10,2]],'brush');
+    hrect(ht,11,7,12,8,1);   // raised dais in the back chamber
+    P['Dungeon']={cols:w,rows:h,tiles:t,height:ht}; })();
+  (function tavern(){ const w=13,h=10,t={},ht={}; fill(t,w,h,'wood'); box(t,w,h); delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood';
+    for(let x=1;x<5;x++) t[x+',2']='wall'; put(t,[[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]],'wall'); t[(w-2)+',1']='lava'; put(t,[[1,8],[11,8]],'brush');
+    hrect(ht,5,7,7,8,1);   // the stage
+    P['Tavern']={cols:w,rows:h,tiles:t,height:ht}; })();
+  (function castle(){ const w=15,h=12,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h); t['6,'+(h-1)]='stone'; t['7,'+(h-1)]='stone';
     for(let x=5;x<10;x++){ t[x+',3']='wall'; t[x+',8']='wall'; } for(let y=3;y<=8;y++){ t['5,'+y]='wall'; t['9,'+y]='wall'; } delete t['7,8']; t['7,8']='stone';
-    rect(t,1,1,1,h-2,'water'); rect(t,w-2,1,w-2,h-2,'water'); put(t,[[2,2],[12,2],[2,9],[12,9]],'wall'); P['Castle']={cols:w,rows:h,tiles:t}; })();
-  (function cave(){ const w=15,h=11,t={}; fill(t,w,h,'stone'); box(t,w,h);
+    rect(t,1,1,1,h-2,'water'); rect(t,w-2,1,w-2,h-2,'water'); put(t,[[2,2],[12,2],[2,9],[12,9]],'wall');
+    hrect(ht,6,4,8,7,1);   // raised inner keep floor
+    hrect(ht,0,0,0,h-1,2); hrect(ht,w-1,0,w-1,h-1,2);   // tall battlements on the outer walls
+    P['Castle']={cols:w,rows:h,tiles:t,height:ht}; })();
+  (function cave(){ const w=15,h=11,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h);
     put(t,[[3,3],[4,3],[8,2],[10,5],[5,7],[6,8],[12,8],[2,6],[7,4],[11,3]],'wall'); put(t,[[3,4],[9,6],[6,2]],'rubble');
-    rect(t,2,8,4,9,'water'); put(t,[[11,2],[12,2],[11,3]],'lava'); put(t,[[7,7],[8,8]],'brush'); rect(t,9,8,10,9,'fog'); P['Cave']={cols:w,rows:h,tiles:t}; })();
+    rect(t,2,8,4,9,'water'); put(t,[[11,2],[12,2],[11,3]],'lava'); put(t,[[7,7],[8,8]],'brush'); rect(t,9,8,10,9,'fog');
+    hrect(ht,11,6,13,7,1); hrect(ht,2,3,3,4,1);   // rocky ledges
+    P['Cave']={cols:w,rows:h,tiles:t,height:ht}; })();
   (function chasm(){ const w=15,h=10,t={}; fill(t,w,h,'grass'); for(let x=0;x<w;x++){ t[x+',4']='void'; t[x+',5']='void'; } [7,8].forEach(x=>{ t[x+',4']='wood'; t[x+',5']='wood'; }); put(t,[[2,2],[12,7]],'brush'); rect(t,1,7,2,8,'mud'); P['Chasm Bridge']={cols:w,rows:h,tiles:t}; })();
-  (function swamp(){ const w=15,h=11,t={}; fill(t,w,h,'mud'); rect(t,2,2,5,4,'water'); rect(t,9,5,12,8,'water'); rect(t,6,8,8,9,'acid');
-    put(t,[[1,6],[4,7],[7,2],[10,2],[13,4],[12,9],[3,9],[8,5]],'brush'); rect(t,5,5,6,6,'fog'); P['Swamp']={cols:w,rows:h,tiles:t}; })();
-  (function frozen(){ const w=15,h=10,t={}; fill(t,w,h,'snow'); rect(t,5,3,9,6,'ice'); put(t,[[2,2],[12,2],[3,7],[11,7],[7,1],[7,8]],'wall'); put(t,[[1,5],[13,5]],'brush'); P['Frozen Lake']={cols:w,rows:h,tiles:t}; })();
+  (function swamp(){ const w=15,h=11,t={},ht={}; fill(t,w,h,'mud'); rect(t,2,2,5,4,'water'); rect(t,9,5,12,8,'water'); rect(t,6,8,8,9,'acid');
+    put(t,[[1,6],[4,7],[7,2],[10,2],[13,4],[12,9],[3,9],[8,5]],'brush'); rect(t,5,5,6,6,'fog');
+    rect(t,12,1,13,2,'grass'); hrect(ht,12,1,13,2,1);   // dry hummock above the mud
+    P['Swamp']={cols:w,rows:h,tiles:t,height:ht}; })();
+  (function frozen(){ const w=15,h=10,t={},ht={}; fill(t,w,h,'snow'); rect(t,5,3,9,6,'ice'); put(t,[[2,2],[12,2],[3,7],[11,7],[7,1],[7,8]],'wall'); put(t,[[1,5],[13,5]],'brush');
+    hrect(ht,0,0,1,9,1); hrect(ht,w-2,0,w-1,9,1);   // ice ridges along both banks
+    P['Frozen Lake']={cols:w,rows:h,tiles:t,height:ht}; })();
   return P; })();
 function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
 function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{}), height:Object.assign({},d.height||{})}; dmBroadcast(); render(); }
@@ -4858,7 +4874,7 @@ function startQuickBattle(c, crMax, count){
   const monsters=chosen.map((m,i)=>{ counts[m.n]=(counts[m.n]||0)+1; const spd=(typeof m.spd==='number')?m.spd:(parseInt(m.spd)||30); const fly=/fly/i.test(String(m.spd||''));
     return {id:'qm'+i, side:'mon', base:m.n, name:m.n+(chosen.filter(x=>x.n===m.n).length>1?' '+counts[m.n]:''), num:chosen.filter(x=>x.n===m.n).length>1?counts[m.n]:0,
       x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:m.attacks||1, attacksLeft:m.attacks||1, moveLeft:spd, reactionUsed:false, brain:'tactical', fly, init:rnd(20)+(m.init||0)}; });
-  QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles)}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
+  QB={active:true, over:null, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles), height:Object.assign({},map.height||{})}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[]};
   qbPlaceUnits();
   // battle resources for the PC (mirror startBattle without its render)
   c.battle=Object.assign({round:1, init:rnd(20)+initiative(c)}, freshTurnState(c));
@@ -5219,7 +5235,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v101';
+const APP_VERSION='v102';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

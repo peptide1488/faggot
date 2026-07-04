@@ -28,7 +28,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
-  'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};');
+  'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
+  'globalThis.MAP_PRESETS=MAP_PRESETS;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -572,6 +573,10 @@ T('Shocking Grasp cond is registered as No Reactions', SPELL_COND['Shocking Gras
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
 const appVer=(src.match(/APP_VERSION='(v\d+)'/)||[])[1], swVer=(sw.match(/grimoire-(v\d+)/)||[])[1];
 T('sw.js cache version matches APP_VERSION ('+appVer+')', appVer && appVer===swVer);
+
+/* ---- map elevation (isometric renderer content) ---- */
+T('preset maps include elevation data', Object.values(MAP_PRESETS).some(m=>m.height&&Object.keys(m.height).length>0));
+T('startQuickBattle copies preset height into QB.map (was silently dropped)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height/.test(src));
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
