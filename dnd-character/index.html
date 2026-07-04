@@ -4229,13 +4229,14 @@ function ensureDecorProbe(key){ const e=DECOR_MANIFEST[key]; if(!e||decorReady.h
   img.onload=()=>{ e.nativeW=img.naturalWidth; e.nativeH=img.naturalHeight; decorReady.add(key); decorChecking.delete(key); render(); };
   img.onerror=()=>{ decorChecking.delete(key); };
   img.src=e.file; }
-// width pinned to a token-scale baseline, height derived from the sprite's own aspect ratio —
-// forcing both to a fixed square (old behaviour) squashed the tall tree / wide bush into a
-// smeared, indistinct blob instead of a recognizable shape.
-const DECOR_W=48;
+// Contain-fit within a bounding box (cap both sides, keep native aspect ratio) — pinning just
+// the width (earlier attempt) let a tall narrow sheet like tree.png (96x360) balloon to 180px
+// tall, dangling far past the tile it's planted on. Capping both dimensions keeps the tree a
+// believable size while still never stretching/squashing the art.
+const DECOR_MAX_W=48, DECOR_MAX_H=72;
 function decorTokenHTML(key){ const e=DECOR_MANIFEST[key]; if(!e) return '';
   if(!decorReady.has(key)){ ensureDecorProbe(key); return ''; }
-  const w=DECOR_W, h=DECOR_W*(e.nativeH/e.nativeW);
+  const scale=Math.min(DECOR_MAX_W/e.nativeW, DECOR_MAX_H/e.nativeH), w=e.nativeW*scale, h=e.nativeH*scale;
   return `<div style="width:${w}px;height:${h}px;align-self:end;background-image:url('${e.file}');background-repeat:no-repeat;background-size:100% 100%;image-rendering:pixelated"></div>`; }
 // Curated SRD bestiary: {n, cr, ac, hp, spd, sprite, atk, desc}
 const MONSTERS_5E=[

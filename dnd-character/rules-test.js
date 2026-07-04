@@ -33,7 +33,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
-  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_W=DECOR_W;');
+  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -641,8 +641,9 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   const tall=decorTokenHTML('__test_tall'), wide=decorTokenHTML('__test_wide');
   const tallW=Number(tall.match(/width:([\d.]+)px/)[1]), tallH=Number(tall.match(/height:([\d.]+)px/)[1]);
   const wideW=Number(wide.match(/width:([\d.]+)px/)[1]), wideH=Number(wide.match(/height:([\d.]+)px/)[1]);
-  T('decor width is pinned to DECOR_W regardless of native size', tallW===DECOR_W && wideW===DECOR_W);
-  T('decor height derives from the sprite\'s own aspect ratio, not a fixed square', Math.abs(tallH-DECOR_W*(360/96))<0.01 && Math.abs(wideH-DECOR_W*(72/96))<0.01);
+  T('a tall narrow sheet is capped by height, not stretched to a fixed width', tallH===DECOR_MAX_H && Math.abs(tallW-DECOR_MAX_H*(96/360))<0.01);
+  T('a wide short sheet is capped by width, not stretched to a fixed height', wideW===DECOR_MAX_W && Math.abs(wideH-DECOR_MAX_W*(72/96))<0.01);
+  T('neither test sheet exceeds the bounding box on either axis', tallW<=DECOR_MAX_W && wideH<=DECOR_MAX_H);
   delete DECOR_MANIFEST.__test_tall; delete DECOR_MANIFEST.__test_wide;
   decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
 })();
