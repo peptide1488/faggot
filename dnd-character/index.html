@@ -4479,7 +4479,13 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       // worth having walls actually read as standing obstacles again. elevBadge still reports the
       // tile's REAL height (a plain wall with no elevation set shows no badge).
       const visHgt = ter==='wall' ? Math.max(hgt,2) : hgt;
-      const wx=(x-cols/2)*T3D, wz=(y-rows/2)*T3D, wy=visHgt*ELEV3D;
+      // wz is negated: rotateX(60)'s Z-axis contribution to screen-Y comes out negative (row
+      // increasing moved tiles UP the screen instead of down — confirmed by comparing rendered
+      // rects for row 0 vs row 9 on a real map, not just derived on paper) — this is what read
+      // as "upside down". Flipping the world-Z sign here corrects on-screen row order without
+      // touching the wall-cuboid face math, which is keyed off each tile's OWN local origin,
+      // not the sign of where that origin sits in the wider grid.
+      const wx=(x-cols/2)*T3D, wz=-(y-rows/2)*T3D, wy=visHgt*ELEV3D;
       tileStyle3d=`transform:translate3d(${wx}px,${wy}px,${wz}px);z-index:${(x+y)*10+(visHgt>0?visHgt:0)};`;
       if(visHgt>0){ const fh=visHgt*ELEV3D;
         // Real cuboid faces (top already folds via the .top3d CSS class) — south + east are the
