@@ -294,6 +294,8 @@
   .mapgrid.iso .mcell.ter-snow{background-image:url('sprites/tiles/snow.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
   .mapgrid.iso .mcell.ter-ice{background-image:url('sprites/tiles/ice.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
   .mapgrid.iso .mcell.ter-lava{background-image:url('sprites/tiles/lava.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-wall{background-image:url('sprites/tiles/wall.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
+  .mapgrid.iso .mcell.ter-mud{background-image:url('sprites/tiles/mud.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
   /* terrain tiles */
   .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
   .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
@@ -5330,7 +5332,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v109';
+const APP_VERSION='v110';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

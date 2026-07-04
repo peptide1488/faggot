@@ -29,9 +29,10 @@ If your sheet's rows are ordered differently, pass a custom `dirOrder`, e.g.
 Currently wired: `fighter` (knight), and monsters `skeleton`/`zombie`/`spider`/`ogre`/`demon`/
 `slime`/`goblin`/`ghost`(fantom)/`wolf`(dog-black)/`human`(villager1) — all from RPG Paper
 Maker's Basic Resources (user-owned license). Terrain tiles `grass`/`sand`/`stone`/`water`/
-`wood`/`snow`/`ice`/`lava` are also real texture swatches from the same pack's Autotiles
-sheets, small crops meant to tile (`background-repeat`), not full autotile sheets. Other
-terrain keys (mud, rubble, void, etc.) keep their original flat CSS-gradient look.
+`wood`/`snow`/`ice`/`lava`/`wall`(brick)/`mud` are also real texture swatches from the same
+pack's Autotiles/Walls sheets, small crops meant to tile (`background-repeat`), not full
+autotile sheets. Other terrain keys (rubble, void, brush, fog, acid, caltrops, grease, web)
+keep their original flat CSS-gradient look — no clean matching swatch found for those yet.
 
 Only 1 of 13 classes (Fighter) has a sprite — the rest is a taste call on which named RPG
 Paper Maker hero should represent which D&D class, left for the user to decide and wire in.
