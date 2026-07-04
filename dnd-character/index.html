@@ -4430,16 +4430,16 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     const elevBadge = hgt!==0 ? `<span class="elevbadge">${hgt>0?'▲':'▼'}${Math.abs(hgt)}</span>` : '';
     let riser='';
     if(iso){ const [rx,ry]=rotXY(x,y,cols,rows,rot);
-      // Walls render as a standing 2-level block regardless of real elevation data (they're
-      // already impassable either way, so this is purely visual) — makes them read as an
-      // actual obstacle instead of a flat brick-textured floor tile.
-      const visHgt = ter==='wall' ? Math.max(hgt,2) : hgt;
+      // Walls used to be forced into a standing 2-level block (a clip-path-cut flat texture
+      // faking a 3D side-face) — CSS can't warp a top-down brick swatch to look perspective-
+      // correct from an isometric angle, it just reads as a mismatched, wonky smear. Real
+      // isometric wall art (drawn for that angle, like FF Tactics / RPG Maker's own iso tiles)
+      // would fix it; a CSS clip-path trick can't. Walls now render flat like every other
+      // terrain — still impassable/opaque via TERRAIN.wall's flags, just not visually "standing".
+      const visHgt = hgt;
       const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-visHgt*ISO_ELEV+ISO_PAD;
       style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+visHgt};`;
-      // Tiled to match the top face's repeat (.ter-wall in CSS) — background-size:cover stretched
-      // the whole small swatch into one blown-up, mismatched-looking smear per face instead of
-      // a consistent brick course.
-      const wallFace = ter==='wall' ? `background-image:url('sprites/tiles/wall.png');background-repeat:repeat;background-size:24px 24px;` : '';
+      const wallFace='';
       // Two slanted faces per elevated/sunken tile, extending from the diamond's own edge to
       // ground level, drawn unconditionally on every non-flat tile — adjacent same-height
       // tiles' faces land in the exact same screen rect as their neighbor's opposite face
