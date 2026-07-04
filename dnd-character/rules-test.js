@@ -25,9 +25,10 @@ global.requestAnimationFrame=f=>f();
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;');
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -281,20 +282,18 @@ T('Guiding Bolt-guided target grants advantage to the next attacker', attackAdva
 T('True Strike gives the attacker advantage', attackAdvantage(S(['True Strike']),S([]),true).adv===1);
 T('Guiding Bolt is registered as the Guided condition', SPELL_COND['Guiding Bolt'].c==='Guided');
 
-/* ---- Sanctuary: attackers must beat a Wis save (DC stashed at cast time) or lose the attack ---- */
+/* ---- Sanctuary: attackers must beat a Wis save (DC stashed at cast time) or lose the attack.
+   The gate itself now lives in Engine.attack (see the dedicated Sanctuary block further down,
+   which exercises pass/fail directly and synchronously) — qbApplyIntent's job is just to spend
+   the attack and hand off to qbResolveAttack unconditionally, whatever Sanctuary decides. ---- */
 { const sc=newCharacter('Warded'); sc.cls='Cleric'; applyClassDefaults(sc); sc.spells=[{name:'Sanctuary',level:1,prepared:true}]; startBattle(sc);
   castSpell(sc,'Sanctuary',1);
   const se=sc.effects.find(e=>e.name==='Sanctuary');
   T('casting Sanctuary stashes a save DC on the effect', se && typeof se.dc==='number');
 
-  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1}, monsters:[{id:'m1',name:'Goblin',x:0,y:0,hp:10,max:10,ac:12,attacksLeft:1}], players:[{id:'pc',side:'pc',name:sc.name,c:sc,x:1,y:0,hpCur:sc.hp.cur,hpMax:sc.hp.max}] });
-  se.dc=999;   // impossible DC → guaranteed fail
-  let syncFail=false; qbApplyIntent(getQB().monsters[0], {type:'attack',targetId:'pc',atk:{name:'Bite',toHit:4,dmg:'1d6'}}, ()=>{ syncFail=true; });
-  T('Sanctuary fail: attack fizzles immediately (done fires synchronously, no roll happens)', syncFail===true && getQB().monsters[0].attacksLeft===0);
-
-  getQB().monsters[0].attacksLeft=1; se.dc=-999;   // impossible-to-fail DC → guaranteed pass-through
-  let syncPass=false; qbApplyIntent(getQB().monsters[0], {type:'attack',targetId:'pc',atk:{name:'Bite',toHit:4,dmg:'1d6'}}, ()=>{ syncPass=true; });
-  T('Sanctuary pass: attack proceeds to normal resolution (deferred, not synchronous)', syncPass===false);
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1}, monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:0,y:0,hp:10,max:10,ac:12,attacksLeft:1}], players:[{id:'pc',side:'pc',name:sc.name,c:sc,x:1,y:0,hpCur:sc.hp.cur,hpMax:sc.hp.max}] });
+  qbApplyIntent(getQB().monsters[0], {type:'attack',targetId:'pc',atk:{name:'Bite',toHit:4,dmg:'1d6'}}, ()=>{});
+  T('qbApplyIntent spends the monster\'s attack synchronously regardless of what Sanctuary decides', getQB().monsters[0].attacksLeft===0);
   setQB(null);
 }
 
@@ -310,48 +309,103 @@ T('Guiding Bolt is registered as the Guided condition', SPELL_COND['Guiding Bolt
   endEffect(mw, mw.effects[0].id);
   T('ending the effect clears the item\'s magic bonus', !mw.items[0].magicBonus);
 }
-
-/* ---- Power Word Kill/Stun: HP-threshold, no save, no attack roll ---- */
-T('Power Word HP thresholds match the PHB', POWER_WORD_HP['Power Word Kill']===100 && POWER_WORD_HP['Power Word Stun']===150);
-{ const weakFoe={id:'w1',name:'Weakling',hp:40,conds:[]}, tankFoe={id:'t1',name:'Tank',hp:200,conds:[]};
-  const killMsg=powerWordResolve(weakFoe,'Power Word Kill');
-  T('Power Word Kill drops a low-HP target to 0', weakFoe.hp===0 && /drops dead/.test(killMsg));
-  const noEffectMsg=powerWordResolve(tankFoe,'Power Word Kill');
-  T('Power Word Kill has no effect above the HP threshold', tankFoe.hp===200 && /no effect/.test(noEffectMsg));
-  const stunFoe={id:'s1',name:'Stunned Target',hp:60,conds:[]};
-  const stunMsg=powerWordResolve(stunFoe,'Power Word Stun');
-  T('Power Word Stun imposes Stunned on a low-HP target (no HP loss)', stunFoe.hp===60 && stunFoe.conds.some(c=>c.name==='Stunned') && /is stunned/.test(stunMsg));
+/* ---- Magic Weapon used to only apply inside qbPcAttacks (Quick Battle) — the sheet,
+   DM-session, and player-net attack menus built toHit/dmg straight from weaponToHit/
+   weaponDmgBonus without ever looking at item.magicBonus, so a +1 weapon silently did
+   nothing outside Quick Battle. Fixed by threading `it` through those two functions
+   directly so every caller gets it for free. ---- */
+{ const mw2=newCharacter('Enchanter2'); mw2.abilities.str=10; mw2.items=[{name:'Club',kind:'weapon',qty:1,equipped:true,magicBonus:1}];
+  const w=weaponByName('Club'), it=mw2.items[0];
+  T('weaponToHit(c,w,it) applies the item\'s magic bonus directly (not just via qbPcAttacks)', weaponToHit(mw2,w,it)===weaponToHit(mw2,w)+1);
+  T('weaponDmgBonus(c,w,it) applies the item\'s magic bonus directly', weaponDmgBonus(mw2,w,it)===weaponDmgBonus(mw2,w)+1);
 }
-{ setQB({active:true}); T('Power Word Kill routes to enemy targeting only in Quick Battle', spellTargetsEnemy('Power Word Kill')===true); setQB(null);
-  T('Power Word Kill does not force enemy targeting outside Quick Battle', spellTargetsEnemy('Power Word Kill')===false);
+
+/* ---- Power Word Kill/Stun: HP-threshold, no save, no attack roll. Was a QB-only bespoke
+   check (powerWordResolve) that bypassed the Engine entirely, and spellTargetsEnemy had a
+   QB.active gate so DM-session/player-net targeting fell through to the narrative cast modal
+   and the spell silently did nothing there. Now it routes to enemy targeting everywhere and
+   resolves through Engine.castApply's sp.powerWord path (any adapter). ---- */
+T('Power Word HP thresholds match the PHB', POWER_WORD_HP['Power Word Kill']===100 && POWER_WORD_HP['Power Word Stun']===150);
+T('Power Word Kill routes to enemy targeting in every mode (no more QB.active gate)', spellTargetsEnemy('Power Word Kill')===true);
+{ setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'w1',side:'mon',name:'Weakling',base:'Weakling',hp:40,max:40,ac:10,conds:[]},{id:'t1',side:'mon',name:'Tank',base:'Tank',hp:200,max:200,ac:10,conds:[]},{id:'s1',side:'mon',name:'Stunned Target',base:'Stunned Target',hp:60,max:60,ac:10,conds:[]}],
+    players:[{id:'pc',side:'pc',name:'Hero',c:newCharacter('Hero'),x:0,y:0}]});
+  const killEv=Engine.castApply(qbAdapter,'pc','w1',{name:'Power Word Kill', powerWord:'Power Word Kill'});
+  T('Power Word Kill drops a low-HP target to 0', killEv.killed===true && qbUnitById('w1').hp===0);
+  const noEffectEv=Engine.castApply(qbAdapter,'pc','t1',{name:'Power Word Kill', powerWord:'Power Word Kill'});
+  T('Power Word Kill has no effect above the HP threshold', noEffectEv.noEffect===true && qbUnitById('t1').hp===200);
+  const stunEv=Engine.castApply(qbAdapter,'pc','s1',{name:'Power Word Stun', powerWord:'Power Word Stun'});
+  T('Power Word Stun imposes Stunned on a low-HP target (no HP loss)', stunEv.stunned===true && qbUnitById('s1').hp===60 && qbUnitById('s1').conds.some(c=>c.name==='Stunned'));
+  setQB(null);
 }
 
 /* ---- Eyebite: a single Wis save gates a player-chosen effect (sleep/frighten/panic) ---- */
 T('Eyebite parses as a Wis-save spell (routes to enemy targeting)', parseSpellMechanics('Eyebite').save==='wis');
 T('Eyebite has three player-chosen outcomes', EYEBITE_OPTIONS.length===3 && EYEBITE_OPTIONS.some(o=>o.key==='panic'));
-{ const foe={id:'e1',name:'Cultist',hp:20,conds:[]};
-  const resistMsg=eyebiteResolve(foe, EYEBITE_OPTIONS[0], 15, 20);   // roll beats DC → resists
+{ const foe={id:'e1',side:'mon',name:'Cultist',hp:20,conds:[]};
+  const resistMsg=eyebiteResolve(qbAdapter,'pc',foe, EYEBITE_OPTIONS[0], 15, 20);   // roll beats DC → resists
   T('Eyebite: a passed save means no effect at all (not half)', foe.conds.length===0 && /resists/.test(resistMsg));
-  const sleepMsg=eyebiteResolve(foe, EYEBITE_OPTIONS[0], 15, 2);     // roll fails DC → sleeps
+  const sleepMsg=eyebiteResolve(qbAdapter,'pc',foe, EYEBITE_OPTIONS[0], 15, 2);     // roll fails DC → sleeps
   T('Eyebite: a failed save applies the chosen condition', foe.conds.some(c=>c.name==='Asleep') && /fails/.test(sleepMsg));
-  const foe2={id:'e2',name:'Bandit',hp:20,max:20,ac:12,conds:[]};
+  const foe2={id:'e2',side:'mon',name:'Bandit',hp:20,max:20,ac:12,conds:[]};
   setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1}, monsters:[foe2], players:[{id:'pc',side:'pc',name:'Hero',c:newCharacter('Hero'),x:0,y:0}]});
-  const panicMsg=eyebiteResolve(foe2, EYEBITE_OPTIONS[2], 15, 2);
+  const panicMsg=eyebiteResolve(qbAdapter,'pc',foe2, EYEBITE_OPTIONS[2], 15, 2);
   T('Eyebite Panicked: failed save deals 3d6 psychic AND poisons', foe2.hp<20 && foe2.conds.some(c=>c.name==='Poisoned') && /Poisoned/.test(panicMsg));
   setQB(null);
 }
+T('Eyebite\'s choice picker is mode-agnostic (adapter+casterId, not hardcoded to Quick Battle)', typeof openEyebiteChoice==='function' && openEyebiteChoice.length===5);
 
-/* ---- Holy Aura: reactive trigger — an attacker who HITS the warded creature must save or be blinded ---- */
-{ const attacker={id:'m1',name:'Orc',conds:[]};
-  const resistMsg=holyAuraResolve(attacker, 15, 18);
-  T('Holy Aura: an attacker who makes its save is unaffected', attacker.conds.length===0 && /resists/.test(resistMsg));
-  const blindMsg=holyAuraResolve(attacker, 15, 3);
-  T('Holy Aura: an attacker who fails its save is blinded', attacker.conds.some(c=>c.name==='Blinded') && /blinds/.test(blindMsg));
+/* ---- Holy Aura: reactive trigger — an attacker who HITS the warded creature must save or be
+   blinded. Was a QB-only bespoke check in qbResolveAttack; now lives in Engine.attack itself
+   (via ad.holyAuraDC) so DM-session monster attacks against a warded player get it too. ---- */
+{ setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'x'}], turn:0, battle:{active:true,round:1}});
+  const resistHc=newCharacter('Warded1'); resistHc.effects=[{name:'Holy Aura', dc:1}];   // DC 1 → no save can fail
+  const pc1={id:'pc1', side:'pc', name:'Warded1', c:resistHc, x:0,y:0};
+  const mo1={id:'m1', side:'mon', name:'Orc', base:'Orc', hp:20, max:20, ac:1, conds:[]};
+  getQB().players=[pc1]; getQB().monsters=[mo1];
+  const ev1=Engine.attack(qbAdapter, mo1.id, pc1.id, {name:'Test', toHit:99, dmg:'1'}, {face:20, apply:false});
+  T('Holy Aura: an attacker who makes its save is unaffected', ev1.hit===true && ev1.holyAura && ev1.holyAura.blinded===false && !mo1.conds.some(c=>c.name==='Blinded'));
+
+  const blindHc=newCharacter('Warded2'); blindHc.effects=[{name:'Holy Aura', dc:999}];   // DC 999 → no save can succeed
+  const pc2={id:'pc2', side:'pc', name:'Warded2', c:blindHc, x:0,y:0};
+  const mo2={id:'m2', side:'mon', name:'Orc', base:'Orc', hp:20, max:20, ac:1, conds:[]};
+  getQB().players=[pc2]; getQB().monsters=[mo2];
+  const ev2=Engine.attack(qbAdapter, mo2.id, pc2.id, {name:'Test', toHit:99, dmg:'1'}, {face:20, apply:false});
+  T('Holy Aura: an attacker who fails its save is blinded', ev2.hit===true && ev2.holyAura && ev2.holyAura.blinded===true && mo2.conds.some(c=>c.name==='Blinded'));
+  setQB(null);
 }
 { const hc=newCharacter('Aura'); hc.cls='Cleric'; hc.level=17; applyClassDefaults(hc); hc.spells=[{name:'Holy Aura',level:8,prepared:true}]; startBattle(hc);
   castSpell(hc,'Holy Aura',8);
   const he=hc.effects.find(e=>e.name==='Holy Aura');
-  T('casting Holy Aura stashes a save DC on the effect (reused by qbResolveAttack)', he && typeof he.dc==='number');
+  T('casting Holy Aura stashes a save DC on the effect (reused by Engine.attack via holyAuraDC)', he && typeof he.dc==='number');
+}
+/* ---- Sanctuary: a Wis save gates the attack itself, before any to-hit roll — moved from a
+   QB-only check in qbApplyIntent into Engine.attack (ad.sanctuaryDC) so it also works for
+   DM-session attacks (sessionAdapter) against a warded, net-synced player. ---- */
+{ setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'x'}], turn:0, battle:{active:true,round:1}});
+  const blockedHc=newCharacter('Warded3'); blockedHc.effects=[{name:'Sanctuary', dc:999}];   // DC 999 → the attacker can't possibly beat it
+  const pc3={id:'pc3', side:'pc', name:'Warded3', c:blockedHc, x:0,y:0};
+  const mo3={id:'m3', side:'mon', name:'Orc', base:'Orc', hp:20, max:20, ac:1, conds:[]};
+  getQB().players=[pc3]; getQB().monsters=[mo3];
+  const ev3=Engine.attack(qbAdapter, mo3.id, pc3.id, {name:'Test', toHit:99, dmg:'1'}, {face:20});
+  T('Sanctuary: a failed save blocks the attack before any to-hit roll happens', ev3.hit===false && ev3.sanctuary && ev3.sanctuary.blocked===true && ev3.total===undefined);
+
+  const throughHc=newCharacter('Warded4'); throughHc.effects=[{name:'Sanctuary', dc:1}];   // DC 1 → the attacker always beats it
+  const pc4={id:'pc4', side:'pc', name:'Warded4', c:throughHc, x:0,y:0};
+  const mo4={id:'m4', side:'mon', name:'Orc', base:'Orc', hp:20, max:20, ac:1, conds:[]};
+  getQB().players=[pc4]; getQB().monsters=[mo4];
+  const ev4=Engine.attack(qbAdapter, mo4.id, pc4.id, {name:'Test', toHit:99, dmg:'1'}, {face:20, apply:false});
+  T('Sanctuary: a passed save lets the attack through normally', ev4.hit===true && ev4.sanctuary && ev4.sanctuary.blocked===false);
+  setQB(null);
+}
+/* ---- Sanctuary/Holy Aura DCs are computed player-side and synced to the DM's session
+   mirror (sessionAdapter has no .c to read effects from) — verify the sync round-trip. ---- */
+{ const s=newCharacter('Synced'); s.effects=[{name:'Sanctuary', dc:14}, {name:'Holy Aura', dc:16}];
+  const sanc=(s.effects||[]).find(e=>e.name==='Sanctuary'), holy=(s.effects||[]).find(e=>e.name==='Holy Aura');
+  const helloPayload={sanctuaryDC:sanc?sanc.dc:null, holyAuraDC:holy?holy.dc:null};
+  T('the hello payload carries both DCs off the player device', helloPayload.sanctuaryDC===14 && helloPayload.holyAuraDC===16);
+  const p={}; Object.assign(p,{sanctuaryDC:helloPayload.sanctuaryDC||null, holyAuraDC:helloPayload.holyAuraDC||null});
+  T('sessionAdapter reads the synced DC off the DM-side player mirror', sessionAdapter.sanctuaryDC(p)===14 && sessionAdapter.holyAuraDC(p)===16);
 }
 
 T('unitConds reads monster conds & PC conditions', unitConds({conds:[{name:'Prone'}]}).has('Prone') && unitConds({c:{conditions:{Poisoned:true}}}).has('Poisoned') && unitConds(null).size===0);
@@ -437,6 +491,22 @@ T('grease terrain is difficult and trips creatures', TERRAIN['grease'].diff===tr
   T('qbPaintTerrain does not overwrite solid terrain', gs2.map.tiles['2,2']==='wall');
 }
 
+/* ---- Web: was AoE + Restrained-on-cast only, never painted terrain, so anyone who
+   walked into the webbed area *after* the cast (rather than being caught in the initial
+   blast) got no effect at all and the map never showed webbing — same failure shape as
+   Grease pre-v92. ---- */
+T('Web is registered as a terrain-painting spell', SPELL_TERRAIN['Web'] && SPELL_TERRAIN['Web'].terrain==='web');
+T('web terrain is difficult and restrains creatures', TERRAIN['web'].diff===true && TERRAIN['web'].restrain===true);
+{ const gs4={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[]};
+  qbPaintTerrain(gs4, {x:1,y:1}, 0, 'Web', 999);   // DC 999 → always fails the save
+  const mo={name:'Spider Victim',x:1,y:1,base:'Goblin'};
+  qbCheckTerrainProne(gs4, mo, 1, 1, false);
+  T('a monster that fails its save is Restrained by web, not Prone', mo.conds && mo.conds.some(c=>c.name==='Restrained') && !mo.conds.some(c=>c.name==='Prone'));
+  const c=newCharacter('Tangled'); c.abilities.dex=10;
+  qbCheckTerrainProne(gs4, c, 1, 1, true);
+  T('a PC that fails its save is Restrained by web, not Prone', c.conditions && c.conditions['Restrained']===true && !c.conditions['Prone']);
+}
+
 /* ---- coverage audit: a spell described with area/condition language must have a
    matching SPELL_AOE/SPELL_COND row, or it silently does nothing when cast (this is
    exactly how Grease and Meteor Swarm broke — this test exists so the next one fails
@@ -475,14 +545,27 @@ T('Shocking Grasp cond is registered as No Reactions', SPELL_COND['Shocking Gras
 /* ---- concentration check pauses the AI turn loop (was: battle kept running,
    and a fresh hit re-opened a brand-new unrolled prompt on top of the unanswered one,
    which looked like "unlimited rerolls") ---- */
-{ setQB({active:true, paused:false, log:[]});
+{ resetConc(); setQB({active:true, paused:false, log:[]});
   const cc=newCharacter('Concentrator'); cc.concentration={active:true, spell:'Bless'}; cc.effects=[{name:'Bless',rounds:10,conc:true}];
   concentrationCheck(cc, 10);
   T('opening a concentration prompt pauses the QB turn loop', getQB().paused===true);
   const turnBefore=42; getQB().turn=turnBefore; getQB().order=[{k:'p',id:'x'},{k:'m',id:'y'}]; getQB().battle={round:1};
   qbNextTurn();
   T('qbNextTurn does not advance the turn while paused (defers instead)', getQB().turn===turnBefore);
-  getQB().paused=false; setQB(null);
+  getQB().paused=false; setQB(null); resetConc();
+}
+
+/* ---- a second hit landing before the first concentration check is answered (two monster
+   opportunity attacks off one move, a multiattack monster, two attackers in the same tick)
+   used to just overwrite the modal with a fresh unrolled prompt, silently discarding the
+   pending one — this read as "unlimited re-rolls" in play. It must queue instead. ---- */
+{ resetConc(); setQB({active:true, paused:false, log:[]});
+  const cc=newCharacter('Queued'); cc.concentration={active:true, spell:'Bless'}; cc.effects=[{name:'Bless',rounds:10,conc:true}];
+  concentrationCheck(cc, 10);   // opens the modal, consumes nothing else yet
+  concentrationCheck(cc, 8);    // a second hit arrives before the first is answered
+  T('a concentration check while one is already open queues instead of clobbering it', concQueueLen()===1);
+  T('QB stays paused while a check is queued', getQB().paused===true);
+  setQB(null); resetConc();
 }
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
