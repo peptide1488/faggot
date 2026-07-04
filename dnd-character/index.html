@@ -281,7 +281,9 @@
   .mapgrid.iso .mcell{position:absolute;width:40px;height:40px;transform:scaleY(.5) rotate(45deg);box-shadow:inset 0 0 0 1px rgba(40,28,12,.35)}
   .mapgrid.iso .mcell:not([class*="ter-"]){background:linear-gradient(145deg,#efe3c4,#dccba0)}
   .mapgrid.iso .isoContent{position:absolute;inset:0;transform:rotate(-45deg) scaleY(2);display:grid;place-items:center}
-  .mapgrid.iso .isoRiser{position:absolute;width:56px;background:linear-gradient(180deg,rgba(70,54,36,.6),rgba(30,22,15,.85));box-shadow:inset 0 0 0 1px rgba(0,0,0,.3)}
+  .mapgrid.iso .isoFace{position:absolute}
+  .mapgrid.iso .isoFaceL{background:linear-gradient(180deg,rgba(55,42,28,.75),rgba(28,20,13,.9))}
+  .mapgrid.iso .isoFaceR{background:linear-gradient(180deg,rgba(78,60,40,.7),rgba(38,28,18,.88))}
   /* terrain tiles */
   .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
   .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
@@ -2128,11 +2130,18 @@ function attackFx(kind){ const el=document.createElement('div'); el.className='c
 /* ---- on-map effects: projectiles & explosions ---- */
 function curMapGrid(){ return document.querySelector('#stModal .mapgrid, #qstModal .mapgrid, #atkModal .mapgrid, #smModal .mapgrid') || document.querySelector('.mapgrid'); }
 function cellCenter(grid,x,y){ const cell=grid.querySelector('[data-cell="'+x+','+y+'"]'); if(!cell) return null; const g=grid.getBoundingClientRect(), c=cell.getBoundingClientRect(); return {x:c.left-g.left+c.width/2, y:c.top-g.top+c.height/2}; }
+// The map is usually below the fold on Quick Battle's tall layout, so the flying glyph
+// and burst below can fire off-screen unseen (the big center-screen castFx flash still
+// shows, which reads as "an explosion in the middle of the screen and nothing else").
+// Scroll the battlefield into view whenever something is about to animate on it.
+function scrollMapIntoView(wrap){ try{ wrap.scrollIntoView({behavior:'smooth', block:'center'}); }catch(e){} }
 function mapProjectile(fx,fy,tx,ty,glyph){ const grid=curMapGrid(); if(!grid) return; const a=cellCenter(grid,fx,fy), b=cellCenter(grid,tx,ty); if(!a||!b) return; const wrap=grid.parentElement; if(getComputedStyle(wrap).position==='static') wrap.style.position='relative';
+  scrollMapIntoView(wrap);
   const p=document.createElement('div'); p.className='mfx-proj'; p.textContent=glyph||'✦'; p.style.left=a.x+'px'; p.style.top=a.y+'px';
   const ang=Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI; p.style.setProperty('--rot',ang+'deg'); wrap.appendChild(p);
   requestAnimationFrame(()=>{ p.style.left=b.x+'px'; p.style.top=b.y+'px'; }); setTimeout(()=>p.remove(),420); }
 function mapBurst(cx,cy,radius){ const grid=curMapGrid(); if(!grid) return; const c=cellCenter(grid,cx,cy); if(!c) return; const wrap=grid.parentElement; if(getComputedStyle(wrap).position==='static') wrap.style.position='relative';
+  scrollMapIntoView(wrap);
   const sz=((radius||1)*2+1)*38; const b=document.createElement('div'); b.className='mfx-burst'; b.style.width=b.style.height=sz+'px'; b.style.left=c.x+'px'; b.style.top=c.y+'px'; wrap.appendChild(b); setTimeout(()=>b.remove(),650); }
 function playClickSound(target){
   const el=target.closest && target.closest('button, .pip, .chip, [data-tab], .diebtn, [data-collapse], label.pill');
@@ -4309,7 +4318,16 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     let riser='';
     if(iso){ const cx=(x-y)*ISO_X+offX, cyLift=(x+y)*ISO_Y-hgt*ISO_ELEV+ISO_PAD;
       style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(x+y)*10+hgt};`;
-      if(hgt>0) riser=`<div class="isoRiser" style="left:${cx-28}px;top:${cyLift+ISO_Y}px;height:${hgt*ISO_ELEV}px;z-index:${(x+y)*10+hgt-1}"></div>`;
+      // Two slanted faces (the diamond's south-west and south-east sides, extended down by
+      // its own height) drawn on every elevated tile unconditionally — adjacent same-height
+      // tiles' faces land in the exact same screen rect as their neighbor's opposite face
+      // (left of one == right of the next, in both grid directions), so a run of tiles reads
+      // as one continuous wall instead of per-tile gaps; higher neighbours simply paint over
+      // the redundant portion via normal z-order.
+      if(hgt>0){ const z=(x+y)*10+hgt-1, fh=hgt*ISO_ELEV, tot=ISO_Y+fh, bp=(ISO_Y/tot*100).toFixed(1), dp=(fh/tot*100).toFixed(1);
+        riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 0%,100% ${bp}%,100% 100%,0% ${dp}%);z-index:${z}"></div>`;
+        riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 0%,0% ${bp}%,0% 100%,100% ${dp}%);z-index:${z}"></div>`;
+      }
     }
     const inner=iso?`<div class="isoContent">${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
     cells+=riser+`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
@@ -5235,7 +5253,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v102';
+const APP_VERSION='v103';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
