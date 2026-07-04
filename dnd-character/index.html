@@ -3652,14 +3652,15 @@ const NAME_SOFT=['Ael','Lia','Syl','Mira','Eli','Thes','Yara','Fen','Lor','Ny','
 const NAME_END =['ar','on','eth','wyn','ius','ra','din','gar','iel','os','ana','eth','wen','dor','iel','as','ira','oth','wick','mund','ric','las','enn','ys','via','ael','orn','isa','wyr','ond','ix','aine','ette','een','aly'];
 const NAME_SURNAME=['Stormborn','Ironheart','Blackwood','Brightblade','Shadowstep','Oakenshield','Stonefist','Emberfell','Frostbeard','Nightwhisper','Dawnstrider','Grimhollow','Silvervein','Thornwood','Ravenscar','Hollowbrook','Ashdown','Wolfsbane','Goldmane','Duskwalker','Highcliff','Stormvale','Briarheart','Coppervein','Mistwalker','Drakemoor'];
 function randName(race){ const soft=['Elf','Half-Elf','Fairy','Gnome','Aasimar','Tabaxi','Tiefling'].includes(race); const first=rndPick(soft?NAME_SOFT:NAME_HARD)+rndPick(NAME_END); return Math.random()<0.5 ? first+' '+rndPick(NAME_SURNAME) : first; }
-let rndAns={style:'melee',heritage:'common',vibe:'heroic'};
-function openRandomBuilder(){ rndAns={style:'melee',heritage:'common',vibe:'heroic',power:'1'}; renderRandomBuilder(); }
+let rndAns={style:'melee',heritage:'common',vibe:'heroic',exactClass:''};
+function openRandomBuilder(){ rndAns={style:'melee',heritage:'common',vibe:'heroic',power:'1',exactClass:''}; renderRandomBuilder(); }
 function renderRandomBuilder(){
   const Q=(key,label,opts)=>`<div class="field"><label>${label}</label><div class="seg" style="flex-wrap:wrap;gap:6px;background:none;border:0;padding:0">${opts.map(([v,l])=>`<button class="${rndAns[key]===v?'on':''}" data-rq="${key}" data-rv="${v}" style="flex:1 0 30%;background:${rndAns[key]===v?'var(--accent2)':'var(--panel2)'};border:1px solid var(--line);color:${rndAns[key]===v?'#f6efda':'var(--ink)'}">${l}</button>`).join('')}</div></div>`;
   $('#modalRoot').innerHTML=`<div class="modal" id="rndModal"><div class="sheet"><div class="grip"></div>
     <h2>🎲 Random Hero Forge</h2>
     <p class="muted" style="font-size:13px;margin:0 0 14px">Answer four questions and we'll roll up a complete character — abilities, skills, spells and a pixel portrait.</p>
     ${Q('style','How do you like to fight?',[['melee','⚔️ Up close'],['ranged','🏹 At range'],['sneaky','🗡️ Sneaky'],['caster','✨ Spells'],['support','✚ Support']])}
+    <div class="field"><label>Exact class (optional — skips the style roll above)</label><select id="rndExactCls"><option value="">🎲 Random from style</option>${CLASSES.filter(k=>k!=='Other').map(k=>`<option value="${k}" ${rndAns.exactClass===k?'selected':''}>${k}</option>`).join('')}</select></div>
     ${Q('heritage','What heritage calls to you?',[['common','🧑 Common'],['fae','🧝 Fae'],['stout','🪓 Stout'],['fierce','👹 Fierce'],['exotic','🐾 Exotic']])}
     ${Q('vibe','Pick a vibe',[['heroic','🛡️ Heroic'],['dark','🌑 Mysterious'],['wild','🍃 Wild'],['clever','📚 Clever'],['charming','🎭 Charming']])}
     ${Q('power','How seasoned?',[['1','🌱 Level 1'],['5','⚔️ Level 5'],['10','🦁 Level 10'],['20','🐉 EPIC — Lv 20']])}
@@ -3669,11 +3670,12 @@ function renderRandomBuilder(){
   $('#rndModal').onclick=e=>{ if(e.target.id==='rndModal') $('#modalRoot').innerHTML=''; };
   $('#rndClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   document.querySelectorAll('[data-rq]').forEach(b=>b.addEventListener('click',()=>{ rndAns[b.dataset.rq]=b.dataset.rv; renderRandomBuilder(); }));
+  { const ec=$('#rndExactCls'); if(ec) ec.onchange=()=>{ rndAns.exactClass=ec.value; }; }
   $('#rndForge').onclick=()=>{ $('#modalRoot').innerHTML=''; forgeRandom(rndAns); };
 }
 function forgeRandom(ans){
   const c=newCharacter();
-  c.cls=rndPick(RND_CLASS[ans.style]||['Fighter']);
+  c.cls=ans.exactClass||rndPick(RND_CLASS[ans.style]||['Fighter']);
   let pool=(RND_RACE[ans.heritage]||RND_RACE.common).concat(RND_VIBE_RACE[ans.vibe]||[]).filter(r=>RACES.includes(r));
   c.race=rndPick(pool);
   c.background=rndPick(RND_BG[c.cls]||['Folk Hero']);
@@ -5217,7 +5219,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v100';
+const APP_VERSION='v101';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
