@@ -269,6 +269,14 @@
   .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
   .mapwrap{overflow:auto;border-radius:12px;padding:6px;background:#b8a274;
     box-shadow:inset 0 0 18px rgba(60,42,20,.35), 0 2px 8px rgba(0,0,0,.18)}
+  /* On mobile, break the map viewport out of main's + the card's padding to use the full
+     screen width — every mode (DM, player battle, quick battle, modal map pickers) shares this
+     one .mapwrap, and all of them sit inside a centered container, so the standard "full-bleed
+     from a centered max-width parent" trick works regardless of nesting depth/modal vs card. */
+  @media(max-width:760px){
+    .mapwrap{margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);border-radius:0;
+      padding-left:calc(6px + env(safe-area-inset-left));padding-right:calc(6px + env(safe-area-inset-right))}
+  }
   .mapgrid{display:grid;gap:0;min-width:max-content;
     background:
       repeating-linear-gradient(0deg,rgba(40,28,12,.20) 0 1px,transparent 1px 36px),
@@ -5368,7 +5376,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v118';
+const APP_VERSION='v118.1';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
