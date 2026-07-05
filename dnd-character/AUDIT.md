@@ -641,3 +641,44 @@ missing from both fails the suite instead of shipping a silent wrong-range bug a
 
 Verified locally via headless Chromium before shipping: circular blast renders as an actual
 stepped disc (not a square) on a real grid.
+
+## v120 — range shape unified (melee/touch stay square, real ranged distances go circular), bigger preset maps, Dominate concentration bug
+Follow-up to v119: "make firebolt and ranged spells respect range, also range needs to be
+circular as well, maybe the maps bigger too."
+
+**Range enforcement already existed** — `openSpellTarget`/`qbSpellTarget`'s `inRange(x,y)` was
+already gating which tiles could be tapped before v119, so "respect range" wasn't a missing
+check; it was that v119 only made the *AoE blast* circular, not the *range ring* or any other
+range check, so a Fire Bolt's "can I reach that far" boundary was still the square `gridDist`
+shape while its blast (N/A, Fire Bolt has none) — but Fireball's *range* ring was still square
+even though its *blast* was now circular, an inconsistency. Swept every remaining
+`gridDist(...)<=N`-as-range site and moved it onto `inBlast`: the spell/teleport range-highlight
+in `mapGridHTML` (`opts.rangeFrom`), both `inRange` closures (`openSpellTarget`, `qbSpellTarget`),
+`monstersInRange` (weapon/cantrip range filtering), `dmMonsterAttack`'s target-in-range filter,
+`teleportOk`, and Quick Battle's own `qbInRange`. Left untouched (still Chebyshev, deliberately):
+`attackFlow`'s melee-vs-ranged check and `leavesReach` (opportunity attacks) — both are *adjacency*
+tests (radius 1–2, "is this reach"), where a diagonal tile is conventionally still adjacent; a
+strict circle at that radius would wrongly reject a valid diagonal melee/touch target.
+
+To keep both cases correct from one function, `inBlast(cx,cy,x,y,r)` now branches on `r`: `r<=1`
+stays Chebyshev (melee reach, Touch-range spells, and small "everything adjacent" AoE like
+Thunderwave/Grease all fall here), `r>1` is genuinely circular (Euclidean). This is why
+`qbPaintTerrain`'s r1 Grease test reverted to expecting the full 3x3 square — that radius is the
+deliberate exception, not a regression — while a new r2 test proves real circularity above it.
+
+**Bigger maps**: all 8 `MAP_PRESETS` roughly doubled in area (e.g. Open Field 15×10 → 26×18,
+Dungeon/Castle/Cave/Swamp 15×11-12 → 26×20) — with corrected ranges from v119 (Fire Bolt 24
+tiles, Fireball 30), the old ~15-tile-wide maps made "range" nearly meaningless (everything was
+always in range). Hand-placed features (walls/water/decor coords) are untouched, just sitting
+within a larger open area now — verified via headless Chromium that the enlarged Open Field
+preset still renders correctly (hill, decor, textures all intact) with no errors.
+
+**Dominate concentration bug** (live report: "i was dominating a monster... the monster died,
+but it kept asking me to concentrate, it needs to end the spell"): `c.concentration` only ever
+tracked the spell *name*, never which monster it was bound to, so nothing noticed when a
+Dominated creature died. Fixed in `qbCheckEnd` (already called after every damage-dealing action
+in Quick Battle, the only mode this feature exists in) — if concentration is active on one of the
+three Dominate spells and no monster with the `Dominated` condition is still alive, concentration
+and its `conc` effect both clear automatically. As a side effect this also correctly handles a
+Dominate spell whose initial save succeeded (nothing was ever dominated) — concentration drops
+on the very next check instead of lingering on a spell that never took hold.

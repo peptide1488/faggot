@@ -276,6 +276,32 @@ T('dominated monster attacks its former ally, not the player', domInts.length>0 
 const domInts2=BRAINS.tactical(domQB, domQB.monsters[1]);
 T('enemy monster fights back against the dominated one', domInts2.length>0 && domInts2[0].type==='attack' && domInts2[0].targetId==='g1');
 
+/* ---- regression: Dominate concentration must end when its target dies — live report: "i was
+   dominating a monster... the monster died, but it kept asking me to concentrate." qbCheckEnd
+   runs after every damage-dealing action, so it's the natural place to notice "nothing left to
+   dominate" and drop concentration instead of nagging for a save on a pet that no longer exists. */
+(function(){
+  const pc={hp:{cur:20,max:20}, concentration:{active:true, spell:'Dominate Monster'}, effects:[{name:'Dominate Monster', conc:true}], log:[]};
+  setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},
+    monsters:[{id:'pet',side:'mon',hp:0,max:10,x:0,y:1,conds:[{name:'Dominated',rounds:10}]},
+              {id:'foe',side:'mon',hp:15,max:15,x:0,y:2,conds:[]}],
+    players:[{id:'pc',side:'pc',name:'Hero',c:pc,x:0,y:0}]});
+  qbCheckEnd();
+  T('concentration drops once the dominated monster dies (hp<=0)', getQB().players[0].c.concentration.active===false);
+  T('the conc effect is removed from c.effects too, not just the flag', getQB().players[0].c.effects.every(e=>!e.conc));
+  setQB(null);
+})();
+(function(){
+  // sanity: a LIVING dominated monster must NOT have its concentration cleared
+  const pc={hp:{cur:20,max:20}, concentration:{active:true, spell:'Dominate Monster'}, effects:[{name:'Dominate Monster', conc:true}], log:[]};
+  setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},
+    monsters:[{id:'pet',side:'mon',hp:5,max:10,x:0,y:1,conds:[{name:'Dominated',rounds:10}]}],
+    players:[{id:'pc',side:'pc',name:'Hero',c:pc,x:0,y:0}]});
+  qbCheckEnd();
+  T('concentration stays active while the dominated monster is still alive', getQB().players[0].c.concentration.active===true);
+  setQB(null);
+})();
+
 /* ---- conditions drive advantage/disadvantage on attacks (PHB) ---- */
 const S=a=>new Set(a);
 T('poisoned attacker → disadvantage', attackAdvantage(S(['Poisoned']),S([]),true).adv===-1);
@@ -477,11 +503,12 @@ T('Grease is registered as a terrain-painting spell', SPELL_TERRAIN['Grease'] &&
 T('grease terrain is difficult and trips creatures', TERRAIN['grease'].diff===true && TERRAIN['grease'].prone===true);
 { const gs={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[]};
   qbPaintTerrain(gs, {x:2,y:2}, 1, 'Grease', 13);
-  // AoE blasts are circular (inBlast, Euclidean), not square — for r1 that's the centre plus its
-  // 4 orthogonal neighbours, NOT the 4 diagonal corners (distance sqrt(2) > 1). See AUDIT.md v119.
-  const painted=['2,1','1,2','2,2','3,2','2,3'].every(k=>gs.map.tiles[k]==='grease');
-  const cornersUnpainted=['1,1','3,1','1,3','3,3'].every(k=>gs.map.tiles[k]==null);
-  T('qbPaintTerrain covers a circular blast (plus-shape for r1), not a square', painted && cornersUnpainted);
+  // inBlast keeps r<=1 as a square (Chebyshev) on purpose — r1 covers Grease/Web/Thunderwave/
+  // Burning Hands, all effectively "everything adjacent," and a diagonal tile is conventionally
+  // still adjacent (same reasoning as melee reach). Circularity only kicks in above r1 — see the
+  // "genuinely circular for r>1" block below and inBlast's own comment. See AUDIT.md v119/v119.1.
+  const painted=['1,1','2,1','3,1','1,2','2,2','3,2','1,3','2,3','3,3'].every(k=>gs.map.tiles[k]==='grease');
+  T('qbPaintTerrain covers the full 3x3 for r1 (diagonal still counts as adjacent at this radius)', painted);
   T('qbHazardAt finds the painted hazard and its save DC', qbHazardAt(gs,2,2) && qbHazardAt(gs,2,2).dc===13);
   T('untouched tiles outside the blast stay unpainted', gs.map.tiles['0,0']===undefined);
   gs.battle.round=11; qbExpireHazards(gs);
@@ -686,12 +713,16 @@ T('Shocking Grasp is Touch range (1 tile)', spellRangeTiles('Shocking Grasp')===
   T('every attack/save/AoE spell resolves a real range (no silent 60ft-default gap remains)', missing.length===0);
 })();
 
-/* ---- regression: AoE blasts (Fireball etc.) must be circular, not the square gridDist/Chebyshev
-   shape — the live report ("fireball radius should be circle") plus a correctness issue: the
-   square shape silently hit corner tiles a true sphere wouldn't reach. inBlast is Euclidean. ---- */
+/* ---- regression: AoE blasts and ranged spell/weapon targeting (Fireball, Fire Bolt's range
+   ring, monster attack range, teleport distance…) must be circular for any real distance, not
+   the square gridDist/Chebyshev shape — live reports: "fireball radius should be circle" and
+   "range needs to be circular as well." r<=1 is the deliberate exception (melee reach / Touch
+   spells / a tiny "everything adjacent" AoE) where diagonal still conventionally counts. ---- */
 T('a tile at Euclidean distance 1.0 (orthogonal neighbour) is inside a radius-1 blast', inBlast(2,2,2,3,1));
-T("a tile at Euclidean distance √2 (diagonal neighbour) is OUTSIDE a radius-1 blast — that's the square-vs-circle bug", !inBlast(2,2,3,3,1));
+T('at radius 1 (melee/touch), a DIAGONAL neighbour still counts — the deliberate exception', inBlast(2,2,3,3,1));
 T('the blast centre itself is always inside its own radius', inBlast(2,2,2,2,1));
+T('at radius 2 (a genuine ranged distance), an orthogonal tile at distance 2 is inside', inBlast(2,2,2,4,2));
+T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's the square-vs-circle bug, fixed for anything beyond melee/touch range", !inBlast(2,2,4,4,2));
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

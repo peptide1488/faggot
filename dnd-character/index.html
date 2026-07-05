@@ -890,7 +890,7 @@ function teleportOk(s, me, tp, x, y){ const td=TERRAIN[terrainAt(s,x,y)];
   if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)) return false;
   if((s.players||[]).some(p=>p!==me&&p.x===x&&p.y===y)) return false;
   if(me.x===x&&me.y===y) return false;
-  if(gridDist(me.x,me.y,x,y)>tp.tiles) return false;
+  if(!inBlast(me.x,me.y,x,y,tp.tiles)) return false;
   if(tp.los && !losClear(s,me.x,me.y,x,y)) return false;
   return true; }
 // Shared destination picker (net play + Quick Battle). commit(x,y) applies the
@@ -932,7 +932,7 @@ function openSpellTarget(c, name, level){
   const s=net.session, me=myMapPos(), tilesR=spellRangeTiles(name);
   const seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
   const reach = seek ? reachableCells(s, me.x, me.y, tilesR*5) : null;
-  const inRange=(x,y)=> seek ? reach[x+','+y]!=null : (gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
+  const inRange=(x,y)=> seek ? reach[x+','+y]!=null : (inBlast(me.x,me.y,x,y,tilesR) && losClear(s,me.x,me.y,x,y));
   const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && inBlast(ctr.x,ctr.y,mo.x,mo.y,aoeR));
   const dc0=8+profBonus(c)+mod(abil(c,c.spellAbility));
   const sp=dmgTotal=>({name, dc:dc0, save:mc.save, dmgTotal, dtype:mc.dtype, cond:spellCondOf(name)});
@@ -4029,7 +4029,11 @@ function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by))
 // Euclidean, not gridDist's Chebyshev. Keep gridDist for range/movement (intentional 5e
 // diagonal-movement simplification, see AUDIT.md); this is only for "is (x,y) inside a radius-r
 // blast centered at (cx,cy)". +0.0001 guards against float rounding excluding an exact-radius tile.
-function inBlast(cx,cy,x,y,r){ return Math.hypot(cx-x,cy-y)<=r+0.0001; }
+// r<=1 stays Chebyshev on purpose: a radius/range of exactly 1 tile represents melee reach or a
+// Touch spell, where a diagonally-adjacent target is still conventionally "adjacent" — a strict
+// circle at r=1 (distance to a true diagonal is √2) would wrongly reject a valid touch-range
+// target. Anything bigger than 1 tile is a genuine ranged distance, so it gets a real circle.
+function inBlast(cx,cy,x,y,r){ if(r<=1) return gridDist(cx,cy,x,y)<=r; return Math.hypot(cx-x,cy-y)<=r+0.0001; }
 // Opportunity attack trigger: a mover leaves an enemy's reach when it starts within reach and ends outside it.
 function leavesReach(fromX,fromY,toX,toY,ex,ey,reach){ reach=reach||1; return gridDist(fromX,fromY,ex,ey)<=reach && gridDist(toX,toY,ex,ey)>reach; }
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
@@ -4080,7 +4084,7 @@ function animateToken(get,set,path,step,done,unit){ let i=0, px=unit?unit.x:null
 function weaponRangeTiles(c,w){ if(!w) return 1; if(w.type==='ranged'){ const m=String(w.rng||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; } return /reach/.test(w.props||'')?2:1; }
 function spellRangeTiles(name){ const mc=parseSpellMechanics(name); if((mc.range||'')==='Touch') return 1; const m=String(mc.range||'').match(/(\d+)/); return m?Math.max(1,Math.ceil(Number(m[1])/5)):12; }
 function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
-function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; return net.session.monsters.filter(m=>m.hp>0 && gridDist(fromPos.x,fromPos.y,m.x,m.y)<=tiles && losClear(net.session,fromPos.x,fromPos.y,m.x,m.y)); }
+function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; return net.session.monsters.filter(m=>m.hp>0 && inBlast(fromPos.x,fromPos.y,m.x,m.y,tiles) && losClear(net.session,fromPos.x,fromPos.y,m.x,m.y)); }
 // Player picks an attack/spell, then a target that's actually in range.
 function playerAttackMenu(c){
   const me=myMapPos();
@@ -4377,40 +4381,40 @@ const MAP_PRESETS=(()=>{ const P={};
   const rect=(t,x0,y0,x1,y1,k)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) t[x+','+y]=k; };
   const put=(t,a,k)=>a.forEach(([x,y])=>t[x+','+y]=k);
   const hrect=(ht,x0,y0,x1,y1,lvl)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) ht[x+','+y]=lvl; };
-  (function field(){ const w=15,h=10,t={},ht={},dc={}; fill(t,w,h,'grass');
+  (function field(){ const w=26,h=18,t={},ht={},dc={}; fill(t,w,h,'grass');
     rect(t,10,1,13,4,'water'); rect(t,2,6,4,8,'mud'); rect(t,6,7,9,9,'sand');
     put(t,[[5,3],[6,3],[5,4],[12,7],[13,7]],'brush'); put(t,[[8,2],[3,1],[11,8]],'wall');
     hrect(ht,0,0,2,2,1); ht['1,1']=2;   // small hill, corner high ground
     put(dc,[[4,2],[7,1],[2,4],[9,3],[14,5],[1,7]],'tree'); put(dc,[[6,2],[11,6],[3,3]],'bush');
     P['Open Field']={cols:w,rows:h,tiles:t,height:ht,decor:dc}; })();
-  (function dungeon(){ const w=15,h=11,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h);
+  (function dungeon(){ const w=26,h=20,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h);
     for(let y=1;y<h-1;y++) if(y!==5) t['7,'+y]='wall'; for(let x=1;x<7;x++) if(x!==3) t[x+',5']='wall'; for(let x=7;x<w-1;x++) if(x!==10) t[x+',6']='wall';
     put(t,[[2,2],[3,2]],'rubble'); rect(t,11,2,12,3,'fog'); put(t,[[4,8],[5,8]],'acid'); put(t,[[10,2]],'brush');
     hrect(ht,11,7,12,8,1);   // raised dais in the back chamber
     P['Dungeon']={cols:w,rows:h,tiles:t,height:ht}; })();
-  (function tavern(){ const w=13,h=10,t={},ht={},dc={}; fill(t,w,h,'wood'); box(t,w,h); delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood';
+  (function tavern(){ const w=22,h=18,t={},ht={},dc={}; fill(t,w,h,'wood'); box(t,w,h); delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood';
     for(let x=1;x<5;x++) t[x+',2']='wall'; put(t,[[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]],'wall'); t[(w-2)+',1']='lava'; put(t,[[1,8],[11,8]],'brush');
     hrect(ht,5,7,7,8,1);   // the stage
     put(dc,[[2,6],[10,6]],'bush');   // potted greenery by the walls
     P['Tavern']={cols:w,rows:h,tiles:t,height:ht,decor:dc}; })();
-  (function castle(){ const w=15,h=12,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h); t['6,'+(h-1)]='stone'; t['7,'+(h-1)]='stone';
+  (function castle(){ const w=26,h=20,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h); t['6,'+(h-1)]='stone'; t['7,'+(h-1)]='stone';
     for(let x=5;x<10;x++){ t[x+',3']='wall'; t[x+',8']='wall'; } for(let y=3;y<=8;y++){ t['5,'+y]='wall'; t['9,'+y]='wall'; } delete t['7,8']; t['7,8']='stone';
     rect(t,1,1,1,h-2,'water'); rect(t,w-2,1,w-2,h-2,'water'); put(t,[[2,2],[12,2],[2,9],[12,9]],'wall');
     hrect(ht,6,4,8,7,1);   // raised inner keep floor
     hrect(ht,0,0,0,h-1,2); hrect(ht,w-1,0,w-1,h-1,2);   // tall battlements on the outer walls
     P['Castle']={cols:w,rows:h,tiles:t,height:ht}; })();
-  (function cave(){ const w=15,h=11,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h);
+  (function cave(){ const w=26,h=20,t={},ht={}; fill(t,w,h,'stone'); box(t,w,h);
     put(t,[[3,3],[4,3],[8,2],[10,5],[5,7],[6,8],[12,8],[2,6],[7,4],[11,3]],'wall'); put(t,[[3,4],[9,6],[6,2]],'rubble');
     rect(t,2,8,4,9,'water'); put(t,[[11,2],[12,2],[11,3]],'lava'); put(t,[[7,7],[8,8]],'brush'); rect(t,9,8,10,9,'fog');
     hrect(ht,11,6,13,7,1); hrect(ht,2,3,3,4,1);   // rocky ledges
     P['Cave']={cols:w,rows:h,tiles:t,height:ht}; })();
-  (function chasm(){ const w=15,h=10,t={}; fill(t,w,h,'grass'); for(let x=0;x<w;x++){ t[x+',4']='void'; t[x+',5']='void'; } [7,8].forEach(x=>{ t[x+',4']='wood'; t[x+',5']='wood'; }); put(t,[[2,2],[12,7]],'brush'); rect(t,1,7,2,8,'mud'); P['Chasm Bridge']={cols:w,rows:h,tiles:t}; })();
-  (function swamp(){ const w=15,h=11,t={},ht={}; fill(t,w,h,'mud'); rect(t,2,2,5,4,'water'); rect(t,9,5,12,8,'water'); rect(t,6,8,8,9,'acid');
+  (function chasm(){ const w=26,h=18,t={}; fill(t,w,h,'grass'); for(let x=0;x<w;x++){ t[x+',4']='void'; t[x+',5']='void'; } [7,8].forEach(x=>{ t[x+',4']='wood'; t[x+',5']='wood'; }); put(t,[[2,2],[12,7]],'brush'); rect(t,1,7,2,8,'mud'); P['Chasm Bridge']={cols:w,rows:h,tiles:t}; })();
+  (function swamp(){ const w=26,h=20,t={},ht={}; fill(t,w,h,'mud'); rect(t,2,2,5,4,'water'); rect(t,9,5,12,8,'water'); rect(t,6,8,8,9,'acid');
     put(t,[[1,6],[4,7],[7,2],[10,2],[13,4],[12,9],[3,9],[8,5]],'brush'); rect(t,5,5,6,6,'fog');
     rect(t,12,1,13,2,'grass'); hrect(ht,12,1,13,2,1);   // dry hummock above the mud
     P['Swamp']={cols:w,rows:h,tiles:t,height:ht}; })();
-  (function frozen(){ const w=15,h=10,t={},ht={}; fill(t,w,h,'snow'); rect(t,5,3,9,6,'ice'); put(t,[[2,2],[12,2],[3,7],[11,7],[7,1],[7,8]],'wall'); put(t,[[1,5],[13,5]],'brush');
-    hrect(ht,0,0,1,9,1); hrect(ht,w-2,0,w-1,9,1);   // ice ridges along both banks
+  (function frozen(){ const w=26,h=18,t={},ht={}; fill(t,w,h,'snow'); rect(t,5,3,9,6,'ice'); put(t,[[2,2],[12,2],[3,7],[11,7],[7,1],[7,8]],'wall'); put(t,[[1,5],[13,5]],'brush');
+    hrect(ht,0,0,1,h-1,1); hrect(ht,w-2,0,w-1,h-1,1);   // ice ridges along both banks
     P['Frozen Lake']={cols:w,rows:h,tiles:t,height:ht}; })();
   return P; })();
 function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
@@ -4478,7 +4482,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     else if(td&&td.e) tok=`<span style="font-size:15px">${td.e}</span>`;
     let extra='';
     if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=(opts.reachNormal!=null && fc>opts.reachNormal)?' reachdash':' reach'; }
-    if(opts.rangeFrom && ter!=='wall'){ const rf=opts.rangeFrom, d=Math.max(Math.abs(rf.x-x),Math.abs(rf.y-y)); if(d>0 && d<=rf.tiles && losClear(s,rf.x,rf.y,x,y)) extra+=' reach'; }
+    if(opts.rangeFrom && ter!=='wall'){ const rf=opts.rangeFrom; if((x!==rf.x||y!==rf.y) && inBlast(rf.x,rf.y,x,y,rf.tiles) && losClear(s,rf.x,rf.y,x,y)) extra+=' reach'; }
     if(opts.blast){ const bl=opts.blast; if(inBlast(bl.x,bl.y,x,y,bl.r)) extra+=' intarget'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
@@ -4692,7 +4696,7 @@ function dmMonsterAttack(mo){
     if(st.consumed) return true;
     if(mo.attacksLeft<=0){ flashBanner(mo.name+' has no attacks left — ▶ Next turn to reset'); return false; }
     mo.attacksLeft=Math.max(0,mo.attacksLeft-1); st.consumed=true; dmBroadcast(); return true; };
-  function draw(){ const range=st.atk.tiles||1; const inR=players.filter(p=>gridDist(mo.x,mo.y,p.x,p.y)<=range && losClear(net.session,mo.x,mo.y,p.x,p.y));
+  function draw(){ const range=st.atk.tiles||1; const inR=players.filter(p=>inBlast(mo.x,mo.y,p.x,p.y,range) && losClear(net.session,mo.x,mo.y,p.x,p.y));
     if(inR.length && !inR.some(p=>p.id===st.targetId)) st.targetId=inR[0].id;
     const t=tgt(); const left=(net.session.battle.active&&mo.attacksLeft!=null)?mo.attacksLeft:null;
     let body=`<h2>⚔ ${esc(mo.name)} attacks${left!=null?` <span class="muted" style="font-size:12px;text-transform:none">— ${left}/${mo.attacks||1} attack${(mo.attacks||1)>1?'s':''} left</span>`:''}</h2>`;
@@ -5030,9 +5034,21 @@ function qbPcAttacks(c){ const out=[];
   if(!out.length) out.push({name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
   return out;
 }
-function qbInRange(att, tgt, atk){ const d=gridDist(att.x,att.y,tgt.x,tgt.y); if(d>(atk.tiles||1)) return false; if((atk.tiles||1)>1) return losClear(QB,att.x,att.y,tgt.x,tgt.y); return true; }
+function qbInRange(att, tgt, atk){ if(!inBlast(att.x,att.y,tgt.x,tgt.y,atk.tiles||1)) return false; if((atk.tiles||1)>1) return losClear(QB,att.x,att.y,tgt.x,tgt.y); return true; }
 function qbEnemiesAlive(){ return QB.monsters.some(m=>m.hp>0 && !isDominated(m)); }   // your dominated pet doesn't keep the battle going
-function qbCheckEnd(){ if(!QB) return; if(QB.players[0].c.hp.cur<=0){ QB.over='lose'; } else if(!qbEnemiesAlive()){ QB.over='win'; } }
+const DOMINATE_SPELLS=new Set(['Dominate Beast','Dominate Person','Dominate Monster']);
+function qbCheckEnd(){ if(!QB) return;
+  // A Dominate spell's concentration has nothing left to hold onto once its target dies (or if
+  // the initial save succeeded and nothing was ever dominated) — without this it kept prompting
+  // concentration saves for a pet that no longer exists. Checked here since qbCheckEnd already
+  // runs after every damage-dealing action, so this fires the instant the dominated monster dies.
+  const c=QB.players[0].c;
+  if(c.concentration && c.concentration.active && DOMINATE_SPELLS.has(c.concentration.spell) && !QB.monsters.some(m=>m.hp>0 && isDominated(m))){
+    const spell=c.concentration.spell;
+    c.effects=(c.effects||[]).filter(e=>!e.conc); c.concentration={active:false, spell:''};
+    logChange(c,'💨 '+spell+' ends — no dominated creature remains'); qbLog('💨 '+spell+' ends — no dominated creature remains');
+  }
+  if(QB.players[0].c.hp.cur<=0){ QB.over='lose'; } else if(!qbEnemiesAlive()){ QB.over='win'; } }
 
 function openQuickBattle(){
   if(!DB.length){ flashBanner('Create a character first (or roll a random hero)'); return; }
@@ -5358,7 +5374,7 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
   if(!canCast(c,name,level)) return;   // pre-check; castSpell re-checks + spends on confirm
   const mc=scaleCantrip(c,name,parseSpellMechanics(name)), tilesR=spellRangeTiles(name), seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
   const reach=seek?reachableCells(s,me.x,me.y,tilesR*5):null;
-  const inRange=(x,y)=> seek?reach[x+','+y]!=null:(gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
+  const inRange=(x,y)=> seek?reach[x+','+y]!=null:(inBlast(me.x,me.y,x,y,tilesR) && losClear(s,me.x,me.y,x,y));
   const spellAtk=profBonus(c)+mod(abil(c,c.spellAbility));
   const dc0=8+profBonus(c)+mod(abil(c,c.spellAbility));
   const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && inBlast(ctr.x,ctr.y,mo.x,mo.y,aoeR));
@@ -5437,7 +5453,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v119';
+const APP_VERSION='v120';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
