@@ -515,3 +515,37 @@ same "stray offset" class of bug fixed in v116.1, cheap to close off now.
 `rules-test.js` regression: builds a real 4-tile staircase (heights 3,2,1,0), runs the actual
 `paintIsoCanvas` against a minimal recording fake `<canvas>` context, and asserts each drawn
 downhill wall's drop is exactly one `ISO_ELEV` step — not the full absolute height.
+
+### v117.2 — v117.1's fix still drew invisible "back-facing" walls, double-drawing every boundary; tree sprite replaced with an emoji
+Live re-test of v117.1 on the Open Field preset (a 3x3 hill, flat height-1 ring around a
+height-2 peak) showed the elevation risers rendering as "clear/overlapped" — reported live.
+v117.1 computed a wall on **all 4** neighbour directions whenever this tile was higher than
+that neighbour (`l`/`r` toward `rx+1`/`ry+1`, plus `nl`/`nr` toward `rx-1`/`ry-1` for the
+"far" pit-interior look). That's wrong for a reason that has nothing to do with sizing: this
+fixed isometric camera (`cx=(rx-ry)*ISO_X, cy=(rx+ry)*ISO_Y`) can only ever see the two faces
+that point toward *increasing* rx/ry ("in front") — the other two always point away from the
+camera and are occluded by the tile's own top face, **regardless of neighbour heights**. A
+solid peak (the pyramid's centre tile) is higher than *all four* of its neighbours, so v117.1
+drew a spurious `nl`/`nr` wall on its back side *in addition to* the correct `l`/`r` front
+walls — two different quads meeting at the same vertex but computed from different neighbour
+heights, which don't align (verified by hand: at the shared LEFT vertex, the front wall's
+extent and the back wall's extent land at different y-coordinates, leaving a gap/mismatch —
+exactly the "clear/overlapped" look).
+
+The fix is to **delete `nl`/`nr` entirely** — there is no scenario that needs them. A pit's
+"far interior wall" isn't a separate case at all: it just falls out of the *higher neighbour
+on that side* drawing its own ordinary front-facing (`l` or `r`) wall pointing back into the
+hole. Verified by hand for a lone pit surrounded by flat ground: the west neighbour's `r`-wall
+and the north neighbour's `l`-wall point into the pit and cover exactly the two interior walls
+a viewer would expect to see; the pit's near (east/south) sides correctly get no wall at all
+(occluded by the rim, matching how every other isometric tactics game draws pits). `rules-test.js`
+now asserts a solid peak surrounded on all 4 sides by lower ground draws exactly 2 walls (not 4
+and not the old code's mismatched pair) inside a height-0 buffer ring so the assertion isn't
+polluted by the separate (correct) "map edge defaults to height 0" behavior.
+
+Also, on the same screenshot: the `sprites/decor/tree.png` sprite itself was flagged as
+low-quality art ("looks like shit") — not a rendering bug, the actual pixel art reads like a
+totem pole up close. Rather than iterate on hand-drawn pixel art blind (no way to preview it
+before a live round-trip), `DECOR_MANIFEST.tree` now renders a plain 🌳 emoji
+(`decorTokenHTML`'s `e.emoji` branch) instead of loading the PNG — guaranteed-clean, no art
+skill required. `bush.png` is untouched (not flagged).

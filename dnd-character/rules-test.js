@@ -692,5 +692,38 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   T('each staircase step walls only its own 1-level drop (ISO_ELEV px), not the full absolute height', drops.every(d=>Math.abs(d-ISO_ELEV)<0.01));
 })();
 
+/* ---- regression: a solid mound (higher than every neighbour, e.g. the Open Field preset's
+   3x3 pyramid hill) must draw ONLY its 2 camera-facing walls, never a wall on the other 2
+   sides too. A prior version of drawIsoTile drew a "back-facing" wall whenever a tile was
+   higher than its rx-1/ry-1 neighbour as well — which double-drew the same boundary from both
+   this tile (a spurious back wall) and that neighbour (its own legitimate front wall towards a
+   *different*, unrelated direction), producing mismatched overlapping/gappy quads exactly where
+   the live report showed clear/overlapped walls on the pyramid hill. There is no scenario where
+   a back-facing wall is correct: that face always points away from this fixed iso camera and is
+   occluded by the tile's own top face, regardless of neighbour heights (a pit's far interior
+   wall isn't a special case either — it just falls out of the higher neighbour's own front wall
+   pointing back into the hole). ---- */
+(function(){
+  function fakeCtx(){ let path=[]; const calls=[];
+    return { calls, clearRect(){}, beginPath(){ path=[]; }, moveTo(x,y){ path.push([x,y]); }, lineTo(x,y){ path.push([x,y]); }, closePath(){},
+      fill(){ calls.push({fillStyle:this._fillStyle, path}); }, stroke(){}, createPattern(){ return null; },
+      set fillStyle(v){ this._fillStyle=v; }, get fillStyle(){ return this._fillStyle; } };
+  }
+  // 3x3 block at height 1 with a height-2 peak in the middle (same shape as MAP_PRESETS' Open
+  // Field hill), padded with a height-0 ring so no tile touches the map edge — isolates the
+  // pyramid's own wall count from the separate (correct) "map edge defaults to 0" behaviour.
+  const heights={}; for(let y=1;y<=3;y++) for(let x=1;x<=3;x++) heights[x+','+y]=1; heights['2,2']=2;
+  const cv={width:500,height:500,dataset:{cols:'5',rows:'5',rot:'0',tiles:encodeURIComponent('{}'),height:encodeURIComponent(JSON.stringify(heights))}};
+  const ctx=fakeCtx(); cv.getContext=()=>ctx;
+  paintIsoCanvas(cv);
+  const tops=ctx.calls.filter(c=>c.fillStyle==='#e2d0a6'), walls=ctx.calls.filter(c=>c.fillStyle!=='#e2d0a6');
+  T('every one of the 25 tiles draws its top face exactly once', tops.length===25);
+  // Hand-verified: the peak draws 2 (its own l+r), 3 ring tiles draw 1 each toward the
+  // height-0 buffer, 1 ring corner tile draws 2 (both its sides border the buffer) = 8 total.
+  // The bug this guards against would add a spurious back-facing wall to every one of these
+  // tiles too, roughly doubling (or worse, mismatching) this count.
+  T('the pyramid draws exactly 8 walls total — no back-facing duplicates', walls.length===8);
+})();
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
