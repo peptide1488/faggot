@@ -549,3 +549,52 @@ totem pole up close. Rather than iterate on hand-drawn pixel art blind (no way t
 before a live round-trip), `DECOR_MANIFEST.tree` now renders a plain 🌳 emoji
 (`decorTokenHTML`'s `e.emoji` branch) instead of loading the PNG — guaranteed-clean, no art
 skill required. `bush.png` is untouched (not flagged).
+
+### v118 — iso renderer extracted to its own file, rebuilt clean, verified against real Chromium instead of live-deploy screenshots
+After v117.2 the user reported the walls *still* looked wrong on a live screenshot. Investigating,
+two things became clear:
+
+1. **The live-deploy-screenshot loop was the actual bottleneck**, not any single geometry bug.
+   Each round (v117 → v117.1 → v117.2) fixed exactly what the previous screenshot showed and
+   broke something the previous screenshot hadn't exercised, because there was no way to see the
+   renderer's actual output locally — every check meant push, wait for Pages, ask the user to
+   screenshot, and read pixel positions out of a JPEG in words.
+2. **The renderer was welded into the same ~5,200-line index.html as every 5e rule**, so even a
+   pure-rendering bug meant reading `mapGridHTML`, iso CSS, and canvas-paint code side by side in
+   one file. User's call: pull it out entirely.
+
+**What changed:**
+- New `iso-renderer.js` — a standalone, dependency-free file owning 100% of the pixel rendering:
+  `ISO_X/Y/ELEV/PAD`, `tileScreenPos` (single source of truth for a tile's screen position — both
+  `mapGridHTML`'s `.mcell` hitbox placement and the canvas painter call this same function now,
+  removing the copy-pasted-formula-drift risk that existed even in v117.2), `paint()` (reads
+  `data-cols/rows/rot/tiles/height/palette` off a `<canvas class="isocanvas">` and depth-sorts +
+  draws it), and its own `MutationObserver` — `index.html` never calls into this file directly,
+  it just emits the right `<canvas data-*>` tag and the renderer notices and paints itself.
+- `index.html`'s `mapGridHTML` now only owns game/DOM concerns: `TERRAIN`/`DECOR` (gameplay flags),
+  the `.mcell` hitboxes + click/target/reach-highlight/DM-terrain-paint wiring, token/decor HTML.
+  It hands the renderer a small `TERRAIN_PALETTE` ({key: hexColor}, no gameplay flags) via a new
+  `data-palette` attribute alongside the existing `data-tiles`/`data-height`.
+- The wall geometry itself is the same rule arrived at in v117.2 (only the 2 camera-facing walls,
+  each sized to the exact height difference to that specific neighbour — a pit's far wall isn't a
+  special case, it falls out of the higher neighbour's own front wall) — rebuilt fresh in the new
+  file rather than copy-pasted, so it isn't carrying forward any DOM/CSS-era assumptions.
+- **New verification step that should have existed from v117 onward**: `tools/iso-preview.js`
+  (dev-only, not shipped/precached) drives a real headless Chromium via Playwright — actual
+  browser Canvas2D, not a second hand-rolled implementation that could have its own bugs — to
+  render canonical scenes (flat/mound/pit/staircase/pyramid-hill/mound-next-to-pit) to PNG.
+  Looking at these directly caught nothing new (the v117.2 geometry turned out to already be
+  correct — the pyramid rendered perfectly first try), which is itself useful information: it
+  means the live "still fucked up" report was very likely a stale service-worker/PWA cache on the
+  user's device showing v117.1, not an actual v117.2 regression. Also spot-verified the real
+  `index.html` + `iso-renderer.js` integration end-to-end (loaded the actual file in headless
+  Chromium, called the real `mapGridHTML` with the real `MAP_PRESETS['Open Field']`) — renders
+  correctly, no console errors.
+- Tests split accordingly: `iso-renderer-test.js` (staircase-step, pyramid-8-walls-not-4,
+  `tileScreenPos` sanity — all exercising `iso-renderer.js` directly) vs. `rules-test.js` keeping
+  only a thin check that `mapGridHTML` hands the renderer the right data attributes.
+
+**Process note for next time a rendering bug is reported live**: run
+`node tools/iso-preview.js` and look at the PNGs *before* assuming the fix needs another
+iteration — a hand-verified-by-eye local render is strictly more informative than a live
+screenshot round-trip, and doesn't cost a Pages build + a message back-and-forth.

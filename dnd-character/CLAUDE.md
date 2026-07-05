@@ -1,17 +1,28 @@
 # Grimoire — D&D 5e Character Keeper
 
-Single-file PWA (deliberate design — do NOT split it): all logic and data live in the
-`<script>` block of **index.html** (~4,600 lines). `sw.js` is the offline cache,
-`AUDIT.md` is the 5e-rules baseline, `rules-test.js` is the test harness.
+Single-file PWA (deliberate design for the rules/UI — do NOT split *that* up): all game logic
+and data live in the `<script>` block of **index.html** (~4,600 lines). `sw.js` is the offline
+cache, `AUDIT.md` is the 5e-rules baseline, `rules-test.js` is the test harness.
+
+**Exception: the isometric battle-map renderer is its own file, `iso-renderer.js`**, loaded via
+`<script src>` — split out deliberately (v118) after three straight live-deploy rounds fixing
+one rendering bug at a time. It knows nothing about D&D rules; index.html's `mapGridHTML` hands
+it plain data via a `<canvas class="isocanvas" data-cols/rows/rot/tiles/height/palette>` tag and
+`iso-renderer.js`'s own `MutationObserver` paints it — no direct function call between the two.
+Its tests live in `iso-renderer-test.js`, separate from `rules-test.js`. See AUDIT.md v117–v118.
 
 ## Efficiency protocol — read this before reading code
 
 index.html is dense (~5,200 lines, but each line is long/minified-style), so naive Read/Grep
 usage burns tokens fast. Follow this order:
 
-1. **Run `node rules-test.js` first.** 190+ assertions covering slots, action economy,
-   concentration, AC, death rules, fighting styles, parsing, monster data. If it passes,
-   the rules core is sound — only read code relevant to the actual task.
+1. **Run `node rules-test.js` first** (5e rules) **and `node iso-renderer-test.js`** if touching
+   the battle map. 190+ assertions covering slots, action economy, concentration, AC, death
+   rules, fighting styles, parsing, monster data. If it passes, the rules core is sound — only
+   read code relevant to the actual task. **For any battle-map rendering change, also render the
+   canonical scenes with `node tools/iso-preview.js` and `Read` the resulting PNGs yourself
+   before pushing** — this is what three rounds of blind live-deploy screenshot debugging cost;
+   don't ship an elevation/wall change without having looked at the pixels first.
 2. **Never read index.html top-to-bottom.** Grep for the anchors below. Once grep shows you
    the exact line, prefer editing that line directly over a `Read` of a wide surrounding
    range — reserve `Read` for cases where you genuinely need the neighboring logic to
@@ -82,6 +93,12 @@ Rules logic:
 Combat / grid / multiplayer:
 - `function dijkstra` / `losClear` / `coverBetween` / `leavesReach` — grid math
   (Chebyshev distance, 1 tile = 5 ft, no diagonal corner-cutting)
+- **Isometric battle-map rendering lives in `iso-renderer.js`, not index.html** — `mapGridHTML`
+  (in index.html) still owns terrain/decor/token HTML + the `.mcell` hitboxes/click-target/DM
+  terrain-paint wiring, and calls `IsoRenderer.tileScreenPos` for hitbox placement, but the
+  actual `<canvas>` pixels (diamond tiles, elevation walls) are painted entirely by
+  `iso-renderer.js`'s own `paint()`/`MutationObserver`. Grep anchors there, not here, for
+  anything about how the iso view actually looks.
 - `const Engine =` — unified resolver: `Engine.attack` (weapons) + `Engine.castApply`
   (spells: save → half dmg / no condition on success → resist/vuln/imm). Adapters bind it
   to each mode: `qbAdapter`, `sessionAdapter` (DM authoritative), `playerNetAdapter`

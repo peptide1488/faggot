@@ -20,6 +20,8 @@ global.window=global; global.addEventListener=()=>{};
 try{ global.navigator={}; }catch(e){}   // Node ≥21 exposes a read-only navigator — the built-in one is fine
 global.confirm=()=>true; global.alert=()=>{}; global.prompt=()=>null;
 global.requestAnimationFrame=f=>f();
+global.Image=class{ constructor(){ this.complete=false; this.naturalWidth=0; } set src(v){} };
+require('./iso-renderer.js');   // mapGridHTML calls IsoRenderer.stageSize/tileScreenPos — see iso-renderer-test.js for the renderer's own tests
 
 // consts inside eval stay block-scoped — re-export the data tables the tests assert on
 eval(src.replace('"use strict";','')+
@@ -34,8 +36,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
   'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
-  'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
-  'globalThis.ISO_X=ISO_X;globalThis.ISO_Y=ISO_Y;globalThis.ISO_ELEV=ISO_ELEV;globalThis.ISO_PAD=ISO_PAD;');
+  'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -650,11 +651,10 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
 })();
 
-/* ---- iso floor/elevation now paints on a <canvas> underlay (paintIsoCanvas), not DOM
-   isoFace risers + z-index — see AUDIT.md/CLAUDE.md for why the DOM/CSS approach kept
-   breaking on occlusion. Depth sort key is (rx+ry)*100+height (bumped from *10 so height
-   can never cross a row boundary), consumed by a real painter's-algorithm draw loop instead
-   of CSS stacking, which can't desync. ---- */
+/* ---- iso rendering itself (paint geometry, wall math, depth sort) lives entirely in
+   iso-renderer.js now — run iso-renderer-test.js for those regressions (staircase overshoot,
+   pyramid back-face double-draw). mapGridHTML's own job is just to hand that renderer the
+   right data via the canvas's data-* attributes, which is all this asserts. ---- */
 (function(){
   setIsoView(true);
   const s={map:{cols:5,rows:5,tiles:{},height:{'2,2':-1},decor:{}}, monsters:[], players:[]};
@@ -663,66 +663,8 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   T('iso mode emits a canvas carrying the height data for painting', !!cvMatch);
   const heightData=JSON.parse(decodeURIComponent(cvMatch[1]));
   T('the pit height reaches the canvas data attribute', heightData['2,2']===-1);
-  const [rx,ry]=rotXY(2,2,5,5,0), depth=(rx+ry)*100+heightData['2,2'];
-  T("a pit tile's depth key stays within one tile-step (100) of its own baseline, not offset by a stray +50", Math.abs(depth-(rx+ry)*100)<=100);
-})();
-
-/* ---- regression: a staircase's walls must wall the exact 1-level step to each neighbour, not
-   drop every elevated tile all the way to absolute ground. The old geometry (ported straight
-   from the DOM isoFace code) did the latter — a 3-high tile's riser overshot 3 levels down
-   regardless of what was actually next to it, cutting a disconnected dark wedge across the
-   2-high/1-high steps below it (reported live as "walls z-sorting is fucked"). Exercises the
-   real paintIsoCanvas/drawIsoTile via a minimal fake 2D context that records each fill's path
-   so we can measure the actual drawn wall height, not just re-derive the formula in the test. */
-(function(){
-  function fakeCtx(){ let path=[]; const calls=[];
-    return { calls, clearRect(){}, beginPath(){ path=[]; }, moveTo(x,y){ path.push([x,y]); }, lineTo(x,y){ path.push([x,y]); }, closePath(){},
-      fill(){ calls.push({fillStyle:this._fillStyle, path}); }, stroke(){}, createPattern(){ return null; },
-      set fillStyle(v){ this._fillStyle=v; }, get fillStyle(){ return this._fillStyle; } };
-  }
-  const heights={'0,0':3,'1,0':2,'2,0':1,'3,0':0};
-  const cv={width:500,height:200,dataset:{cols:'4',rows:'1',rot:'0',tiles:encodeURIComponent('{}'),height:encodeURIComponent(JSON.stringify(heights))}};
-  const ctx=fakeCtx(); cv.getContext=()=>ctx;
-  paintIsoCanvas(cv);
-  const wallFills=ctx.calls.filter(c=>c.fillStyle==='rgba(48,36,24,.72)');   // the "r" (toward rx+1) wall colour
-  // path is [a, b, b+drop, a+drop] (see drawIsoTile's quad()) — path[2].y - path[1].y is the
-  // drop itself, isolated from the diamond's own ISO_Y height baked into a/b.
-  const drops=wallFills.map(c=>c.path[2][1]-c.path[1][1]);
-  T('a staircase draws exactly one down-hill wall per step (3→2, 2→1, 1→0)', wallFills.length===3);
-  T('each staircase step walls only its own 1-level drop (ISO_ELEV px), not the full absolute height', drops.every(d=>Math.abs(d-ISO_ELEV)<0.01));
-})();
-
-/* ---- regression: a solid mound (higher than every neighbour, e.g. the Open Field preset's
-   3x3 pyramid hill) must draw ONLY its 2 camera-facing walls, never a wall on the other 2
-   sides too. A prior version of drawIsoTile drew a "back-facing" wall whenever a tile was
-   higher than its rx-1/ry-1 neighbour as well — which double-drew the same boundary from both
-   this tile (a spurious back wall) and that neighbour (its own legitimate front wall towards a
-   *different*, unrelated direction), producing mismatched overlapping/gappy quads exactly where
-   the live report showed clear/overlapped walls on the pyramid hill. There is no scenario where
-   a back-facing wall is correct: that face always points away from this fixed iso camera and is
-   occluded by the tile's own top face, regardless of neighbour heights (a pit's far interior
-   wall isn't a special case either — it just falls out of the higher neighbour's own front wall
-   pointing back into the hole). ---- */
-(function(){
-  function fakeCtx(){ let path=[]; const calls=[];
-    return { calls, clearRect(){}, beginPath(){ path=[]; }, moveTo(x,y){ path.push([x,y]); }, lineTo(x,y){ path.push([x,y]); }, closePath(){},
-      fill(){ calls.push({fillStyle:this._fillStyle, path}); }, stroke(){}, createPattern(){ return null; },
-      set fillStyle(v){ this._fillStyle=v; }, get fillStyle(){ return this._fillStyle; } };
-  }
-  // 3x3 block at height 1 with a height-2 peak in the middle (same shape as MAP_PRESETS' Open
-  // Field hill), padded with a height-0 ring so no tile touches the map edge — isolates the
-  // pyramid's own wall count from the separate (correct) "map edge defaults to 0" behaviour.
-  const heights={}; for(let y=1;y<=3;y++) for(let x=1;x<=3;x++) heights[x+','+y]=1; heights['2,2']=2;
-  const cv={width:500,height:500,dataset:{cols:'5',rows:'5',rot:'0',tiles:encodeURIComponent('{}'),height:encodeURIComponent(JSON.stringify(heights))}};
-  const ctx=fakeCtx(); cv.getContext=()=>ctx;
-  paintIsoCanvas(cv);
-  const tops=ctx.calls.filter(c=>c.fillStyle==='#e2d0a6'), walls=ctx.calls.filter(c=>c.fillStyle!=='#e2d0a6');
-  T('every one of the 25 tiles draws its top face exactly once', tops.length===25);
-  // Hand-verified: the peak draws 2 (its own l+r), 3 ring tiles draw 1 each toward the
-  // height-0 buffer, 1 ring corner tile draws 2 (both its sides border the buffer) = 8 total.
-  // The bug this guards against would add a spurious back-facing wall to every one of these
-  // tiles too, roughly doubling (or worse, mismatching) this count.
-  T('the pyramid draws exactly 8 walls total — no back-facing duplicates', walls.length===8);
+  const paletteMatch=html.match(/data-palette="([^"]*)"/);
+  T('mapGridHTML also hands the renderer a colour palette (decoupled from TERRAIN internals)', !!paletteMatch && Object.keys(JSON.parse(decodeURIComponent(paletteMatch[1]))).length>0);
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
