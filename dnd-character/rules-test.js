@@ -33,7 +33,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
-  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;');
+  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
+  'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -575,7 +576,7 @@ T('Shocking Grasp cond is registered as No Reactions', SPELL_COND['Shocking Gras
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
-const appVer=(src.match(/APP_VERSION='(v\d+)'/)||[])[1], swVer=(sw.match(/grimoire-(v\d+)/)||[])[1];
+const appVer=(src.match(/APP_VERSION='(v[\d.]+)'/)||[])[1], swVer=(sw.match(/grimoire-(v[\d.]+)/)||[])[1];
 T('sw.js cache version matches APP_VERSION ('+appVer+')', appVer && appVer===swVer);
 
 /* ---- map elevation (isometric renderer content) ---- */
@@ -646,6 +647,20 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   T('neither test sheet exceeds the bounding box on either axis', tallW<=DECOR_MAX_W && wideH<=DECOR_MAX_H);
   delete DECOR_MANIFEST.__test_tall; delete DECOR_MANIFEST.__test_wide;
   decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
+})();
+
+/* ---- pit riser z-index must stay within normal per-tile granularity, not a stray +50 ---- */
+// Regression test: a pit's interior-wall riser had z-index = (rx+ry)*10 - visHgt + 50 — the
+// stray +50 was far bigger than the 10-per-tile step everything else uses, so a pit's riser
+// outranked tiles several rows away instead of just the one immediate neighbour that should
+// occlude it, rendering as disconnected dark wedges slicing across nearby floor tiles.
+(function(){
+  setIsoView(true);
+  const s={map:{cols:5,rows:5,tiles:{},height:{'2,2':-1},decor:{}}, monsters:[], players:[]};
+  const html=mapGridHTML(s,true,{});
+  const zs=[...html.matchAll(/isoFace[LR]" style="[^"]*z-index:(-?\d+)/g)].map(m=>Number(m[1]));
+  T('a pit riser exists for the sunken tile', zs.length===2);
+  T("a pit riser's z-index stays within one tile-step (10) of its own tile's baseline, not offset by a stray +50", zs.every(z=>Math.abs(z-(2+2)*10)<=10));
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

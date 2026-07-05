@@ -4450,7 +4450,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
         // raised block: south-west/south-east faces extend DOWN from the diamond's bottom edge to ground
         riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 0%,100% ${bp}%,100% 100%,0% ${dp}%);z-index:${z};${wallFace}"></div>`;
         riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 0%,0% ${bp}%,0% 100%,100% ${dp}%);z-index:${z};${wallFace}"></div>`;
-      } else if(visHgt<0){ const z=(rx+ry)*10-visHgt+50, depth=-visHgt*ISO_ELEV, tot=ISO_Y+depth, bp=(100-(ISO_Y/tot*100)).toFixed(1), dp=(100-(depth/tot*100)).toFixed(1), boxTop=cyLift-ISO_Y-depth;
+      } else if(visHgt<0){ const z=(rx+ry)*10-visHgt, depth=-visHgt*ISO_ELEV, tot=ISO_Y+depth, bp=(100-(ISO_Y/tot*100)).toFixed(1), dp=(100-(depth/tot*100)).toFixed(1), boxTop=cyLift-ISO_Y-depth;
         // pit: north-west/north-east interior walls extend UP from the diamond's top edge to ground
         riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 100%,100% ${bp}%,100% 0%,0% ${dp}%);z-index:${z}"></div>`;
         riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 100%,0% ${bp}%,0% 0%,100% ${dp}%);z-index:${z}"></div>`;
@@ -5387,7 +5387,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v116';
+const APP_VERSION='v116.1';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
