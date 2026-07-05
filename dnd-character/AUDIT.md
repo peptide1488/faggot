@@ -366,10 +366,9 @@ render-layer rewrite only.
      interior faces are on the *far* side from the camera, which is different geometry from a
      raised block's near faces, not just a sign flip. Deferred; pits currently just sink and
      darken (`brightness` filter) with no true depth.
-- **Walls default to standing 2 levels tall** even with no explicit elevation painted (purely
-  visual — they're impassable/opaque via `TERRAIN.wall`'s flags either way), same as the
-  original v112 behavior; this was reverted to flat for one session while the clip-path
-  approach was broken, then restored once the real 3D cuboid made it render correctly.
+- **Walls render flat by default** (visHgt=hgt, no forced minimum). They stood 2 levels tall by
+  default for part of this session once the real 3D cuboid replaced the broken clip-path fake —
+  see v115.3 below for why that got reverted again.
 
 ### v115.2 — the yaw belongs in JS trig, not a scene-level rotateZ
 The first cut of this (v115/v115.1) put the 45°+90°*rot "diamond" yaw into the scene's own
@@ -405,3 +404,30 @@ against the live app: measured a wall tile's rendered bounding box before/after 
 went from 452×573 screen px — narrower than tall, i.e. rotated — to 719×608, correctly wider
 than tall). Regression test added: a one-column step and a one-row step must move the same
 horizontal distance in mirrored directions.
+
+### v115.3 — CSS 3D depth-sorting doesn't scale past a few adjacent raised tiles; walls revert to flat
+Once v115.2 fixed the projection, the dungeon room's wall PERIMETER (a long contiguous run of
+raised tiles, not a short corner) still looked wrong — reported as "not isometric at all." A
+12-tile straight test row reproduced it cleanly: visible gaps between every adjacent wall
+block's top face, reading as a jagged staircase instead of a solid parapet.
+
+This was **not** a position bug — `getBoundingClientRect()` on each `.tile3d` wrapper showed
+a perfectly smooth, linear progression (25px/24px alternating steps, no discontinuity), and
+even the `.top3d` faces' bounding rects legitimately overlapped their neighbors'. The gap is a
+rendering/occlusion artifact: CSS's `preserve-3d` depth sort is an approximation, not a real
+per-pixel z-buffer, and it visibly breaks down once there are more than a couple of
+coplanar-ish raised quads near each other — even though isolated tiles and short corners (the
+3-tile L-shape validated in the original v115 prototype) composite perfectly. This is the same
+underlying limitation that killed the pre-v115 clip-path approach, wearing a different
+disguise — CSS 3D genuinely has no z-buffer, full stop, and a wall *perimeter* is exactly the
+shape that stresses it hardest.
+
+Given walls are almost always long runs in real maps (dungeon borders, corridors) and rarely
+short isolated pillars, the practical fix is reverting "wall defaults to standing 2 levels" —
+flat tiles never had this problem (validated extensively: grass/water/sand all tile perfectly
+edge-to-edge, elevated or not, in every test this session). An explicitly-DM-elevated tile
+(e.g. a deliberately raised short section) still gets the real standing cuboid — only the
+automatic "every wall stands" default was reverted. If a future session wants standing walls
+back, the real fix is either a from-scratch WebGL renderer (real z-buffer, ruled out earlier
+for the dependency cost) or manually chunking long wall runs into merged multi-tile faces
+instead of one cuboid per tile (untested, likely real but nontrivial work).

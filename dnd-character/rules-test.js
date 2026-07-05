@@ -653,11 +653,17 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
 /* ---- battle map: real CSS 3D isometric scene (replaces the old 2D rotate+squash fake) ---- */
 (function(){
   setIsoView(true); setMapRotation(0);
-  const s={map:{cols:3,rows:3,tiles:{'1,1':'wall'},height:{},decor:{}}, monsters:[], players:[]};
+  const s={map:{cols:3,rows:3,tiles:{'1,1':'wall'},height:{'1,1':2},decor:{}}, monsters:[], players:[]};
   const html=mapGridHTML(s, true, {});
   T('iso mode emits a real 3D scene wrapper with a pure camera tilt (no scene-level rotateZ — see below for why)', /class="scene3d"[^>]*transform:rotateX\(60deg\)"/.test(html));
   T('every cell still gets a data-cell so click targeting/cellCenter work unchanged', (html.match(/data-cell="/g)||[]).length===9);
-  T("a plain wall with no explicit elevation still stands: exactly one south3d + one east3d face (the only tile with any height)", (html.match(/side3d south3d/g)||[]).length===1 && (html.match(/side3d east3d/g)||[]).length===1);
+  // Walls no longer default to standing when hgt=0 (a real dungeon's wall PERIMETER is a long
+  // contiguous run, and CSS's approximate 3D depth-sort visibly gaps between adjacent raised
+  // tiles there even though their positions are exactly correct — see AUDIT.md v115.2 addendum).
+  // An explicitly-elevated wall (DM-painted, e.g. a short raised section) still gets the real
+  // standing cuboid — that part of the mechanism is unchanged and still correct in isolation.
+  T("a plain wall with NO explicit elevation renders flat (no side3d faces) — the standing-by-default behavior was reverted", (s2=>{ const h=mapGridHTML(s2,true,{}); return !h.includes('side3d'); })({map:{cols:3,rows:3,tiles:{'1,1':'wall'},height:{},decor:{}}, monsters:[], players:[]}));
+  T("an EXPLICITLY elevated wall still stands: exactly one south3d + one east3d face", (html.match(/side3d south3d/g)||[]).length===1 && (html.match(/side3d east3d/g)||[]).length===1);
   T('the wall\'s side faces carry the wall terrain texture class', /side3d south3d ter-wall/.test(html) && /side3d east3d ter-wall/.test(html));
   setIsoView(false);
   const topdown=mapGridHTML(s,true,{});

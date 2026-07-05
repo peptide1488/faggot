@@ -4478,13 +4478,19 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     let faces='';
     let tileStyle3d='';
     if(iso){
-      // Walls default to standing 2 levels tall even with no explicit elevation set — they're
-      // already impassable/opaque either way, so this is purely visual. The old clip-path 3D
-      // fake couldn't pull this off (no real perspective on a flat texture), which is why it got
-      // reverted to flat earlier; the real CSS 3D cuboid below renders it correctly, so it's
-      // worth having walls actually read as standing obstacles again. elevBadge still reports the
-      // tile's REAL height (a plain wall with no elevation set shows no badge).
-      const visHgt = ter==='wall' ? Math.max(hgt,2) : hgt;
+      // Walls render flat (visHgt=hgt, no forced minimum) — still impassable/opaque via
+      // TERRAIN.wall's flags either way, purely a visual call. The standing-cuboid render is
+      // correct for an ISOLATED elevated tile or a short corner (validated in a 3-tile test),
+      // but a real dungeon's wall perimeter is a long contiguous run, and CSS's approximate 3D
+      // depth-sort visibly breaks down there: measured real, non-negligible gaps between
+      // adjacent raised tiles' top faces even though their translate3d positions are
+      // mathematically exact (verified via getBoundingClientRect on a 12-tile test row — no
+      // position error, just a rendering/occlusion artifact). This is the same wall that killed
+      // the earlier clip-path approach, just a different-shaped dead end: CSS 3D doesn't have a
+      // real z-buffer, and many coplanar-ish quads in a row is exactly where that shows. A DM
+      // can still explicitly raise a short run of terrain (hills etc.) and get the real cuboid —
+      // this only removes the automatic "wall = standing" default.
+      const visHgt = hgt;
       // Grid-centered coords rotated by camR (the 45°+90°*rot yaw) via real trig — this is what
       // makes the map read as a proper symmetric diamond (col and row mirror each other
       // horizontally) instead of the skewed/rotated-looking result a scene-level rotateZ gave.
@@ -5435,7 +5441,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v115.2';
+const APP_VERSION='v115.3';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
