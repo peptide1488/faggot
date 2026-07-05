@@ -276,26 +276,15 @@
       linear-gradient(145deg,#efe3c4,#dccba0);
     box-shadow:inset 0 0 0 1px rgba(40,28,12,.25)}
   .mcell{width:36px;height:36px;display:grid;place-items:center;position:relative;cursor:pointer;background:transparent}
-  /* isometric mode: absolutely-positioned diamond tiles (rotate+squash trick), content counter-rotated to stay upright */
+  /* isometric mode: floor/elevation is painted on a <canvas> underlay (real painter's-algorithm
+     depth sort — see paintIsoCanvas/drawIsoTile) so occlusion can never desync from z-index the
+     way the old clip-path riser divs did. The .mcell divs stay (invisible, no fill) purely as
+     absolutely-positioned hitboxes/highlight-rings for click/reach/target — same diamond
+     shape+position math as before, so all existing click/target/DM-paint code is untouched. */
   .mapgrid.iso{position:relative;background:none;box-shadow:none;min-width:0;isolation:isolate}
-  .mapgrid.iso .mcell{position:absolute;width:40px;height:40px;transform:scaleY(.5) rotate(45deg);box-shadow:inset 0 0 0 1px rgba(40,28,12,.35)}
-  .mapgrid.iso .mcell:not([class*="ter-"]){background:linear-gradient(145deg,#efe3c4,#dccba0)}
+  .mapgrid.iso canvas.isocanvas{position:absolute;left:0;top:0;pointer-events:none}
+  .mapgrid.iso .mcell{position:absolute;width:40px;height:40px;transform:scaleY(.5) rotate(45deg);background:none}
   .mapgrid.iso .isoContent{position:absolute;inset:0;transform:rotate(-45deg) scaleY(2);display:grid;place-items:center}
-  .mapgrid.iso .isoFace{position:absolute}
-  .mapgrid.iso .isoFaceL{background:linear-gradient(180deg,rgba(55,42,28,.75),rgba(28,20,13,.9))}
-  .mapgrid.iso .isoFaceR{background:linear-gradient(180deg,rgba(78,60,40,.7),rgba(38,28,18,.88))}
-  /* real texture swatches (RPG Paper Maker Basic Resources, user-owned license) — iso view only;
-     top-down/flat mode keeps its CSS-gradient look above unchanged */
-  .mapgrid.iso .mcell.ter-grass{background-image:url('sprites/tiles/grass.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-sand{background-image:url('sprites/tiles/sand.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-stone{background-image:url('sprites/tiles/stone.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-water{background-image:url('sprites/tiles/water.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-wood{background-image:url('sprites/tiles/wood.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-snow{background-image:url('sprites/tiles/snow.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-ice{background-image:url('sprites/tiles/ice.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-lava{background-image:url('sprites/tiles/lava.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso .mcell.ter-wall{background-image:url('sprites/tiles/wall.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
-  .mapgrid.iso .mcell.ter-mud{background-image:url('sprites/tiles/mud.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
   /* terrain tiles */
   .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
   .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
@@ -4428,42 +4417,71 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     if(hgt>0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(255,255,255,${(hgt*0.10).toFixed(2)}), 0 ${hgt+1}px ${hgt*2}px rgba(0,0,0,.28);`; }
     else if(hgt<0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(0,0,0,${(-hgt*0.14).toFixed(2)}), inset 0 ${-hgt}px ${-hgt*3}px rgba(0,0,0,.35);`; }
     const elevBadge = hgt!==0 ? `<span class="elevbadge">${hgt>0?'▲':'▼'}${Math.abs(hgt)}</span>` : '';
-    let riser='';
     if(iso){ const [rx,ry]=rotXY(x,y,cols,rows,rot);
-      // Walls used to be forced into a standing 2-level block (a clip-path-cut flat texture
-      // faking a 3D side-face) — CSS can't warp a top-down brick swatch to look perspective-
-      // correct from an isometric angle, it just reads as a mismatched, wonky smear. Real
-      // isometric wall art (drawn for that angle, like FF Tactics / RPG Maker's own iso tiles)
-      // would fix it; a CSS clip-path trick can't. Walls now render flat like every other
-      // terrain — still impassable/opaque via TERRAIN.wall's flags, just not visually "standing".
-      const visHgt = hgt;
-      const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-visHgt*ISO_ELEV+ISO_PAD;
-      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+visHgt};`;
-      const wallFace='';
-      // Two slanted faces per elevated/sunken tile, extending from the diamond's own edge to
-      // ground level, drawn unconditionally on every non-flat tile — adjacent same-height
-      // tiles' faces land in the exact same screen rect as their neighbor's opposite face
-      // (left of one == right of the next, in both grid directions), so a run of tiles reads
-      // as one continuous wall/pit-edge instead of per-tile gaps; taller/deeper neighbours
-      // simply paint over the redundant portion via normal z-order.
-      if(visHgt>0){ const z=(rx+ry)*10+visHgt-1, fh=visHgt*ISO_ELEV, tot=ISO_Y+fh, bp=(ISO_Y/tot*100).toFixed(1), dp=(fh/tot*100).toFixed(1);
-        // raised block: south-west/south-east faces extend DOWN from the diamond's bottom edge to ground
-        riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 0%,100% ${bp}%,100% 100%,0% ${dp}%);z-index:${z};${wallFace}"></div>`;
-        riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 0%,0% ${bp}%,0% 100%,100% ${dp}%);z-index:${z};${wallFace}"></div>`;
-      } else if(visHgt<0){ const z=(rx+ry)*10-visHgt, depth=-visHgt*ISO_ELEV, tot=ISO_Y+depth, bp=(100-(ISO_Y/tot*100)).toFixed(1), dp=(100-(depth/tot*100)).toFixed(1), boxTop=cyLift-ISO_Y-depth;
-        // pit: north-west/north-east interior walls extend UP from the diamond's top edge to ground
-        riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 100%,100% ${bp}%,100% 0%,0% ${dp}%);z-index:${z}"></div>`;
-        riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 100%,0% ${bp}%,0% 0%,100% ${dp}%);z-index:${z}"></div>`;
-      }
+      // Floor/elevation pixels are painted on the <canvas> underlay (paintIsoCanvas) with a real
+      // depth-sorted painter's algorithm — these .mcell divs are just positioned hitboxes/rings
+      // now (no fill, no riser faces), so click/reach/target logic below is untouched.
+      const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-hgt*ISO_ELEV+ISO_PAD;
+      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+hgt};`;
     }
     const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey):'';
     const inner=iso?`<div class="isoContent">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
-    cells+=riser+`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
+    cells+=`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
   }
-  return iso
-    ? `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px">${cells}</div></div>`
-    : `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
+  if(iso){
+    const canvasTag=`<canvas class="isocanvas" width="${stageW}" height="${stageH}" data-cols="${cols}" data-rows="${rows}" data-rot="${rot}" data-tiles="${encodeURIComponent(JSON.stringify(tiles))}" data-height="${encodeURIComponent(JSON.stringify(s.map.height||{}))}"></canvas>`;
+    return `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px">${canvasTag}${cells}</div></div>`;
+  }
+  return `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
 }
+// ---- iso canvas painter: real depth-sorted 2D rendering (no z-index/clip-path — see AUDIT.md
+// for why the DOM/CSS approach kept breaking on occlusion). Runs after insertion via the
+// MutationObserver below since a fresh <canvas> is re-created on every render() pass. ----
+const TILE_IMG={};
+function tileImg(key){ let im=TILE_IMG[key]; if(im) return im;
+  im=new Image(); im.src='sprites/tiles/'+key+'.png'; im.onload=()=>render(); TILE_IMG[key]=im; return im; }
+function isoDiamondPath(ctx,cx,cy){ ctx.beginPath(); ctx.moveTo(cx,cy-ISO_Y); ctx.lineTo(cx+ISO_X,cy); ctx.lineTo(cx,cy+ISO_Y); ctx.lineTo(cx-ISO_X,cy); ctx.closePath(); }
+function isoTopFill(ctx,ter){ const td=ter&&TERRAIN[ter];
+  if(ter){ const img=tileImg(ter); if(img.complete && img.naturalWidth) return ctx.createPattern(img,'repeat'); }
+  return (td&&td.c) || '#e2d0a6'; }
+function drawIsoTile(ctx,ter,hgt,cx,cy){
+  const fh=Math.abs(hgt)*ISO_ELEV;
+  if(hgt<0){
+    // pit: draw the recessed floor, then interior NW/NE walls rising from its top edge to ground level
+    isoDiamondPath(ctx,cx,cy); ctx.fillStyle=isoTopFill(ctx,ter); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx-ISO_X,cy); ctx.lineTo(cx,cy-ISO_Y); ctx.lineTo(cx,cy-ISO_Y-fh); ctx.lineTo(cx-ISO_X,cy-fh); ctx.closePath();
+    ctx.fillStyle='rgba(20,16,10,.55)'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx+ISO_X,cy); ctx.lineTo(cx,cy-ISO_Y); ctx.lineTo(cx,cy-ISO_Y-fh); ctx.lineTo(cx+ISO_X,cy-fh); ctx.closePath();
+    ctx.fillStyle='rgba(45,34,22,.5)'; ctx.fill();
+  } else if(hgt>0){
+    // raised block: SW/SE faces extend down from the diamond's bottom edge to ground level, then the top face on top
+    ctx.beginPath(); ctx.moveTo(cx-ISO_X,cy); ctx.lineTo(cx,cy+ISO_Y); ctx.lineTo(cx,cy+ISO_Y+fh); ctx.lineTo(cx-ISO_X,cy+fh); ctx.closePath();
+    ctx.fillStyle='rgba(28,20,13,.82)'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx+ISO_X,cy); ctx.lineTo(cx,cy+ISO_Y); ctx.lineTo(cx,cy+ISO_Y+fh); ctx.lineTo(cx+ISO_X,cy+fh); ctx.closePath();
+    ctx.fillStyle='rgba(48,36,24,.72)'; ctx.fill();
+    isoDiamondPath(ctx,cx,cy); ctx.fillStyle=isoTopFill(ctx,ter); ctx.fill();
+  } else {
+    isoDiamondPath(ctx,cx,cy); ctx.fillStyle=isoTopFill(ctx,ter); ctx.fill();
+  }
+  isoDiamondPath(ctx,cx,cy); ctx.lineWidth=1; ctx.strokeStyle='rgba(0,0,0,.22)'; ctx.stroke();
+}
+function paintIsoCanvas(cv){
+  const cols=+cv.dataset.cols, rows=+cv.dataset.rows, rot=+cv.dataset.rot;
+  const tiles=JSON.parse(decodeURIComponent(cv.dataset.tiles||'%7B%7D'));
+  const height=JSON.parse(decodeURIComponent(cv.dataset.height||'%7B%7D'));
+  const ctx=cv.getContext('2d'); ctx.clearRect(0,0,cv.width,cv.height);
+  const rcols=(rot%2===0)?cols:rows, rrows=(rot%2===0)?rows:cols, offX=(rrows-1)*ISO_X+20;
+  const items=[];
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+    const hgt=height[x+','+y]||0, [rx,ry]=rotXY(x,y,cols,rows,rot);
+    items.push({depth:(rx+ry)*10+hgt, ter:tiles[x+','+y], hgt, cx:(rx-ry)*ISO_X+offX, cy:(rx+ry)*ISO_Y-hgt*ISO_ELEV+ISO_PAD});
+  }
+  items.sort((a,b)=>a.depth-b.depth);
+  for(const it of items) drawIsoTile(ctx,it.ter,it.hgt,it.cx,it.cy);
+}
+if(typeof MutationObserver!=='undefined') new MutationObserver(()=>{
+  document.querySelectorAll('canvas.isocanvas:not([data-painted])').forEach(cv=>{ cv.dataset.painted='1'; paintIsoCanvas(cv); });
+}).observe(document.body, {childList:true, subtree:true});
 
 /* ---- DM dashboard (full screen) ---- */
 function renderDM(){
@@ -5387,7 +5405,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v116.1';
+const APP_VERSION='v117';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

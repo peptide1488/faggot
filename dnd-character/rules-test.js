@@ -649,18 +649,20 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
 })();
 
-/* ---- pit riser z-index must stay within normal per-tile granularity, not a stray +50 ---- */
-// Regression test: a pit's interior-wall riser had z-index = (rx+ry)*10 - visHgt + 50 — the
-// stray +50 was far bigger than the 10-per-tile step everything else uses, so a pit's riser
-// outranked tiles several rows away instead of just the one immediate neighbour that should
-// occlude it, rendering as disconnected dark wedges slicing across nearby floor tiles.
+/* ---- iso floor/elevation now paints on a <canvas> underlay (paintIsoCanvas), not DOM
+   isoFace risers + z-index — see AUDIT.md/CLAUDE.md for why the DOM/CSS approach kept
+   breaking on occlusion. Depth sort still uses the same (rx+ry)*10+height key, just consumed
+   by a real painter's-algorithm draw loop instead of CSS stacking, which can't desync. ---- */
 (function(){
   setIsoView(true);
   const s={map:{cols:5,rows:5,tiles:{},height:{'2,2':-1},decor:{}}, monsters:[], players:[]};
   const html=mapGridHTML(s,true,{});
-  const zs=[...html.matchAll(/isoFace[LR]" style="[^"]*z-index:(-?\d+)/g)].map(m=>Number(m[1]));
-  T('a pit riser exists for the sunken tile', zs.length===2);
-  T("a pit riser's z-index stays within one tile-step (10) of its own tile's baseline, not offset by a stray +50", zs.every(z=>Math.abs(z-(2+2)*10)<=10));
+  const cvMatch=html.match(/<canvas class="isocanvas"[^>]*data-height="([^"]*)"/);
+  T('iso mode emits a canvas carrying the height data for painting', !!cvMatch);
+  const heightData=JSON.parse(decodeURIComponent(cvMatch[1]));
+  T('the pit height reaches the canvas data attribute', heightData['2,2']===-1);
+  const [rx,ry]=rotXY(2,2,5,5,0), depth=(rx+ry)*10+heightData['2,2'];
+  T("a pit tile's depth key stays within one tile-step (10) of its own baseline, not offset by a stray +50", Math.abs(depth-(rx+ry)*10)<=10);
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

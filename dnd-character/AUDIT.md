@@ -455,3 +455,31 @@ tile — both un-attempted, both real work, neither guaranteed). The v114/v115.x
 are kept as a full record of what was tried and why each specific piece failed, precisely so
 that record doesn't have to be rebuilt by re-deriving the same projection math and re-hitting
 the same depth-sort wall a second time.
+
+### v117 — floor/elevation moved to a `<canvas>` painter's-algorithm underlay (new information: not CSS at all)
+v116's flat 2D mode still used DOM `isoFace` divs (`clip-path`-cut flat swatches) for elevation
+risers, stacked via `z-index` — the exact technique the v116 revert-note above flags as the
+recurring failure mode (a stray-offset z-index bug in one of those risers had just been
+patched in v116.1). The actual fix wasn't a better z-index formula, it was dropping DOM/CSS
+stacking entirely for the visual layer: `mapGridHTML`'s iso branch now emits a `<canvas
+class="isocanvas">` (sized to the same stage box, carrying `data-tiles`/`data-height` as
+`encodeURIComponent(JSON.stringify(...))` so a fresh canvas can repaint itself independent of
+which of the ~8 call sites rendered it) plus the same `.mcell` divs as before, but now with no
+fill/riser HTML at all — they're pure positioned hitboxes/highlight-rings, so every existing
+click/target/DM-terrain-paint code path is untouched.
+
+`paintIsoCanvas` (wired via a `MutationObserver` on `document.body`, since `render()` recreates
+the DOM — and the canvas with it — on every state change) rebuilds the same `{depth:(rx+ry)*10
++height, ...}` list `mapGridHTML` used to sort risers by, then draws each tile with `ctx.fill()`
+in that order — a real painter's algorithm with no stacking-context approximation, so the
+"stray +50" class of bug is structurally impossible (there is no z-index to get wrong). Terrain
+top faces use the existing `sprites/tiles/*.png` via `ctx.createPattern` when loaded (falling
+back to `TERRAIN[key].c` solid color until the `Image` `onload` fires and triggers a re-render,
+same lazy-load-then-`render()` pattern as `ensureDecorProbe`); elevation side faces are flat
+shaded quads (no texture warp attempted — that warp was the specific thing that made v114's
+standing walls look like "a mismatched, wonky smear").
+
+Walls are still rendered flat (not reintroduced as standing) — that was a separate, deliberate
+call in v116 about asset quality (flat top-down wall art doesn't read as a standing block from
+any angle), not a symptom of the z-index bug this fixes. Revisit standing walls only with actual
+iso-angle wall art, not as a side effect of this change.
