@@ -4422,7 +4422,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       // depth-sorted painter's algorithm — these .mcell divs are just positioned hitboxes/rings
       // now (no fill, no riser faces), so click/reach/target logic below is untouched.
       const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-hgt*ISO_ELEV+ISO_PAD;
-      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+hgt};`;
+      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*100+hgt};`;
     }
     const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey):'';
     const inner=iso?`<div class="isoContent">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
@@ -4444,26 +4444,22 @@ function isoDiamondPath(ctx,cx,cy){ ctx.beginPath(); ctx.moveTo(cx,cy-ISO_Y); ct
 function isoTopFill(ctx,ter){ const td=ter&&TERRAIN[ter];
   if(ter){ const img=tileImg(ter); if(img.complete && img.naturalWidth) return ctx.createPattern(img,'repeat'); }
   return (td&&td.c) || '#e2d0a6'; }
-function drawIsoTile(ctx,ter,hgt,cx,cy){
-  const fh=Math.abs(hgt)*ISO_ELEV;
-  if(hgt<0){
-    // pit: draw the recessed floor, then interior NW/NE walls rising from its top edge to ground level
-    isoDiamondPath(ctx,cx,cy); ctx.fillStyle=isoTopFill(ctx,ter); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(cx-ISO_X,cy); ctx.lineTo(cx,cy-ISO_Y); ctx.lineTo(cx,cy-ISO_Y-fh); ctx.lineTo(cx-ISO_X,cy-fh); ctx.closePath();
-    ctx.fillStyle='rgba(20,16,10,.55)'; ctx.fill();
-    ctx.beginPath(); ctx.moveTo(cx+ISO_X,cy); ctx.lineTo(cx,cy-ISO_Y); ctx.lineTo(cx,cy-ISO_Y-fh); ctx.lineTo(cx+ISO_X,cy-fh); ctx.closePath();
-    ctx.fillStyle='rgba(45,34,22,.5)'; ctx.fill();
-  } else if(hgt>0){
-    // raised block: SW/SE faces extend down from the diamond's bottom edge to ground level, then the top face on top
-    ctx.beginPath(); ctx.moveTo(cx-ISO_X,cy); ctx.lineTo(cx,cy+ISO_Y); ctx.lineTo(cx,cy+ISO_Y+fh); ctx.lineTo(cx-ISO_X,cy+fh); ctx.closePath();
-    ctx.fillStyle='rgba(28,20,13,.82)'; ctx.fill();
-    ctx.beginPath(); ctx.moveTo(cx+ISO_X,cy); ctx.lineTo(cx,cy+ISO_Y); ctx.lineTo(cx,cy+ISO_Y+fh); ctx.lineTo(cx+ISO_X,cy+fh); ctx.closePath();
-    ctx.fillStyle='rgba(48,36,24,.72)'; ctx.fill();
-    isoDiamondPath(ctx,cx,cy); ctx.fillStyle=isoTopFill(ctx,ter); ctx.fill();
-  } else {
-    isoDiamondPath(ctx,cx,cy); ctx.fillStyle=isoTopFill(ctx,ter); ctx.fill();
-  }
-  isoDiamondPath(ctx,cx,cy); ctx.lineWidth=1; ctx.strokeStyle='rgba(0,0,0,.22)'; ctx.stroke();
+// Each tile draws its own top face, plus a step-wall on any side where it's HIGHER than that
+// neighbour — sized to the exact height difference, not a fixed drop to absolute ground. A
+// staircase's every step then meets its neighbour flush by construction (both sides compute
+// the same shared-edge geometry from the same two heights), instead of relying on draw order
+// to paint over an oversized wall that dropped all the way to ground on every elevated tile
+// regardless of what was actually next to it — that overshoot is what cut the disconnected
+// dark wedges across flat/lower ground in the v117 screenshot.
+function drawIsoTile(ctx,ter,cx,cy,walls){
+  const TOP=[cx,cy-ISO_Y], RIGHT=[cx+ISO_X,cy], BOTTOM=[cx,cy+ISO_Y], LEFT=[cx-ISO_X,cy];
+  const quad=(a,b,drop,fill)=>{ ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.lineTo(b[0],b[1]+drop); ctx.lineTo(a[0],a[1]+drop); ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); };
+  if(walls.l>0)  quad(LEFT,  BOTTOM, walls.l*ISO_ELEV,  'rgba(28,20,13,.82)');   // toward (rx,ry+1)
+  if(walls.r>0)  quad(RIGHT, BOTTOM, walls.r*ISO_ELEV,  'rgba(48,36,24,.72)');   // toward (rx+1,ry)
+  if(walls.nl>0) quad(LEFT,  TOP,    walls.nl*ISO_ELEV, 'rgba(28,20,13,.6)');    // toward (rx-1,ry)
+  if(walls.nr>0) quad(RIGHT, TOP,    walls.nr*ISO_ELEV, 'rgba(48,36,24,.55)');   // toward (rx,ry-1)
+  isoDiamondPath(ctx,cx,cy); ctx.fillStyle=isoTopFill(ctx,ter); ctx.fill();
+  ctx.lineWidth=1; ctx.strokeStyle='rgba(0,0,0,.22)'; ctx.stroke();
 }
 function paintIsoCanvas(cv){
   const cols=+cv.dataset.cols, rows=+cv.dataset.rows, rot=+cv.dataset.rot;
@@ -4471,13 +4467,18 @@ function paintIsoCanvas(cv){
   const height=JSON.parse(decodeURIComponent(cv.dataset.height||'%7B%7D'));
   const ctx=cv.getContext('2d'); ctx.clearRect(0,0,cv.width,cv.height);
   const rcols=(rot%2===0)?cols:rows, rrows=(rot%2===0)?rows:cols, offX=(rrows-1)*ISO_X+20;
+  // rotated-space height lookup so the 4 neighbour comparisons below don't need an inverse rotation
+  const hAt={};
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){ const [rx,ry]=rotXY(x,y,cols,rows,rot); hAt[rx+','+ry]=height[x+','+y]||0; }
+  const nb=(rx,ry)=>{ const k=rx+','+ry; return hAt.hasOwnProperty(k)?hAt[k]:0; };
   const items=[];
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
-    const hgt=height[x+','+y]||0, [rx,ry]=rotXY(x,y,cols,rows,rot);
-    items.push({depth:(rx+ry)*10+hgt, ter:tiles[x+','+y], hgt, cx:(rx-ry)*ISO_X+offX, cy:(rx+ry)*ISO_Y-hgt*ISO_ELEV+ISO_PAD});
+    const [rx,ry]=rotXY(x,y,cols,rows,rot), hgt=hAt[rx+','+ry];
+    items.push({depth:(rx+ry)*100+hgt, ter:tiles[x+','+y], cx:(rx-ry)*ISO_X+offX, cy:(rx+ry)*ISO_Y-hgt*ISO_ELEV+ISO_PAD,
+      walls:{ l:Math.max(0,hgt-nb(rx,ry+1)), r:Math.max(0,hgt-nb(rx+1,ry)), nl:Math.max(0,hgt-nb(rx-1,ry)), nr:Math.max(0,hgt-nb(rx,ry-1)) }});
   }
   items.sort((a,b)=>a.depth-b.depth);
-  for(const it of items) drawIsoTile(ctx,it.ter,it.hgt,it.cx,it.cy);
+  for(const it of items) drawIsoTile(ctx,it.ter,it.cx,it.cy,it.walls);
 }
 if(typeof MutationObserver!=='undefined') new MutationObserver(()=>{
   document.querySelectorAll('canvas.isocanvas:not([data-painted])').forEach(cv=>{ cv.dataset.painted='1'; paintIsoCanvas(cv); });
@@ -5405,7 +5406,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v117';
+const APP_VERSION='v117.1';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

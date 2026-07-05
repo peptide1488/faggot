@@ -483,3 +483,35 @@ Walls are still rendered flat (not reintroduced as standing) — that was a sepa
 call in v116 about asset quality (flat top-down wall art doesn't read as a standing block from
 any angle), not a symptom of the z-index bug this fixes. Revisit standing walls only with actual
 iso-angle wall art, not as a side effect of this change.
+
+### v117.1 — the ported riser geometry itself was still wrong: risers must wall the exact step to a neighbour, not drop to absolute ground
+v117 moved rendering to canvas but carried over v114-era geometry verbatim: every elevated tile
+drew a riser dropping all the way to *absolute* ground (`hgt*ISO_ELEV` px), regardless of what
+was actually next to it, relying on z-order for a taller/closer neighbour to paint over the
+redundant portion — same assumption the old DOM code made. That assumption only holds for an
+isolated bump on flat ground. On a staircase (screenshot: heights 3→2→2→1→1→0), each step's
+riser overshot past the *next* step instead of stopping at the real 1-level difference,
+cutting disconnected dark wedges across the lower steps — reported live as "walls z-sorting is
+fucked."
+
+**Fix**: `paintIsoCanvas` now builds a rotated-space height lookup (`hAt`) and, for each tile,
+computes the height difference to all 4 grid neighbours (`rx+1,ry` / `rx,ry+1` / `rx-1,ry` /
+`rx,ry-1` — the four diamond-edge-sharing directions, derived from the projection algebra:
+`cx=(rx-ry)*ISO_X, cy=(rx+ry)*ISO_Y`). `drawIsoTile` draws a wall on a given edge **only when
+this tile is higher than that neighbour**, sized to exactly `(thisHgt-neighbourHgt)*ISO_ELEV`.
+Both sides of a boundary compute the same shared-edge geometry from the same two heights, so
+steps meet flush **by construction** — this is provably correct regardless of paint order, not
+dependent on z-order overpainting an oversized shape. A raised bump on flat ground and a pit
+surrounded by flat ground both fall out of the same 4-direction diff formula (no separate
+raised/pit branches needed anymore); map edges (no neighbour) still drop the tile's full height
+to ground, matching the old edge-of-map behavior.
+
+Also bumped the depth-sort key from `(rx+ry)*10+height` to `(rx+ry)*100+height` (both in
+`paintIsoCanvas` and the `.mcell` hitbox z-index in `mapGridHTML`) — with the old ×10 step, a
+height swing ≥10 levels between tiles could tie or invert two different rows' sort keys. Not
+the active bug in the screenshot (heights there only ranged ±3), but a latent version of the
+same "stray offset" class of bug fixed in v116.1, cheap to close off now.
+
+`rules-test.js` regression: builds a real 4-tile staircase (heights 3,2,1,0), runs the actual
+`paintIsoCanvas` against a minimal recording fake `<canvas>` context, and asserts each drawn
+downhill wall's drop is exactly one `ISO_ELEV` step — not the full absolute height.

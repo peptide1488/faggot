@@ -34,7 +34,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
   'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
-  'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};');
+  'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
+  'globalThis.ISO_X=ISO_X;globalThis.ISO_Y=ISO_Y;globalThis.ISO_ELEV=ISO_ELEV;globalThis.ISO_PAD=ISO_PAD;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -651,8 +652,9 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
 
 /* ---- iso floor/elevation now paints on a <canvas> underlay (paintIsoCanvas), not DOM
    isoFace risers + z-index — see AUDIT.md/CLAUDE.md for why the DOM/CSS approach kept
-   breaking on occlusion. Depth sort still uses the same (rx+ry)*10+height key, just consumed
-   by a real painter's-algorithm draw loop instead of CSS stacking, which can't desync. ---- */
+   breaking on occlusion. Depth sort key is (rx+ry)*100+height (bumped from *10 so height
+   can never cross a row boundary), consumed by a real painter's-algorithm draw loop instead
+   of CSS stacking, which can't desync. ---- */
 (function(){
   setIsoView(true);
   const s={map:{cols:5,rows:5,tiles:{},height:{'2,2':-1},decor:{}}, monsters:[], players:[]};
@@ -661,8 +663,33 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   T('iso mode emits a canvas carrying the height data for painting', !!cvMatch);
   const heightData=JSON.parse(decodeURIComponent(cvMatch[1]));
   T('the pit height reaches the canvas data attribute', heightData['2,2']===-1);
-  const [rx,ry]=rotXY(2,2,5,5,0), depth=(rx+ry)*10+heightData['2,2'];
-  T("a pit tile's depth key stays within one tile-step (10) of its own baseline, not offset by a stray +50", Math.abs(depth-(rx+ry)*10)<=10);
+  const [rx,ry]=rotXY(2,2,5,5,0), depth=(rx+ry)*100+heightData['2,2'];
+  T("a pit tile's depth key stays within one tile-step (100) of its own baseline, not offset by a stray +50", Math.abs(depth-(rx+ry)*100)<=100);
+})();
+
+/* ---- regression: a staircase's walls must wall the exact 1-level step to each neighbour, not
+   drop every elevated tile all the way to absolute ground. The old geometry (ported straight
+   from the DOM isoFace code) did the latter — a 3-high tile's riser overshot 3 levels down
+   regardless of what was actually next to it, cutting a disconnected dark wedge across the
+   2-high/1-high steps below it (reported live as "walls z-sorting is fucked"). Exercises the
+   real paintIsoCanvas/drawIsoTile via a minimal fake 2D context that records each fill's path
+   so we can measure the actual drawn wall height, not just re-derive the formula in the test. */
+(function(){
+  function fakeCtx(){ let path=[]; const calls=[];
+    return { calls, clearRect(){}, beginPath(){ path=[]; }, moveTo(x,y){ path.push([x,y]); }, lineTo(x,y){ path.push([x,y]); }, closePath(){},
+      fill(){ calls.push({fillStyle:this._fillStyle, path}); }, stroke(){}, createPattern(){ return null; },
+      set fillStyle(v){ this._fillStyle=v; }, get fillStyle(){ return this._fillStyle; } };
+  }
+  const heights={'0,0':3,'1,0':2,'2,0':1,'3,0':0};
+  const cv={width:500,height:200,dataset:{cols:'4',rows:'1',rot:'0',tiles:encodeURIComponent('{}'),height:encodeURIComponent(JSON.stringify(heights))}};
+  const ctx=fakeCtx(); cv.getContext=()=>ctx;
+  paintIsoCanvas(cv);
+  const wallFills=ctx.calls.filter(c=>c.fillStyle==='rgba(48,36,24,.72)');   // the "r" (toward rx+1) wall colour
+  // path is [a, b, b+drop, a+drop] (see drawIsoTile's quad()) — path[2].y - path[1].y is the
+  // drop itself, isolated from the diamond's own ISO_Y height baked into a/b.
+  const drops=wallFills.map(c=>c.path[2][1]-c.path[1][1]);
+  T('a staircase draws exactly one down-hill wall per step (3→2, 2→1, 1→0)', wallFills.length===3);
+  T('each staircase step walls only its own 1-level drop (ISO_ELEV px), not the full absolute height', drops.every(d=>Math.abs(d-ISO_ELEV)<0.01));
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
