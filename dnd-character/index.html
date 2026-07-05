@@ -4423,11 +4423,17 @@ const T3D=40, ELEV3D=20; // 3D world tile size / per-elevation-level height, px 
 function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
   const at=(x,y)=>tiles[x+','+y];
   const iso=isoView, rot=mapRotation;
-  // Camera yaw in degrees; billboarded content (tokens/decor) counter-rotates by exactly this
-  // (negated, reverse order) to stay upright regardless of tile position or map rotation —
-  // rotateX(60)∘rotateZ(camR) then rotateZ(-camR)∘rotateX(-60) is a true matrix inverse, so the
-  // composition is provably identity (worked out on paper + confirmed against screenshots).
-  const camR=45+rot*90;
+  // The 45°+90°*rot "diamond" yaw is baked into each tile's (wx,wz) via real trigonometry below,
+  // NOT applied as a scene-level rotateZ — rotateX(60)∘rotateZ(45) mathematically does NOT
+  // produce a symmetric isometric diamond (confirmed both on paper and empirically: a 15-wide×
+  // 11-tall room rendered 472px wide × 572px tall on screen — narrower than tall despite being
+  // wider than tall in grid terms, i.e. genuinely rotated). rotateZ(45) mixes the flat (Y=0)
+  // ground plane's X into a nonzero Y' BEFORE rotateX ever sees it, so X and Z end up
+  // contributing unequally to screen position. Rotating the coordinates in JS first, then
+  // applying a pure rotateX(60) camera tilt with no rotateZ at all, avoids that mixing entirely.
+  // Billboards only need to counter-rotate the fixed rotateX(60) now — the yaw is baked into
+  // position, not rotation, so there's nothing else for them to undo.
+  const camR=45+rot*90, camRad=camR*Math.PI/180, camCos=Math.cos(camRad), camSin=Math.sin(camRad);
   const stageW=(cols+rows)*T3D*0.72+220, stageH=(cols+rows)*T3D*0.55+320;
   // Both axes must center on stageW/2, stageH/2 — the projected grid is symmetric around the
   // scene's own (centered) origin on BOTH axes, not just horizontal. A fixed originY here once
@@ -4479,13 +4485,13 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       // worth having walls actually read as standing obstacles again. elevBadge still reports the
       // tile's REAL height (a plain wall with no elevation set shows no badge).
       const visHgt = ter==='wall' ? Math.max(hgt,2) : hgt;
-      // wz is negated: rotateX(60)'s Z-axis contribution to screen-Y comes out negative (row
-      // increasing moved tiles UP the screen instead of down — confirmed by comparing rendered
-      // rects for row 0 vs row 9 on a real map, not just derived on paper) — this is what read
-      // as "upside down". Flipping the world-Z sign here corrects on-screen row order without
-      // touching the wall-cuboid face math, which is keyed off each tile's OWN local origin,
-      // not the sign of where that origin sits in the wider grid.
-      const wx=(x-cols/2)*T3D, wz=-(y-rows/2)*T3D, wy=visHgt*ELEV3D;
+      // Grid-centered coords rotated by camR (the 45°+90°*rot yaw) via real trig — this is what
+      // makes the map read as a proper symmetric diamond (col and row mirror each other
+      // horizontally) instead of the skewed/rotated-looking result a scene-level rotateZ gave.
+      const gx=x-cols/2, gy=y-rows/2;
+      // toFixed avoids scientific notation on near-zero trig results (e.g. rot=0's cos(45°) math
+      // can land on -2.22e-15 instead of a clean 0) leaking into the transform string.
+      const wx=((gx*camCos-gy*camSin)*T3D).toFixed(2), wz=(-(gx*camSin+gy*camCos)*T3D).toFixed(2), wy=visHgt*ELEV3D;
       tileStyle3d=`transform:translate3d(${wx}px,${wy}px,${wz}px);z-index:${(x+y)*10+(visHgt>0?visHgt:0)};`;
       if(visHgt>0){ const fh=visHgt*ELEV3D;
         // Real cuboid faces (top already folds via the .top3d CSS class) — south + east are the
@@ -4496,14 +4502,14 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       }
     }
     const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey):'';
-    const overlay=iso?`<div class="isoContent" style="transform:rotateZ(${-camR}deg) rotateX(-60deg)">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
+    const overlay=iso?`<div class="isoContent" style="transform:rotateX(-60deg)">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
     const topEl=iso?`<div class="top3d${td?' ter-'+ter:''}" style="${topStyle}"></div>`:'';
     cells+=iso
       ? `<div class="tile3d${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${tileStyle3d}" ${canTarget?`data-target="${mo.id}"`:''}>${topEl}${faces}${overlay}</div>`
       : `<div class="mcell${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${topStyle}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}${elevBadge}</div>`;
   }
   return iso
-    ? `<div class="mapwrap"><div class="mapgrid iso3d" style="width:${stageW}px;height:${stageH}px"><div class="scene3d" style="left:${originX}px;top:${originY}px;transform:rotateX(60deg) rotateZ(${camR}deg)">${cells}</div></div></div>`
+    ? `<div class="mapwrap"><div class="mapgrid iso3d" style="width:${stageW}px;height:${stageH}px"><div class="scene3d" style="left:${originX}px;top:${originY}px;transform:rotateX(60deg)">${cells}</div></div></div>`
     : `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
 }
 
@@ -5429,7 +5435,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v115.1';
+const APP_VERSION='v115.2';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

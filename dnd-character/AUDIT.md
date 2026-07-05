@@ -366,16 +366,42 @@ render-layer rewrite only.
      interior faces are on the *far* side from the camera, which is different geometry from a
      raised block's near faces, not just a sign flip. Deferred; pits currently just sink and
      darken (`brightness` filter) with no true depth.
-- **Tokens/decor are billboards**: positioned absolutely inside a full-tile wrapper
-  (`.isoContent`) that counter-rotates by the scene's own camera rotation
-  (`rotateZ(-camR) rotateX(-60deg)`, reverse order, negated angles — a true matrix inverse of
-  the scene's `rotateX(60) rotateZ(camR)`, so composition is provably identity), keeping
-  sprites upright and camera-facing regardless of tile position or map rotation.
-- **Map rotation** (`mapRotation`, 0–3) is now a real camera yaw (`camR = 45 + rot*90`
-  degrees on the scene), not the old coordinate-remap hack (`rotXY`) — `rotXY`/`rotDelta` still
-  exist and are unchanged, but only for picking a unit's walk-cycle sprite frame, a separate
-  concern from tile positioning.
 - **Walls default to standing 2 levels tall** even with no explicit elevation painted (purely
   visual — they're impassable/opaque via `TERRAIN.wall`'s flags either way), same as the
   original v112 behavior; this was reverted to flat for one session while the clip-path
   approach was broken, then restored once the real 3D cuboid made it render correctly.
+
+### v115.2 — the yaw belongs in JS trig, not a scene-level rotateZ
+The first cut of this (v115/v115.1) put the 45°+90°*rot "diamond" yaw into the scene's own
+CSS transform: `rotateX(60deg) rotateZ(camR deg)`, with tokens counter-rotating
+`rotateZ(-camR) rotateX(-60deg)` to stay upright. This shipped, then broke visibly on any
+real (non-square, non-tiny) map: a 15-wide × 11-tall dungeon room rendered **taller than it
+is wide** on screen, and long wall runs showed V-shaped gaps between segments instead of a
+solid perimeter. Both symptoms — reported by the user as "the entire map is rotated 90
+degrees" — turned out to be the same root cause, not two bugs.
+
+**Why `rotateX(60) rotateZ(45)` doesn't give a symmetric diamond:** work through the matrix
+composition for a flat ground point (X, Y=0, Z). `rotateZ(45)` first maps it to
+(0.707X, 0.707X, Z) — note Y is no longer 0, it's now proportional to X. `rotateX(60)` then
+mixes THIS already-X-contaminated Y with Z: the final screen coordinates come out to
+`screenX = 0.707X` (depends only on X, not Z at all) and
+`screenY = 0.3535X - 0.866Z` (X and Z contribute with *different* magnitudes: 0.3535 vs 0.866).
+A true isometric diamond needs `screenX ∝ (X − Z)` and `screenY ∝ (X + Z)` — equal-magnitude,
+mirrored-sign contributions from both axes. Composing rotateZ then rotateX structurally can't
+produce that; the intermediate rotateZ step contaminates one axis into the other unevenly
+before rotateX ever runs.
+
+**Fix:** bake the 45°+90°*rot yaw into each tile's world position via real trigonometry in JS
+(`wx = (gx·cos − gy·sin)·T`, `wz = −(gx·sin + gy·cos)·T` for grid-centered `gx,gy`), and apply
+*only* `rotateX(60deg)` as the scene's CSS transform — no rotateZ at all. The camera is now a
+fixed tilt with no yaw of its own; the yaw lives entirely in where tiles are placed. This
+also simplifies the billboard counter-rotation to plain `rotateX(-60deg)` (there's no camR
+term left to undo), and it doesn't touch the wall-cuboid face logic (south3d/east3d) at all —
+those are local to each tile's own origin and stay correct regardless of how that origin is
+positioned in the wider grid.
+
+Caught by re-deriving the projection matrix by hand after the user's report, then confirming
+against the live app: measured a wall tile's rendered bounding box before/after (a 15×11 room
+went from 452×573 screen px — narrower than tall, i.e. rotated — to 719×608, correctly wider
+than tall). Regression test added: a one-column step and a one-row step must move the same
+horizontal distance in mirrored directions.

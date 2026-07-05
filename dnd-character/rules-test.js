@@ -655,18 +655,32 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   setIsoView(true); setMapRotation(0);
   const s={map:{cols:3,rows:3,tiles:{'1,1':'wall'},height:{},decor:{}}, monsters:[], players:[]};
   const html=mapGridHTML(s, true, {});
-  T('iso mode emits a real 3D scene wrapper with a camera rotateX+rotateZ transform', /class="scene3d"[^>]*transform:rotateX\(60deg\) rotateZ\(45deg\)/.test(html));
+  T('iso mode emits a real 3D scene wrapper with a pure camera tilt (no scene-level rotateZ — see below for why)', /class="scene3d"[^>]*transform:rotateX\(60deg\)"/.test(html));
   T('every cell still gets a data-cell so click targeting/cellCenter work unchanged', (html.match(/data-cell="/g)||[]).length===9);
   T("a plain wall with no explicit elevation still stands: exactly one south3d + one east3d face (the only tile with any height)", (html.match(/side3d south3d/g)||[]).length===1 && (html.match(/side3d east3d/g)||[]).length===1);
   T('the wall\'s side faces carry the wall terrain texture class', /side3d south3d ter-wall/.test(html) && /side3d east3d ter-wall/.test(html));
-  setMapRotation(2);
-  const html2=mapGridHTML(s, true, {});
-  T('map rotation is a real 90°-step camera yaw (camR=45+rot*90), not the old coordinate-remap hack', /rotateZ\(225deg\)/.test(html2));
-  setMapRotation(0);
   setIsoView(false);
   const topdown=mapGridHTML(s,true,{});
   setIsoView(true);
   T('top-down mode is untouched by the 3D rewrite — plain CSS grid, no 3D scene', topdown.includes('grid-template-columns') && !topdown.includes('scene3d'));
+})();
+
+/* ---- battle map: columns and rows must contribute SYMMETRICALLY to screen position ---- */
+// Regression test for a real bug: baking the 45°+90°*rot "diamond" yaw into a scene-level
+// rotateZ(45) (composed with rotateX(60)) does NOT produce a symmetric isometric diamond —
+// rotateZ(45) mixes the flat (Y=0) ground plane's X into a nonzero Y' before rotateX ever sees
+// it, so columns and rows end up contributing UNEQUALLY to horizontal screen position. Measured
+// live: a 15-wide × 11-tall room rendered narrower than it is tall — genuinely rotated, not just
+// a different-looking projection. The fix bakes the yaw into each tile's (wx,wz) via real
+// trigonometry in JS and applies only a pure rotateX(60) camera tilt with no rotateZ at all.
+(function(){
+  setIsoView(true); setMapRotation(0);
+  const s={map:{cols:5,rows:5,tiles:{},height:{},decor:{}}, monsters:[], players:[]};
+  const html=mapGridHTML(s,true,{});
+  const posOf=(x,y)=>{ const m=html.match(new RegExp('data-cell="'+x+','+y+'"[^>]*style="transform:translate3d\\(([-\\d.]+)px,[-\\d.]+px,([-\\d.]+)px\\)')); return m?{wx:Number(m[1]),wz:Number(m[2])}:null; };
+  const c22=posOf(2,2), c32=posOf(3,2), c23=posOf(2,3);
+  const dxCol=c32.wx-c22.wx, dxRow=c23.wx-c22.wx;
+  T('a one-column step and a one-row step move the SAME horizontal distance in mirrored directions (a true symmetric diamond), not one axis dominating the other', Math.abs(Math.abs(dxCol)-Math.abs(dxRow))<0.5 && dxCol>0 && dxRow<0);
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
