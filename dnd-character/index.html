@@ -267,7 +267,11 @@
     padding:calc(env(safe-area-inset-top) + 8px) 12px 8px;display:flex;align-items:center;gap:10px;font-size:13px}
   .netbar .code{font-family:Georgia,serif;font-weight:700;letter-spacing:2px}
   .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
-  .mapwrap{overflow:auto;border-radius:12px;padding:6px;background:#b8a274;
+  /* clear:both is load-bearing: .mapwrap's own overflow:auto makes it establish a block
+     formatting context, and a BFC box sitting beside an UNCLEARED float (every map header row
+     has float:right Rotate/Top-down/Move buttons) shrinks to fit beside the float instead of
+     spanning the container — clearing forces it onto its own line below the header first. */
+  .mapwrap{clear:both;overflow:auto;border-radius:12px;padding:6px;background:#b8a274;
     box-shadow:inset 0 0 18px rgba(60,42,20,.35), 0 2px 8px rgba(0,0,0,.18)}
   /* On mobile, break the map viewport out of main's + the card's padding to use the full
      screen width — every mode (DM, player battle, quick battle, modal map pickers) shares this
@@ -5376,7 +5380,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v118.1';
+const APP_VERSION='v118.2';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
