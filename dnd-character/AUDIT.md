@@ -431,3 +431,27 @@ automatic "every wall stands" default was reverted. If a future session wants st
 back, the real fix is either a from-scratch WebGL renderer (real z-buffer, ruled out earlier
 for the dependency cost) or manually chunking long wall runs into merged multi-tile faces
 instead of one cuboid per tile (untested, likely real but nontrivial work).
+
+### v116 — the whole CSS 3D map rewrite (v115–v115.3) was reverted, in full
+After the v115.3 fix, the user tested it live and it still looked wrong — this time not a bug
+that showed up in a specific test scenario, but a general "doesn't read as isometric, looks
+worse than before the 3D work started" verdict on the actual rendering quality. Every fix in
+this arc (v115, v115.1, v115.2, v115.3) genuinely fixed the specific bug it targeted — gaps
+closed, projection became symmetric, elevation depth-sorted correctly in isolation — and the
+whole thing *still* didn't add up to a good-looking battle map, because CSS's `preserve-3d` is
+an approximation (no real z-buffer) fighting pixel art that was never drawn for this angle.
+Each individual fix was correct; the technique's ceiling was below "looks good."
+
+**Reverted index.html, sw.js, and rules-test.js to their state at commit `a44a9c7`** (the last
+commit before the 3D rewrite began) — flat 2D `rotate(45deg) scaleY(.5)` tiles, no standing
+walls, walls/tiles/decor at whatever quality that commit had already reached this session
+(tree/bush anchor fixes, wall texture tiling fix, redundant-emoji cleanup — all still in
+place, those were real fixes to the 2D system and are unaffected by this revert).
+
+**Do not attempt a from-scratch CSS 3D isometric rewrite again** without new information that
+specifically addresses the z-buffer problem (e.g., an actual WebGL/Three.js renderer, or
+manually merging long wall runs into single multi-tile-wide faces instead of one cuboid per
+tile — both un-attempted, both real work, neither guaranteed). The v114/v115.x entries above
+are kept as a full record of what was tried and why each specific piece failed, precisely so
+that record doesn't have to be rebuilt by re-deriving the same projection math and re-hitting
+the same depth-sort wall a second time.

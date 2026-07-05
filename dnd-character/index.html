@@ -267,9 +267,8 @@
     padding:calc(env(safe-area-inset-top) + 8px) 12px 8px;display:flex;align-items:center;gap:10px;font-size:13px}
   .netbar .code{font-family:Georgia,serif;font-weight:700;letter-spacing:2px}
   .netbar button{margin-left:auto;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#f6efda;border-radius:8px;padding:5px 10px;font-size:12px}
-  .mapwrap{overflow:auto;border-radius:12px;padding:6px;background:#b8a274;cursor:grab;touch-action:none;
+  .mapwrap{overflow:auto;border-radius:12px;padding:6px;background:#b8a274;
     box-shadow:inset 0 0 18px rgba(60,42,20,.35), 0 2px 8px rgba(0,0,0,.18)}
-  .mapwrap:active{cursor:grabbing}
   .mapgrid{display:grid;gap:0;min-width:max-content;
     background:
       repeating-linear-gradient(0deg,rgba(40,28,12,.20) 0 1px,transparent 1px 36px),
@@ -277,36 +276,26 @@
       linear-gradient(145deg,#efe3c4,#dccba0);
     box-shadow:inset 0 0 0 1px rgba(40,28,12,.25)}
   .mcell{width:36px;height:36px;display:grid;place-items:center;position:relative;cursor:pointer;background:transparent}
-  /* isometric mode: a real CSS 3D scene (perspective-free/orthographic — no vanishing point, so
-     tile size stays constant regardless of depth, matching classic dimetric game projection).
-     Each tile is a true cuboid (top face + south/east side faces folded via rotateX/rotateY),
-     not a 2D rotate+squash illusion — side faces get real perspective-correct texture shearing
-     for free, which a clip-path cut of a flat top-down swatch could never do. Tokens/decor are
-     billboards: counter-rotated by the scene's own rotation so they stay upright/camera-facing
-     regardless of tile position or map rotation. See AUDIT.md for the derivation notes (axis
-     conventions + the two non-obvious sign/pivot fixes that made this work). */
-  .mapgrid.iso3d{position:relative;background:none;box-shadow:none;min-width:0}
-  .mapgrid.iso3d .scene3d{position:absolute;transform-style:preserve-3d}
-  .mapgrid.iso3d .tile3d{position:absolute;width:40px;height:40px;transform-style:preserve-3d;cursor:pointer}
-  .mapgrid.iso3d .top3d{position:absolute;width:40px;height:40px;transform:rotateX(90deg);transform-origin:top;box-shadow:inset 0 0 0 1px rgba(40,28,12,.35);image-rendering:pixelated}
-  .mapgrid.iso3d .top3d:not([class*="ter-"]){background:linear-gradient(145deg,#efe3c4,#dccba0)}
-  .mapgrid.iso3d .side3d{position:absolute;width:40px;image-rendering:pixelated;box-shadow:inset 0 0 0 1px rgba(0,0,0,.3)}
-  .mapgrid.iso3d .side3d.south3d{filter:brightness(.78)}
-  .mapgrid.iso3d .side3d.east3d{filter:brightness(.6)}
-  .mapgrid.iso3d .isoContent{position:absolute;inset:0;display:grid;place-items:center}
+  /* isometric mode: absolutely-positioned diamond tiles (rotate+squash trick), content counter-rotated to stay upright */
+  .mapgrid.iso{position:relative;background:none;box-shadow:none;min-width:0;isolation:isolate}
+  .mapgrid.iso .mcell{position:absolute;width:40px;height:40px;transform:scaleY(.5) rotate(45deg);box-shadow:inset 0 0 0 1px rgba(40,28,12,.35)}
+  .mapgrid.iso .mcell:not([class*="ter-"]){background:linear-gradient(145deg,#efe3c4,#dccba0)}
+  .mapgrid.iso .isoContent{position:absolute;inset:0;transform:rotate(-45deg) scaleY(2);display:grid;place-items:center}
+  .mapgrid.iso .isoFace{position:absolute}
+  .mapgrid.iso .isoFaceL{background:linear-gradient(180deg,rgba(55,42,28,.75),rgba(28,20,13,.9))}
+  .mapgrid.iso .isoFaceR{background:linear-gradient(180deg,rgba(78,60,40,.7),rgba(38,28,18,.88))}
   /* real texture swatches (RPG Paper Maker Basic Resources, user-owned license) — iso view only;
-     top-down/flat mode keeps its CSS-gradient look above unchanged. Shared by top AND side faces
-     (side shading comes from the brightness filters above, not a separate darker asset). */
-  .mapgrid.iso3d .top3d.ter-grass,.mapgrid.iso3d .side3d.ter-grass{background-image:url('sprites/tiles/grass.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-sand,.mapgrid.iso3d .side3d.ter-sand{background-image:url('sprites/tiles/sand.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-stone,.mapgrid.iso3d .side3d.ter-stone{background-image:url('sprites/tiles/stone.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-water,.mapgrid.iso3d .side3d.ter-water{background-image:url('sprites/tiles/water.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-wood,.mapgrid.iso3d .side3d.ter-wood{background-image:url('sprites/tiles/wood.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-snow,.mapgrid.iso3d .side3d.ter-snow{background-image:url('sprites/tiles/snow.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-ice,.mapgrid.iso3d .side3d.ter-ice{background-image:url('sprites/tiles/ice.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-lava,.mapgrid.iso3d .side3d.ter-lava{background-image:url('sprites/tiles/lava.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
-  .mapgrid.iso3d .top3d.ter-wall,.mapgrid.iso3d .side3d.ter-wall{background-image:url('sprites/tiles/wall.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
-  .mapgrid.iso3d .top3d.ter-mud,.mapgrid.iso3d .side3d.ter-mud{background-image:url('sprites/tiles/mud.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
+     top-down/flat mode keeps its CSS-gradient look above unchanged */
+  .mapgrid.iso .mcell.ter-grass{background-image:url('sprites/tiles/grass.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-sand{background-image:url('sprites/tiles/sand.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-stone{background-image:url('sprites/tiles/stone.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-water{background-image:url('sprites/tiles/water.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-wood{background-image:url('sprites/tiles/wood.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-snow{background-image:url('sprites/tiles/snow.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-ice{background-image:url('sprites/tiles/ice.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-lava{background-image:url('sprites/tiles/lava.png')!important;background-repeat:repeat!important;background-size:14px 14px!important}
+  .mapgrid.iso .mcell.ter-wall{background-image:url('sprites/tiles/wall.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
+  .mapgrid.iso .mcell.ter-mud{background-image:url('sprites/tiles/mud.png')!important;background-repeat:repeat!important;background-size:24px 24px!important}
   /* terrain tiles */
   .ter-grass{background:linear-gradient(145deg,#7aa14a,#5d8235)!important;box-shadow:inset 0 0 4px rgba(40,70,20,.4)}
   .ter-mud{background:repeating-linear-gradient(45deg,#7c5a30,#7c5a30 5px,#6a4c28 5px,#6a4c28 10px)!important;box-shadow:inset 0 0 5px rgba(0,0,0,.35)}
@@ -2150,23 +2139,6 @@ function attackFx(kind){ const el=document.createElement('div'); el.className='c
   const map={hit:{ic:'💥',col:'rgba(200,80,40,.5)'}, crit:{ic:'💥',col:'rgba(240,180,60,.6)'}, miss:{ic:'💨',col:'rgba(160,160,160,.35)'}, heal:{ic:'✨',col:'rgba(80,180,90,.45)'}, slash:{ic:'⚔️',col:'rgba(210,210,220,.4)'}}[kind]||{ic:'⚔️',col:'rgba(200,80,40,.5)'};
   el.innerHTML=`<div class="glow" style="background:radial-gradient(circle,${map.col},transparent 60%)"></div><div class="ic">${map.ic}</div>`;
   document.body.appendChild(el); setTimeout(()=>el.remove(),700); }
-// Click-drag/touch panning for the battle map — scrollbars alone are an easy-to-miss way to
-// navigate a big tactical grid. Only starts scrolling past a small movement threshold so an
-// ordinary tap/click on a tile (move/attack/target) still fires normally. Wired via a
-// MutationObserver (below) rather than from each of mapGridHTML's 7+ call sites, since a
-// .mapwrap can appear from any of them (DM view, player view, quick battle, spell-target and
-// teleport modals, ...).
-function wireMapPan(el){ if(el._panWired) return; el._panWired=true;
-  let sx=0, sy=0, sl=0, st=0, dragging=false, moved=false;
-  el.addEventListener('pointerdown', e=>{ dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sl=el.scrollLeft; st=el.scrollTop; });
-  el.addEventListener('pointermove', e=>{ if(!dragging) return; const dx=e.clientX-sx, dy=e.clientY-sy;
-    if(!moved && Math.abs(dx)<6 && Math.abs(dy)<6) return; moved=true;
-    el.scrollLeft=sl-dx; el.scrollTop=st-dy; });
-  const stop=()=>{ dragging=false; };
-  el.addEventListener('pointerup', stop); el.addEventListener('pointercancel', stop); el.addEventListener('pointerleave', stop);
-}
-new MutationObserver(()=>document.querySelectorAll('.mapwrap').forEach(wireMapPan))
-  .observe(document.body, {childList:true, subtree:true});
 /* ---- on-map effects: projectiles & explosions ---- */
 function curMapGrid(){ return document.querySelector('#stModal .mapgrid, #qstModal .mapgrid, #atkModal .mapgrid, #smModal .mapgrid') || document.querySelector('.mapgrid'); }
 function cellCenter(grid,x,y){ const cell=grid.querySelector('[data-cell="'+x+','+y+'"]'); if(!cell) return null; const g=grid.getBoundingClientRect(), c=cell.getBoundingClientRect(); return {x:c.left-g.left+c.width/2, y:c.top-g.top+c.height/2}; }
@@ -4419,36 +4391,19 @@ function loadCampaign(name){ if(!net||net.role!=='dm') return; const cp=campaign
 function deleteCampaign(name){ const all=campaigns(); delete all[name];
   try{ localStorage.setItem('grimoire.campaigns',JSON.stringify(all)); }catch(e){}
   if(net&&net.campaign===name) net.campaign=null; flashBanner('Campaign deleted: '+name); }
-const T3D=40, ELEV3D=20; // 3D world tile size / per-elevation-level height, px (real CSS 3D scene, see AUDIT.md)
+const ISO_X=28, ISO_Y=14, ISO_ELEV=12, ISO_PAD=90; // isometric diamond step (px) + top pad for elevation/overflow
 function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
   const at=(x,y)=>tiles[x+','+y];
-  const iso=isoView, rot=mapRotation;
-  // The 45°+90°*rot "diamond" yaw is baked into each tile's (wx,wz) via real trigonometry below,
-  // NOT applied as a scene-level rotateZ — rotateX(60)∘rotateZ(45) mathematically does NOT
-  // produce a symmetric isometric diamond (confirmed both on paper and empirically: a 15-wide×
-  // 11-tall room rendered 472px wide × 572px tall on screen — narrower than tall despite being
-  // wider than tall in grid terms, i.e. genuinely rotated). rotateZ(45) mixes the flat (Y=0)
-  // ground plane's X into a nonzero Y' BEFORE rotateX ever sees it, so X and Z end up
-  // contributing unequally to screen position. Rotating the coordinates in JS first, then
-  // applying a pure rotateX(60) camera tilt with no rotateZ at all, avoids that mixing entirely.
-  // Billboards only need to counter-rotate the fixed rotateX(60) now — the yaw is baked into
-  // position, not rotation, so there's nothing else for them to undo.
-  const camR=45+rot*90, camRad=camR*Math.PI/180, camCos=Math.cos(camRad), camSin=Math.sin(camRad);
-  const stageW=(cols+rows)*T3D*0.72+220, stageH=(cols+rows)*T3D*0.55+320;
-  // Both axes must center on stageW/2, stageH/2 — the projected grid is symmetric around the
-  // scene's own (centered) origin on BOTH axes, not just horizontal. A fixed originY here once
-  // read as fine on a small test grid but cut off the top of any real (15x10+) map: content
-  // rendered above the container's own top edge is outside the reachable scroll range (you
-  // can't scroll to a negative offset), so it was just permanently invisible, not merely
-  // off-screen. See the derivation in AUDIT.md v114 if this needs adjusting again.
-  const originX=stageW/2, originY=stageH/2;
+  const iso=isoView, rot=mapRotation, rcols=(rot%2===0)?cols:rows, rrows=(rot%2===0)?rows:cols;
+  const offX=(rrows-1)*ISO_X+20, stageW=(rcols-1+rrows-1)*ISO_X+80, stageH=(rcols-1+rrows-1)*ISO_Y+80+ISO_PAD;
   for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
-    const ter=at(x,y), td=ter&&TERRAIN[ter]; let topStyle='';
+    const ter=at(x,y), td=ter&&TERRAIN[ter]; let style='';
     if(td&&td.c){
       // autotile: same-terrain neighbours connect (square edge); outer corners round off
+      // autotile: flush cells (no gap); round only true outer corners → seamless blocks
       const U=at(x,y-1)===ter, D=at(x,y+1)===ter, L=at(x-1,y)===ter, R=at(x+1,y)===ter, RAD='10px';
       const tl=(!U&&!L)?RAD:'0', tr=(!U&&!R)?RAD:'0', br=(!D&&!R)?RAD:'0', bl=(!D&&!L)?RAD:'0';
-      topStyle=`border-radius:${tl} ${tr} ${br} ${bl};`;
+      style=`border-radius:${tl} ${tr} ${br} ${bl};`;
     }
     const mo=s.monsters.find(m=>m.x===x&&m.y===y), pl=s.players.find(p=>p.x===x&&p.y===y);
     const hpbar=(cur,mx)=>{ if(!mx) return ''; const p=Math.max(0,Math.min(100,Math.round(cur/mx*100))); const cl=p<=25?'crit':p<=50?'low':''; return `<span class="hpbar ${cl}"><i style="width:${p}%"></i></span>`; };
@@ -4470,52 +4425,43 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
     const hgt=heightAt(s,x,y);
-    // Pits don't get full 3D interior walls yet (the visible faces of a recessed hole are the FAR
-    // side from camera — opposite geometry from a raised block, not just a sign flip — deferred;
-    // see AUDIT.md). They still sink and darken so the elevation reads, just without true depth.
-    if(hgt<0) topStyle+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(0,0,0,${(-hgt*0.14).toFixed(2)});`;
+    if(hgt>0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(255,255,255,${(hgt*0.10).toFixed(2)}), 0 ${hgt+1}px ${hgt*2}px rgba(0,0,0,.28);`; }
+    else if(hgt<0){ style+=`filter:brightness(${(1+hgt*0.09).toFixed(2)});box-shadow:inset 0 0 0 1px rgba(0,0,0,${(-hgt*0.14).toFixed(2)}), inset 0 ${-hgt}px ${-hgt*3}px rgba(0,0,0,.35);`; }
     const elevBadge = hgt!==0 ? `<span class="elevbadge">${hgt>0?'▲':'▼'}${Math.abs(hgt)}</span>` : '';
-    let faces='';
-    let tileStyle3d='';
-    if(iso){
-      // Walls render flat (visHgt=hgt, no forced minimum) — still impassable/opaque via
-      // TERRAIN.wall's flags either way, purely a visual call. The standing-cuboid render is
-      // correct for an ISOLATED elevated tile or a short corner (validated in a 3-tile test),
-      // but a real dungeon's wall perimeter is a long contiguous run, and CSS's approximate 3D
-      // depth-sort visibly breaks down there: measured real, non-negligible gaps between
-      // adjacent raised tiles' top faces even though their translate3d positions are
-      // mathematically exact (verified via getBoundingClientRect on a 12-tile test row — no
-      // position error, just a rendering/occlusion artifact). This is the same wall that killed
-      // the earlier clip-path approach, just a different-shaped dead end: CSS 3D doesn't have a
-      // real z-buffer, and many coplanar-ish quads in a row is exactly where that shows. A DM
-      // can still explicitly raise a short run of terrain (hills etc.) and get the real cuboid —
-      // this only removes the automatic "wall = standing" default.
+    let riser='';
+    if(iso){ const [rx,ry]=rotXY(x,y,cols,rows,rot);
+      // Walls used to be forced into a standing 2-level block (a clip-path-cut flat texture
+      // faking a 3D side-face) — CSS can't warp a top-down brick swatch to look perspective-
+      // correct from an isometric angle, it just reads as a mismatched, wonky smear. Real
+      // isometric wall art (drawn for that angle, like FF Tactics / RPG Maker's own iso tiles)
+      // would fix it; a CSS clip-path trick can't. Walls now render flat like every other
+      // terrain — still impassable/opaque via TERRAIN.wall's flags, just not visually "standing".
       const visHgt = hgt;
-      // Grid-centered coords rotated by camR (the 45°+90°*rot yaw) via real trig — this is what
-      // makes the map read as a proper symmetric diamond (col and row mirror each other
-      // horizontally) instead of the skewed/rotated-looking result a scene-level rotateZ gave.
-      const gx=x-cols/2, gy=y-rows/2;
-      // toFixed avoids scientific notation on near-zero trig results (e.g. rot=0's cos(45°) math
-      // can land on -2.22e-15 instead of a clean 0) leaking into the transform string.
-      const wx=((gx*camCos-gy*camSin)*T3D).toFixed(2), wz=(-(gx*camSin+gy*camCos)*T3D).toFixed(2), wy=visHgt*ELEV3D;
-      tileStyle3d=`transform:translate3d(${wx}px,${wy}px,${wz}px);z-index:${(x+y)*10+(visHgt>0?visHgt:0)};`;
-      if(visHgt>0){ const fh=visHgt*ELEV3D;
-        // Real cuboid faces (top already folds via the .top3d CSS class) — south + east are the
-        // only two that can ever face this fixed camera; adjacent tiles' faces meet edge-to-edge
-        // automatically since they share the same world grid, no per-tile gap math needed.
-        faces+=`<div class="side3d south3d ter-${ter}" style="height:${fh}px;transform:translateZ(${T3D}px) translateY(${-fh}px)"></div>`;
-        faces+=`<div class="side3d east3d ter-${ter}" style="height:${fh}px;transform:translateX(${T3D}px) translateZ(${T3D/2}px) rotateY(90deg) translateY(${-fh}px)"></div>`;
+      const cx=(rx-ry)*ISO_X+offX, cyLift=(rx+ry)*ISO_Y-visHgt*ISO_ELEV+ISO_PAD;
+      style+=`left:${cx-20}px;top:${cyLift-20}px;z-index:${(rx+ry)*10+visHgt};`;
+      const wallFace='';
+      // Two slanted faces per elevated/sunken tile, extending from the diamond's own edge to
+      // ground level, drawn unconditionally on every non-flat tile — adjacent same-height
+      // tiles' faces land in the exact same screen rect as their neighbor's opposite face
+      // (left of one == right of the next, in both grid directions), so a run of tiles reads
+      // as one continuous wall/pit-edge instead of per-tile gaps; taller/deeper neighbours
+      // simply paint over the redundant portion via normal z-order.
+      if(visHgt>0){ const z=(rx+ry)*10+visHgt-1, fh=visHgt*ISO_ELEV, tot=ISO_Y+fh, bp=(ISO_Y/tot*100).toFixed(1), dp=(fh/tot*100).toFixed(1);
+        // raised block: south-west/south-east faces extend DOWN from the diamond's bottom edge to ground
+        riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 0%,100% ${bp}%,100% 100%,0% ${dp}%);z-index:${z};${wallFace}"></div>`;
+        riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${cyLift}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 0%,0% ${bp}%,0% 100%,100% ${dp}%);z-index:${z};${wallFace}"></div>`;
+      } else if(visHgt<0){ const z=(rx+ry)*10-visHgt+50, depth=-visHgt*ISO_ELEV, tot=ISO_Y+depth, bp=(100-(ISO_Y/tot*100)).toFixed(1), dp=(100-(depth/tot*100)).toFixed(1), boxTop=cyLift-ISO_Y-depth;
+        // pit: north-west/north-east interior walls extend UP from the diamond's top edge to ground
+        riser+=`<div class="isoFace isoFaceL" style="left:${cx-ISO_X}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(0% 100%,100% ${bp}%,100% 0%,0% ${dp}%);z-index:${z}"></div>`;
+        riser+=`<div class="isoFace isoFaceR" style="left:${cx}px;top:${boxTop}px;width:${ISO_X}px;height:${tot}px;clip-path:polygon(100% 100%,0% ${bp}%,0% 0%,100% ${dp}%);z-index:${z}"></div>`;
       }
     }
     const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey):'';
-    const overlay=iso?`<div class="isoContent" style="transform:rotateX(-60deg)">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
-    const topEl=iso?`<div class="top3d${td?' ter-'+ter:''}" style="${topStyle}"></div>`:'';
-    cells+=iso
-      ? `<div class="tile3d${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${tileStyle3d}" ${canTarget?`data-target="${mo.id}"`:''}>${topEl}${faces}${overlay}</div>`
-      : `<div class="mcell${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${topStyle}" ${canTarget?`data-target="${mo.id}"`:''}>${tok}${elevBadge}</div>`;
+    const inner=iso?`<div class="isoContent">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
+    cells+=riser+`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
   }
   return iso
-    ? `<div class="mapwrap"><div class="mapgrid iso3d" style="width:${stageW}px;height:${stageH}px"><div class="scene3d" style="left:${originX}px;top:${originY}px;transform:rotateX(60deg)">${cells}</div></div></div>`
+    ? `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px">${cells}</div></div>`
     : `<div class="mapwrap"><div class="mapgrid" style="grid-template-columns:repeat(${cols},36px)">${cells}</div></div>`;
 }
 
@@ -5441,7 +5387,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v115.3';
+const APP_VERSION='v116';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

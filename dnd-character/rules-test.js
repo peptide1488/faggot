@@ -20,7 +20,6 @@ global.window=global; global.addEventListener=()=>{};
 try{ global.navigator={}; }catch(e){}   // Node ≥21 exposes a read-only navigator — the built-in one is fine
 global.confirm=()=>true; global.alert=()=>{}; global.prompt=()=>null;
 global.requestAnimationFrame=f=>f();
-global.MutationObserver=class{observe(){}disconnect(){}};
 
 // consts inside eval stay block-scoped — re-export the data tables the tests assert on
 eval(src.replace('"use strict";','')+
@@ -34,8 +33,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
-  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
-  'globalThis.mapGridHTML=mapGridHTML;globalThis.heightAt=heightAt;globalThis.setIsoView=v=>{isoView=v;};globalThis.setMapRotation=v=>{mapRotation=v;};');
+  'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -577,7 +575,7 @@ T('Shocking Grasp cond is registered as No Reactions', SPELL_COND['Shocking Gras
 
 /* ---- version hygiene: sw.js cache must match APP_VERSION ---- */
 const sw=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
-const appVer=(src.match(/APP_VERSION='(v[\d.]+)'/)||[])[1], swVer=(sw.match(/grimoire-(v[\d.]+)/)||[])[1];
+const appVer=(src.match(/APP_VERSION='(v\d+)'/)||[])[1], swVer=(sw.match(/grimoire-(v\d+)/)||[])[1];
 T('sw.js cache version matches APP_VERSION ('+appVer+')', appVer && appVer===swVer);
 
 /* ---- map elevation (isometric renderer content) ---- */
@@ -648,45 +646,6 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   T('neither test sheet exceeds the bounding box on either axis', tallW<=DECOR_MAX_W && wideH<=DECOR_MAX_H);
   delete DECOR_MANIFEST.__test_tall; delete DECOR_MANIFEST.__test_wide;
   decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
-})();
-
-/* ---- battle map: real CSS 3D isometric scene (replaces the old 2D rotate+squash fake) ---- */
-(function(){
-  setIsoView(true); setMapRotation(0);
-  const s={map:{cols:3,rows:3,tiles:{'1,1':'wall'},height:{'1,1':2},decor:{}}, monsters:[], players:[]};
-  const html=mapGridHTML(s, true, {});
-  T('iso mode emits a real 3D scene wrapper with a pure camera tilt (no scene-level rotateZ — see below for why)', /class="scene3d"[^>]*transform:rotateX\(60deg\)"/.test(html));
-  T('every cell still gets a data-cell so click targeting/cellCenter work unchanged', (html.match(/data-cell="/g)||[]).length===9);
-  // Walls no longer default to standing when hgt=0 (a real dungeon's wall PERIMETER is a long
-  // contiguous run, and CSS's approximate 3D depth-sort visibly gaps between adjacent raised
-  // tiles there even though their positions are exactly correct — see AUDIT.md v115.2 addendum).
-  // An explicitly-elevated wall (DM-painted, e.g. a short raised section) still gets the real
-  // standing cuboid — that part of the mechanism is unchanged and still correct in isolation.
-  T("a plain wall with NO explicit elevation renders flat (no side3d faces) — the standing-by-default behavior was reverted", (s2=>{ const h=mapGridHTML(s2,true,{}); return !h.includes('side3d'); })({map:{cols:3,rows:3,tiles:{'1,1':'wall'},height:{},decor:{}}, monsters:[], players:[]}));
-  T("an EXPLICITLY elevated wall still stands: exactly one south3d + one east3d face", (html.match(/side3d south3d/g)||[]).length===1 && (html.match(/side3d east3d/g)||[]).length===1);
-  T('the wall\'s side faces carry the wall terrain texture class', /side3d south3d ter-wall/.test(html) && /side3d east3d ter-wall/.test(html));
-  setIsoView(false);
-  const topdown=mapGridHTML(s,true,{});
-  setIsoView(true);
-  T('top-down mode is untouched by the 3D rewrite — plain CSS grid, no 3D scene', topdown.includes('grid-template-columns') && !topdown.includes('scene3d'));
-})();
-
-/* ---- battle map: columns and rows must contribute SYMMETRICALLY to screen position ---- */
-// Regression test for a real bug: baking the 45°+90°*rot "diamond" yaw into a scene-level
-// rotateZ(45) (composed with rotateX(60)) does NOT produce a symmetric isometric diamond —
-// rotateZ(45) mixes the flat (Y=0) ground plane's X into a nonzero Y' before rotateX ever sees
-// it, so columns and rows end up contributing UNEQUALLY to horizontal screen position. Measured
-// live: a 15-wide × 11-tall room rendered narrower than it is tall — genuinely rotated, not just
-// a different-looking projection. The fix bakes the yaw into each tile's (wx,wz) via real
-// trigonometry in JS and applies only a pure rotateX(60) camera tilt with no rotateZ at all.
-(function(){
-  setIsoView(true); setMapRotation(0);
-  const s={map:{cols:5,rows:5,tiles:{},height:{},decor:{}}, monsters:[], players:[]};
-  const html=mapGridHTML(s,true,{});
-  const posOf=(x,y)=>{ const m=html.match(new RegExp('data-cell="'+x+','+y+'"[^>]*style="transform:translate3d\\(([-\\d.]+)px,[-\\d.]+px,([-\\d.]+)px\\)')); return m?{wx:Number(m[1]),wz:Number(m[2])}:null; };
-  const c22=posOf(2,2), c32=posOf(3,2), c23=posOf(2,3);
-  const dxCol=c32.wx-c22.wx, dxRow=c23.wx-c22.wx;
-  T('a one-column step and a one-row step move the SAME horizontal distance in mirrored directions (a true symmetric diamond), not one axis dominating the other', Math.abs(Math.abs(dxCol)-Math.abs(dxRow))<0.5 && dxCol>0 && dxRow<0);
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
