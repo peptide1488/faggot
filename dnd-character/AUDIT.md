@@ -598,3 +598,46 @@ two things became clear:
 `node tools/iso-preview.js` and look at the PNGs *before* assuming the fix needs another
 iteration — a hand-verified-by-eye local render is strictly more informative than a live
 screenshot round-trip, and doesn't cost a Pages build + a message back-and-forth.
+
+## v119 — real range bug (not terrain height), circular AoE blasts, manual initiative, roll-mode toggle
+Live report: "range of fireball and firebolt seems to be getting fucked up, i think its mistaking
+the terrain height." Investigated the height angle first (rebuilt the exact reported scenario —
+range-highlighting near the Open Field hill through the real `mapGridHTML`/`losClear`) and it
+checked out: `gridDist`/`losClear` never read `heightAt` at all, elevation genuinely doesn't
+affect range or LOS in this engine (a documented simplification), and a tile that looked wrongly
+excluded turned out to be correctly LOS-blocked by an actual tree on the sightline — working as
+designed, not a bug. The user's hunch about *something* being wrong was right, just not the cause:
+
+**The real bug**: `parseSpellMechanics` only found a spell's range by regex-matching "within N ft"
+in `SPELL_DESC`'s one-line flavor text. Almost none of them say that — Fire Bolt's description is
+"Ranged fire mote, 1d10 fire; ignites objects," never mentioning its real 120 ft — so `spellRangeTiles`
+silently fell back to a flat 60 ft default. A sweep found **87 attack/save/AoE spells** hitting
+this gap, including Fireball (real 150 ft, was 60) and Fire Bolt (real 120 ft, was 60). Fixed with
+a new `SPELL_RANGE` table (real PHB ft, `'Touch'` where RAW says Touch) that `parseSpellMechanics`
+checks first, falling back to the old description-regex for anything not listed. `rules-test.js`
+now has a standing coverage check (mirrors the v92 spell-coverage audits) so any future spell
+missing from both fails the suite instead of shipping a silent wrong-range bug again.
+
+**Also fixed, from the same conversation**:
+- **Circular AoE** ("fireball radius should be circle"): blast-radius checks used `gridDist`
+  (Chebyshev/square — a diagonal tile at distance `√2` still counted as "distance 1"), so Fireball
+  et al. hit a square footprint, not a sphere. New `inBlast(cx,cy,x,y,r)` (Euclidean) replaces
+  `gridDist<=r` at every blast site: `openSpellTarget`/`qbSpellTarget`'s `blastTargets`/`alliesIn`/
+  `selfIn` (actual damage), `mapGridHTML`'s `opts.blast` (visual highlight), `qbPaintTerrain`
+  (Grease/Web zones) — visual and mechanical shape now match, both circular. `gridDist` itself is
+  untouched (still Chebyshev for range/movement — intentional 5e diagonal-movement rule, unrelated).
+- **Manual initiative entry**: the DM's Turn Order card showed each roll as a plain `<div>`; it's
+  now an editable `<input>` per combatant (`data-initedit`) — changing it re-sorts `s.order` and
+  keeps the turn pointer on whoever was acting. `rollInitiative`'s one-tap auto-roll-everyone is
+  untouched, this is an edit-after-the-fact affordance, not a replacement.
+- **Roll-mode toggle** ("auto/manual toggle instead of asking each time"): `attackFlow`'s to-hit
+  and damage steps used to show an auto-roll button *and* a manual input side by side, forcing a
+  choice on literally every attack. New persisted `rollMode` (`grimoire.rollmode`, ⚙ App menu,
+  same pattern as the sound toggle) shows only the preferred one by default, with a small
+  "enter manually instead" / "auto-roll instead" link so a single attack can still go the other
+  way without changing the global setting. `castModal`'s spell-roll rows were left as-is — they
+  already show both inline with no forced sequential choice, so there was no "asking each time"
+  friction there to fix.
+
+Verified locally via headless Chromium before shipping: circular blast renders as an actual
+stepped disc (not a square) on a real grid.

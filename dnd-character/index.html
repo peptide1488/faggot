@@ -933,7 +933,7 @@ function openSpellTarget(c, name, level){
   const seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0; let center=null;
   const reach = seek ? reachableCells(s, me.x, me.y, tilesR*5) : null;
   const inRange=(x,y)=> seek ? reach[x+','+y]!=null : (gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
-  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && gridDist(mo.x,mo.y,ctr.x,ctr.y)<=aoeR);
+  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && inBlast(ctr.x,ctr.y,mo.x,mo.y,aoeR));
   const dc0=8+profBonus(c)+mod(abil(c,c.spellAbility));
   const sp=dmgTotal=>({name, dc:dc0, save:mc.save, dmgTotal, dtype:mc.dtype, cond:spellCondOf(name)});
   function resolveSingle(mo){
@@ -951,8 +951,8 @@ function openSpellTarget(c, name, level){
       flashBanner(mc.dmg ? name+' hits '+mo.name+' for '+ev.dmg+(ev.saved?' (saved — half)':'') : name+' on '+mo.name+(ev.saved?' — it saves, no effect':'')); }, 430); }
   function resolveBlast(ctr){ const aff=blastTargets(ctr);
     // AoE has no allegiance (PHB) — you take real damage; other players are flagged for the DM
-    const alliesIn=(s.players||[]).filter(p=>p.id!==(net.peer&&net.peer.id) && gridDist(p.x,p.y,ctr.x,ctr.y)<=aoeR);
-    const selfIn=gridDist(me.x,me.y,ctr.x,ctr.y)<=aoeR;
+    const alliesIn=(s.players||[]).filter(p=>p.id!==(net.peer&&net.peer.id) && inBlast(ctr.x,ctr.y,p.x,p.y,aoeR));
+    const selfIn=inBlast(ctr.x,ctr.y,me.x,me.y,aoeR);
     mapProjectile(me.x,me.y,ctr.x,ctr.y,'🔥'); setTimeout(()=>mapBurst(ctr.x,ctr.y,aoeR),300);   // bolt then explosion on the map
     setTimeout(()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,name,level)) return;
       const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0; sfx('damage'); attackFx('crit');
@@ -998,7 +998,7 @@ function attackFlow(c, atk){
   }
   const toHit=Number(atk.toHit)||0;
   const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
-  const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false};
+  const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false, mode:rollMode};
   // Class riders on weapon hits (PHB): Rogue Sneak Attack (once/turn, finesse or ranged
   // weapon, needs advantage or an adjacent ally) and Paladin Divine Smite (burn a slot,
   // melee hit, 2d8 radiant + 1d8/extra slot level, max 5d8; dice double on a crit).
@@ -1071,9 +1071,11 @@ function attackFlow(c, atk){
   function draw(){
     let body=`<h2>⚔ ${esc(atk.name)}</h2>`;
     if(st.phase==='tohit'){
-      body+=`<p class="muted" style="font-size:13px">To hit <b>${sgn(toHit)}</b> — auto-roll the d20 or enter your own.</p>
-        <button class="btn block" id="afAuto">🎲 Roll to hit</button>
-        <div class="addrow" style="margin-top:8px"><input id="afManual" type="number" placeholder="enter d20 (1–20)"><button class="btn ghost" id="afUse">Use</button></div>`;
+      body+=`<p class="muted" style="font-size:13px">To hit <b>${sgn(toHit)}</b></p>
+        ${st.mode==='manual'
+          ? `<div class="addrow"><input id="afManual" type="number" placeholder="enter d20 (1–20)"><button class="btn" id="afUse">Use</button></div>`
+          : `<button class="btn block" id="afAuto">🎲 Roll to hit</button>`}
+        <button class="btn ghost sm" id="afModeSwitch" style="margin-top:8px">${st.mode==='manual'?'🎲 Auto-roll instead':'✎ Enter manually instead'}</button>`;
     } else if(st.phase==='hit'){
       body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--accent)">${st.total}</div><div class="muted">d20 (${st.d20}) ${sgn(toHit)}${st.crit?' · 💥 NAT 20':st.d20===1?' · NAT 1':''}</div></div>
         <p style="text-align:center;margin:0 0 8px">Did it beat the target's AC?</p>
@@ -1086,8 +1088,10 @@ function attackFlow(c, atk){
         ${(canSneak && st.hit!==false && !(c.battle&&c.battle.sneakUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afSneak"> 🗡️ Sneak Attack +${sneakDice}d6 <span class="muted" style="font-size:11px">(once/turn; needs advantage or an adjacent ally)</span></label>`:''}
         ${smiteLvls.length?`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚡ Divine Smite</span><select id="afSmite" style="flex:1"><option value="">— no smite —</option>${smiteLvls.map(l=>`<option value="${l}">L${l} slot — +${Math.min(5,1+l)}d8 radiant</option>`).join('')}</select></div>`:''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
-        <button class="btn block" id="afDmgAuto">🎲 Roll damage</button>
-        <div class="addrow" style="margin-top:8px"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn ghost" id="afDmgUse">Use</button></div>`;
+        ${st.mode==='manual'
+          ? `<div class="addrow"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn" id="afDmgUse">Use</button></div>`
+          : `<button class="btn block" id="afDmgAuto">🎲 Roll damage</button>`}
+        <button class="btn ghost sm" id="afModeSwitch" style="margin-top:8px">${st.mode==='manual'?'🎲 Auto-roll instead':'✎ Enter manually instead'}</button>`;
     } else {
       const single = atk.offhand || atk.reaction;   // off-hand & opportunity attacks are one-and-done
       const moreAttacks = !single && (!c.battle || (c.battle.attacksLeft||0)>0);
@@ -1101,9 +1105,18 @@ function attackFlow(c, atk){
     $('#modalRoot').innerHTML=`<div class="modal" id="afModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
     $('#afModal').onclick=e=>{ if(e.target.id==='afModal') close(); };
     $('#afClose').onclick=close;
-    if(st.phase==='tohit'){ $('#afAuto').onclick=()=>rollToHit(null); $('#afUse').onclick=()=>{ const v=Number($('#afManual').value); if(v>=1&&v<=20) rollToHit(v); else flashBanner('Enter 1–20'); }; }
+    if(st.phase==='tohit'){
+      const a=$('#afAuto'); if(a) a.onclick=()=>rollToHit(null);
+      const u=$('#afUse'); if(u) u.onclick=()=>{ const v=Number($('#afManual').value); if(v>=1&&v<=20) rollToHit(v); else flashBanner('Enter 1–20'); };
+      $('#afModeSwitch').onclick=()=>{ st.mode=st.mode==='manual'?'auto':'manual'; draw(); };
+    }
     else if(st.phase==='hit'){ $('#afHit').onclick=()=>{ st.hit=true; st.phase='dmg'; sfx(st.crit?'crit':'hit'); attackFx(st.crit?'crit':'hit'); draw(); }; $('#afMiss').onclick=()=>{ st.hit=false; st.phase='done'; sfx('miss'); attackFx('miss'); logChange(c, atk.name+' — attack missed'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:false}); }catch(e){} } draw(); }; }
-    else if(st.phase==='dmg'){ const t=$('#af2h'); if(t) t.onchange=()=>{ st.twoH=t.checked; draw(); }; $('#afDmgAuto').onclick=()=>rollDmg(null); $('#afDmgUse').onclick=()=>{ const el=$('#afDmgMan'); const v=Number(el.value); if(el.value!==''&&!isNaN(v)) rollDmg(v); }; }
+    else if(st.phase==='dmg'){
+      const t=$('#af2h'); if(t) t.onchange=()=>{ st.twoH=t.checked; draw(); };
+      const a=$('#afDmgAuto'); if(a) a.onclick=()=>rollDmg(null);
+      const u=$('#afDmgUse'); if(u) u.onclick=()=>{ const el=$('#afDmgMan'); const v=Number(el.value); if(el.value!==''&&!isNaN(v)) rollDmg(v); };
+      $('#afModeSwitch').onclick=()=>{ st.mode=st.mode==='manual'?'auto':'manual'; draw(); };
+    }
     else { $('#afAgain').onclick=()=>{ st.phase='tohit'; st.d20=0; st.total=0; st.crit=false; st.hit=null; st.dmgTotal=null; st.twoH=false; draw(); }; }
   }
   draw();
@@ -1708,6 +1721,27 @@ const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necroti
 // — center them on your own tile. Meteor Swarm's four 40-ft-radius impact points are
 // collapsed to one centered r8 burst (matches its largest sphere, like Sleet Storm).
 const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1,'Meteor Swarm':8,'Color Spray':1,'Fear':2,'Sunbeam':1};
+// PHB cast range in feet ('Touch' where RAW says Touch); Self-centered cone/line/radius spells
+// (Burning Hands, Thunderwave, Fear, Cone of Cold, Lightning Bolt, Spirit Guardians, Sunbeam,
+// Sunburst, Prismatic Spray) use their blast reach as a practical target-picking proxy, since
+// parseSpellMechanics has nothing else to gate "how far can I place this" by. This exists
+// because parseSpellMechanics's regex only found a range when SPELL_DESC's one-liner happened
+// to literally say "within N ft" — true for almost none of them (e.g. Fire Bolt: "Ranged fire
+// mote, 1d10 fire" never states 120 ft), so every attack/save/AoE spell silently fell back to
+// a wrong flat 60-ft default. Checked first in parseSpellMechanics; the description-regex stays
+// as a fallback for anything not listed here.
+const SPELL_RANGE={
+  'Acid Splash':60,'Chill Touch':120,'Eldritch Blast':120,'Fire Bolt':120,'Poison Spray':10,'Produce Flame':30,'Ray of Frost':60,'Sacred Flame':60,'Shillelagh':'Touch','Shocking Grasp':'Touch','Thorn Whip':30,'Vicious Mockery':60,
+  'Animal Friendship':30,'Bane':30,'Burning Hands':15,'Charm Person':30,'Color Spray':15,'Command':60,'Entangle':90,'Faerie Fire':60,'Grease':60,'Guiding Bolt':120,'Hellish Rebuke':60,'Hex':90,"Hunter's Mark":90,'Inflict Wounds':'Touch','Magic Missile':120,'Ray of Sickness':60,'Sleep':90,"Tasha's Hideous Laughter":30,'Thunderwave':15,'Witch Bolt':30,
+  'Blindness/Deafness':30,'Cloud of Daggers':60,'Crown of Madness':120,'Flaming Sphere':60,'Heat Metal':60,'Hold Person':60,'Moonbeam':120,'Ray of Enfeeblement':60,'Scorching Ray':120,'Shatter':60,'Spike Growth':150,'Spiritual Weapon':60,'Suggestion':30,'Web':60,'Zone of Truth':60,
+  'Bestow Curse':'Touch','Call Lightning':120,'Fear':30,'Fireball':150,'Hypnotic Pattern':120,'Lightning Bolt':100,'Sleet Storm':150,'Slow':120,'Spirit Guardians':15,'Stinking Cloud':90,'Vampiric Touch':'Touch',
+  'Banishment':60,'Blight':30,'Confusion':90,'Dominate Beast':60,'Ice Storm':300,'Phantasmal Killer':120,'Polymorph':60,'Wall of Fire':120,
+  'Cloudkill':120,'Cone of Cold':60,'Dominate Person':60,'Flame Strike':60,'Hold Monster':90,'Insect Plague':300,
+  'Chain Lightning':150,'Circle of Death':60,'Disintegrate':60,'Eyebite':60,'Harm':60,'Sunbeam':60,
+  'Delayed Blast Fireball':150,'Finger of Death':60,'Fire Storm':150,'Prismatic Spray':60,
+  'Dominate Monster':60,'Feeblemind':150,'Power Word Stun':60,'Sunburst':60,
+  'Meteor Swarm':500
+};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
 const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10},'Shocking Grasp':{c:'No Reactions',r:1},'Chill Touch':{c:"Can't Heal",r:1},'Guiding Bolt':{c:'Guided',r:1},'Power Word Stun':{c:'Stunned',r:10}};
 // Dominate Person/Beast/Monster: a Dominated monster fights for the party — the Quick
@@ -1737,7 +1771,8 @@ function parseSpellMechanics(name){
   const eff=SPELL_EFFECTS[name], d=SPELL_DESC[name]||'';
   const out={attack:false, save:null, dmg:null, dtype:'', heal:null, buff:!!eff,
     conc:isConcentration(name)||!!(eff&&eff.conc), range:'', duration:''};
-  if(/\btouch\b/i.test(d)) out.range='Touch';
+  if(SPELL_RANGE[name]!=null) out.range = SPELL_RANGE[name]==='Touch' ? 'Touch' : SPELL_RANGE[name]+' ft';
+  else if(/\btouch\b/i.test(d)) out.range='Touch';
   else { const r=d.match(/within (\d+)\s*ft/i); if(r) out.range=r[1]+' ft'; }
   if(eff&&eff.rounds!=null) out.duration=fmtDuration(eff.rounds);
   else if(out.conc) out.duration='Concentration';
@@ -2112,6 +2147,12 @@ function renderDiceLog(){
 
 /* ---- sound effects (Web Audio synth — no files, fully offline) ---- */
 let _ac=null, soundOn=(localStorage.getItem('grimoire.sound')!=='off');
+// Persisted default for the to-hit/damage/healing roll steps (attackFlow, castModal): 'auto'
+// shows just the auto-roll button, 'manual' shows just the number entry — either way a small
+// link still switches modes for that one roll, so nobody's ever fully locked out of the other
+// option. Exists because those steps used to show BOTH side by side and made you choose every
+// single attack; this makes the choice a one-time setting instead of a per-roll one.
+let rollMode=localStorage.getItem('grimoire.rollmode')||'auto';
 function audioCtx(){
   if(_ac && _ac.state==='closed') _ac=null;   // browsers reclaim contexts mid-session — rebuild
   if(!_ac){ try{ _ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
@@ -3776,6 +3817,9 @@ function openAppMenu(){
       <button class="btn ghost" id="mnLog">📜 Adventure log</button>
       <button class="btn ghost" id="mnSound">${soundOn?'🔊 Sound: on':'🔇 Sound: off'}</button>
     </div>
+    <div class="row2" style="margin-bottom:10px">
+      <button class="btn ghost" id="mnRollMode" title="Default for to-hit/damage/healing rolls — a link still lets you switch for any single roll">${rollMode==='manual'?'✎ Rolls: manual':'🎲 Rolls: auto'}</button>
+    </div>
     <div class="row2">
       <button class="btn ghost" id="mnExport">⬇ Export backup</button>
       <button class="btn ghost" id="mnImport">⬆ Import backup</button>
@@ -3799,6 +3843,7 @@ function openAppMenu(){
   $('#mnJoin').onclick=()=>{ close(); openJoin(); };
   $('#mnQuick').onclick=()=>{ close(); openQuickBattle(); };
   $('#mnSound').onclick=()=>{ soundOn=!soundOn; localStorage.setItem('grimoire.sound', soundOn?'on':'off'); if(soundOn) sfx('success'); openAppMenu(); };
+  $('#mnRollMode').onclick=()=>{ rollMode=rollMode==='manual'?'auto':'manual'; localStorage.setItem('grimoire.rollmode',rollMode); openAppMenu(); };
   $('#mnExport').onclick=exportData;
   $('#mnImport').onclick=()=>$('#mnImportFile').click();
   $('#mnImportFile').addEventListener('change',e=>{ importData(e); close(); });
@@ -3980,6 +4025,11 @@ function playerOpportunityPrompt(c, d){
     attackFlow(c, {name:w.n+' (opportunity)', toHit:weaponToHit(c,w), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:'', reaction:true}); });
 }
 function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by)); }
+// True circular check for AoE blasts specifically (Fireball etc. are spheres, not squares) —
+// Euclidean, not gridDist's Chebyshev. Keep gridDist for range/movement (intentional 5e
+// diagonal-movement simplification, see AUDIT.md); this is only for "is (x,y) inside a radius-r
+// blast centered at (cx,cy)". +0.0001 guards against float rounding excluding an exact-radius tile.
+function inBlast(cx,cy,x,y,r){ return Math.hypot(cx-x,cy-y)<=r+0.0001; }
 // Opportunity attack trigger: a mover leaves an enemy's reach when it starts within reach and ends outside it.
 function leavesReach(fromX,fromY,toX,toY,ex,ey,reach){ reach=reach||1; return gridDist(fromX,fromY,ex,ey)<=reach && gridDist(toX,toY,ex,ey)>reach; }
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
@@ -4429,7 +4479,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     let extra='';
     if(opts.reachCost && !mo && !pl && ter!=='wall' && ter!=='void'){ const fc=opts.reachCost[x+','+y]; if(fc!=null && fc>0) extra+=(opts.reachNormal!=null && fc>opts.reachNormal)?' reachdash':' reach'; }
     if(opts.rangeFrom && ter!=='wall'){ const rf=opts.rangeFrom, d=Math.max(Math.abs(rf.x-x),Math.abs(rf.y-y)); if(d>0 && d<=rf.tiles && losClear(s,rf.x,rf.y,x,y)) extra+=' reach'; }
-    if(opts.blast){ const bl=opts.blast, d=Math.max(Math.abs(bl.x-x),Math.abs(bl.y-y)); if(d<=bl.r) extra+=' intarget'; }
+    if(opts.blast){ const bl=opts.blast; if(inBlast(bl.x,bl.y,x,y,bl.r)) extra+=' intarget'; }
     if(opts.targets && mo && opts.targets.indexOf(mo.id)>=0) extra+=' intarget';
     const canTarget = !isDM && mo && mo.hp>0;
     const hgt=heightAt(s,x,y);
@@ -4480,7 +4530,7 @@ function renderDM(){
   ${(s.order&&s.order.length)?(()=>{ const cur=s.order[s.turn]||{}; const curMon=cur.k==='m'?s.monsters.find(m=>m.id===cur.id):null;
     return `<div class="card">
       <div class="row between"><h2 style="margin:0">Turn Order</h2><button class="btn ghost sm" id="dmReroll">↻ Re-roll</button></div>
-      ${s.order.map((o,i)=>{ const dead=orderDead(o); return `<div class="listrow" style="${i===s.turn?'background:rgba(77,106,44,.14);border-radius:8px':''}${dead?';opacity:.45':''}"><span style="flex:none;width:22px">${i===s.turn?'▶':''}</span><div class="nm"><b style="${dead?'text-decoration:line-through':''}">${o.k==='m'?'🟥 ':'🟩 '}${esc(o.name)}${dead?' 💀':''}</b></div><div class="val">${o.roll}</div></div>`; }).join('')}
+      ${s.order.map((o,i)=>{ const dead=orderDead(o); return `<div class="listrow" style="${i===s.turn?'background:rgba(77,106,44,.14);border-radius:8px':''}${dead?';opacity:.45':''}"><span style="flex:none;width:22px">${i===s.turn?'▶':''}</span><div class="nm"><b style="${dead?'text-decoration:line-through':''}">${o.k==='m'?'🟥 ':'🟩 '}${esc(o.name)}${dead?' 💀':''}</b></div><input type="number" class="val" data-initedit="${i}" value="${o.roll}" title="Edit this roll manually" style="max-width:54px;text-align:center;padding:4px 6px"></div>`; }).join('')}
       <div class="card" style="margin:10px 0 0;background:rgba(77,106,44,.10)">
         <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Up now: ${esc(cur.name||'—')}</div>
         ${curMon? `<div class="row2"><button class="btn" id="curAtk">⚔ ${esc(curMon.name)} attacks</button><button class="btn ghost" id="curMove">📍 Move it</button></div>`
@@ -4528,6 +4578,13 @@ function renderDM(){
   { const iv=$('#dmIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
   { const rv=$('#dmRotBtn'); if(rv) rv.onclick=rotateMap; }
   { const rr=$('#dmReroll'); if(rr) rr.onclick=rollInitiative; }
+  document.querySelectorAll('[data-initedit]').forEach(el=>el.onchange=()=>{
+    const i=Number(el.dataset.initedit), v=Number(el.value); if(isNaN(v)) return;
+    const cur=s.order[s.turn];   // remember who's acting so the turn pointer survives the re-sort
+    s.order[i].roll=v; s.order.sort((a,b)=>b.roll-a.roll);
+    if(cur) s.turn=Math.max(0, s.order.findIndex(o=>o.k===cur.k && o.id===cur.id));
+    dmBroadcast(); render(); flashBanner('Initiative updated');
+  });
   { const nt=$('#dmNextT'); if(nt) nt.onclick=dmNextTurn; }
   { const pt=$('#dmPrevT'); if(pt) pt.onclick=dmPrevTurn; }
   { const ca=$('#curAtk'); if(ca) ca.onclick=()=>{ const cur=s.order[s.turn]; const mo=cur&&s.monsters.find(m=>m.id===cur.id); if(mo) dmMonsterAttack(mo); }; }
@@ -5277,7 +5334,7 @@ function qbPaintTerrain(s,ctr,aoeR,name,dc){ const st=SPELL_TERRAIN[name]; if(!s
   s.map.tiles=s.map.tiles||{}; const cells=[];
   for(let x=Math.max(0,ctr.x-aoeR); x<=Math.min(s.map.cols-1,ctr.x+aoeR); x++)
     for(let y=Math.max(0,ctr.y-aoeR); y<=Math.min(s.map.rows-1,ctr.y+aoeR); y++){
-      if(gridDist(ctr.x,ctr.y,x,y)>aoeR) continue;
+      if(!inBlast(ctr.x,ctr.y,x,y,aoeR)) continue;
       const k=x+','+y, prevDef=TERRAIN[s.map.tiles[k]]; if(prevDef&&(prevDef.solid||prevDef.deadly)) continue;
       cells.push({x,y,prev:s.map.tiles[k]||null}); s.map.tiles[k]=st.terrain;
     }
@@ -5304,7 +5361,7 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
   const inRange=(x,y)=> seek?reach[x+','+y]!=null:(gridDist(me.x,me.y,x,y)<=tilesR && losClear(s,me.x,me.y,x,y));
   const spellAtk=profBonus(c)+mod(abil(c,c.spellAbility));
   const dc0=8+profBonus(c)+mod(abil(c,c.spellAbility));
-  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && gridDist(mo.x,mo.y,ctr.x,ctr.y)<=aoeR);
+  const blastTargets=ctr=>s.monsters.filter(mo=>mo.hp>0 && inBlast(ctr.x,ctr.y,mo.x,mo.y,aoeR));
   function finish(){ qbCheckEnd(); save(); render(); }
   const sp=dmgTotal=>({name, dc:dc0, save:mc.save, dmgTotal, dtype:mc.dtype, cond:spellCondOf(name)});
   const logEv=(mo,ev)=>{ if(ev.save) qbLog('🛡️ '+mo.name+' '+String(ev.save).toUpperCase()+' save '+ev.saveRoll+' vs DC '+ev.dc+' — '+(ev.saved?'success':'fail'));
@@ -5325,7 +5382,7 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
     setTimeout(()=>{ const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0; sfx('damage'); attackFx('crit');
       aff.forEach(mo=>{ logEv(mo, Engine.castApply(qbAdapter, 'pc', mo.id, sp(dmgTotal))); });
       // friendly fire: an area spell hits everything in it — including you (PHB: AoE has no allegiance)
-      if(dmgTotal && gridDist(me.x,me.y,ctr.x,ctr.y)<=aoeR){
+      if(dmgTotal && inBlast(ctr.x,ctr.y,me.x,me.y,aoeR)){
         const ev=Engine.castApply(qbAdapter, 'pc', 'pc', Object.assign(sp(dmgTotal), {save:mc.save||'dex', cond:null}));
         if(ev.dmg>0) qbLog('💥 '+c.name+' is caught in the blast — '+ev.dmg+' damage'+(ev.saved?' (saved — half)':'')); }
       qbPaintTerrain(s,ctr,aoeR,name,dc0);
@@ -5380,7 +5437,7 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v118.2';
+const APP_VERSION='v119';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

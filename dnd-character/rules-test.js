@@ -477,8 +477,11 @@ T('Grease is registered as a terrain-painting spell', SPELL_TERRAIN['Grease'] &&
 T('grease terrain is difficult and trips creatures', TERRAIN['grease'].diff===true && TERRAIN['grease'].prone===true);
 { const gs={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[]};
   qbPaintTerrain(gs, {x:2,y:2}, 1, 'Grease', 13);
-  const painted=['1,1','2,1','3,1','1,2','2,2','3,2','1,3','2,3','3,3'].every(k=>gs.map.tiles[k]==='grease');
-  T('qbPaintTerrain covers the blast radius (3x3 for r1)', painted);
+  // AoE blasts are circular (inBlast, Euclidean), not square — for r1 that's the centre plus its
+  // 4 orthogonal neighbours, NOT the 4 diagonal corners (distance sqrt(2) > 1). See AUDIT.md v119.
+  const painted=['2,1','1,2','2,2','3,2','2,3'].every(k=>gs.map.tiles[k]==='grease');
+  const cornersUnpainted=['1,1','3,1','1,3','3,3'].every(k=>gs.map.tiles[k]==null);
+  T('qbPaintTerrain covers a circular blast (plus-shape for r1), not a square', painted && cornersUnpainted);
   T('qbHazardAt finds the painted hazard and its save DC', qbHazardAt(gs,2,2) && qbHazardAt(gs,2,2).dc===13);
   T('untouched tiles outside the blast stay unpainted', gs.map.tiles['0,0']===undefined);
   gs.battle.round=11; qbExpireHazards(gs);
@@ -666,6 +669,29 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   const paletteMatch=html.match(/data-palette="([^"]*)"/);
   T('mapGridHTML also hands the renderer a colour palette (decoupled from TERRAIN internals)', !!paletteMatch && Object.keys(JSON.parse(decodeURIComponent(paletteMatch[1]))).length>0);
 })();
+
+/* ---- regression: spell range must come from SPELL_RANGE (real PHB numbers), not silently fall
+   back to a wrong flat 60 ft whenever SPELL_DESC's one-line prose never says "within N ft" —
+   which was true for ~87 attack/save/AoE spells (e.g. Fire Bolt: "Ranged fire mote, 1d10 fire"
+   never states its actual 120 ft). Reported live as "fireball and firebolt range is fucked up." */
+T('Fire Bolt range is its real 120 ft (24 tiles), not the silent 60-ft fallback', spellRangeTiles('Fire Bolt')===24);
+T('Fireball range is its real 150 ft (30 tiles), not the silent 60-ft fallback', spellRangeTiles('Fireball')===30);
+T('Magic Missile range is 120 ft', spellRangeTiles('Magic Missile')===24);
+T('Shocking Grasp is Touch range (1 tile)', spellRangeTiles('Shocking Grasp')===1);
+(function(){
+  // Coverage check mirroring the live audit: every spell that needs a real range (attack, save,
+  // or AoE) must resolve one via SPELL_RANGE or the description regex — not silently fall through.
+  const names=Object.keys(SPELL_DESC);
+  const missing=names.filter(n=>{ const mc=parseSpellMechanics(n); return (mc.attack||mc.dmg||mc.save||SPELL_AOE[n]) && !mc.range; });
+  T('every attack/save/AoE spell resolves a real range (no silent 60ft-default gap remains)', missing.length===0);
+})();
+
+/* ---- regression: AoE blasts (Fireball etc.) must be circular, not the square gridDist/Chebyshev
+   shape — the live report ("fireball radius should be circle") plus a correctness issue: the
+   square shape silently hit corner tiles a true sphere wouldn't reach. inBlast is Euclidean. ---- */
+T('a tile at Euclidean distance 1.0 (orthogonal neighbour) is inside a radius-1 blast', inBlast(2,2,2,3,1));
+T("a tile at Euclidean distance √2 (diagonal neighbour) is OUTSIDE a radius-1 blast — that's the square-vs-circle bug", !inBlast(2,2,3,3,1));
+T('the blast centre itself is always inside its own radius', inBlast(2,2,2,2,1));
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
