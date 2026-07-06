@@ -62,6 +62,12 @@ if PROXY:
 def extraction_attempts(opts):
     """Yield progressively more aggressive option sets for stubborn sites."""
     yield opts
+    # Twitter/X's default GraphQL API enforces the login/age-gate on
+    # "sensitive"/restricted tweets; its public syndication endpoint
+    # (cdn.syndication.twimg.com -- the same API Twitter's own embed
+    # widgets use) serves the same video without any auth. Harmless no-op
+    # for every other site since extractor_args are keyed by extractor name.
+    yield {**opts, "extractor_args": {"twitter": {"api": ["syndication"]}}}
     try:
         from yt_dlp.networking.impersonate import ImpersonateTarget
 
