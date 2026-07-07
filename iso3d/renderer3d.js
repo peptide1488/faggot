@@ -27,6 +27,65 @@ let camZoom = 1.0;
 let camPanX = 0;
 let camPanY = 0;
 
+export function gridToWorld(col, row, cols, rows, height = 0) {
+  const x = col - (cols - 1) / 2;
+  const z = row - (rows - 1) / 2;
+  return { x, y: height, z };
+}
+
+export function worldToGrid(x, z, cols, rows) {
+  let col = Math.round(x + (cols - 1) / 2);
+  let row = Math.round(z + (rows - 1) / 2);
+  if (col >= 0 && col < cols && row >= 0 && row < rows) {
+    return { col, row };
+  }
+  return null;
+}
+
+export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
+  const halfH = 50 * camZoom;
+  const halfW = halfH * (aspect || 1);
+
+  const proj = new Float32Array([
+    1.0 / halfW, 0, 0, 0,
+    0, 1.0 / halfH, 0, 0,
+    0, 0, -1.0 / 50.0, 0,
+    0, 0, 0, 1.0
+  ]);
+
+  const rad = camRot * Math.PI / 180;
+  const cosR = Math.cos(rad);
+  const sinR = Math.sin(rad);
+
+  const rotY = new Float32Array([
+    cosR, 0, -sinR, 0,
+    0,    1, 0,     0,
+    sinR, 0, cosR,  0,
+    0,    0, 0,     1
+  ]);
+
+  const trans = new Float32Array([
+    1, 0, 0, camPanX,
+    0, 1, 0, camPanY,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+  ]);
+
+  function mulMat4(a, b) {
+    const r = new Float32Array(16);
+    for(let i=0; i<4; i++) {
+      for(let j=0; j<4; j++) {
+        let sum = 0;
+        for(let k=0; k<4; k++) sum += a[i*4+k] * b[k*4+j];
+        r[i*4+j] = sum;
+      }
+    }
+    return r;
+  }
+
+  return mulMat4(proj, mulMat4(rotY, trans));
+}
+
 function buildGeometry(cols, rows, heights, palette) {
   const positions = [];
   const normals = [];
