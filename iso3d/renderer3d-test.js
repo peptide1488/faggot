@@ -37,36 +37,36 @@ assert.strictEqual(worldToGrid(-3, -3, 5, 5), null);
 
 // Identity-like projection at 0 deg rotation, zoom=1, aspect=1, pan=(0,0)
 const m0 = getCameraMatrix(0, 1.0, 0, 0, 1);
-assert.ok(approxEqual(m0[0], 0.19287), 'm0[0] should be 1/5 * 1/cos(32°)');
-assert.ok(approxEqual(m0[5], 0.19287), 'm0[5] should be 1/5 * 1/cos(32°)');
+assert.ok(approxEqual(m0[0], 0.192873), 'm0[0] should be 1/5 * 1/cos(32°)');
+assert.ok(approxEqual(m0[5], 0.192873), 'm0[5] should be 1/5 * 1/cos(32°)');
 assert.ok(approxEqual(m0[10], -0.02), 'm0[10] should be -1/50 (fixed depth scale, unrelated to map size)');
 
 // 90 deg rotation: X and Z axes swap with sign changes
 const m90 = getCameraMatrix(90, 1.0, 0, 0, 1);
-assert.ok(approxEqual(m90[2], -0.19287), 'm90[2] should be -1/5 * 1/cos(32°)');
+assert.ok(approxEqual(m90[2], -0.192873), 'm90[2] should be -1/5 * 1/cos(32°)');
 assert.ok(approxEqual(m90[6], 0), 'm90[6] should be 0 -- yaw rotation must not mix Z into the Y row');
-assert.ok(approxEqual(m90[5], 0.19287), 'm90[5] Y scale unchanged');
+assert.ok(approxEqual(m90[5], 0.192873), 'm90[5] Y scale unchanged');
 
 // 180 deg rotation: X and Z axes flip signs
 const m180 = getCameraMatrix(180, 1.0, 0, 0, 1);
-assert.ok(approxEqual(m180[0], -0.19287), 'm180[0] should be -1/5 * 1/cos(32°)');
+assert.ok(approxEqual(m180[0], -0.192873), 'm180[0] should be -1/5 * 1/cos(32°)');
 assert.ok(approxEqual(m180[10], 0.02), 'm180[10] should be 1/50 (fixed depth scale)');
 
 // 270 deg rotation: X and Z axes swap again
 const m270 = getCameraMatrix(270, 1.0, 0, 0, 1);
-assert.ok(approxEqual(m270[2], 0.19287), 'm270[2] should be 1/5 * 1/cos(32°)');
+assert.ok(approxEqual(m270[2], 0.192873), 'm270[2] should be 1/5 * 1/cos(32°)');
 assert.ok(approxEqual(m270[6], 0), 'm270[6] should be 0 -- yaw rotation must not mix Z into the Y row');
 
 // Pan is applied in world-space before projection, so its effect on the
 // matrix is scaled by the same 1/halfW|1/halfH factor as everything else
 // (10 world units at halfW=5 -> 2), not a raw passthrough of camPanX/Y.
 const mPan = getCameraMatrix(0, 1.0, 10, 20, 1);
-assert.ok(approxEqual(mPan[3], 10 / 5), 'mPan[3] should reflect camPanX scaled by the projection (camPanX/halfW)');
-assert.ok(approxEqual(mPan[7], 20 / 5), 'mPan[7] should reflect camPanY scaled by the projection (camPanY/halfH)');
+assert.ok(approxEqual(mPan[3], 2), 'mPan[3] should reflect camPanX scaled by the projection (camPanX/halfW)');
+assert.ok(approxEqual(mPan[7], 4), 'mPan[7] should reflect camPanY scaled by the projection (camPanY/halfH)');
 
 // Zoom scaling affects projection scale inversely
 const mZoom = getCameraMatrix(0, 2.0, 0, 0, 1);
-assert.ok(approxEqual(mZoom[0], 0.09643), 'mZoom[0] should be 1/10 * 1/cos(32°) (zoom=2)');
-assert.ok(approxEqual(mZoom[5], 0.09643), 'mZoom[5] should be 1/10 * 1/cos(32°) (zoom=2)');
+assert.ok(approxEqual(mZoom[0], 0.096436), 'mZoom[0] should be 1/10 * 1/cos(32°) (zoom=2)');
+assert.ok(approxEqual(mZoom[5], 0.096436), 'mZoom[5] should be 1/10 * 1/cos(32°) (zoom=2)');
 
 console.log('All renderer3d pure math tests passed!');
