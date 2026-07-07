@@ -429,6 +429,17 @@ export function init(canvasEl) {
 
   const vs = compileShader(vsSource, glCtx.VERTEX_SHADER);
   const fs = compileShader(fsSource, glCtx.FRAGMENT_SHADER);
+  
+  progObj = glCtx.createProgram();
+  glCtx.attachShader(progObj, vs);
+  glCtx.attachShader(progObj, fs);
+  glCtx.linkProgram(progObj);
+  
+  if (!glCtx.getProgramParameter(progObj, glCtx.LINK_STATUS)) {
+    console.error('Program link error:', glCtx.getProgramInfoLog(progObj));
+    throw new Error('Failed to link shader program');
+  }
+  
   const aPosLoc = glCtx.getAttribLocation(progObj, 'aPos');
   const aNormalLoc = glCtx.getAttribLocation(progObj, 'aNormal');
   const aColorLoc = glCtx.getAttribLocation(progObj, 'aColor');
