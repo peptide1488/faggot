@@ -27,6 +27,9 @@ let camZoom = 1.0;
 let camPanX = 0;
 let camPanY = 0;
 
+// Map size for camera scaling
+let mapSizeForCamera = 10; // default fallback
+
 export function gridToWorld(col, row, cols, rows, height = 0) {
   const x = col - (cols - 1) / 2;
   const z = row - (rows - 1) / 2;
@@ -43,7 +46,8 @@ export function worldToGrid(x, z, cols, rows) {
 }
 
 export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
-  const halfH = 50 * camZoom;
+  // Scale the camera based on map size for better default view
+  const halfH = (mapSizeForCamera * 0.5) * camZoom;
   const halfW = halfH * (aspect || 1);
 
   const proj = new Float32Array([
@@ -269,6 +273,9 @@ export function setMap(cols, rows, heights, palette) {
   mapHeights = heights.slice();
   currentPalette = palette;
   
+  // Update map size for camera scaling
+  mapSizeForCamera = Math.max(cols, rows);
+  
   const geo = buildGeometry(cols, rows, heights, palette);
   
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
@@ -422,21 +429,10 @@ export function init(canvasEl) {
 
   const vs = compileShader(vsSource, glCtx.VERTEX_SHADER);
   const fs = compileShader(fsSource, glCtx.FRAGMENT_SHADER);
-  console.log('[DIAG] vs ok:', !!vs, 'fs ok:', !!fs);
-  progObj = glCtx.createProgram();
-  glCtx.attachShader(progObj, vs);
-  glCtx.attachShader(progObj, fs);
-  glCtx.linkProgram(progObj);
-  if (!glCtx.getProgramParameter(progObj, glCtx.LINK_STATUS)) {
-    console.error(glCtx.getProgramInfoLog(progObj));
-  }
-  console.log('[DIAG] link status:', glCtx.getProgramParameter(progObj, glCtx.LINK_STATUS));
-
   const aPosLoc = glCtx.getAttribLocation(progObj, 'aPos');
   const aNormalLoc = glCtx.getAttribLocation(progObj, 'aNormal');
   const aColorLoc = glCtx.getAttribLocation(progObj, 'aColor');
   const uProjLoc = glCtx.getUniformLocation(progObj, 'uProj');
-  console.log('[DIAG] aPosLoc:', aPosLoc, 'aNormalLoc:', aNormalLoc, 'aColorLoc:', aColorLoc, 'uProjLoc:', uProjLoc);
 
   vaoHandle = glCtx.createVertexArray();
   glCtx.bindVertexArray(vaoHandle);
@@ -545,13 +541,6 @@ export function init(canvasEl) {
       glCtx.viewport(0, 0, canvasRef.clientWidth, canvasRef.clientHeight);
       glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
       glCtx.uniformMatrix4fv(uProjLoc, false, getOrthoMatrix());
-
-      frameNum++;
-      if (frameNum === 1 || frameNum === 30 || frameNum === 90) {
-        console.log('[DIAG] frame', frameNum, '- canvas w/h:', canvasRef.width, canvasRef.height,
-          'vertexCount:', vertexCount, 'tokenVertexCount:', tokenVertexCount,
-          'glError:', glCtx.getError());
-      }
 
       if (vertexCount > 0) {
         glCtx.bindVertexArray(vaoHandle);
