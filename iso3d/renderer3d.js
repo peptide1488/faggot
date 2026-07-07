@@ -364,8 +364,22 @@ export function pickTile(screenX, screenY) {
   return (hitCol >= 0) ? { col: hitCol, row: hitRow } : null;
 }
 
+function syncCanvasSize(canvasEl) {
+  // The canvas's actual drawing-buffer resolution (width/height attributes)
+  // defaults to 300x150 and is independent of its CSS display size
+  // (clientWidth/clientHeight). viewport() and the projection aspect ratio
+  // both need to match the REAL buffer size, or geometry gets projected for
+  // a viewport far larger than what actually exists and never appears.
+  const w = canvasEl.clientWidth, h = canvasEl.clientHeight;
+  if (canvasEl.width !== w || canvasEl.height !== h) {
+    canvasEl.width = w;
+    canvasEl.height = h;
+  }
+}
+
 export function init(canvasEl) {
   canvasRef = canvasEl;
+  syncCanvasSize(canvasEl);
   glCtx = canvasEl.getContext('webgl2', { antialias: true, alpha: false });
   if (!glCtx) throw new Error('WebGL2 not supported');
 
@@ -514,6 +528,7 @@ export function init(canvasEl) {
 
   function drawFrame() {
     if (canvasRef.clientWidth > 0 && canvasRef.clientHeight > 0) {
+      syncCanvasSize(canvasRef);
       glCtx.viewport(0, 0, canvasRef.clientWidth, canvasRef.clientHeight);
       glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
       glCtx.uniformMatrix4fv(uProjLoc, false, getOrthoMatrix());
