@@ -19,7 +19,7 @@
   </div>
 
   <script type="module">
-    import { init, setMap, rotate, setZoom, setPan, getCamState } from './renderer3d.js';
+    import { init, setMap, rotate, setZoom, setPan, getCamState, setTokens } from './renderer3d.js';
     const canvas = document.getElementById('glCanvas');
     init(canvas);
 
@@ -92,6 +92,14 @@
     };
 
     setMap(cols, rows, heights, palette);
+
+    // Place example tokens on the map
+    const tokens = [
+      { x: 2, z: 3, color: [1.0, 0.2, 0.2], label: 'Red' },
+      { x: 5, z: 6, color: [0.2, 0.8, 0.2], label: 'Green' },
+      { x: 8, z: 1, color: [0.3, 0.4, 1.0], label: 'Blue' }
+    ];
+    setTokens(tokens);
   </script>
 </body>
 </html>

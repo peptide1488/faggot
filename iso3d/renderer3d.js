@@ -7,6 +7,18 @@ let colBufHandle = null;
 let vertexCount = 0;
 let canvasRef = null;
 
+// Map state for token placement
+let mapCols = 0;
+let mapRows = 0;
+let mapHeights = [];
+
+// Token buffers
+let tokenVAOHandle = null;
+let tokenPosBufHandle = null;
+let tokenNormBufHandle = null;
+let tokenColBufHandle = null;
+let tokenVertexCount = 0;
+
 // Camera state
 let camRot = 0; // degrees: 0, 90, 180, 270
 let camZoom = 1.0;
@@ -93,6 +105,64 @@ function buildGeometry(cols, rows, heights, palette) {
   };
 }
 
+function buildTokenGeometry(tokens, cols, rows, heights) {
+  const positions = [];
+  const normals = [];
+  const colors = [];
+  
+  function addQuad(v0, v1, v2, v3, n, c) {
+    positions.push(...v0, ...v1, ...v2, ...v0, ...v2, ...v3);
+    for(let i=0; i<6; i++) normals.push(...n);
+    for(let i=0; i<6; i++) colors.push(...c);
+  }
+
+  const tSize = 0.2; // token box half-size
+  
+  for (const tok of tokens) {
+    let tx = Math.floor(tok.x);
+    let tz = Math.floor(tok.z);
+    if (tx < 0 || tx >= cols || tz < 0 || tz >= rows) continue;
+    
+    const idx = tz * cols + tx;
+    let h = heights[idx];
+    if (typeof h === 'object') h = h.h ?? 0;
+    h = Math.max(0, Math.min(4, Number(h)));
+    
+    const cx = tx - (cols - 1) / 2;
+    const cz = tz - (rows - 1) / 2;
+    const cy = h + tSize + 0.1; // sit on top of tile
+    
+    const [r, g, b] = tok.color || [1, 0, 0];
+    
+    // Top face
+    addQuad([cx-tSize, cy+tSize, cz-tSize], [cx+tSize, cy+tSize, cz-tSize], 
+            [cx+tSize, cy+tSize, cz+tSize], [cx-tSize, cy+tSize, cz+tSize], 
+            [0,1,0], [r,g,b]);
+    // Bottom face
+    addQuad([cx-tSize, cy-tSize, cz+tSize], [cx+tSize, cy-tSize, cz+tSize], 
+            [cx+tSize, cy-tSize, cz-tSize], [cx-tSize, cy-tSize, cz-tSize], 
+            [0,-1,0], [r*0.7, g*0.7, b*0.7]);
+    // Front (z+)
+    addQuad([cx-tSize, cy-tSize, cz+tSize], [cx+tSize, cy-tSize, cz+tSize], 
+            [cx+tSize, cy+tSize, cz+tSize], [cx-tSize, cy+tSize, cz+tSize], 
+            [0,0,1], [r*0.85, g*0.85, b*0.85]);
+    // Back (z-)
+    addQuad([cx+tSize, cy-tSize, cz-tSize], [cx-tSize, cy-tSize, cz-tSize], 
+            [cx-tSize, cy+tSize, cz-tSize], [cx+tSize, cy+tSize, cz-tSize], 
+            [0,0,-1], [r*0.85, g*0.85, b*0.85]);
+    // Right (x+)
+    addQuad([cx+tSize, cy-tSize, cz+tSize], [cx+tSize, cy-tSize, cz-tSize], 
+            [cx+tSize, cy+tSize, cz-tSize], [cx+tSize, cy+tSize, cz+tSize], 
+            [1,0,0], [r*0.95, g*0.95, b*0.95]);
+    // Left (x-)
+    addQuad([cx-tSize, cy-tSize, cz-tSize], [cx-tSize, cy-tSize, cz+tSize], 
+            [cx-tSize, cy+tSize, cz+tSize], [cx-tSize, cy+tSize, cz-tSize], 
+            [-1,0,0], [r*0.95, g*0.95, b*0.95]);
+  }
+  
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), colors: new Float32Array(colors) };
+}
+
 export function rotate(step) {
   camRot = (camRot + step * 90 + 360) % 360;
 }
@@ -110,8 +180,29 @@ export function getCamState() {
   return { rot: camRot, zoom: camZoom, panX: camPanX, panY: camPanY };
 }
 
+export function setTokens(tokens) {
+  if (!glCtx || !tokenVAOHandle || !mapHeights.length) return;
+  
+  const geo = buildTokenGeometry(tokens, mapCols, mapRows, mapHeights);
+  
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, tokenPosBufHandle);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.DYNAMIC_DRAW);
+  
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, tokenNormBufHandle);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.DYNAMIC_DRAW);
+  
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, tokenColBufHandle);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.DYNAMIC_DRAW);
+  
+  tokenVertexCount = geo.positions.length / 3;
+}
+
 export function setMap(cols, rows, heights, palette) {
   if (!glCtx || !vaoHandle) return;
+  
+  mapCols = cols;
+  mapRows = rows;
+  mapHeights = heights.slice();
   
   const geo = buildGeometry(cols, rows, heights, palette);
   
@@ -202,6 +293,25 @@ export function init(canvasEl) {
   glCtx.enableVertexAttribArray(aColorLoc);
   glCtx.vertexAttribPointer(aColorLoc, 3, glCtx.FLOAT, false, 0, 0);
 
+  // Token buffers setup
+  tokenVAOHandle = glCtx.createVertexArray();
+  glCtx.bindVertexArray(tokenVAOHandle);
+
+  tokenPosBufHandle = glCtx.createBuffer();
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, tokenPosBufHandle);
+  glCtx.enableVertexAttribArray(aPosLoc);
+  glCtx.vertexAttribPointer(aPosLoc, 3, glCtx.FLOAT, false, 0, 0);
+
+  tokenNormBufHandle = glCtx.createBuffer();
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, tokenNormBufHandle);
+  glCtx.enableVertexAttribArray(aNormalLoc);
+  glCtx.vertexAttribPointer(aNormalLoc, 3, glCtx.FLOAT, false, 0, 0);
+
+  tokenColBufHandle = glCtx.createBuffer();
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, tokenColBufHandle);
+  glCtx.enableVertexAttribArray(aColorLoc);
+  glCtx.vertexAttribPointer(aColorLoc, 3, glCtx.FLOAT, false, 0, 0);
+
   function getOrthoMatrix() {
     const aspect = canvasEl.clientWidth / canvasEl.clientHeight || 1;
     const halfH = 50 * camZoom;
@@ -265,6 +375,11 @@ export function init(canvasEl) {
       if (vertexCount > 0) {
         glCtx.bindVertexArray(vaoHandle);
         glCtx.drawArrays(glCtx.TRIANGLES, 0, vertexCount);
+      }
+      
+      if (tokenVertexCount > 0) {
+        glCtx.bindVertexArray(tokenVAOHandle);
+        glCtx.drawArrays(glCtx.TRIANGLES, 0, tokenVertexCount);
       }
     }
     requestAnimationFrame(drawFrame);
