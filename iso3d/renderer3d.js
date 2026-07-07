@@ -557,7 +557,6 @@ export function init(canvasEl) {
 
   // Force an initial draw to make sure everything is set up
   drawFrame();
-  setTimeout(() => drawFrame(), 10);
 
   return { gl: glCtx, prog: progObj, uProjLoc, getOrthoMatrix };
 }
