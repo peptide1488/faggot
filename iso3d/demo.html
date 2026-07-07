@@ -12,9 +12,27 @@
 <body>
   <canvas id="glCanvas"></canvas>
   <script type="module">
-    import { init } from './renderer3d.js';
+    import { init, setMap } from './renderer3d.js';
     const canvas = document.getElementById('glCanvas');
     init(canvas);
+
+    // Generate a sample 10x10 map with random heights (0-4)
+    const cols = 10, rows = 10;
+    const heights = new Array(cols * rows).fill(0);
+    for(let y=0; y<rows; y++) {
+      for(let x=0; x<cols; x++) {
+        heights[y*cols+x] = Math.floor(Math.random() * 5);
+      }
+    }
+    
+    // Optional: custom palette mapping terrain-type int -> [r,g,b]
+    const palette = {
+      0: [0.35, 0.55, 0.25], // grass
+      1: [0.60, 0.45, 0.20], // dirt
+      2: [0.70, 0.70, 0.70]  // stone
+    };
+
+    setMap(cols, rows, heights, palette);
   </script>
 </body>
 </html>
