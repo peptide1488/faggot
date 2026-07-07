@@ -24,6 +24,7 @@
       const APP_VERSION = '1.0';
       
       const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } = await import("./renderer3d.js?v=" + Date.now());
+      const { computeMoveRange } = await import("./movement.js?v=" + Date.now());
       
       // Add debug logging to see if the module loaded correctly
       console.log('Module loaded successfully');
@@ -123,6 +124,79 @@
       ];
       console.log('Setting tokens:', tokens);
       setTokens(tokens);
+      
+      // Track the currently selected unit
+      let selectedUnit = null;
+      let reachableTiles = new Set();
+      
+      // Function to highlight reachable tiles
+      function highlightReachableTiles(unit, allUnits, mapCols, mapRows, mapHeights) {
+        reachableTiles = computeMoveRange(unit, allUnits, mapCols, mapRows, mapHeights);
+        
+        // Convert set of tiles to token format for display
+        const reachableTokens = Array.from(reachableTiles).map(tile => ({
+          x: tile.col,
+          z: tile.row,
+          color: [0.2, 0.8, 0.2], // Green color for reachable tiles
+          label: ''
+        }));
+        
+        setTokens([...tokens, ...reachableTokens]);
+      }
+      
+      // Function to move a unit to a new position
+      function moveUnit(unit, newX, newY) {
+        // Check if the target tile is in reachable tiles
+        const isReachable = Array.from(reachableTiles).some(tile => 
+          tile.col === newX && tile.row === newY
+        );
+        
+        if (isReachable) {
+          unit.x = newX;
+          unit.z = newY;
+          
+          // Update tokens to show new position
+          setTokens(tokens);
+          
+          // Clear reachable tiles highlight
+          reachableTiles.clear();
+          setTokens(tokens);
+          
+          // Reset selection
+          selectedUnit = null;
+        }
+      }
+      
+      // Click to select a unit or move it
+      canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const picked = pickTile(e.clientX - rect.left, e.clientY - rect.top);
+        
+        if (picked) {
+          // Check if clicked on a unit
+          const clickedUnit = tokens.find(token => 
+            token.x === picked.col && token.z === picked.row
+          );
+          
+          if (clickedUnit && clickedUnit.label) {
+            // Select the unit
+            selectedUnit = clickedUnit;
+            highlightReachableTiles(clickedUnit, tokens, cols, rows, heights);
+            const s = getCamState();
+            camInfo.textContent = `Rot: ${s.rot}° | Zoom: ${s.zoom.toFixed(2)}x | Selected: ${clickedUnit.label}`;
+          } else if (selectedUnit) {
+            // Try to move the selected unit
+            moveUnit(selectedUnit, picked.col, picked.row);
+            const s = getCamState();
+            camInfo.textContent = `Rot: ${s.rot}° | Zoom: ${s.zoom.toFixed(2)}x | Moved ${selectedUnit.label} to (${picked.col}, ${picked.row})`;
+          } else {
+            // Just pick a tile
+            selectTile(picked.col, picked.row);
+            const s = getCamState();
+            camInfo.textContent = `Rot: ${s.rot}° | Zoom: ${s.zoom.toFixed(2)}x | Picked: (${picked.col}, ${picked.row})`;
+          }
+        }
+      });
     })();
   </script>
 </body>
