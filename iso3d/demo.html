@@ -19,7 +19,7 @@
   </div>
 
   <script type="module">
-    import { init, setMap, rotate, setZoom, setPan, getCamState, setTokens } from './renderer3d.js';
+    import { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } from './renderer3d.js';
     const canvas = document.getElementById('glCanvas');
     init(canvas);
 
@@ -71,6 +71,17 @@
     });
 
     window.addEventListener('mouseup', () => { isDragging = false; });
+
+    // Click to pick tile
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const picked = pickTile(e.clientX - rect.left, e.clientY - rect.top);
+      if (picked) {
+        selectTile(picked.col, picked.row);
+        const s = getCamState();
+        camInfo.textContent = `Rot: ${s.rot}° | Zoom: ${s.zoom.toFixed(2)}x | Picked: (${picked.col}, ${picked.row})`;
+      }
+    });
 
     // Initial UI state
     updateUI();

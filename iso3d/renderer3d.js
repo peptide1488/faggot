@@ -1,5 +1,7 @@
 let glCtx = null;
 let progObj = null;
+let pickedTile = null;
+let currentPalette = null;
 let vaoHandle = null;
 let posBufHandle = null;
 let normBufHandle = null;
@@ -52,7 +54,10 @@ function buildGeometry(cols, rows, heights, palette) {
       }
       h = Math.max(0, Math.min(4, Number(h)));
       
-      const baseColor = palette ? (palette[type] || defaultPalette[h]) : defaultPalette[h];
+      let baseColor = palette ? (palette[type] || defaultPalette[h]) : defaultPalette[h];
+      if (pickedTile && x === pickedTile.col && z === pickedTile.row) {
+        baseColor = [1, 0.85, 0.2]; // highlight color
+      }
       const sideColor = [baseColor[0]*0.7, baseColor[1]*0.7, baseColor[2]*0.7];
       
       // Center the grid around world origin
@@ -203,6 +208,7 @@ export function setMap(cols, rows, heights, palette) {
   mapCols = cols;
   mapRows = rows;
   mapHeights = heights.slice();
+  currentPalette = palette;
   
   const geo = buildGeometry(cols, rows, heights, palette);
   
@@ -216,6 +222,87 @@ export function setMap(cols, rows, heights, palette) {
   glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.DYNAMIC_DRAW);
   
   vertexCount = geo.positions.length / 3;
+}
+
+export function selectTile(c, r) {
+  pickedTile = (c === pickedTile?.col && r === pickedTile?.row) ? null : { col: c, row: r };
+  if (glCtx && vaoHandle) {
+    setMap(mapCols, mapRows, mapHeights, currentPalette);
+  }
+}
+
+export function pickTile(screenX, screenY) {
+  if (!canvasRef || !mapHeights.length) return null;
+  
+  const w = canvasRef.clientWidth;
+  const h = canvasRef.clientHeight;
+  const nx = (screenX / w) * 2 - 1;
+  const ny = 1 - (screenY / h) * 2;
+  
+  const rad = camRot * Math.PI / 180;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  const halfH = 50 * camZoom;
+  const halfW = halfH * (w / h || 1);
+  
+  function unproject(nz) {
+    return [
+      c * halfW * nx - s * 50 * nz - camPanX,
+      halfH * ny - camPanY,
+      -s * halfW * nx - c * 50 * nz
+    ];
+  }
+  
+  const p1 = unproject(-0.5);
+  const p2 = unproject(0.5);
+  const dx = p2[0] - p1[0];
+  const dy = p2[1] - p1[1];
+  const dz = p2[2] - p1[2];
+  
+  let closestT = Infinity;
+  let hitCol = -1, hitRow = -1;
+  
+  for (let r = 0; r < mapRows; r++) {
+    for (let col = 0; col < mapCols; col++) {
+      const idx = r * mapCols + col;
+      let hVal = mapHeights[idx];
+      if (typeof hVal === 'object') hVal = hVal.h ?? 0;
+      hVal = Math.max(0, Math.min(4, Number(hVal)));
+      
+      const ox = col - (mapCols - 1) / 2;
+      const oz = r - (mapRows - 1) / 2;
+      
+      const xMin = ox - 0.5, xMax = ox + 0.5;
+      const yMin = 0, yMax = hVal;
+      const zMin = oz - 0.5, zMax = oz + 0.5;
+      
+      let tEnter = -Infinity, tExit = Infinity;
+      
+      const checkSlab = (p, d, min, max) => {
+        if (Math.abs(d) < 1e-6) return (p >= min && p <= max);
+        let t1 = (min - p) / d, t2 = (max - p) / d;
+        if (t1 > t2) [t1, t2] = [t2, t1];
+        tEnter = Math.max(tEnter, t1);
+        tExit = Math.min(tExit, t2);
+        return true;
+      };
+      
+      if (!checkSlab(p1[0], dx, xMin, xMax)) continue;
+      if (!checkSlab(p1[1], dy, yMin, yMax)) continue;
+      if (!checkSlab(p1[2], dz, zMin, zMax)) continue;
+      
+      if (tExit > 0 && tEnter < tExit) {
+        let t = tEnter > 0 ? tEnter : 0;
+        if (t < closestT) {
+          closestT = t;
+          hitCol = col;
+          hitRow = r;
+        }
+      }
+    }
+  }
+  
+  return (hitCol >= 0) ? { col: hitCol, row: hitRow } : null;
 }
 
 export function init(canvasEl) {
