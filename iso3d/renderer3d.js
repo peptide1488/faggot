@@ -472,6 +472,14 @@ export function init(canvasEl) {
   glCtx.enableVertexAttribArray(aColorLoc);
   glCtx.vertexAttribPointer(aColorLoc, 3, glCtx.FLOAT, false, 0, 0);
 
+  // Bind back to map VAO for initial setup
+  glCtx.bindVertexArray(vaoHandle);
+  
+  // Ensure we're properly set up by binding all buffers once
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
+
   function getOrthoMatrix() {
     const aspect = canvasEl.clientWidth / canvasEl.clientHeight || 1;
     const halfH = 50 * camZoom;
@@ -517,6 +525,7 @@ export function init(canvasEl) {
       return r;
     }
 
+    // The order should be: projection * view matrix
     return mulMat4(proj, mulMat4(rotY, trans));
   }
 
@@ -546,7 +555,9 @@ export function init(canvasEl) {
     requestAnimationFrame(drawFrame);
   }
 
+  // Force an initial draw to make sure everything is set up
   drawFrame();
+  setTimeout(() => drawFrame(), 10);
 
   return { gl: glCtx, prog: progObj, uProjLoc, getOrthoMatrix };
 }
