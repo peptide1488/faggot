@@ -263,6 +263,9 @@ export function setTokens(tokens) {
   glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.DYNAMIC_DRAW);
   
   tokenVertexCount = geo.positions.length / 3;
+  
+  // Debug: log token info
+  console.log('Set tokens. Token vertex count:', tokenVertexCount);
 }
 
 export function setMap(cols, rows, heights, palette) {
@@ -288,6 +291,9 @@ export function setMap(cols, rows, heights, palette) {
   glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.DYNAMIC_DRAW);
   
   vertexCount = geo.positions.length / 3;
+  
+  // Debug: log geometry info
+  console.log('Set map with', cols, 'x', rows, 'tiles. Vertex count:', vertexCount);
 }
 
 export function selectTile(c, r) {
@@ -420,7 +426,7 @@ export function init(canvasEl) {
     glCtx.shaderSource(s, src);
     glCtx.compileShader(s);
     if (!glCtx.getShaderParameter(s, glCtx.COMPILE_STATUS)) {
-      console.error(glCtx.getShaderInfoLog(s));
+      console.error('Shader compilation error:', glCtx.getShaderInfoLog(s));
       glCtx.deleteShader(s);
       return null;
     }

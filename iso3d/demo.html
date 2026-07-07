@@ -25,6 +25,9 @@
       
       const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } = await import("./renderer3d.js?v=" + Date.now());
       
+      // Add debug logging to see if the module loaded correctly
+      console.log('Module loaded successfully');
+      
       // Set version info after APP_VERSION is defined
       document.getElementById('versionInfo').textContent = 'v' + APP_VERSION;
       const canvas = document.getElementById('glCanvas');
@@ -109,6 +112,7 @@
         2: [0.70, 0.70, 0.70]  // stone
       };
 
+      console.log('Setting map with dimensions:', cols, 'x', rows);
       setMap(cols, rows, heights, palette);
 
       // Place example tokens on the map
@@ -117,6 +121,7 @@
         { x: 5, z: 6, color: [0.2, 0.8, 0.2], label: 'Green' },
         { x: 8, z: 1, color: [0.3, 0.4, 1.0], label: 'Blue' }
       ];
+      console.log('Setting tokens:', tokens);
       setTokens(tokens);
     })();
   </script>
