@@ -40,7 +40,7 @@ assert.ok(approxEqual(m0[10], -0.02), 'm0[10] should be -1/50');
 // 90 deg rotation: X and Z axes swap with sign changes
 const m90 = getCameraMatrix(90, 1.0, 0, 0, 1);
 assert.ok(approxEqual(m90[2], -0.02), 'm90[2] should be -1/50');
-assert.ok(approxEqual(m90[6], -0.02), 'm90[6] should be -1/50');
+assert.ok(approxEqual(m90[6], 0), 'm90[6] should be 0 -- yaw rotation must not mix Z into the Y row');
 assert.ok(approxEqual(m90[5], 0.02), 'm90[5] Y scale unchanged');
 
 // 180 deg rotation: X and Z axes flip signs
@@ -51,12 +51,14 @@ assert.ok(approxEqual(m180[10], 0.02), 'm180[10] should be 1/50');
 // 270 deg rotation: X and Z axes swap again
 const m270 = getCameraMatrix(270, 1.0, 0, 0, 1);
 assert.ok(approxEqual(m270[2], 0.02), 'm270[2] should be 1/50');
-assert.ok(approxEqual(m270[6], 0.02), 'm270[6] should be 1/50');
+assert.ok(approxEqual(m270[6], 0), 'm270[6] should be 0 -- yaw rotation must not mix Z into the Y row');
 
-// Pan translation affects matrix translation components (indices 3 and 7)
+// Pan is applied in world-space before projection, so its effect on the
+// matrix is scaled by the same 1/halfW|1/halfH factor as everything else
+// (10 world units at halfW=50 -> 0.2), not a raw passthrough of camPanX/Y.
 const mPan = getCameraMatrix(0, 1.0, 10, 20, 1);
-assert.ok(approxEqual(mPan[3], 10), 'mPan[3] should reflect camPanX');
-assert.ok(approxEqual(mPan[7], 20), 'mPan[7] should reflect camPanY');
+assert.ok(approxEqual(mPan[3], 10 / 50), 'mPan[3] should reflect camPanX scaled by the projection (camPanX/halfW)');
+assert.ok(approxEqual(mPan[7], 20 / 50), 'mPan[7] should reflect camPanY scaled by the projection (camPanY/halfH)');
 
 // Zoom scaling affects projection scale inversely
 const mZoom = getCameraMatrix(0, 2.0, 0, 0, 1);
