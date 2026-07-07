@@ -15,6 +15,12 @@
   <div id="ui" style="position:absolute; top:10px; left:10px; color:#fff; font-family:sans-serif; background:rgba(0,0,0,0.6); padding:12px; border-radius:8px; pointer-events:auto;">
     <button id="btnRotate" style="cursor:pointer; padding:6px 12px; font-size:14px;">Rotate 90°</button>
     <div id="camInfo" style="margin-top:8px; font-size:13px;">Rot: 0° | Zoom: 1.0x</div>
+    <div id="turnInfo" style="margin-top:8px; font-size:13px; color:#ffcc00;"></div>
+    <div id="actionMenu" style="margin-top:8px; display:none;">
+      <button id="btnMove" style="cursor:pointer; padding:6px 12px; font-size:14px; margin-right:6px;">Move</button>
+      <button id="btnAttack" style="cursor:pointer; padding:6px 12px; font-size:14px; margin-right:6px;">Attack</button>
+      <button id="btnWait" style="cursor:pointer; padding:6px 12px; font-size:14px;">Wait</button>
+    </div>
     <div style="font-size:11px; margin-top:6px; color:#aaa;">Scroll to zoom • Drag to pan</div>
     <div id="versionInfo" style="position:absolute; top:10px; right:10px; color:#666; font-size:12px;"></div>
   </div>
@@ -25,6 +31,7 @@
       
       const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } = await import("./renderer3d.js?v=" + Date.now());
       const { computeMoveRange } = await import("./movement.js?v=" + Date.now());
+      const { TurnManager, computeTurnOrder } = await import("./turnOrder.js?v=" + Date.now());
       
       // Add debug logging to see if the module loaded correctly
       console.log('Module loaded successfully');
@@ -128,6 +135,36 @@
       // Track the currently selected unit
       let selectedUnit = null;
       let reachableTiles = new Set();
+      let turnManager = null;
+      
+      // Initialize turn manager
+      const units = tokens.map(token => ({
+        id: token.label,
+        x: token.x,
+        z: token.z,
+        alive: true,
+        speed: 10, // Default speed
+        moveRange: 3, // Default movement range
+        jumpHeight: 1, // Default jump height
+        hp: 20, // Default HP
+        maxHp: 20,
+        job: 'Warrior' // Default job
+      }));
+      
+      turnManager = new TurnManager(units);
+      
+      // Function to update turn info display
+      function updateTurnInfo() {
+        const currentUnit = turnManager.currentUnit();
+        if (currentUnit) {
+          document.getElementById('turnInfo').textContent = 
+            `Turn: ${currentUnit.label} (${currentUnit.job}) - HP: ${currentUnit.hp}/${currentUnit.maxHp}`;
+          document.getElementById('actionMenu').style.display = 'block';
+        } else {
+          document.getElementById('turnInfo').textContent = '';
+          document.getElementById('actionMenu').style.display = 'none';
+        }
+      }
       
       // Function to highlight reachable tiles
       function highlightReachableTiles(unit, allUnits, mapCols, mapRows, mapHeights) {
@@ -164,7 +201,30 @@
           
           // Reset selection
           selectedUnit = null;
+          
+          // End turn after moving
+          endTurn();
         }
+      }
+      
+      // Function to end the current unit's turn
+      function endTurn() {
+        const nextUnit = turnManager.nextTurn();
+        updateTurnInfo();
+        
+        // Clear any reachable tiles highlight
+        if (reachableTiles.size > 0) {
+          reachableTiles.clear();
+          setTokens(tokens);
+        }
+      }
+      
+      // Function to handle attack action
+      function handleAttack() {
+        // In a real implementation, this would target an enemy unit
+        console.log('Attack action selected');
+        // For now, just end the turn
+        endTurn();
       }
       
       // Click to select a unit or move it
@@ -197,6 +257,27 @@
           }
         }
       });
+      
+      // Action buttons
+      document.getElementById('btnMove').addEventListener('click', () => {
+        const currentUnit = turnManager.currentUnit();
+        if (currentUnit) {
+          highlightReachableTiles(currentUnit, tokens, cols, rows, heights);
+          document.getElementById('camInfo').textContent = 
+            `Rot: ${getCamState().rot}° | Zoom: ${getCamState().zoom.toFixed(2)}x | Moving ${currentUnit.label}`;
+        }
+      });
+      
+      document.getElementById('btnAttack').addEventListener('click', () => {
+        handleAttack();
+      });
+      
+      document.getElementById('btnWait').addEventListener('click', () => {
+        endTurn();
+      });
+      
+      // Initialize turn info
+      updateTurnInfo();
     })();
   </script>
 </body>
