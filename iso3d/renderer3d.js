@@ -552,6 +552,20 @@ export function init(canvasEl) {
         glCtx.drawArrays(glCtx.TRIANGLES, 0, tokenVertexCount);
       }
     }
+    
+    // Log debug info on frame 30
+    if (frameNum === 30) {
+      const camMatrix = getOrthoMatrix();
+      console.log('Debug values on frame 30:');
+      console.log('  mapSizeForCamera:', mapSizeForCamera);
+      console.log('  vertexCount:', vertexCount);
+      console.log('  tokenVertexCount:', tokenVertexCount);
+      console.log('  camera matrix (first 4 values):', 
+        camMatrix[0].toFixed(3), camMatrix[1].toFixed(3), 
+        camMatrix[2].toFixed(3), camMatrix[3].toFixed(3));
+    }
+    
+    frameNum++;
     requestAnimationFrame(drawFrame);
   }
 

@@ -19,7 +19,7 @@
   </div>
 
   <script type="module">
-    import { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } from './renderer3d.js';
+    import { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } from './renderer3d.js?v=' + Date.now();
     const canvas = document.getElementById('glCanvas');
     init(canvas);
 
