@@ -50,11 +50,17 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   const halfH = (mapSizeForCamera * 0.5) * camZoom;
   const halfW = halfH * (aspect || 1);
 
+  // Use perspective projection instead of orthographic to show elevation properly
+  const fov = 45 * Math.PI / 180; // 45 degrees in radians
+  const near = 0.1;
+  const far = 100.0;
+  const f = 1.0 / Math.tan(fov / 2);
+  
   const proj = new Float32Array([
-    1.0 / halfW, 0, 0, 0,
-    0, 1.0 / halfH, 0, 0,
-    0, 0, -1.0 / 50.0, 0,
-    0, 0, 0, 1.0
+    f / halfW, 0, 0, 0,
+    0, f / halfH, 0, 0,
+    0, 0, (far + near) / (near - far), -1,
+    0, 0, (2 * far * near) / (near - far), 0
   ]);
 
   const rad = camRot * Math.PI / 180;
@@ -432,8 +438,11 @@ export function init(canvasEl) {
     void main() {
       // Simple directional light to emphasize elevation
       vec3 lightDir = normalize(vec3(1.0, 1.0, 0.5));
-      float diff = max(dot(vNormal, lightDir), 0.25);
-      fragColor = vec4(vColor * diff, 1.0);
+      float diff = max(dot(vNormal, lightDir), 0.2);
+      // Add some ambient lighting for better visibility
+      float ambient = 0.2;
+      float intensity = ambient + diff * (1.0 - ambient);
+      fragColor = vec4(vColor * intensity, 1.0);
     }`;
 
   function compileShader(src, type) {
