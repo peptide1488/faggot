@@ -11,10 +11,69 @@
 </head>
 <body>
   <canvas id="glCanvas"></canvas>
+  
+  <div id="ui" style="position:absolute; top:10px; left:10px; color:#fff; font-family:sans-serif; background:rgba(0,0,0,0.6); padding:12px; border-radius:8px; pointer-events:auto;">
+    <button id="btnRotate" style="cursor:pointer; padding:6px 12px; font-size:14px;">Rotate 90°</button>
+    <div id="camInfo" style="margin-top:8px; font-size:13px;">Rot: 0° | Zoom: 1.0x</div>
+    <div style="font-size:11px; margin-top:6px; color:#aaa;">Scroll to zoom • Drag to pan</div>
+  </div>
+
   <script type="module">
-    import { init, setMap } from './renderer3d.js';
+    import { init, setMap, rotate, setZoom, setPan, getCamState } from './renderer3d.js';
     const canvas = document.getElementById('glCanvas');
     init(canvas);
+
+    // UI Elements
+    const btnRotate = document.getElementById('btnRotate');
+    const camInfo = document.getElementById('camInfo');
+    
+    function updateUI() {
+      const s = getCamState();
+      camInfo.textContent = `Rot: ${s.rot}° | Zoom: ${s.zoom.toFixed(2)}x`;
+    }
+
+    btnRotate.addEventListener('click', () => {
+      rotate(1);
+      updateUI();
+    });
+
+    // Scroll to zoom
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setZoom(getCamState().zoom + delta);
+      updateUI();
+    }, { passive: false });
+
+    // Click-drag to pan
+    let isDragging = false;
+    let lastX, lastY;
+    
+    canvas.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      
+      // Adjust pan speed based on zoom level for consistent feel
+      const s = getCamState();
+      const scale = 0.025 * (1 / s.zoom); 
+      
+      setPan(s.panX + dx * scale, s.panY - dy * scale);
+      lastX = e.clientX;
+      lastY = e.clientY;
+      updateUI();
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    // Initial UI state
+    updateUI();
 
     // Generate a sample 10x10 map with random heights (0-4)
     const cols = 10, rows = 10;

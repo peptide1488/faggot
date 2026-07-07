@@ -7,6 +7,12 @@ let colBufHandle = null;
 let vertexCount = 0;
 let canvasRef = null;
 
+// Camera state
+let camRot = 0; // degrees: 0, 90, 180, 270
+let camZoom = 1.0;
+let camPanX = 0;
+let camPanY = 0;
+
 function buildGeometry(cols, rows, heights, palette) {
   const positions = [];
   const normals = [];
@@ -85,6 +91,23 @@ function buildGeometry(cols, rows, heights, palette) {
     normals: new Float32Array(normals), 
     colors: new Float32Array(colors) 
   };
+}
+
+export function rotate(step) {
+  camRot = (camRot + step * 90 + 360) % 360;
+}
+
+export function setZoom(z) {
+  camZoom = Math.max(0.2, Math.min(5.0, z));
+}
+
+export function setPan(x, y) {
+  camPanX = x;
+  camPanY = y;
+}
+
+export function getCamState() {
+  return { rot: camRot, zoom: camZoom, panX: camPanX, panY: camPanY };
 }
 
 export function setMap(cols, rows, heights, palette) {
@@ -180,15 +203,51 @@ export function init(canvasEl) {
   glCtx.vertexAttribPointer(aColorLoc, 3, glCtx.FLOAT, false, 0, 0);
 
   function getOrthoMatrix() {
-    const aspect = canvasEl.clientWidth / canvasEl.clientHeight;
-    const halfH = 50;
+    const aspect = canvasEl.clientWidth / canvasEl.clientHeight || 1;
+    const halfH = 50 * camZoom;
     const halfW = halfH * aspect;
-    return new Float32Array([
+
+    // Orthographic projection
+    const proj = new Float32Array([
       1.0 / halfW, 0, 0, 0,
       0, 1.0 / halfH, 0, 0,
       0, 0, -1.0 / 50.0, 0,
       0, 0, 0, 1.0
     ]);
+
+    // View matrix: rotate around Y axis, then translate (pan)
+    const rad = camRot * Math.PI / 180;
+    const cosR = Math.cos(rad);
+    const sinR = Math.sin(rad);
+
+    const rotY = new Float32Array([
+      cosR, 0, -sinR, 0,
+      0,    1, 0,     0,
+      sinR, 0, cosR,  0,
+      0,    0, 0,     1
+    ]);
+
+    const trans = new Float32Array([
+      1, 0, 0, camPanX,
+      0, 1, 0, camPanY,
+      0, 0, 1, 0,
+      0, 0, 0, 1
+    ]);
+
+    // Matrix multiplication helper (column-major compatible)
+    function mulMat4(a, b) {
+      const r = new Float32Array(16);
+      for(let i=0; i<4; i++) {
+        for(let j=0; j<4; j++) {
+          let sum = 0;
+          for(let k=0; k<4; k++) sum += a[i*4+k] * b[k*4+j];
+          r[i*4+j] = sum;
+        }
+      }
+      return r;
+    }
+
+    return mulMat4(proj, mulMat4(rotY, trans));
   }
 
   glCtx.useProgram(progObj);
