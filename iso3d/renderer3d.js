@@ -422,6 +422,7 @@ export function init(canvasEl) {
 
   const vs = compileShader(vsSource, glCtx.VERTEX_SHADER);
   const fs = compileShader(fsSource, glCtx.FRAGMENT_SHADER);
+  console.log('[DIAG] vs ok:', !!vs, 'fs ok:', !!fs);
   progObj = glCtx.createProgram();
   glCtx.attachShader(progObj, vs);
   glCtx.attachShader(progObj, fs);
@@ -429,11 +430,13 @@ export function init(canvasEl) {
   if (!glCtx.getProgramParameter(progObj, glCtx.LINK_STATUS)) {
     console.error(glCtx.getProgramInfoLog(progObj));
   }
+  console.log('[DIAG] link status:', glCtx.getProgramParameter(progObj, glCtx.LINK_STATUS));
 
   const aPosLoc = glCtx.getAttribLocation(progObj, 'aPos');
   const aNormalLoc = glCtx.getAttribLocation(progObj, 'aNormal');
   const aColorLoc = glCtx.getAttribLocation(progObj, 'aColor');
   const uProjLoc = glCtx.getUniformLocation(progObj, 'uProj');
+  console.log('[DIAG] aPosLoc:', aPosLoc, 'aNormalLoc:', aNormalLoc, 'aColorLoc:', aColorLoc, 'uProjLoc:', uProjLoc);
 
   vaoHandle = glCtx.createVertexArray();
   glCtx.bindVertexArray(vaoHandle);
@@ -535,13 +538,22 @@ export function init(canvasEl) {
   glCtx.clearColor(0.08, 0.1, 0.15, 1.0);
   glCtx.enable(glCtx.DEPTH_TEST);
 
+  let loggedOnce = false;
   function drawFrame() {
     if (canvasRef.clientWidth > 0 && canvasRef.clientHeight > 0) {
       syncCanvasSize(canvasRef);
       glCtx.viewport(0, 0, canvasRef.clientWidth, canvasRef.clientHeight);
       glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
       glCtx.uniformMatrix4fv(uProjLoc, false, getOrthoMatrix());
-      
+
+      if (!loggedOnce) {
+        loggedOnce = true;
+        console.log('[DIAG] canvas w/h:', canvasRef.width, canvasRef.height,
+          'clientW/H:', canvasRef.clientWidth, canvasRef.clientHeight,
+          'vertexCount:', vertexCount, 'tokenVertexCount:', tokenVertexCount,
+          'glError:', glCtx.getError());
+      }
+
       if (vertexCount > 0) {
         glCtx.bindVertexArray(vaoHandle);
         glCtx.drawArrays(glCtx.TRIANGLES, 0, vertexCount);
