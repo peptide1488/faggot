@@ -451,6 +451,18 @@ export function init(canvasEl) {
   const aColorLoc = glCtx.getAttribLocation(progObj, 'aColor');
   const uProjLoc = glCtx.getUniformLocation(progObj, 'uProj');
 
+  // Check if attribute locations are valid
+  if (aPosLoc < 0 || aNormalLoc < 0 || aColorLoc < 0) {
+    console.error('Attribute location error:', { aPosLoc, aNormalLoc, aColorLoc });
+    throw new Error('Failed to get attribute locations');
+  }
+
+  // Check if uniform location is valid
+  if (uProjLoc < 0) {
+    console.error('Uniform location error:', uProjLoc);
+    throw new Error('Failed to get uniform location');
+  }
+
   vaoHandle = glCtx.createVertexArray();
   glCtx.bindVertexArray(vaoHandle);
 
