@@ -532,69 +532,6 @@ export function init(canvasEl) {
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
 
-  function getOrthoMatrix() {
-    const aspect = canvasEl.clientWidth / canvasEl.clientHeight || 1;
-    const halfH = 50 * camZoom;
-    const halfW = halfH * aspect;
-
-    // Orthographic projection
-    const proj = new Float32Array([
-      1.0 / halfW, 0, 0, 0,
-      0, 1.0 / halfH, 0, 0,
-      0, 0, -1.0 / 50.0, 0,
-      0, 0, 0, 1.0
-    ]);
-
-    // View matrix: rotate around Y axis (yaw), then apply fixed pitch/tilt, then translate (pan)
-    const rad = camRot * Math.PI / 180;
-    const cosR = Math.cos(rad);
-    const sinR = Math.sin(rad);
-
-    // Yaw rotation (around Y axis)
-    const rotY = new Float32Array([
-      cosR, 0, -sinR, 0,
-      0,    1, 0,     0,
-      sinR, 0, cosR,  0,
-      0,    0, 0,     1
-    ]);
-
-    // Add fixed isometric pitch/tilt (30-35 degrees down from horizontal)
-    const pitchRad = 32 * Math.PI / 180; // ~32 degrees
-    const cosP = Math.cos(pitchRad);
-    const sinP = Math.sin(pitchRad);
-    
-    // Pitch rotation (around X axis)
-    const rotX = new Float32Array([
-      1, 0, 0, 0,
-      0, cosP, sinP, 0,
-      0, -sinP, cosP, 0,
-      0, 0, 0, 1
-    ]);
-
-    const trans = new Float32Array([
-      1, 0, 0, camPanX,
-      0, 1, 0, camPanY,
-      0, 0, 1, 0,
-      0, 0, 0, 1
-    ]);
-
-    // Matrix multiplication helper (column-major compatible)
-    function mulMat4(a, b) {
-      const r = new Float32Array(16);
-      for(let i=0; i<4; i++) {
-        for(let j=0; j<4; j++) {
-          let sum = 0;
-          for(let k=0; k<4; k++) sum += a[i*4+k] * b[k*4+j];
-          r[i*4+j] = sum;
-        }
-      }
-      return r;
-    }
-
-    // The order should be: projection * (pitch * yaw * translation)
-    return mulMat4(proj, mulMat4(rotX, mulMat4(rotY, trans)));
-  }
-
   glCtx.useProgram(progObj);
   glCtx.uniformMatrix4fv(uProjLoc, false, getOrthoMatrix());
 
