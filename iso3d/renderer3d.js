@@ -61,11 +61,25 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   const cosR = Math.cos(rad);
   const sinR = Math.sin(rad);
 
+  // Yaw rotation (around Y axis)
   const rotY = new Float32Array([
     cosR, 0, -sinR, 0,
     0,    1, 0,     0,
     sinR, 0, cosR,  0,
     0,    0, 0,     1
+  ]);
+
+  // Add fixed isometric pitch/tilt (30-35 degrees down from horizontal)
+  const pitchRad = 32 * Math.PI / 180; // ~32 degrees
+  const cosP = Math.cos(pitchRad);
+  const sinP = Math.sin(pitchRad);
+  
+  // Pitch rotation (around X axis)
+  const rotX = new Float32Array([
+    1, 0, 0, 0,
+    0, cosP, sinP, 0,
+    0, -sinP, cosP, 0,
+    0, 0, 0, 1
   ]);
 
   const trans = new Float32Array([
@@ -87,7 +101,8 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
     return r;
   }
 
-  return mulMat4(proj, mulMat4(rotY, trans));
+  // Apply transformations in order: pitch -> yaw -> translation
+  return mulMat4(proj, mulMat4(rotX, mulMat4(rotY, trans)));
 }
 
 function buildGeometry(cols, rows, heights, palette) {
@@ -521,16 +536,30 @@ export function init(canvasEl) {
       0, 0, 0, 1.0
     ]);
 
-    // View matrix: rotate around Y axis, then translate (pan)
+    // View matrix: rotate around Y axis (yaw), then apply fixed pitch/tilt, then translate (pan)
     const rad = camRot * Math.PI / 180;
     const cosR = Math.cos(rad);
     const sinR = Math.sin(rad);
 
+    // Yaw rotation (around Y axis)
     const rotY = new Float32Array([
       cosR, 0, -sinR, 0,
       0,    1, 0,     0,
       sinR, 0, cosR,  0,
       0,    0, 0,     1
+    ]);
+
+    // Add fixed isometric pitch/tilt (30-35 degrees down from horizontal)
+    const pitchRad = 32 * Math.PI / 180; // ~32 degrees
+    const cosP = Math.cos(pitchRad);
+    const sinP = Math.sin(pitchRad);
+    
+    // Pitch rotation (around X axis)
+    const rotX = new Float32Array([
+      1, 0, 0, 0,
+      0, cosP, sinP, 0,
+      0, -sinP, cosP, 0,
+      0, 0, 0, 1
     ]);
 
     const trans = new Float32Array([
@@ -553,8 +582,8 @@ export function init(canvasEl) {
       return r;
     }
 
-    // The order should be: projection * view matrix
-    return mulMat4(proj, mulMat4(rotY, trans));
+    // The order should be: projection * (pitch * yaw * translation)
+    return mulMat4(proj, mulMat4(rotX, mulMat4(rotY, trans)));
   }
 
   glCtx.useProgram(progObj);
