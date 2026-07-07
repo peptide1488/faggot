@@ -538,7 +538,7 @@ export function init(canvasEl) {
   glCtx.clearColor(0.08, 0.1, 0.15, 1.0);
   glCtx.enable(glCtx.DEPTH_TEST);
 
-  let loggedOnce = false;
+  let frameNum = 0;
   function drawFrame() {
     if (canvasRef.clientWidth > 0 && canvasRef.clientHeight > 0) {
       syncCanvasSize(canvasRef);
@@ -546,10 +546,9 @@ export function init(canvasEl) {
       glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
       glCtx.uniformMatrix4fv(uProjLoc, false, getOrthoMatrix());
 
-      if (!loggedOnce) {
-        loggedOnce = true;
-        console.log('[DIAG] canvas w/h:', canvasRef.width, canvasRef.height,
-          'clientW/H:', canvasRef.clientWidth, canvasRef.clientHeight,
+      frameNum++;
+      if (frameNum === 1 || frameNum === 30 || frameNum === 90) {
+        console.log('[DIAG] frame', frameNum, '- canvas w/h:', canvasRef.width, canvasRef.height,
           'vertexCount:', vertexCount, 'tokenVertexCount:', tokenVertexCount,
           'glError:', glCtx.getError());
       }
