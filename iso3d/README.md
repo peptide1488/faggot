@@ -66,4 +66,3 @@ matrices + pan/zoom scaling).
   as distinct types, matching `TERRAIN` in `index.html`, aren't modeled).
 - 5e rules integration was deliberately out of scope for this build (by
   design -- this pass was graphics-only, rules come later).
-<!-- model test ok -->
