@@ -1,3 +1,6 @@
+// Destructure mat4 from glMatrix at the top of the file
+const { mat4 } = window.glMatrix || glMatrix;
+
 let glCtx = null;
 let progObj = null;
 let pickedTile = null;
