@@ -61,7 +61,7 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   mat4.ortho(projection, -halfSize, halfSize, -halfSize, halfSize, 0.1, 100.0);
   
   // Set up camera position and orientation for isometric view
-  // Camera is positioned above the center of the map looking down at an angle
+  // Camera should be positioned above the center of the map looking down at an angle
   const camX = 0;
   const camY = 25; // Height above the map
   const camZ = 0;
