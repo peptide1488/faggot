@@ -48,82 +48,43 @@ export function worldToGrid(x, z, cols, rows) {
   return null;
 }
 
-export function getOrthoMatrix(left, right, bottom, top, near, far) {
-  // Create orthographic projection matrix
-  const result = new Float32Array(16);
+export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
+  // Create camera matrices using gl-matrix
+  const projection = mat4.create();
+  const view = mat4.create();
   
-  result[0] = 2 / (right - left);
-  result[1] = 0;
-  result[2] = 0;
-  result[3] = 0;
+  // Set up orthographic projection with proper bounds
+  const halfSize = 15 * camZoom;
+  mat4.ortho(projection, -halfSize, halfSize, -halfSize, halfSize, 0.1, 100.0);
   
-  result[4] = 0;
-  result[5] = 2 / (top - bottom);
-  result[6] = 0;
-  result[7] = 0;
+  // Set up camera position and orientation for isometric view
+  // Camera is positioned above the center of the map looking down at an angle
+  const camX = 0;
+  const camY = 25; // Height above the map
+  const camZ = 0;
   
-  result[8] = 0;
-  result[9] = 0;
-  result[10] = -2 / (far - near);
-  result[11] = 0;
+  // Use a fixed isometric view with 35.264 degree pitch (0.6154 radians)
+  const pitch = 0.6154; // ~35.264 degrees
   
-  result[12] = -(right + left) / (right - left);
-  result[13] = -(top + bottom) / (top - bottom);
-  result[14] = -(far + near) / (far - near);
-  result[15] = 1;
+  // Set up the view matrix using lookAt
+  mat4.lookAt(view, 
+    [camX, camY, camZ],   // Camera position
+    [camX, 0, camZ],      // Look at point (center of map)
+    [0, 1, 0]             // Up vector
+  );
+  
+  // Apply rotation around Y axis for camera yaw (isometric rotation)
+  const rad = camRot * Math.PI / 180;
+  mat4.rotateY(view, view, rad);
+  
+  // Apply pitch rotation (around X axis) for isometric tilt
+  mat4.rotateX(view, view, pitch);
+  
+  // Combine projection and view matrices
+  const result = mat4.create();
+  mat4.multiply(result, projection, view);
   
   return result;
-}
-
-export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
-  // Use orthographic projection for isometric view
-  const halfSize = 15 * camZoom; // Adjusted for better fit
-  
-  // Create orthographic projection matrix with proper bounds
-  const proj = getOrthoMatrix(
-    -halfSize, 
-    halfSize, 
-    -halfSize, 
-    halfSize, 
-    0.1, 
-    100.0
-  );
-
-  // Camera rotation around Y axis (isometric view)
-  const rad = camRot * Math.PI / 180;
-  const cosR = Math.cos(rad);
-  const sinR = Math.sin(rad);
-
-  // Rotation matrix for camera yaw
-  const rotY = new Float32Array([
-    cosR, 0, -sinR, 0,
-    0,    1, 0,     0,
-    sinR, 0, cosR,  0,
-    0,    0, 0,     1
-  ]);
-
-  // Camera translation (panning)
-  const trans = new Float32Array([
-    1, 0, 0, camPanX,
-    0, 1, 0, camPanY,
-    0, 0, 1, 0,
-    0, 0, 0, 1
-  ]);
-
-  function mulMat4(a, b) {
-    const r = new Float32Array(16);
-    for(let i=0; i<4; i++) {
-      for(let j=0; j<4; j++) {
-        let sum = 0;
-        for(let k=0; k<4; k++) sum += a[i*4+k] * b[k*4+j];
-        r[i*4+j] = sum;
-      }
-    }
-    return r;
-  }
-
-  // Apply transformations in order: translation -> rotation -> projection
-  return mulMat4(proj, mulMat4(rotY, trans));
 }
 
 function buildGeometry(cols, rows, heights, palette) {
