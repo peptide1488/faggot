@@ -30,6 +30,9 @@ let camPanY = 0;
 // Map size for camera scaling
 let mapSizeForCamera = 10; // default fallback
 
+// Shader uniform locations
+let uProjLoc = null;
+
 export function gridToWorld(col, row, cols, rows, height = 0) {
   const x = col - (cols - 1) / 2;
   const z = row - (rows - 1) / 2;
@@ -479,7 +482,7 @@ function initShaders() {
   const aPosLoc = glCtx.getAttribLocation(progObj, 'aPos');
   const aNormalLoc = glCtx.getAttribLocation(progObj, 'aNormal');
   const aColorLoc = glCtx.getAttribLocation(progObj, 'aColor');
-  const uProjLoc = glCtx.getUniformLocation(progObj, 'uProj');
+  uProjLoc = glCtx.getUniformLocation(progObj, 'uProj');
 
   // Check if attribute locations are valid
   if (aPosLoc < 0 || aNormalLoc < 0 || aColorLoc < 0) {
@@ -493,7 +496,7 @@ function initShaders() {
     throw new Error('Failed to get uniform location');
   }
 
-  return { aPosLoc, aNormalLoc, aColorLoc, uProjLoc };
+  return { aPosLoc, aNormalLoc, aColorLoc };
 }
 
 function draw() {
@@ -525,7 +528,7 @@ export function init(canvasEl) {
   if (!glCtx) throw new Error('WebGL2 not supported');
 
   // Initialize shaders
-  const { aPosLoc, aNormalLoc, aColorLoc, uProjLoc } = initShaders();
+  const { aPosLoc, aNormalLoc, aColorLoc } = initShaders();
 
   vaoHandle = glCtx.createVertexArray();
   glCtx.bindVertexArray(vaoHandle);
@@ -608,5 +611,5 @@ export function init(canvasEl) {
   // Force an initial draw to make sure everything is set up
   drawFrame();
 
-  return { gl: glCtx, prog: progObj, uProjLoc };
+  return { gl: glCtx, prog: progObj };
 }
