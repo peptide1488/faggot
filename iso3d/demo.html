@@ -29,6 +29,7 @@
     (async () => {
       const APP_VERSION = '1.0';
       
+      // Load modules in correct order to avoid gl-matrix issues
       const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } = await import("./renderer3d.js?v=" + Date.now());
       const { computeMoveRange } = await import("./movement.js?v=" + Date.now());
       const { TurnManager, computeTurnOrder } = await import("./turnOrder.js?v=" + Date.now());
