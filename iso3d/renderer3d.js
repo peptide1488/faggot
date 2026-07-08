@@ -45,19 +45,46 @@ export function worldToGrid(x, z, cols, rows) {
   return null;
 }
 
+export function getOrthoMatrix(left, right, bottom, top, near, far) {
+  // Create orthographic projection matrix
+  const result = new Float32Array(16);
+  
+  result[0] = 2 / (right - left);
+  result[1] = 0;
+  result[2] = 0;
+  result[3] = 0;
+  
+  result[4] = 0;
+  result[5] = 2 / (top - bottom);
+  result[6] = 0;
+  result[7] = 0;
+  
+  result[8] = 0;
+  result[9] = 0;
+  result[10] = -2 / (far - near);
+  result[11] = 0;
+  
+  result[12] = -(right + left) / (right - left);
+  result[13] = -(top + bottom) / (top - bottom);
+  result[14] = -(far + near) / (far - near);
+  result[15] = 1;
+  
+  return result;
+}
+
 export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   // Use orthographic projection for isometric view
-  const halfSize = 15 * camZoom; // Adjusted for better fit
-  const near = 0.1;
-  const far = 100.0;
+  const halfSize = 10 * camZoom; // Adjusted for better fit
   
-  // Orthographic projection matrix for isometric view
-  const proj = new Float32Array([
-    1 / halfSize, 0, 0, 0,
-    0, 1 / halfSize, 0, 0,
-    0, 0, 2 / (near - far), 0,
-    0, 0, (near + far) / (near - far), 1
-  ]);
+  // Create orthographic projection matrix
+  const proj = getOrthoMatrix(
+    -halfSize, 
+    halfSize, 
+    -halfSize, 
+    halfSize, 
+    0.1, 
+    100.0
+  );
 
   // Camera rotation around Y axis (isometric view)
   const rad = camRot * Math.PI / 180;
@@ -320,7 +347,7 @@ export function pickTile(screenX, screenY) {
   const rad = camRot * Math.PI / 180;
   const c = Math.cos(rad);
   const s = Math.sin(rad);
-  const halfSize = 15 * camZoom; // Adjusted for better fit
+  const halfSize = 10 * camZoom; // Adjusted for better fit
   
   function unproject(nz) {
     return [
@@ -395,12 +422,7 @@ function syncCanvasSize(canvasEl) {
   }
 }
 
-export function init(canvasEl) {
-  canvasRef = canvasEl;
-  syncCanvasSize(canvasEl);
-  glCtx = canvasEl.getContext('webgl2', { antialias: true, alpha: false });
-  if (!glCtx) throw new Error('WebGL2 not supported');
-
+function initShaders() {
   const vsSource = `#version 300 es
     in vec3 aPos;
     in vec3 aNormal;
@@ -471,6 +493,40 @@ export function init(canvasEl) {
     throw new Error('Failed to get uniform location');
   }
 
+  return { aPosLoc, aNormalLoc, aColorLoc, uProjLoc };
+}
+
+function draw() {
+  if (!glCtx || !vaoHandle) return;
+  
+  glCtx.viewport(0, 0, canvasRef.clientWidth, canvasRef.clientHeight);
+  glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
+  
+  // Set up the projection matrix
+  const aspect = canvasRef.clientWidth / canvasRef.clientHeight;
+  const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect);
+  glCtx.uniformMatrix4fv(uProjLoc, false, camMatrix);
+
+  if (vertexCount > 0) {
+    glCtx.bindVertexArray(vaoHandle);
+    glCtx.drawArrays(glCtx.TRIANGLES, 0, vertexCount);
+  }
+
+  if (tokenVertexCount > 0) {
+    glCtx.bindVertexArray(tokenVAOHandle);
+    glCtx.drawArrays(glCtx.TRIANGLES, 0, tokenVertexCount);
+  }
+}
+
+export function init(canvasEl) {
+  canvasRef = canvasEl;
+  syncCanvasSize(canvasEl);
+  glCtx = canvasEl.getContext('webgl2', { antialias: true, alpha: false });
+  if (!glCtx) throw new Error('WebGL2 not supported');
+
+  // Initialize shaders
+  const { aPosLoc, aNormalLoc, aColorLoc, uProjLoc } = initShaders();
+
   vaoHandle = glCtx.createVertexArray();
   glCtx.bindVertexArray(vaoHandle);
 
@@ -517,7 +573,11 @@ export function init(canvasEl) {
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
 
   glCtx.useProgram(progObj);
-  glCtx.uniformMatrix4fv(uProjLoc, false, getCameraMatrix(camRot, camZoom, camPanX, camPanY, canvasEl.clientWidth / canvasEl.clientHeight));
+  
+  // Set initial projection matrix
+  const aspect = canvasRef.clientWidth / canvasRef.clientHeight;
+  const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect);
+  glCtx.uniformMatrix4fv(uProjLoc, false, camMatrix);
 
   glCtx.clearColor(0.08, 0.1, 0.15, 1.0);
   glCtx.enable(glCtx.DEPTH_TEST);
@@ -526,24 +586,12 @@ export function init(canvasEl) {
   function drawFrame() {
     if (canvasRef.clientWidth > 0 && canvasRef.clientHeight > 0) {
       syncCanvasSize(canvasRef);
-      glCtx.viewport(0, 0, canvasRef.clientWidth, canvasRef.clientHeight);
-      glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
-      glCtx.uniformMatrix4fv(uProjLoc, false, getCameraMatrix(camRot, camZoom, camPanX, camPanY, canvasEl.clientWidth / canvasEl.clientHeight));
-
-      if (vertexCount > 0) {
-        glCtx.bindVertexArray(vaoHandle);
-        glCtx.drawArrays(glCtx.TRIANGLES, 0, vertexCount);
-      }
-
-      if (tokenVertexCount > 0) {
-        glCtx.bindVertexArray(tokenVAOHandle);
-        glCtx.drawArrays(glCtx.TRIANGLES, 0, tokenVertexCount);
-      }
+      draw();
     }
 
     // Log debug info on frame 30
     if (frameNum === 30) {
-      const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, canvasEl.clientWidth / canvasEl.clientHeight);
+      const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect);
       console.log('Debug values on frame 30:');
       console.log('  mapSizeForCamera:', mapSizeForCamera);
       console.log('  vertexCount:', vertexCount);
