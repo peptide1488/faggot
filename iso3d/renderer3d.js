@@ -77,9 +77,9 @@ export function getOrthoMatrix(left, right, bottom, top, near, far) {
 
 export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   // Use orthographic projection for isometric view
-  const halfSize = 10 * camZoom; // Adjusted for better fit
+  const halfSize = 12 * camZoom; // Adjusted for better fit
   
-  // Create orthographic projection matrix
+  // Create orthographic projection matrix with proper bounds
   const proj = getOrthoMatrix(
     -halfSize, 
     halfSize, 
@@ -350,7 +350,7 @@ export function pickTile(screenX, screenY) {
   const rad = camRot * Math.PI / 180;
   const c = Math.cos(rad);
   const s = Math.sin(rad);
-  const halfSize = 10 * camZoom; // Adjusted for better fit
+  const halfSize = 12 * camZoom; // Adjusted for better fit
   
   function unproject(nz) {
     return [
