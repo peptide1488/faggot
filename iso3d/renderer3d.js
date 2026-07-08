@@ -55,7 +55,7 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   const near = 0.1;
   const far = 100.0;
   const f = 1.0 / Math.tan(fov / 2);
-  
+
   const proj = new Float32Array([
     f / halfW, 0, 0, 0,
     0, f / halfH, 0, 0,
@@ -79,7 +79,7 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   const pitchRad = 32 * Math.PI / 180; // ~32 degrees
   const cosP = Math.cos(pitchRad);
   const sinP = Math.sin(pitchRad);
-  
+
   // Pitch rotation (around X axis)
   const rotX = new Float32Array([
     1, 0, 0, 0,
@@ -459,17 +459,17 @@ export function init(canvasEl) {
 
   const vs = compileShader(vsSource, glCtx.VERTEX_SHADER);
   const fs = compileShader(fsSource, glCtx.FRAGMENT_SHADER);
-  
+
   progObj = glCtx.createProgram();
   glCtx.attachShader(progObj, vs);
   glCtx.attachShader(progObj, fs);
   glCtx.linkProgram(progObj);
-  
+
   if (!glCtx.getProgramParameter(progObj, glCtx.LINK_STATUS)) {
     console.error('Program link error:', glCtx.getProgramInfoLog(progObj));
     throw new Error('Failed to link shader program');
   }
-  
+
   const aPosLoc = glCtx.getAttribLocation(progObj, 'aPos');
   const aNormalLoc = glCtx.getAttribLocation(progObj, 'aNormal');
   const aColorLoc = glCtx.getAttribLocation(progObj, 'aColor');
@@ -526,14 +526,14 @@ export function init(canvasEl) {
 
   // Bind back to map VAO for initial setup
   glCtx.bindVertexArray(vaoHandle);
-  
+
   // Ensure we're properly set up by binding all buffers once
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
 
   glCtx.useProgram(progObj);
-  glCtx.uniformMatrix4fv(uProjLoc, false, getOrthoMatrix());
+  glCtx.uniformMatrix4fv(uProjLoc, false, getCameraMatrix(camRot, camZoom, camPanX, camPanY, canvasEl.clientWidth / canvasEl.clientHeight));
 
   glCtx.clearColor(0.08, 0.1, 0.15, 1.0);
   glCtx.enable(glCtx.DEPTH_TEST);
@@ -544,31 +544,31 @@ export function init(canvasEl) {
       syncCanvasSize(canvasRef);
       glCtx.viewport(0, 0, canvasRef.clientWidth, canvasRef.clientHeight);
       glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
-      glCtx.uniformMatrix4fv(uProjLoc, false, getOrthoMatrix());
+      glCtx.uniformMatrix4fv(uProjLoc, false, getCameraMatrix(camRot, camZoom, camPanX, camPanY, canvasEl.clientWidth / canvasEl.clientHeight));
 
       if (vertexCount > 0) {
         glCtx.bindVertexArray(vaoHandle);
         glCtx.drawArrays(glCtx.TRIANGLES, 0, vertexCount);
       }
-      
+
       if (tokenVertexCount > 0) {
         glCtx.bindVertexArray(tokenVAOHandle);
         glCtx.drawArrays(glCtx.TRIANGLES, 0, tokenVertexCount);
       }
     }
-    
+
     // Log debug info on frame 30
     if (frameNum === 30) {
-      const camMatrix = getOrthoMatrix();
+      const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, canvasEl.clientWidth / canvasEl.clientHeight);
       console.log('Debug values on frame 30:');
       console.log('  mapSizeForCamera:', mapSizeForCamera);
       console.log('  vertexCount:', vertexCount);
       console.log('  tokenVertexCount:', tokenVertexCount);
-      console.log('  camera matrix (first 4 values):', 
-        camMatrix[0].toFixed(3), camMatrix[1].toFixed(3), 
+      console.log('  camera matrix (first 4 values):',
+        camMatrix[0].toFixed(3), camMatrix[1].toFixed(3),
         camMatrix[2].toFixed(3), camMatrix[3].toFixed(3));
     }
-    
+
     frameNum++;
     requestAnimationFrame(drawFrame);
   }
@@ -576,5 +576,5 @@ export function init(canvasEl) {
   // Force an initial draw to make sure everything is set up
   drawFrame();
 
-  return { gl: glCtx, prog: progObj, uProjLoc, getOrthoMatrix };
+  return { gl: glCtx, prog: progObj, uProjLoc };
 }
