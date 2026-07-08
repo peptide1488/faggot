@@ -46,28 +46,25 @@ export function worldToGrid(x, z, cols, rows) {
 }
 
 export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
-  // Scale the camera based on map size for better default view
-  const halfH = (mapSizeForCamera * 0.5) * camZoom;
-  const halfW = halfH * (aspect || 1);
-
-  // Use perspective projection instead of orthographic to show elevation properly
-  const fov = 45 * Math.PI / 180; // 45 degrees in radians
+  // Use orthographic projection for isometric view
+  const halfSize = 15 * camZoom; // Adjusted for better fit
   const near = 0.1;
   const far = 100.0;
-  const f = 1.0 / Math.tan(fov / 2);
-
+  
+  // Orthographic projection matrix for isometric view
   const proj = new Float32Array([
-    f / halfW, 0, 0, 0,
-    0, f / halfH, 0, 0,
-    0, 0, (far + near) / (near - far), -1,
-    0, 0, (2 * far * near) / (near - far), 0
+    1 / halfSize, 0, 0, 0,
+    0, 1 / halfSize, 0, 0,
+    0, 0, 2 / (near - far), 0,
+    0, 0, (near + far) / (near - far), 1
   ]);
 
+  // Camera rotation around Y axis (isometric view)
   const rad = camRot * Math.PI / 180;
   const cosR = Math.cos(rad);
   const sinR = Math.sin(rad);
 
-  // Yaw rotation (around Y axis)
+  // Rotation matrix for camera yaw
   const rotY = new Float32Array([
     cosR, 0, -sinR, 0,
     0,    1, 0,     0,
@@ -75,19 +72,7 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
     0,    0, 0,     1
   ]);
 
-  // Add fixed isometric pitch/tilt (30-35 degrees down from horizontal)
-  const pitchRad = 32 * Math.PI / 180; // ~32 degrees
-  const cosP = Math.cos(pitchRad);
-  const sinP = Math.sin(pitchRad);
-
-  // Pitch rotation (around X axis)
-  const rotX = new Float32Array([
-    1, 0, 0, 0,
-    0, cosP, sinP, 0,
-    0, -sinP, cosP, 0,
-    0, 0, 0, 1
-  ]);
-
+  // Camera translation (panning)
   const trans = new Float32Array([
     1, 0, 0, camPanX,
     0, 1, 0, camPanY,
@@ -107,8 +92,8 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
     return r;
   }
 
-  // Apply transformations in order: pitch -> yaw -> translation
-  return mulMat4(proj, mulMat4(rotX, mulMat4(rotY, trans)));
+  // Apply transformations in order: translation -> rotation -> projection
+  return mulMat4(proj, mulMat4(rotY, trans));
 }
 
 function buildGeometry(cols, rows, heights, palette) {
@@ -335,14 +320,13 @@ export function pickTile(screenX, screenY) {
   const rad = camRot * Math.PI / 180;
   const c = Math.cos(rad);
   const s = Math.sin(rad);
-  const halfH = 50 * camZoom;
-  const halfW = halfH * (w / h || 1);
+  const halfSize = 15 * camZoom; // Adjusted for better fit
   
   function unproject(nz) {
     return [
-      c * halfW * nx - s * 50 * nz - camPanX,
-      halfH * ny - camPanY,
-      -s * halfW * nx - c * 50 * nz
+      c * halfSize * nx - s * halfSize * nz - camPanX,
+      halfSize * ny - camPanY,
+      -s * halfSize * nx - c * halfSize * nz
     ];
   }
   
