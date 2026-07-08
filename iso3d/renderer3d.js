@@ -56,14 +56,14 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   const projection = mat4.create();
   const view = mat4.create();
   
-  // Set up orthographic projection with proper bounds
-  const halfSize = 15 * camZoom;
+  // Set up orthographic projection with proper bounds for isometric view
+  const halfSize = 12 * camZoom;
   mat4.ortho(projection, -halfSize, halfSize, -halfSize, halfSize, 0.1, 100.0);
   
   // Set up camera position and orientation for isometric view
   // Camera is positioned above the center of the map looking down at an angle
   const camX = 0;
-  const camY = 25; // Height above the map
+  const camY = 20; // Height above the map
   const camZ = 0;
   
   // Use a fixed isometric view with 35.264 degree pitch (0.6154 radians)
@@ -314,7 +314,7 @@ export function pickTile(screenX, screenY) {
   const rad = camRot * Math.PI / 180;
   const c = Math.cos(rad);
   const s = Math.sin(rad);
-  const halfSize = 15 * camZoom; // Adjusted for better fit
+  const halfSize = 12 * camZoom; // Adjusted for better fit
   
   function unproject(nz) {
     return [
