@@ -110,9 +110,13 @@ function buildGeometry(cols, rows, heights, palette) {
       h = Math.max(0, Math.min(5, Number(h))); // Allow 0-5 terrain types
       
       let baseColor = palette ? (palette[type] || TERRAIN_TYPES[h]) : TERRAIN_TYPES[h];
-      if (pickedTile && x === pickedTile.col && z === pickedTile.row) {
-        baseColor = [1, 0.85, 0.2]; // highlight color
+      
+      // Check if this tile is the hovered/picked tile
+      const isPicked = pickedTile && x === pickedTile.col && z === pickedTile.row;
+      if (isPicked) {
+        baseColor = [1, 1, 1]; // White highlight for picked tile
       }
+      
       const sideColor = [baseColor[0]*0.7, baseColor[1]*0.7, baseColor[2]*0.7];
       
       // Center the grid around world origin
