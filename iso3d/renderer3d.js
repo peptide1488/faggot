@@ -48,6 +48,10 @@ const TERRAIN_TYPES = [
   [0.70, 0.30, 0.30]  // brick
 ];
 
+// Current tool state
+let currentTool = 'raise';
+let currentTerrainType = 0;
+
 export function gridToWorld(col, row, cols, rows, height = 0) {
   const x = col - (cols - 1) / 2;
   const z = row - (rows - 1) / 2;
@@ -113,11 +117,31 @@ function buildGeometry(cols, rows, heights, palette) {
       
       // Check if this tile is the hovered/picked tile
       const isPicked = pickedTile && x === pickedTile.col && z === pickedTile.row;
+      let finalColor = baseColor;
+      
+      // Apply tool-specific visual effects
       if (isPicked) {
-        baseColor = [1, 1, 1]; // White highlight for picked tile
+        switch(currentTool) {
+          case 'raise':
+            // Bright yellow tint for raise tool
+            finalColor = [1.0, 1.0, 0.0];
+            break;
+          case 'lower':
+            // Bright purple/blue tint for lower tool
+            finalColor = [0.5, 0.0, 1.0];
+            break;
+          case 'paint':
+            // Use selected terrain type color for paint tool
+            if (palette && palette[currentTerrainType]) {
+              finalColor = palette[currentTerrainType];
+            } else {
+              finalColor = TERRAIN_TYPES[currentTerrainType] || [0.5, 0.5, 0.5];
+            }
+            break;
+        }
       }
       
-      const sideColor = [baseColor[0]*0.7, baseColor[1]*0.7, baseColor[2]*0.7];
+      const sideColor = [finalColor[0]*0.7, finalColor[1]*0.7, finalColor[2]*0.7];
       
       // Center the grid around world origin
       const ox = x - (cols - 1) / 2;
@@ -133,7 +157,7 @@ function buildGeometry(cols, rows, heights, palette) {
       // Top face (always drawn)
       addQuad(
         [ox-hs, h * 0.5, oz-hs], [ox+hs, h * 0.5, oz-hs], [ox+hs, h * 0.5, oz+hs], [ox-hs, h * 0.5, oz+hs],
-        [0, 1, 0], baseColor
+        [0, 1, 0], finalColor
       );
 
       // Side walls (only if elevated)
@@ -158,6 +182,39 @@ function buildGeometry(cols, rows, heights, palette) {
           [ox-hs, 0, oz-hs], [ox-hs, 0, oz+hs], [ox-hs, h * 0.5, oz+hs], [ox-hs, h * 0.5, oz-hs],
           [-1, 0, 0], sideColor
         );
+      }
+
+      // Add tool-specific indicators for hovered tile
+      if (isPicked) {
+        const indicatorSize = 0.2;
+        const indicatorHeight = h * 0.5 + 0.05; // Slightly above the top face
+        
+        switch(currentTool) {
+          case 'raise':
+            // Add upward chevron indicator on top face
+            addQuad(
+              [ox-hs+indicatorSize, indicatorHeight, oz-hs+indicatorSize], 
+              [ox+hs-indicatorSize, indicatorHeight, oz-hs+indicatorSize], 
+              [ox+hs-indicatorSize, indicatorHeight, oz+hs-indicatorSize], 
+              [ox-hs+indicatorSize, indicatorHeight, oz+hs-indicatorSize],
+              [0, 1, 0], [1.0, 1.0, 0.0] // Yellow chevron
+            );
+            break;
+          case 'lower':
+            // Add downward chevron indicator on top face
+            addQuad(
+              [ox-hs+indicatorSize, indicatorHeight, oz-hs+indicatorSize], 
+              [ox+hs-indicatorSize, indicatorHeight, oz-hs+indicatorSize], 
+              [ox+hs-indicatorSize, indicatorHeight, oz+hs-indicatorSize], 
+              [ox-hs+indicatorSize, indicatorHeight, oz+hs-indicatorSize],
+              [0, 1, 0], [0.5, 0.0, 1.0] // Purple chevron
+            );
+            break;
+          case 'paint':
+            // For paint tool, we already use the terrain color for the tile
+            // No additional indicator needed
+            break;
+        }
       }
     }
   }
@@ -387,6 +444,14 @@ export function updateTile(col, row, toolMode, terrainType) {
   // Force a full geometry rebuild and redraw
   const currentPalette = [ [0.2, 0.6, 0.2], [0.7, 0.6, 0.4], [0.2, 0.4, 0.8], [0.4, 0.3, 0.2] ];
   setMap(mapCols, mapRows, mapHeights, currentPalette);
+}
+
+export function setCurrentTool(tool) {
+  currentTool = tool;
+}
+
+export function setCurrentTerrainType(type) {
+  currentTerrainType = type;
 }
 
 function syncCanvasSize(canvasEl) {

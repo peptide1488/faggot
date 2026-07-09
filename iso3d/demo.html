@@ -7,6 +7,17 @@
   <style>
     body { margin: 0; overflow: hidden; background: #000; }
     canvas { display: block; width: 100vw; height: 100vh; }
+    #toolTip {
+      position: absolute;
+      color: white;
+      font-family: sans-serif;
+      font-size: 12px;
+      pointer-events: none;
+      background: rgba(0,0,0,0.7);
+      padding: 4px 8px;
+      border-radius: 4px;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -45,6 +56,8 @@
     <div style="font-size:11px; color:#aaa;">Click on tiles to edit</div>
   </div>
 
+  <div id="toolTip"></div>
+
   <script type="module">
     (async () => {
       // Dynamically load gl-matrix library
@@ -59,7 +72,7 @@
       const APP_VERSION = '1.1';
       
       // Load modules in correct order to avoid gl-matrix issues
-      const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile, updateTile } = await import("./renderer3d.js?v=" + Date.now());
+      const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile, updateTile, setCurrentTool, setCurrentTerrainType } = await import("./renderer3d.js?v=" + Date.now());
       const { computeMoveRange } = await import("./movement.js?v=" + Date.now());
       const { TurnManager, computeTurnOrder } = await import("./turnOrder.js?v=" + Date.now());
       
@@ -104,6 +117,52 @@
       });
 
       window.addEventListener('mousemove', (e) => {
+        if (!isDragging) {
+          // Update tool tip position
+          const toolTip = document.getElementById('toolTip');
+          toolTip.style.left = (e.clientX + 10) + 'px';
+          toolTip.style.top = (e.clientY + 10) + 'px';
+          
+          // Handle hover detection for brush highlighting
+          const rect = canvas.getBoundingClientRect();
+          const hovered = pickTile(e.clientX - rect.left, e.clientY - rect.top);
+          
+          if (hovered) {
+            selectTile(hovered.col, hovered.row);
+            
+            // Update tool tip text
+            let toolTipText = '';
+            switch(window.currentTool) {
+              case 'raise':
+                toolTipText = ' Raise';
+                break;
+              case 'lower':
+                toolTipText = ' Lower';
+                break;
+              case 'paint':
+                const terrainType = parseInt(document.getElementById('terrainType').value);
+                switch(terrainType) {
+                  case 0: toolTipText = ' Grass'; break;
+                  case 1: toolTipText = ' Sand'; break;
+                  case 2: toolTipText = ' Water'; break;
+                  case 3: toolTipText = ' Brick'; break;
+                  case 4: toolTipText = ' Building'; break;
+                }
+                break;
+            }
+            
+            if (toolTipText) {
+              toolTip.textContent = toolTipText;
+              toolTip.style.display = 'block';
+            } else {
+              toolTip.style.display = 'none';
+            }
+          } else {
+            selectTile(null, null); // Clear selection
+            toolTip.style.display = 'none';
+          }
+        }
+        
         if (!isDragging) return;
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
@@ -137,24 +196,34 @@
       // Editor tool selection
       document.getElementById('toolRaise').addEventListener('click', () => {
         currentTool = 'raise';
+        window.currentTool = currentTool;
+        setCurrentTool(currentTool);
         document.querySelectorAll('#editorPanel button').forEach(btn => btn.style.background = '');
         document.getElementById('toolRaise').style.background = '#4CAF50';
+        updateUI();
       });
       
       document.getElementById('toolLower').addEventListener('click', () => {
         currentTool = 'lower';
+        window.currentTool = currentTool;
+        setCurrentTool(currentTool);
         document.querySelectorAll('#editorPanel button').forEach(btn => btn.style.background = '');
         document.getElementById('toolLower').style.background = '#f44336';
+        updateUI();
       });
       
       document.getElementById('toolPaint').addEventListener('click', () => {
         currentTool = 'paint';
+        window.currentTool = currentTool;
+        setCurrentTool(currentTool);
         document.querySelectorAll('#editorPanel button').forEach(btn => btn.style.background = '');
         document.getElementById('toolPaint').style.background = '#2196F3';
+        updateUI();
       });
       
       // Initialize tool selection
       document.getElementById('toolRaise').style.background = '#4CAF50';
+      window.currentTool = currentTool;
 
       // Click to pick tile
       canvas.addEventListener('click', (e) => {
@@ -167,6 +236,7 @@
           
           // If in editor mode, update the tile
           const terrainType = parseInt(document.getElementById('terrainType').value);
+          setCurrentTerrainType(terrainType);
           updateTile(picked.col, picked.row, currentTool, terrainType);
         }
       });
