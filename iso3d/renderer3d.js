@@ -342,13 +342,13 @@ export function setMap(cols, rows, heights, palette) {
   const geo = buildGeometry(cols, rows, heights, palette);
   
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.DYNAMIC_DRAW);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.STATIC_DRAW);
   
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.DYNAMIC_DRAW);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.STATIC_DRAW);
   
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.DYNAMIC_DRAW);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.STATIC_DRAW);
   
   vertexCount = geo.positions.length / 3;
   
@@ -457,13 +457,13 @@ export function updateTile(col, row, toolMode, terrainType) {
   const geo = buildGeometry(mapCols, mapRows, mapHeights, currentPalette);
   
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.DYNAMIC_DRAW);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.STATIC_DRAW);
   
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.DYNAMIC_DRAW);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.STATIC_DRAW);
   
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.DYNAMIC_DRAW);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.STATIC_DRAW);
   
   vertexCount = geo.positions.length / 3;
 }
