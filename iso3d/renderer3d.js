@@ -64,7 +64,7 @@ export function worldToGrid(x, z, cols, rows) {
 }
 
 export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
-  // Create camera matrices using gl-matrix
+  // Create camera matrices using gl-matrix - moved inside function scope to prevent multi-frame corruption
   const projection = mat4.create();
   const view = mat4.create();
   
