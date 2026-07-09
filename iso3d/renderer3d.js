@@ -454,8 +454,18 @@ export function updateTile(col, row, toolMode, terrainType) {
   }
   
   // Force a full geometry rebuild and redraw immediately
-  const currentPalette = [ [0.2, 0.6, 0.2], [0.7, 0.6, 0.4], [0.2, 0.4, 0.8], [0.4, 0.3, 0.2] ];
-  setMap(mapCols, mapRows, mapHeights, currentPalette);
+  const geo = buildGeometry(mapCols, mapRows, mapHeights, currentPalette);
+  
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.DYNAMIC_DRAW);
+  
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.DYNAMIC_DRAW);
+  
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.DYNAMIC_DRAW);
+  
+  vertexCount = geo.positions.length / 3;
 }
 
 export function setCurrentTool(tool) {
