@@ -141,6 +141,13 @@ function buildGeometry(cols, rows, heights, palette) {
         }
       }
       
+      // Override with hover highlight if applicable
+      if (window.hoveredCol !== undefined && window.hoveredRow !== undefined) {
+        if (x === window.hoveredCol && z === window.hoveredRow) {
+          finalColor = [1.0, 1.0, 0.0]; // Bright yellow for hover highlight
+        }
+      }
+      
       const sideColor = [finalColor[0]*0.7, finalColor[1]*0.7, finalColor[2]*0.7];
       
       // Center the grid around world origin

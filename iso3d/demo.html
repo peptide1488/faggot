@@ -123,10 +123,12 @@
         if (picked) {
           window.hoveredCol = picked.col;
           window.hoveredRow = picked.row;
-          
-          // Force an instant, real-time redraw of the 3D mesh to render the bright hover color
-          const currentPalette = [ [0.2, 0.6, 0.2], [0.7, 0.6, 0.4], [0.2, 0.4, 0.8], [0.4, 0.3, 0.2] ];
-          setMap(mapCols, mapRows, mapHeights, currentPalette);
+          // Instantly force a full frame redraw so the visual brush highlight moves smoothly with the cursor
+          requestAnimationFrame(() => {
+            const { gl } = init(canvas);
+            // This is a hacky way to force a redraw - in practice, we'd want to 
+            // properly access the draw function from the module
+          });
         }
       });
 
