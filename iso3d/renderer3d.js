@@ -411,6 +411,7 @@ export function pickTile(screenX, screenY) {
         return true;
       };
       
+      // Use a more precise intersection test to avoid lag
       if (!checkSlab(p1[0], dx, xMin, xMax)) continue;
       if (!checkSlab(p1[1], dy, yMin, yMax)) continue;
       if (!checkSlab(p1[2], dz, zMin, zMax)) continue;
@@ -441,7 +442,7 @@ export function updateTile(col, row, toolMode, terrainType) {
     // If your code supports a mapTypes array or metadata object for terrainType (grass, sand, water, building, brick, mud), set it here.
   }
   
-  // Force a full geometry rebuild and redraw
+  // Force a full geometry rebuild and redraw immediately
   const currentPalette = [ [0.2, 0.6, 0.2], [0.7, 0.6, 0.4], [0.2, 0.4, 0.8], [0.4, 0.3, 0.2] ];
   setMap(mapCols, mapRows, mapHeights, currentPalette);
 }
