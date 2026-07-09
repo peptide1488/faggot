@@ -116,59 +116,17 @@
         lastY = e.clientY;
       });
 
-      // Continuous hover detection for brush highlighting
+      // Global hover listener for brush preview
       canvas.addEventListener('mousemove', (e) => {
-        if (isDragging) return;
-        
         const rect = canvas.getBoundingClientRect();
-        const hovered = pickTile(e.clientX - rect.left, e.clientY - rect.top);
-        
-        if (hovered) {
-          window.hoveredCol = hovered.col;
-          window.hoveredRow = hovered.row;
+        const picked = pickTile(e.clientX - rect.left, e.clientY - rect.top);
+        if (picked) {
+          window.hoveredCol = picked.col;
+          window.hoveredRow = picked.row;
           
-          // Force immediate redraw for smooth brush feedback
-          requestAnimationFrame(() => {
-            // Just call draw to update the display immediately
-            const { gl } = init(canvas);
-            // This is a hacky way to force a redraw - in practice, we'd want to 
-            // properly access the draw function from the module
-          });
-          
-          // Update tool tip text
-          let toolTipText = '';
-          switch(window.currentTool) {
-            case 'raise':
-              toolTipText = ' Raise';
-              break;
-            case 'lower':
-              toolTipText = ' Lower';
-              break;
-            case 'paint':
-              const terrainType = parseInt(document.getElementById('terrainType').value);
-              switch(terrainType) {
-                case 0: toolTipText = ' Grass'; break;
-                case 1: toolTipText = ' Sand'; break;
-                case 2: toolTipText = ' Water'; break;
-                case 3: toolTipText = ' Brick'; break;
-                case 4: toolTipText = ' Building'; break;
-              }
-              break;
-          }
-          
-          const toolTip = document.getElementById('toolTip');
-          if (toolTipText) {
-            toolTip.textContent = toolTipText;
-            toolTip.style.left = (e.clientX + 10) + 'px';
-            toolTip.style.top = (e.clientY + 10) + 'px';
-            toolTip.style.display = 'block';
-          } else {
-            toolTip.style.display = 'none';
-          }
-        } else {
-          window.hoveredCol = null;
-          window.hoveredRow = null;
-          toolTip.style.display = 'none';
+          // Force an instant, real-time redraw of the 3D mesh to render the bright hover color
+          const currentPalette = [ [0.2, 0.6, 0.2], [0.7, 0.6, 0.4], [0.2, 0.4, 0.8], [0.4, 0.3, 0.2] ];
+          setMap(mapCols, mapRows, mapHeights, currentPalette);
         }
       });
 
