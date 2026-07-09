@@ -128,7 +128,7 @@ function buildGeometry(cols, rows, heights, palette) {
 
       // Top face (always drawn)
       addQuad(
-        [ox-hs, h, oz-hs], [ox+hs, h, oz-hs], [ox+hs, h, oz+hs], [ox-hs, h, oz+hs],
+        [ox-hs, h * 0.5, oz-hs], [ox+hs, h * 0.5, oz-hs], [ox+hs, h * 0.5, oz+hs], [ox-hs, h * 0.5, oz+hs],
         [0, 1, 0], baseColor
       );
 
@@ -136,22 +136,22 @@ function buildGeometry(cols, rows, heights, palette) {
       if (h > 0) {
         // Front (z+)
         addQuad(
-          [ox-hs, 0, oz+hs], [ox+hs, 0, oz+hs], [ox+hs, h, oz+hs], [ox-hs, h, oz+hs],
+          [ox-hs, 0, oz+hs], [ox+hs, 0, oz+hs], [ox+hs, h * 0.5, oz+hs], [ox-hs, h * 0.5, oz+hs],
           [0, 0, 1], sideColor
         );
         // Back (z-)
         addQuad(
-          [ox+hs, 0, oz-hs], [ox-hs, 0, oz-hs], [ox-hs, h, oz-hs], [ox+hs, h, oz-hs],
+          [ox+hs, 0, oz-hs], [ox-hs, 0, oz-hs], [ox-hs, h * 0.5, oz-hs], [ox+hs, h * 0.5, oz-hs],
           [0, 0, -1], sideColor
         );
         // Right (x+)
         addQuad(
-          [ox+hs, 0, oz+hs], [ox+hs, 0, oz-hs], [ox+hs, h, oz-hs], [ox+hs, h, oz+hs],
+          [ox+hs, 0, oz+hs], [ox+hs, 0, oz-hs], [ox+hs, h * 0.5, oz-hs], [ox+hs, h * 0.5, oz+hs],
           [1, 0, 0], sideColor
         );
         // Left (x-)
         addQuad(
-          [ox-hs, 0, oz-hs], [ox-hs, 0, oz+hs], [ox-hs, h, oz+hs], [ox-hs, h, oz-hs],
+          [ox-hs, 0, oz-hs], [ox-hs, 0, oz+hs], [ox-hs, h * 0.5, oz+hs], [ox-hs, h * 0.5, oz-hs],
           [-1, 0, 0], sideColor
         );
       }
@@ -190,7 +190,7 @@ function buildTokenGeometry(tokens, cols, rows, heights) {
     
     const cx = tx - (cols - 1) / 2;
     const cz = tz - (rows - 1) / 2;
-    const cy = h + tSize + 0.1; // sit on top of tile
+    const cy = h * 0.5 + tSize + 0.1; // sit on top of tile
     
     const [r, g, b] = tok.color || [1, 0, 0];
     
@@ -336,7 +336,7 @@ export function pickTile(screenX, screenY) {
       const oz = r - (mapRows - 1) / 2;
       
       const xMin = ox - 0.5, xMax = ox + 0.5;
-      const yMin = 0, yMax = hVal;
+      const yMin = 0, yMax = hVal * 0.5;
       const zMin = oz - 0.5, zMax = oz + 0.5;
       
       let tEnter = -Infinity, tExit = Infinity;
@@ -366,6 +366,23 @@ export function pickTile(screenX, screenY) {
   }
   
   return (hitCol >= 0) ? { col: hitCol, row: hitRow } : null;
+}
+
+export function updateTile(col, row, toolMode, terrainType) {
+  if (col < 0 || col >= mapCols || row < 0 || row >= mapRows) return;
+  const idx = row * mapCols + col;
+  
+  if (toolMode === 'raise') {
+    mapHeights[idx] = (mapHeights[idx] || 0) + 1;
+  } else if (toolMode === 'lower') {
+    mapHeights[idx] = Math.max(0, (mapHeights[idx] || 0) - 1);
+  } else if (toolMode === 'paint') {
+    // If your code supports a mapTypes array or metadata object for terrainType (grass, sand, water, building, brick, mud), set it here.
+  }
+  
+  // Force a full geometry rebuild and redraw
+  const currentPalette = [ [0.2, 0.6, 0.2], [0.7, 0.6, 0.4], [0.2, 0.4, 0.8], [0.4, 0.3, 0.2] ];
+  setMap(mapCols, mapRows, mapHeights, currentPalette);
 }
 
 function syncCanvasSize(canvasEl) {

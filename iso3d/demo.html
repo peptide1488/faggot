@@ -25,6 +25,26 @@
     <div id="versionInfo" style="position:absolute; top:10px; right:10px; color:#666; font-size:12px;"></div>
   </div>
 
+  <div id="editorPanel" style="position:absolute; top:10px; right:10px; color:#fff; font-family:sans-serif; background:rgba(0,0,0,0.6); padding:12px; border-radius:8px; pointer-events:auto;">
+    <h3>Map Editor</h3>
+    <div style="margin-bottom:10px;">
+      <button id="toolRaise" style="cursor:pointer; padding:6px 12px; font-size:14px; margin-right:6px; background:#4CAF50;">Raise Terrain</button>
+      <button id="toolLower" style="cursor:pointer; padding:6px 12px; font-size:14px; margin-right:6px; background:#f44336;">Lower Terrain</button>
+      <button id="toolPaint" style="cursor:pointer; padding:6px 12px; font-size:14px; background:#2196F3;">Paint Terrain</button>
+    </div>
+    <div style="margin-bottom:10px;">
+      <label for="terrainType">Terrain Type:</label>
+      <select id="terrainType" style="padding:6px; font-size:14px; background:#333; color:#fff; border:none; border-radius:4px;">
+        <option value="0">Grass</option>
+        <option value="1">Sand</option>
+        <option value="2">Water</option>
+        <option value="3">Brick</option>
+        <option value="4">Building</option>
+      </select>
+    </div>
+    <div style="font-size:11px; color:#aaa;">Click on tiles to edit</div>
+  </div>
+
   <script type="module">
     (async () => {
       // Dynamically load gl-matrix library
@@ -39,7 +59,7 @@
       const APP_VERSION = '1.1';
       
       // Load modules in correct order to avoid gl-matrix issues
-      const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile } = await import("./renderer3d.js?v=" + Date.now());
+      const { init, setMap, rotate, setZoom, setPan, getCamState, setTokens, pickTile, selectTile, updateTile } = await import("./renderer3d.js?v=" + Date.now());
       const { computeMoveRange } = await import("./movement.js?v=" + Date.now());
       const { TurnManager, computeTurnOrder } = await import("./turnOrder.js?v=" + Date.now());
       
@@ -118,14 +138,22 @@
           selectTile(picked.col, picked.row);
           const s = getCamState();
           camInfo.textContent = `Rot: ${s.rot}° | Zoom: ${s.zoom.toFixed(2)}x | Picked: (${picked.col}, ${picked.row})`;
+          
+          // If in editor mode, update the tile
+          const toolButton = document.querySelector('#editorPanel button[style*="background"]');
+          if (toolButton) {
+            const toolMode = toolButton.id.replace('tool', '').toLowerCase();
+            const terrainType = parseInt(document.getElementById('terrainType').value);
+            updateTile(picked.col, picked.row, toolMode, terrainType);
+          }
         }
       });
 
       // Initial UI state
       updateUI();
 
-      // Generate a sample 10x10 map with random heights (0-4)
-      const cols = 10, rows = 10;
+      // Generate a sample 20x20 map with random heights (0-4)
+      const cols = 20, rows = 20;
       const heights = new Array(cols * rows).fill(0);
       for(let y=0; y<rows; y++) {
         for(let x=0; x<cols; x++) {
@@ -295,6 +323,31 @@
       document.getElementById('btnWait').addEventListener('click', () => {
         endTurn();
       });
+      
+      // Editor tool selection
+      let currentTool = 'raise';
+      let currentType = 0;
+      
+      document.getElementById('toolRaise').addEventListener('click', () => {
+        currentTool = 'raise';
+        document.querySelectorAll('#editorPanel button').forEach(btn => btn.style.background = '');
+        document.getElementById('toolRaise').style.background = '#4CAF50';
+      });
+      
+      document.getElementById('toolLower').addEventListener('click', () => {
+        currentTool = 'lower';
+        document.querySelectorAll('#editorPanel button').forEach(btn => btn.style.background = '');
+        document.getElementById('toolLower').style.background = '#f44336';
+      });
+      
+      document.getElementById('toolPaint').addEventListener('click', () => {
+        currentTool = 'paint';
+        document.querySelectorAll('#editorPanel button').forEach(btn => btn.style.background = '');
+        document.getElementById('toolPaint').style.background = '#2196F3';
+      });
+      
+      // Initialize tool selection
+      document.getElementById('toolRaise').style.background = '#4CAF50';
       
       // Initialize turn info
       updateTurnInfo();
