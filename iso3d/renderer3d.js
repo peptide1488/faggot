@@ -330,30 +330,24 @@ export function setTokens(tokens) {
 
 export function setMap(cols, rows, heights, palette) {
   if (!glCtx || !vaoHandle) return;
-  
   mapCols = cols;
   mapRows = rows;
   mapHeights = heights.slice();
-  currentPalette = palette;
-  
-  // Update map size for camera scaling
+  currentPalette = palette || currentPalette;
   mapSizeForCamera = Math.max(cols, rows);
-  
-  const geo = buildGeometry(cols, rows, heights, palette);
-  
+
+  const geo = buildGeometry(cols, rows, mapHeights, currentPalette);
+
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.STATIC_DRAW);
-  
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, new Float32Array(geo.positions), glCtx.STATIC_DRAW);
+
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.STATIC_DRAW);
-  
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, new Float32Array(geo.normals), glCtx.STATIC_DRAW);
+
   glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.STATIC_DRAW);
-  
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, new Float32Array(geo.colors), glCtx.STATIC_DRAW);
+
   vertexCount = geo.positions.length / 3;
-  
-  // Debug: log geometry info
-  console.log('Set map with', cols, 'x', rows, 'tiles. Vertex count:', vertexCount);
 }
 
 export function selectTile(c, r) {
@@ -449,23 +443,10 @@ export function updateTile(col, row, toolMode, terrainType) {
     mapHeights[idx] = (mapHeights[idx] || 0) + 1;
   } else if (toolMode === 'lower') {
     mapHeights[idx] = Math.max(0, (mapHeights[idx] || 0) - 1);
-  } else if (toolMode === 'paint') {
-    // If your code supports a mapTypes array or metadata object for terrainType (grass, sand, water, building, brick, mud), set it here.
   }
   
-  // Force a full geometry rebuild and redraw immediately
-  const geo = buildGeometry(mapCols, mapRows, mapHeights, currentPalette);
-  
-  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, posBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.positions, glCtx.STATIC_DRAW);
-  
-  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, normBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.normals, glCtx.STATIC_DRAW);
-  
-  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, colBufHandle);
-  glCtx.bufferData(glCtx.ARRAY_BUFFER, geo.colors, glCtx.STATIC_DRAW);
-  
-  vertexCount = geo.positions.length / 3;
+  // Cleanly route to the corrected buffer handler to rebuild and paint the mesh safely
+  setMap(mapCols, mapRows, mapHeights, currentPalette);
 }
 
 export function setCurrentTool(tool) {
