@@ -116,85 +116,60 @@
         lastY = e.clientY;
       });
 
-      window.addEventListener('mousemove', (e) => {
-        if (!isDragging) {
-          // Update tool tip position
-          const toolTip = document.getElementById('toolTip');
-          toolTip.style.left = (e.clientX + 10) + 'px';
-          toolTip.style.top = (e.clientY + 10) + 'px';
-          
-          // Handle hover detection for brush highlighting
-          const rect = canvas.getBoundingClientRect();
-          const hovered = pickTile(e.clientX - rect.left, e.clientY - rect.top);
-          
-          if (hovered) {
-            selectTile(hovered.col, hovered.row);
-            
-            // Update tool tip text
-            let toolTipText = '';
-            switch(window.currentTool) {
-              case 'raise':
-                toolTipText = ' Raise';
-                break;
-              case 'lower':
-                toolTipText = ' Lower';
-                break;
-              case 'paint':
-                const terrainType = parseInt(document.getElementById('terrainType').value);
-                switch(terrainType) {
-                  case 0: toolTipText = ' Grass'; break;
-                  case 1: toolTipText = ' Sand'; break;
-                  case 2: toolTipText = ' Water'; break;
-                  case 3: toolTipText = ' Brick'; break;
-                  case 4: toolTipText = ' Building'; break;
-                }
-                break;
-            }
-            
-            if (toolTipText) {
-              toolTip.textContent = toolTipText;
-              toolTip.style.display = 'block';
-            } else {
-              toolTip.style.display = 'none';
-            }
-          } else {
-            selectTile(null, null); // Clear selection
-            toolTip.style.display = 'none';
-          }
+      // Continuous hover detection for brush highlighting
+      canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        const hovered = pickTile(e.clientX - rect.left, e.clientY - rect.top);
+        
+        if (hovered) {
+          window.hoveredCol = hovered.col;
+          window.hoveredRow = hovered.row;
           
           // Force immediate redraw for smooth brush feedback
-          if (typeof drawFrame === 'function') {
-            requestAnimationFrame(() => {
-              // Just call draw to update the display immediately
-              const { gl } = init(canvas);
-              // This is a hacky way to force a redraw - in practice, we'd want to 
-              // properly access the draw function from the module
-            });
+          requestAnimationFrame(() => {
+            // Just call draw to update the display immediately
+            const { gl } = init(canvas);
+            // This is a hacky way to force a redraw - in practice, we'd want to 
+            // properly access the draw function from the module
+          });
+          
+          // Update tool tip text
+          let toolTipText = '';
+          switch(window.currentTool) {
+            case 'raise':
+              toolTipText = ' Raise';
+              break;
+            case 'lower':
+              toolTipText = ' Lower';
+              break;
+            case 'paint':
+              const terrainType = parseInt(document.getElementById('terrainType').value);
+              switch(terrainType) {
+                case 0: toolTipText = ' Grass'; break;
+                case 1: toolTipText = ' Sand'; break;
+                case 2: toolTipText = ' Water'; break;
+                case 3: toolTipText = ' Brick'; break;
+                case 4: toolTipText = ' Building'; break;
+              }
+              break;
           }
+          
+          const toolTip = document.getElementById('toolTip');
+          if (toolTipText) {
+            toolTip.textContent = toolTipText;
+            toolTip.style.left = (e.clientX + 10) + 'px';
+            toolTip.style.top = (e.clientY + 10) + 'px';
+            toolTip.style.display = 'block';
+          } else {
+            toolTip.style.display = 'none';
+          }
+        } else {
+          window.hoveredCol = null;
+          window.hoveredRow = null;
+          toolTip.style.display = 'none';
         }
-        
-        if (!isDragging) return;
-        const dx = e.clientX - lastX;
-        const dy = e.clientY - lastY;
-        
-        // Adjust pan speed based on zoom level for consistent feel
-        const s = getCamState();
-        const scale = 0.025 * (1 / s.zoom); 
-        
-        // s.rot is already in radians!
-        const rad = s.rot;
-        const cos = Math.cos(rad);
-        const sin = Math.sin(rad);
-
-        // Map the screen delta mouse movements to the current camera view orientation
-        // Grab-and-drag behavior: moving mouse right pulls map right
-        const worldDX = (-dx * cos - dy * sin) * scale;
-        const worldDY = (dx * sin - dy * cos) * scale;
-
-        setPan(s.panX + worldDX, s.panY + worldDY);
-        lastX = e.clientX;
-        lastY = e.clientY;
-        updateUI();
       });
 
       window.addEventListener('mouseup', () => { isDragging = false; });
@@ -240,36 +215,14 @@
         const rect = canvas.getBoundingClientRect();
         const picked = pickTile(e.clientX - rect.left, e.clientY - rect.top);
         if (picked) {
-          selectTile(picked.col, picked.row);
           const s = getCamState();
           camInfo.textContent = `Rot: ${s.rot}° | Zoom: ${s.zoom.toFixed(2)}x | Picked: (${picked.col}, ${picked.row})`;
           
-          // If in editor mode, update the tile
+          // If in editor mode, update the tile using our new handler
           const terrainType = parseInt(document.getElementById('terrainType').value);
           setCurrentTerrainType(terrainType);
-          updateTile(picked.col, picked.row, currentTool, terrainType);
+          updateTile(picked.col, picked.row, window.currentTool, terrainType);
         }
-      });
-
-      // Continuous hover detection for brush highlighting
-      let hoverTimeout;
-      canvas.addEventListener('mousemove', (e) => {
-        if (isDragging) return;
-        
-        const rect = canvas.getBoundingClientRect();
-        const hovered = pickTile(e.clientX - rect.left, e.clientY - rect.top);
-        
-        // Clear previous timeout
-        clearTimeout(hoverTimeout);
-        
-        // Set new hover timeout to prevent excessive updates
-        hoverTimeout = setTimeout(() => {
-          if (hovered) {
-            selectTile(hovered.col, hovered.row);
-          } else {
-            selectTile(null, null); // Clear selection
-          }
-        }, 50);
       });
 
       // Initial UI state
