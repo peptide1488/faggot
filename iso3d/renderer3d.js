@@ -64,49 +64,30 @@ export function worldToGrid(x, z, cols, rows) {
 }
 
 export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
-  // Create camera matrices using gl-matrix - moved inside function scope to prevent multi-frame corruption
   const projection = mat4.create();
   const view = mat4.create();
-  
-  // Get canvas dimensions with fallbacks
-  let width = canvasRef?.clientWidth || 800;
-  let height = canvasRef?.clientHeight || 600;
-  
-  // Ensure we have valid numeric values
-  if (isNaN(width) || width <= 0) width = 800;
-  if (isNaN(height) || height <= 0) height = 600;
-  
-  // Set up orthographic projection with proper bounds for isometric view
-  const halfSize = 15 * camZoom;
-  mat4.ortho(projection, -halfSize, halfSize, -halfSize, halfSize, 0.1, 100.0);
-  
-  // Set up camera position and orientation for isometric view
-  // Camera should be positioned above the center of the map looking down at an angle
-  const camX = 0;
-  const camY = 25; // Height above the map
-  const camZ = 0;
-  
-  // Use a fixed isometric view with 35.264 degree pitch (0.6154 radians)
-  const pitch = 0.6154; // ~35.264 degrees
-  
-  // Set up the view matrix using lookAt
-  mat4.lookAt(view, 
-    [camX, camY, camZ],   // Camera position
-    [camX, 0, camZ],      // Look at point (center of map)
-    [0, 1, 0]             // Up vector
-  );
-  
-  // Apply rotation around Y axis for camera yaw (isometric rotation)
-  const rad = camRot * Math.PI / 180;
-  mat4.rotateY(view, view, rad);
-  
-  // Apply pitch rotation (around X axis) for isometric tilt
-  mat4.rotateX(view, view, pitch);
-  
-  // Combine projection and view matrices
   const result = mat4.create();
-  mat4.multiply(result, projection, view);
+
+  // 1. Orthographic bounds scaled by aspect ratio and zoom
+  const size = 10.0 / (camZoom || 1.0);
+  mat4.ortho(projection, -size * aspect, size * aspect, -size, size, 0.1, 1000.0);
+
+  // 2. Calculate true isometric eye position (35.264 pitch, rotation, and translation panning)
+  const distance = 50.0;
+  const pitch = 0.6154; // 35.264 degrees in radians
   
+  const eye = [
+    camPanX + distance * Math.cos(pitch) * Math.sin(camRot),
+    distance * Math.sin(pitch),
+    camPanY + distance * Math.cos(pitch) * Math.cos(camRot)
+  ];
+  const target = [camPanX, 0, camPanY];
+  const up = [0, 1, 0];
+
+  mat4.lookAt(view, eye, target, up);
+
+  // 3. Multiply cleanly
+  mat4.multiply(result, projection, view);
   return result;
 }
 
