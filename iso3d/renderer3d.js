@@ -35,6 +35,8 @@ let mapSizeForCamera = 10; // default fallback
 
 // Shader uniform locations
 let uProjLoc = null;
+let uViewPosLoc = null;
+let uLightDirLoc = null;
 
 // Phase 2 terrain types
 const TERRAIN_TYPES = [
@@ -417,12 +419,14 @@ function initShaders() {
     in vec3 vColor;
     in vec3 vNormal;
     out vec4 fragColor;
+    uniform vec3 uViewPos;
+    uniform vec3 uLightDir;
     void main() {
       // Simple directional light to emphasize elevation
-      vec3 lightDir = normalize(vec3(1.0, 1.0, 0.5));
+      vec3 lightDir = normalize(uLightDir);
       float diff = max(dot(vNormal, lightDir), 0.2);
-      // Add some ambient lighting for better visibility
-      float ambient = 0.2;
+      // Add some ambient lighting for better visibility (increased from 0.2 to 0.4)
+      float ambient = 0.4;
       float intensity = ambient + diff * (1.0 - ambient);
       fragColor = vec4(vColor * intensity, 1.0);
     }`;
@@ -456,6 +460,8 @@ function initShaders() {
   const aNormalLoc = glCtx.getAttribLocation(progObj, 'aNormal');
   const aColorLoc = glCtx.getAttribLocation(progObj, 'aColor');
   uProjLoc = glCtx.getUniformLocation(progObj, 'uProj');
+  uViewPosLoc = glCtx.getUniformLocation(progObj, 'uViewPos');
+  uLightDirLoc = glCtx.getUniformLocation(progObj, 'uLightDir');
 
   // Check if attribute locations are valid
   if (aPosLoc < 0 || aNormalLoc < 0 || aColorLoc < 0) {
@@ -463,9 +469,19 @@ function initShaders() {
     throw new Error('Failed to get attribute locations');
   }
 
-  // Check if uniform location is valid
+  // Check if uniform locations are valid
   if (uProjLoc < 0) {
     console.error('Uniform location error:', uProjLoc);
+    throw new Error('Failed to get uniform location');
+  }
+  
+  if (uViewPosLoc < 0) {
+    console.error('Uniform location error:', uViewPosLoc);
+    throw new Error('Failed to get uniform location');
+  }
+  
+  if (uLightDirLoc < 0) {
+    console.error('Uniform location error:', uLightDirLoc);
     throw new Error('Failed to get uniform location');
   }
 
@@ -486,10 +502,13 @@ function draw() {
   
   const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, safeAspect);
   
-  // Log engine state for debugging
-  console.log('ENGINE STATE:', { aspect: safeAspect, camMatrix });
+  // Set up view position and light direction uniforms
+  const viewPos = [0.0, 25.0, 0.0];
+  const lightDir = [1.0, 1.0, 0.5];
   
   glCtx.uniformMatrix4fv(uProjLoc, false, camMatrix);
+  glCtx.uniform3fv(uViewPosLoc, viewPos);
+  glCtx.uniform3fv(uLightDirLoc, lightDir);
 
   if (vertexCount > 0) {
     glCtx.bindVertexArray(vaoHandle);
