@@ -25,7 +25,7 @@ let tokenColBufHandle = null;
 let tokenVertexCount = 0;
 
 // Camera state
-let camRot = 0; // degrees: 0, 90, 180, 270
+let camRot = 45; // degrees: 45 (looking right at center of grid)
 let camZoom = 1.0;
 let camPanX = 0;
 let camPanY = 0;
@@ -35,6 +35,16 @@ let mapSizeForCamera = 10; // default fallback
 
 // Shader uniform locations
 let uProjLoc = null;
+
+// Phase 2 terrain types
+const TERRAIN_TYPES = [
+  [0.35, 0.55, 0.25], // sand
+  [0.45, 0.65, 0.30], // grass
+  [0.40, 0.40, 0.80], // water
+  [0.55, 0.45, 0.20], // mud
+  [0.60, 0.50, 0.30], // dirt
+  [0.70, 0.30, 0.30]  // brick
+];
 
 export function gridToWorld(col, row, cols, rows, height = 0) {
   const x = col - (cols - 1) / 2;
@@ -55,6 +65,14 @@ export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect) {
   // Create camera matrices using gl-matrix
   const projection = mat4.create();
   const view = mat4.create();
+  
+  // Get canvas dimensions with fallbacks
+  let width = canvasRef?.clientWidth || 800;
+  let height = canvasRef?.clientHeight || 600;
+  
+  // Ensure we have valid numeric values
+  if (isNaN(width) || width <= 0) width = 800;
+  if (isNaN(height) || height <= 0) height = 600;
   
   // Set up orthographic projection with proper bounds for isometric view
   const halfSize = 15 * camZoom;
@@ -95,15 +113,6 @@ function buildGeometry(cols, rows, heights, palette) {
   const normals = [];
   const colors = [];
   
-  // Default height-based palette fallback
-  const defaultPalette = [
-    [0.35, 0.55, 0.25], // h=0 grass
-    [0.45, 0.65, 0.30], // h=1
-    [0.55, 0.75, 0.35], // h=2
-    [0.65, 0.85, 0.40], // h=3
-    [0.80, 0.90, 0.50]  // h=4 peak
-  ];
-
   for (let z = 0; z < rows; z++) {
     for (let x = 0; x < cols; x++) {
       const idx = z * cols + x;
@@ -115,9 +124,9 @@ function buildGeometry(cols, rows, heights, palette) {
         h = h.h ?? 0;
         type = h.type ?? 0;
       }
-      h = Math.max(0, Math.min(4, Number(h)));
+      h = Math.max(0, Math.min(5, Number(h))); // Allow 0-5 terrain types
       
-      let baseColor = palette ? (palette[type] || defaultPalette[h]) : defaultPalette[h];
+      let baseColor = palette ? (palette[type] || TERRAIN_TYPES[h]) : TERRAIN_TYPES[h];
       if (pickedTile && x === pickedTile.col && z === pickedTile.row) {
         baseColor = [1, 0.85, 0.2]; // highlight color
       }
@@ -194,7 +203,7 @@ function buildTokenGeometry(tokens, cols, rows, heights) {
     const idx = tz * cols + tx;
     let h = heights[idx];
     if (typeof h === 'object') h = h.h ?? 0;
-    h = Math.max(0, Math.min(4, Number(h)));
+    h = Math.max(0, Math.min(5, Number(h)));
     
     const cx = tx - (cols - 1) / 2;
     const cz = tz - (rows - 1) / 2;
@@ -338,7 +347,7 @@ export function pickTile(screenX, screenY) {
       const idx = r * mapCols + col;
       let hVal = mapHeights[idx];
       if (typeof hVal === 'object') hVal = hVal.h ?? 0;
-      hVal = Math.max(0, Math.min(4, Number(hVal)));
+      hVal = Math.max(0, Math.min(5, Number(hVal)));
       
       const ox = col - (mapCols - 1) / 2;
       const oz = r - (mapRows - 1) / 2;
@@ -471,7 +480,15 @@ function draw() {
   
   // Set up the projection matrix
   const aspect = canvasRef.clientWidth / canvasRef.clientHeight;
-  const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect);
+  
+  // Ensure we have valid numeric values for aspect ratio
+  const safeAspect = isNaN(aspect) || aspect <= 0 ? 1.0 : aspect;
+  
+  const camMatrix = getCameraMatrix(camRot, camZoom, camPanX, camPanY, safeAspect);
+  
+  // Log engine state for debugging
+  console.log('ENGINE STATE:', { aspect: safeAspect, camMatrix });
+  
   glCtx.uniformMatrix4fv(uProjLoc, false, camMatrix);
 
   if (vertexCount > 0) {
