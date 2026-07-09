@@ -92,7 +92,17 @@
         const s = getCamState();
         const scale = 0.025 * (1 / s.zoom); 
         
-        setPan(s.panX + dx * scale, s.panY - dy * scale);
+        // s.rot is already in radians!
+        const rad = s.rot;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+
+        // Map the screen delta mouse movements to the current camera view orientation
+        // Grab-and-drag behavior: moving mouse right pulls map right
+        const worldDX = (-dx * cos - dy * sin) * scale;
+        const worldDY = (dx * sin - dy * cos) * scale;
+
+        setPan(s.panX + worldDX, s.panY + worldDY);
         lastX = e.clientX;
         lastY = e.clientY;
         updateUI();
