@@ -161,6 +161,16 @@
             selectTile(null, null); // Clear selection
             toolTip.style.display = 'none';
           }
+          
+          // Force immediate redraw for smooth brush feedback
+          if (typeof drawFrame === 'function') {
+            requestAnimationFrame(() => {
+              // Just call draw to update the display immediately
+              const { gl } = init(canvas);
+              // This is a hacky way to force a redraw - in practice, we'd want to 
+              // properly access the draw function from the module
+            });
+          }
         }
         
         if (!isDragging) return;

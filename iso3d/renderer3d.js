@@ -427,6 +427,10 @@ export function pickTile(screenX, screenY) {
     }
   }
   
+  // Store hovered tile globally
+  window.hoveredCol = hitCol >= 0 ? hitCol : null;
+  window.hoveredRow = hitRow >= 0 ? hitRow : null;
+  
   return (hitCol >= 0) ? { col: hitCol, row: hitRow } : null;
 }
 
