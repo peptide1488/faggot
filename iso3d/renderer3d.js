@@ -562,11 +562,19 @@ function initShaders() {
 function draw() {
   if (!glCtx || !vaoHandle) return;
   
-  glCtx.viewport(0, 0, canvasRef.clientWidth, canvasRef.clientHeight);
+  // Ensure we have valid numeric values for canvas dimensions
+  const w = canvasRef.clientWidth;
+  const h = canvasRef.clientHeight;
+  
+  // Fallback to default size if dimensions are invalid
+  const width = (w && !isNaN(w)) ? w : 800;
+  const height = (h && !isNaN(h)) ? h : 600;
+  
+  glCtx.viewport(0, 0, width, height);
   glCtx.clear(glCtx.COLOR_BUFFER_BIT | glCtx.DEPTH_BUFFER_BIT);
   
   // Set up the projection matrix
-  const aspect = canvasRef.clientWidth / canvasRef.clientHeight;
+  const aspect = width / height;
   
   // Ensure we have valid numeric values for aspect ratio
   const safeAspect = isNaN(aspect) || aspect <= 0 ? 1.0 : aspect;
@@ -580,6 +588,9 @@ function draw() {
   glCtx.uniformMatrix4fv(uProjLoc, false, camMatrix);
   glCtx.uniform3fv(uViewPosLoc, viewPos);
   glCtx.uniform3fv(uLightDirLoc, lightDir);
+
+  // Log engine state for debugging
+  console.log('ENGINE STATE:', { aspect });
 
   if (vertexCount > 0) {
     glCtx.bindVertexArray(vaoHandle);
