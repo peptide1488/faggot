@@ -1,0 +1,37 @@
+{
+  "title": "Grimoire \u2014 D&D 5e Character Keeper",
+  "qbActive": true,
+  "iso3dView": true,
+  "isoView": true,
+  "host": true,
+  "Iso3D": true,
+  "mount": {
+    "w": 1312,
+    "h": 786,
+    "kids": 2,
+    "display": "block",
+    "z": "0"
+  },
+  "grid": {
+    "w": 1312,
+    "h": 786,
+    "className": "mapgrid iso iso3dmode",
+    "bg": "rgb(26, 34, 48)"
+  },
+  "glInfo": {
+    "w": 1312,
+    "h": 786,
+    "cw": 1312,
+    "ch": 786
+  },
+  "overlay": {
+    "w": 1312,
+    "h": 786
+  },
+  "cards": 4,
+  "h2": [
+    "\u2694 Quick Battle",
+    "Battlefield \u2b1c Top-down\ud83d\udd79 3D on\ud83d\udd04 Rotate",
+    "Battle Log"
+  ]
+}

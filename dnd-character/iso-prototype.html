@@ -1,0 +1,192 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Iso Prototype — Canvas painter's algorithm</title>
+<style>
+  html,body{margin:0;background:#1b1712;color:#eee;font-family:system-ui,sans-serif;overflow:hidden}
+  #hud{position:fixed;top:8px;left:8px;background:rgba(0,0,0,.55);padding:8px 12px;border-radius:8px;font-size:13px;line-height:1.5;z-index:5}
+  #hud b{color:#ffd67a}
+  canvas{display:block;cursor:pointer}
+  button{background:#3a2f1e;color:#eee;border:1px solid #6a5a3a;border-radius:6px;padding:4px 10px;margin-right:6px;cursor:pointer;font-size:12px}
+  button:hover{background:#4a3d26}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div><b>Canvas isometric proof-of-concept</b> — real depth sort, no z-index/clip-path.</div>
+  <div>Hover a tile to test occlusion around the pit + wall + raised block. Click <b>Rotate</b> to confirm the projection re-derives from grid coords (trig), not a CSS scene transform.</div>
+  <div style="margin-top:6px"><button id="rotBtn">🔄 Rotate view</button><button id="regenBtn">🎲 New layout</button></div>
+</div>
+<canvas id="c"></canvas>
+<script>
+// ---- tile geometry: standard 2:1 diamond projection ----
+const TW = 64, TH = 32, ELEV = 18; // tile width/height px, per-level elevation rise
+const COLS = 8, ROWS = 8;
+
+// terrain: 0 grass, 1 stone, 2 water, 3 wall(height+2), 4 pit(height-1)
+let terrain = [];
+let heights = [];
+function regen(){
+  terrain = []; heights = [];
+  for(let y=0;y<ROWS;y++){ const row=[], hrow=[];
+    for(let x=0;x<COLS;x++){
+      let t = 0;
+      if(x===3 && y>=2 && y<=5) t = 3;      // a wall run
+      else if(x>=5 && x<=6 && y>=1 && y<=2) t = 4; // a pit
+      else if((x+y)%7===0) t = 1;
+      else if(x===0 || y===0) t = 2;
+      row.push(t);
+      hrow.push(t===3?2:(t===4?-1:0));
+    }
+    terrain.push(row); heights.push(hrow);
+  }
+}
+regen();
+
+// tokens: {x,y,color,label}
+const tokens = [
+  {x:2,y:3,color:'#c0392b',label:'G'},
+  {x:4,y:4,color:'#2980b9',label:'P'},
+  {x:6,y:3,color:'#c0392b',label:'O'}, // near/behind the pit edge — occlusion test
+];
+
+let rot = 0; // 0..3, 90deg steps
+let hover = null;
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+function resize(){ cv.width = innerWidth; cv.height = innerHeight; draw(); }
+addEventListener('resize', resize);
+
+function rotXY(x,y){
+  // rotate grid coords around center by 90deg*rot — same trig-based approach the
+  // live app now uses (baking rotation into position, not a CSS scene transform)
+  const cx=(COLS-1)/2, cy=(ROWS-1)/2, dx=x-cx, dy=y-cy;
+  let rx=dx, ry=dy;
+  for(let i=0;i<rot;i++){ const nx=-ry, ny=rx; rx=nx; ry=ny; }
+  return [rx+cy, ry+cx]; // re-center (swaps for odd rotations handled by symmetry since cols=rows here)
+}
+
+function screenPos(x,y,h){
+  const [rx,ry] = rotXY(x,y);
+  const originX = cv.width/2, originY = 120;
+  const sx = originX + (rx-ry)*TW/2;
+  const sy = originY + (rx+ry)*TH/2 - h*ELEV;
+  return [sx,sy];
+}
+
+const PAL = {
+  0:{top:'#5a7d3a',lft:'#3f5a28',rgt:'#4a6b30'},   // grass
+  1:{top:'#8a8578',lft:'#5f5b50',rgt:'#726d5f'},   // stone
+  2:{top:'#3a6b8a',lft:'#264458',rgt:'#2f5570'},   // water
+  3:{top:'#7a5a3a',lft:'#4a3722',rgt:'#5c4229'},   // wall
+  4:{top:'#2a2318',lft:'#1a1610',rgt:'#221c14'},   // pit floor
+};
+
+function diamond(sx,sy){
+  ctx.beginPath();
+  ctx.moveTo(sx, sy-TH/2);
+  ctx.lineTo(sx+TW/2, sy);
+  ctx.lineTo(sx, sy+TH/2);
+  ctx.lineTo(sx-TW/2, sy);
+  ctx.closePath();
+}
+
+function drawTile(x,y){
+  const t = terrain[y][x], h = heights[y][x];
+  const pal = PAL[t];
+  const [sx,sy] = screenPos(x,y,h>0?h:0);
+  const isPit = h<0;
+  const topY = isPit ? screenPos(x,y,0)[1] : sy;
+
+  if(isPit){
+    // pit: draw the recessed floor first (further down), then interior walls up to ground level
+    const floorY = screenPos(x,y,h)[1];
+    diamond(sx, floorY); ctx.fillStyle = pal.top; ctx.fill();
+    const depth = -h*ELEV;
+    ctx.fillStyle = pal.lft;
+    ctx.beginPath();
+    ctx.moveTo(sx-TW/2, floorY); ctx.lineTo(sx, floorY+TH/2); ctx.lineTo(sx, floorY+TH/2-depth); ctx.lineTo(sx-TW/2, floorY-depth);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = pal.rgt;
+    ctx.beginPath();
+    ctx.moveTo(sx+TW/2, floorY); ctx.lineTo(sx, floorY+TH/2); ctx.lineTo(sx, floorY+TH/2-depth); ctx.lineTo(sx+TW/2, floorY-depth);
+    ctx.closePath(); ctx.fill();
+    // ground-level rim (so it reads as an opening, not a floating floor)
+    diamond(sx, topY-TH); ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.lineWidth=1; ctx.stroke();
+  } else {
+    if(h>0){
+      const rise = h*ELEV;
+      ctx.fillStyle = pal.lft;
+      ctx.beginPath();
+      ctx.moveTo(sx-TW/2, sy); ctx.lineTo(sx, sy+TH/2); ctx.lineTo(sx, sy+TH/2+rise); ctx.lineTo(sx-TW/2, sy+rise);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = pal.rgt;
+      ctx.beginPath();
+      ctx.moveTo(sx+TW/2, sy); ctx.lineTo(sx, sy+TH/2); ctx.lineTo(sx, sy+TH/2+rise); ctx.lineTo(sx+TW/2, sy+rise);
+      ctx.closePath(); ctx.fill();
+    }
+    diamond(sx,sy); ctx.fillStyle = pal.top; ctx.fill();
+  }
+  ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.lineWidth=1; diamond(sx, isPit?screenPos(x,y,h)[1]:sy); ctx.stroke();
+
+  if(hover && hover[0]===x && hover[1]===y){
+    diamond(sx, isPit?screenPos(x,y,h)[1]:sy);
+    ctx.fillStyle='rgba(255,220,120,.35)'; ctx.fill();
+    ctx.strokeStyle='#ffd67a'; ctx.lineWidth=2; ctx.stroke();
+  }
+}
+
+function drawToken(tok){
+  const h = heights[tok.y][tok.x];
+  const [sx,sy] = screenPos(tok.x, tok.y, h>0?h:0);
+  const baseY = sy - 6;
+  ctx.beginPath(); ctx.ellipse(sx, baseY+10, 12, 5, 0, 0, Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,.35)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(sx, baseY, 11, 0, Math.PI*2);
+  ctx.fillStyle=tok.color; ctx.fill();
+  ctx.strokeStyle='#fff2'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.font='bold 11px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(tok.label, sx, baseY);
+}
+
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // painter's algorithm: single sorted pass over grid cells AND tokens by depth key.
+  // depth key = rx+ry (screen-row order) with elevation as a tiebreak so risers layer correctly.
+  const items = [];
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    const [rx,ry] = rotXY(x,y);
+    items.push({kind:'tile', x, y, depth:(rx+ry)*10 + (heights[y][x]||0)});
+  }
+  for(const tok of tokens){
+    const [rx,ry] = rotXY(tok.x, tok.y);
+    items.push({kind:'token', tok, depth:(rx+ry)*10 + 0.5});
+  }
+  items.sort((a,b)=>a.depth-b.depth);
+  for(const it of items){
+    if(it.kind==='tile') drawTile(it.x, it.y);
+    else drawToken(it.tok);
+  }
+}
+
+cv.addEventListener('mousemove', e=>{
+  // inverse-project mouse -> nearest grid cell by brute force (fine for an 8x8 demo)
+  let best=null, bestD=1e9;
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    const [sx,sy] = screenPos(x,y,Math.max(0,heights[y][x]));
+    const d = Math.hypot(e.clientX-sx, e.clientY-sy);
+    if(d<bestD){ bestD=d; best=[x,y]; }
+  }
+  hover = bestD < TW ? best : null;
+  draw();
+});
+
+document.getElementById('rotBtn').onclick = ()=>{ rot=(rot+1)%4; draw(); };
+document.getElementById('regenBtn').onclick = ()=>{ regen(); draw(); };
+
+resize();
+</script>
+</body>
+</html>

@@ -36,6 +36,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.DECOR=DECOR;globalThis.decorAt=decorAt;globalThis.losClear=losClear;globalThis.dijkstra=dijkstra;'+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
   'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
+  'globalThis.SPELL_HANDLERS=SPELL_HANDLERS;globalThis.SUMMON_CATALOG=SUMMON_CATALOG;globalThis.summonCatalogEntry=summonCatalogEntry;'+
+  'globalThis.spawnSummon=spawnSummon;globalThis.dismissSummonsForSpell=dismissSummonsForSpell;globalThis.nearbySpawnTiles=nearbySpawnTiles;globalThis.isConcentration=isConcentration;'+
   'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};');
 
 let fails=0;
@@ -614,6 +616,8 @@ T('sw.js cache version matches APP_VERSION ('+appVer+')', appVer && appVer===swV
 /* ---- map elevation (isometric renderer content) ---- */
 T('preset maps include elevation data', Object.values(MAP_PRESETS).some(m=>m.height&&Object.keys(m.height).length>0));
 T('startQuickBattle copies preset height into QB.map (was silently dropped)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height/.test(src));
+T('startQuickBattle clears effects and concentration, not just conditions (buffs/conc were leaking into the next fight)',
+  /c\.conditions=\{\};\s*\n\s*c\.effects=\[\];\s*\n\s*c\.concentration=\{active:false,spell:''\};/.test(src));
 
 /* ---- sprite-sheet loader (opt-in; no-op with an empty manifest) ---- */
 T('dirFromDelta picks screen-dominant axis (iso projection: (dx,dy) both same-sign renders as pure vertical, opposite-sign as pure horizontal)', dirFromDelta(1,1,true)==='down' && dirFromDelta(-1,-1,true)==='up' && dirFromDelta(1,-1,true)==='right' && dirFromDelta(-1,1,true)==='left');
@@ -639,15 +643,36 @@ T('rotDelta matches rotXY for the same 90° step (delta-based facing stays consi
   return (bx-ax)===ddx && (by-ay)===ddy; })());
 T('rotXY(rot=0) is the identity', rotXY(3,4,10,10,0).join()==='3,4');
 
-/* ---- decorations: paintable layer independent of terrain, blocks movement/LoS like TERRAIN ---- */
+/* ---- decorations: trees block walk+spell LoE; bushes/brush are soft (tiny grass) ---- */
 (function(){
   const s={map:{cols:5,rows:5,tiles:{},height:{},decor:{'2,2':'tree'}}, monsters:[], players:[]};
   T('a solid tree blocks pathfinding through its cell', dijkstra(s,0,2,100,false).cost['2,2']==null);
-  T('a solid tree blocks line of sight', losClear(s,0,2,4,2)===false);
+  T('a solid tree blocks light-style LoS (Fire Bolt / Fireball)', losClear(s,0,2,4,2)===false);
   const s2={map:{cols:5,rows:5,tiles:{},height:{},decor:{'2,2':'bush'}}, monsters:[], players:[]};
   T('a non-solid bush does NOT block pathfinding (only difficult terrain)', dijkstra(s2,0,2,100,false).cost['2,2']!=null);
-  T('a bush still blocks line of sight (opaque)', losClear(s2,0,2,4,2)===false);
-  T('DECOR.tree/bush have the expected solid/opaque/diff flags', DECOR.tree.solid===true && DECOR.tree.opaque===true && DECOR.bush.solid!==true && DECOR.bush.opaque===true && DECOR.bush.diff===true);
+  T('a bush does NOT block light LoS (tiny undergrowth)', losClear(s2,0,2,4,2)===true);
+  T('DECOR.tree/bush: solid tree, softCover bush', DECOR.tree.solid===true && DECOR.tree.opaque===true && DECOR.bush.solid!==true && DECOR.bush.softCover===true && DECOR.bush.diff===true);
+  const s3={map:{cols:5,rows:5,tiles:{'2,2':'brush'},height:{},decor:{}}, monsters:[], players:[]};
+  T('brush terrain does NOT block light LoS', losClear(s3,0,2,4,2)===true);
+  const s4={map:{cols:5,rows:5,tiles:{'2,2':'wall'},height:{},decor:{}}, monsters:[], players:[]};
+  T('a wall blocks light LoS', losClear(s4,0,2,4,2)===false);
+  const s5={map:{cols:5,rows:5,tiles:{'2,2':'fog'},height:{},decor:{}}, monsters:[], players:[]};
+  T('fog blocks light LoS', losClear(s5,0,2,4,2)===false);
+  // Ridge taller than both ends blocks light; same-height mesa between equals does not if not taller
+  const s6={map:{cols:7,rows:3,tiles:{},height:{'0,1':0,'3,1':2,'6,1':0},decor:{}}, monsters:[], players:[]};
+  T('taller ridge between ends blocks light LoS', losClear(s6,0,1,6,1)===false);
+  const s7={map:{cols:7,rows:3,tiles:{'3,1':'wall'},height:{},decor:{}}, monsters:[], players:[]};
+  T('solid wall blocks light LoS', losClear(s7,0,1,6,1)===false);
+  // Diagonals work the same as orthogonals (not chess-piece Bresenham)
+  const open={map:{cols:8,rows:8,tiles:{},height:{},decor:{}}, monsters:[], players:[]};
+  T('diagonal open ray is clear (light LoS)', losClear(open,1,1,5,5)===true);
+  T('orthogonal open ray is clear (light LoS)', losClear(open,1,3,6,3)===true);
+  const diagWall={map:{cols:8,rows:8,tiles:{'3,3':'wall'},height:{},decor:{}}, monsters:[], players:[]};
+  T('diagonal ray blocked by wall on the line', losClear(diagWall,1,1,5,5)===false);
+  // Creature body blocks intermediate light
+  const bod={map:{cols:6,rows:3,tiles:{},height:{},decor:{}}, monsters:[{id:1,hp:5,x:2,y:1}], players:[]};
+  T('living creature blocks light LoS through its tile', losClear(bod,0,1,5,1)===false);
+  T('target creature does not block its own tile', losClear(bod,0,1,2,1)===true);
 })();
 T('decorAt returns empty string for an undecorated cell, not undefined/null', decorAt({map:{decor:{}}},0,0)==='');
 T('startQuickBattle copies preset decor into QB.map (same pattern as height)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height\|\|\{\}\), decor:Object\.assign\(\{\},map\.decor/.test(src));
@@ -674,8 +699,8 @@ T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_P
   const tall=decorTokenHTML('__test_tall'), wide=decorTokenHTML('__test_wide');
   const tallW=Number(tall.match(/width:([\d.]+)px/)[1]), tallH=Number(tall.match(/height:([\d.]+)px/)[1]);
   const wideW=Number(wide.match(/width:([\d.]+)px/)[1]), wideH=Number(wide.match(/height:([\d.]+)px/)[1]);
-  T('a tall narrow sheet is capped by height, not stretched to a fixed width', tallH===DECOR_MAX_H && Math.abs(tallW-DECOR_MAX_H*(96/360))<0.01);
-  T('a wide short sheet is capped by width, not stretched to a fixed height', wideW===DECOR_MAX_W && Math.abs(wideH-DECOR_MAX_W*(72/96))<0.01);
+  T('a tall narrow sheet is capped by height, not stretched to a fixed width', Math.abs(tallH-DECOR_MAX_H)<0.01 && Math.abs(tallW-DECOR_MAX_H*(96/360))<0.01);
+  T('a wide short sheet is capped by width, not stretched to a fixed height', Math.abs(wideW-DECOR_MAX_W)<0.01 && Math.abs(wideH-DECOR_MAX_W*(72/96))<0.01);
   T('neither test sheet exceeds the bounding box on either axis', tallW<=DECOR_MAX_W && wideH<=DECOR_MAX_H);
   delete DECOR_MANIFEST.__test_tall; delete DECOR_MANIFEST.__test_wide;
   decorReady.delete('__test_tall'); decorReady.delete('__test_wide');
@@ -723,6 +748,28 @@ T('at radius 1 (melee/touch), a DIAGONAL neighbour still counts — the delibera
 T('the blast centre itself is always inside its own radius', inBlast(2,2,2,2,1));
 T('at radius 2 (a genuine ranged distance), an orthogonal tile at distance 2 is inside', inBlast(2,2,2,4,2));
 T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's the square-vs-circle bug, fixed for anything beyond melee/touch range", !inBlast(2,2,4,4,2));
+
+/* ---- Wave 2 summons: Conjure Animals (pack, concentration) + Animate Dead (single, no conc) ---- */
+(function(){
+  T('Conjure Animals and Animate Dead are wired as summon handlers', SPELL_HANDLERS['Conjure Animals'].kind==='summon' && SPELL_HANDLERS['Animate Dead'].kind==='summon');
+  T('Conjure Animals resolves a catalog with 4 pack-size options', summonCatalogEntry('Conjure Animals').pick.length===4);
+  T('Animate Dead resolves a catalog with skeleton/zombie options', summonCatalogEntry('Animate Dead').pick.length===2);
+  T('Conjure Animals is tracked as concentration (PHB); Animate Dead is not', isConcentration('Conjure Animals') && !isConcentration('Animate Dead'));
+  T("Animate Dead's catalog explicitly opts out of concentration on the spawned unit", summonCatalogEntry('Animate Dead').conc===false);
+
+  const s={map:{cols:10,rows:10,tiles:{},height:{},decor:{}}, monsters:[], players:[{x:0,y:0}], order:[], turn:0};
+  const wolfPick=summonCatalogEntry('Conjure Animals').pick.find(p=>p.count===8);
+  const tiles=nearbySpawnTiles(s, 5, 5, 8);
+  T('nearbySpawnTiles finds 8 distinct open tiles for an 8-beast pack', tiles.length===8 && new Set(tiles.map(t=>t.x+','+t.y)).size===8);
+  const units=tiles.map(t=>spawnSummon(s, {x:0,y:0}, wolfPick, t.x, t.y, 'Conjure Animals')).filter(Boolean);
+  T('a full 8-wolf pack spawns as separate ally units on distinct tiles', units.length===8 && new Set(units.map(u=>u.x+','+u.y)).size===8 && units.every(u=>u.ally&&u.conc));
+
+  const skelPick=summonCatalogEntry('Animate Dead').pick.find(p=>p.id==='skel');
+  const skel=spawnSummon(s, {x:0,y:0}, skelPick, 1, 1, 'Animate Dead');
+  T('Animate Dead spawns a permanent (non-concentration) undead ally', skel.ally && skel.summoned && !skel.conc);
+
+  T('nearbySpawnTiles never returns a tile already occupied by a live monster', !nearbySpawnTiles(s,5,5,3).some(t=>s.monsters.some(m=>m.hp>0&&m.x===t.x&&m.y===t.y&&!(t.x===5&&t.y===5))));
+})();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

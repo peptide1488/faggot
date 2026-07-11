@@ -682,3 +682,31 @@ three Dominate spells and no monster with the `Dominated` condition is still ali
 and its `conc` effect both clear automatically. As a side effect this also correctly handles a
 Dominate spell whose initial save succeeded (nothing was ever dominated) — concentration drops
 on the very next check instead of lingering on a spell that never took hold.
+
+## v120.4 — 5e jump / climb / cliffs on the grid
+- Elevation: each map height level = **5 ft** vertical.
+- **High jump** (PHB): running = 3 + STR mod feet (requires ≥10 ft of movement already spent on the path as run-up); standing = half. Jumping onto a ledge of that height or less costs that many feet of movement.
+- **Climb**: rises taller than the jump require climbing. Without a climb speed, each foot climbed costs **2 feet** of movement (PHB). With climb speed, 1:1.
+- **Too tall**: unaided climbs above max(20 ft, 4× running high jump) are **impassable** in pathfinding (need rope, magic, climb speed, or DM adjudication).
+- **Descent**: ≤5 ft step-down is free vertically; longer drops use controlled climb-down cost. Drops ≥10 ft also apply **fall damage** (1d6/10 ft, max 20d6) on landing in Quick Battle.
+- Pathfinding / reach highlights pass the **mover** (PC or monster) so STR and climb speed apply. Monsters without explicit STR use a CR-based guess.
+
+## v120.66 — Wave 2 summons: Conjure Animals (pack) + Animate Dead (permanent, no conc)
+Extends the Wave 1 summon framework (Conjure Elemental) with the two next spells on the handoff
+backlog, both routed through the same `SPELL_HANDLERS`/`SUMMON_CATALOG`/`openSummonSpellUI` path
+— pick a template, place on the map, join initiative as an `ally:true` tactical-AI unit.
+
+**Conjure Animals** — PHB pack choice (1×CR2 / 2×CR1 / 4×CR1/2 / 8×CR1/4), 30 ft placement range,
+concentration. A 5th-level+ slot doubles the count (PHB: "twice as many creatures"). Simplification:
+the whole pack spawns from one clicked tile via `nearbySpawnTiles` (spiraling outward to the
+nearest open ground) rather than placing each beast individually — real 5e lets you place each in
+any unoccupied space you can see within range; this app scatters them near your chosen spot instead.
+Already wired into `CONC_SPELLS`/`SUMMON_CONC_SPELLS` from Wave 1 groundwork, so losing
+concentration (or the whole pack dying) correctly ends the spell.
+
+**Animate Dead** — no concentration (PHB-correct: it's an instantaneous cast that leaves a
+permanent minion, not a sustained effect), skeleton or zombie, Touch range. Simplification: no
+corpse-on-the-map requirement and no "control cap" (2× proficiency bonus HD) — casting it again
+just replaces your last Animate Dead servant, same one-summon-per-spell-name rule Conjure Elemental
+already uses. Real 5e lets a necromancer accumulate multiple raised undead across casts without
+recasting each day, which this app doesn't model.

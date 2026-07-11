@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sprite Test — walk-around sandbox</title>
+<style>
+  html,body{margin:0;height:100%;background:#1b1712;color:#eee;font-family:system-ui,sans-serif;overflow:hidden}
+  #hud{position:fixed;top:8px;left:8px;background:rgba(0,0,0,.6);padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.6;z-index:5;max-width:320px}
+  #hud b{color:#ffd67a}
+  #hud select,#hud input{background:#2a2318;color:#eee;border:1px solid #6a5a3a;border-radius:6px;padding:4px 6px;font-size:13px;margin-top:4px;width:100%}
+  #mount{position:fixed;top:0;left:0;width:100vw;height:100vh}
+  .row{margin-top:8px}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div><b>Sprite test sandbox</b> — no rules, no combat. Click a tile to walk there.</div>
+  <div class="row">Sprite key — everything here loads sprites/hq/characters/&lt;key&gt;.png directly (no class whitelist, this is a test tool)
+    <select id="clsSel">
+      <optgroup label="Your custom art">
+        <option>wiz</option><option>wizard_purple</option>
+      </optgroup>
+      <optgroup label="Real classes (only fighter/paladin/barbarian/human have art — rest fall back to fighter)">
+        <option>fighter</option><option>barbarian</option><option>paladin</option>
+        <option>ranger</option><option>rogue</option><option>monk</option><option>bard</option>
+        <option>cleric</option><option>druid</option><option>wizard</option><option>sorcerer</option>
+        <option>warlock</option><option>artificer</option><option>human</option>
+      </optgroup>
+    </select>
+  </div>
+  <div class="row">Or type any other key — file must exist at sprites/hq/characters/&lt;key&gt;.png (4x4 grid sheet — see sprites/_templates/README.md). Press Enter to apply.
+    <input id="customKey" placeholder="e.g. my_new_sprite">
+  </div>
+  <div class="row" id="status">Loading Iso3D…</div>
+</div>
+<div id="mount"></div>
+<script type="module">
+  import './iso3d/boot.js?v=0.5.58';
+
+  const mount = document.getElementById('mount');
+  const status = document.getElementById('status');
+  const clsSel = document.getElementById('clsSel');
+  const customKey = document.getElementById('customKey');
+
+  function boot() {
+    const I = window.Iso3D;
+    if (!I || !I.ready) { setTimeout(boot, 50); return; }
+    status.textContent = 'Iso3D ' + I.version + ' ready.';
+
+    const host = new I.Host(mount, { assetBase: '' });
+    const demo = I.makeDemoSession();
+    // Keep just one controllable unit — pure walk sandbox, no monsters/AI.
+    const session = { map: demo.map, players: [{ ...demo.players[0], cls: 'fighter', x: 2, y: 7, facing: 'down' }] };
+
+    // Every setSession call must carry the sprite override — otherwise walking (which
+    // calls setSession again with just the new x/y) drops it and silently reverts to
+    // whatever the class whitelist resolves to (the fighter stand-in).
+    let spritePaths;
+    function currentOpts(extra) { return { spritePaths, ...extra }; }
+
+    host.setSession(session, currentOpts({ resetCamera: true }));
+    host.onTileClick = (col, row) => {
+      session.players[0].x = col;
+      session.players[0].y = row;
+      host.setSession(session, currentOpts());
+    };
+
+    function applySprite() {
+      const custom = customKey.value.trim();
+      const key = custom || clsSel.value;
+      session.players[0].cls = key;
+      // Always bypass the built-in HQ_CHARACTER_KEYS whitelist here — this is a test tool,
+      // so whatever key you pick/type should try to load that exact file, not silently fall
+      // back to the fighter stand-in with no visible feedback.
+      // Cache-bust every apply: sprites.js caches loaded images in memory by exact URL
+      // (never re-fetches a URL it's already seen, even after you overwrite the file), and
+      // the browser's own HTTP cache does the same across page loads. A fresh timestamp
+      // query string makes every "apply" a guaranteed cache miss → guaranteed fresh fetch.
+      spritePaths = { [key.toLowerCase()]: `sprites/hq/characters/${key}.png?t=${Date.now()}` };
+      host.setSession(session, currentOpts());
+    }
+    clsSel.addEventListener('change', () => { customKey.value = ''; applySprite(); });
+    customKey.addEventListener('change', applySprite);
+  }
+  boot();
+</script>
+</body>
+</html>
