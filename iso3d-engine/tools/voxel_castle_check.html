@@ -15,6 +15,7 @@ import { loadAtlasImage } from '../src/voxel/blocks.js';
 import { VoxelRenderer } from '../src/voxel/renderer.js';
 import { EditorHistory, applyEdit } from '../src/voxel/editor.js';
 import { resolveLighting } from '../src/voxel/lighting.js';
+import { APP_VERSION } from '../src/version.js';
 
 // Build a small 5x5 room by hand: stone floor, dungeon_wall perimeter, a door on the south
 // wall, a window on the north wall, and table+chair+shelf furniture inside. Exercises the
@@ -53,7 +54,7 @@ const jsonText = JSON.stringify(saved);
 store = VoxelStore.fromJSON(JSON.parse(jsonText));
 
 const canvas = document.getElementById('c');
-const atlasImg = await loadAtlasImage('../src/voxel/atlas.png');
+const atlasImg = await loadAtlasImage('../src/voxel/atlas.png?v=' + APP_VERSION);
 
 const renderer = new VoxelRenderer(canvas);
 renderer.setAtlasImage(atlasImg);

@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>orientation test</title>
+<style>html,body{margin:0;background:#14161c;overflow:hidden;height:100%}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import { getCameraMatrix } from '../src/math.js';
+import { buildBoxMesh } from '../src/voxel/mesher.js';
+import { loadAtlasImage } from '../src/voxel/blocks.js';
+import { VoxelRenderer } from '../src/voxel/renderer.js';
+
+const params = new URLSearchParams(location.search);
+const rot = Number(params.get('rot') || 0.7);
+
+const canvas = document.getElementById('c');
+const atlasImg = await loadAtlasImage('../src/voxel/atlas.png?v=' + Date.now());
+const renderer = new VoxelRenderer(canvas);
+renderer.setAtlasImage(atlasImg);
+// texId 15 = 4-quadrant orientation test texture, same on all 6 faces of one isolated cube.
+renderer.setMesh({ opaque: buildBoxMesh({ from: [0, 0, 0], to: [1, 1, 1] }, 15), translucent: { positions: [], uvs: [], colors: [], indices: [] } });
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const cam = { rot, zoom: 12, panX: 0.5, panY: 0.5 };
+const aspect = canvas.width / canvas.height;
+const { matrix } = getCameraMatrix(cam.rot, cam.zoom, cam.panX, cam.panY, aspect);
+renderer.render(matrix);
+window.__orientReady = true;
+</script>
+</body>
+</html>

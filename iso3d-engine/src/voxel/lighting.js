@@ -145,6 +145,10 @@ function normalizePoint(p) {
   return {
     col: p.col | 0,
     row: p.row | 0,
+    // Voxel-only addition: height of the light source. The 2D system has no concept of
+    // elevation (its points are pure map coordinates); passed through here (not stripped)
+    // so the voxel-specific 3D occlusion/falloff in mesher.js has a real Z to work with.
+    z: p.z != null ? Number(p.z) : 1.5,
     radius: p.radius != null ? Number(p.radius) : 4,
     color: p.color || [1.0, 0.62, 0.28],
     intensity: p.intensity != null ? Number(p.intensity) : 1.2,

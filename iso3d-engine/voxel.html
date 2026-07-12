@@ -10,6 +10,7 @@
   #hud {
     position: fixed; top: 8px; left: 8px; color: #ddd; font: 12px monospace;
     background: #0009; padding: 8px 10px; border-radius: 6px; max-width: 320px;
+    max-height: calc(100vh - 16px); overflow-y: auto;
   }
   #hud .row { margin-bottom: 6px; }
   #palette { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
@@ -20,12 +21,38 @@
   .swatch.selected { border-color: #fff; }
   button { font: 11px monospace; cursor: pointer; }
   textarea { width: 300px; font: 10px monospace; }
+  #matPanel {
+    display: none; position: fixed; top: 8px; right: 8px; color: #ddd; font: 11px monospace;
+    background: #0009; padding: 8px 10px; border-radius: 6px; width: 300px;
+    max-height: calc(100vh - 16px); overflow-y: auto;
+  }
+  #matPanel.open { display: block; }
+  #matPanel h3 { margin: 4px 0; font-size: 12px; }
+  #matPanel label { display: block; margin: 6px 0 2px; }
+  #matPanel input[type=text], #matPanel input[type=number], #matPanel select { width: 100%; font: 11px monospace; }
+  #matPanel .inline { display: flex; align-items: center; gap: 6px; }
+  #matPanel .inline label { display: inline; margin: 0; }
+  #matLibList { margin-top: 6px; }
+  #matLibList .libRow { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 3px; }
+  #matLibList .libRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #matPanel hr { border-color: #444; margin: 10px 0; }
+  #matError { color: #f66; white-space: pre-wrap; }
+  #sunPanel {
+    display: none; position: fixed; bottom: 8px; right: 8px; color: #ddd; font: 11px monospace;
+    background: #0009; padding: 8px 10px; border-radius: 6px; width: 260px;
+  }
+  #sunPanel.open { display: block; }
+  #sunPanel h3 { margin: 4px 0; font-size: 12px; }
+  #sunPanel label { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 6px 0 2px; }
+  #sunPanel input[type=range] { flex: 1; }
+  #sunPanel input[type=color] { width: 40px; }
+  #sunPanel .val { width: 32px; text-align: right; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hud">
-  <div class="row">left click/drag = place/paint &middot; alt+click = remove &middot; right-drag = orbit &middot; wheel = zoom &middot; Q/E = rotate cam &middot; R = rotate brush &middot; P = paint/place toggle</div>
+  <div class="row">left click/drag = place/paint &middot; alt+click/drag = remove &middot; right-drag = orbit &middot; wheel = zoom &middot; Q/E = rotate cam &middot; R = rotate brush &middot; S = toggle slab &middot; P = paint/place toggle</div>
   <div class="row">Brush: <span id="brushLabel"></span> &middot; Mode: <span id="modeLabel"></span> &middot; Facing: <span id="facingLabel"></span> &middot; Slab: <span id="slabLabel"></span></div>
   <div id="palette"></div>
   <div class="row">
@@ -35,38 +62,223 @@
     <button id="btnUnitMode">toggle unit-move</button>
   </div>
   <div class="row">
+    <button id="btnLightMode">toggle day/dungeon</button> Lighting: <span id="lightLabel"></span>
+  </div>
+  <div class="row">
     <button id="btnExport">Export JSON</button>
     <button id="btnImport">Import JSON</button>
   </div>
   <textarea id="jsonBox" rows="4"></textarea>
+  <div class="row">
+    <button id="btnMatPanel">Material Maker</button>
+    <button id="btnSunPanel">Sun/Ambient</button>
+  </div>
+</div>
+
+<div id="sunPanel">
+  <h3>Sun / Ambient (<span id="sunModeLabel"></span>)</h3>
+  <label>Sun azimuth <input type="range" id="sunAzimuth" min="0" max="360" step="1"><span class="val" id="sunAzimuthVal"></span></label>
+  <label>Sun elevation <input type="range" id="sunElevation" min="0" max="90" step="1"><span class="val" id="sunElevationVal"></span></label>
+  <label>Sun color <input type="color" id="sunColor"></label>
+  <label>Sun strength <input type="range" id="sunStrength" min="0" max="8" step="0.1"><span class="val" id="sunStrengthVal"></span></label>
+  <label>Ambient floor <input type="range" id="ambientFloor" min="0" max="2" step="0.02"><span class="val" id="ambientFloorVal"></span></label>
+  <label>Ambient color <input type="color" id="ambientColor"></label>
+  <div class="row"><button id="btnSunReset">Reset to preset</button></div>
+</div>
+
+<div id="matPanel">
+  <h3>Material Maker</h3>
+  <label>Name <input type="text" id="matName" placeholder="Mossy Brick"></label>
+  <label>Height (blocks) <select id="matHeight">
+    <option value="1">1 (single side texture)</option>
+    <option value="2">2 (top course / bottom course)</option>
+    <option value="3">3 (cap / mid / base)</option>
+  </select></label>
+  <label>Top face image <input type="file" id="matTop" accept="image/*"></label>
+  <div id="matSides"></div>
+  <label>Bottom face image (optional) <input type="file" id="matBottom" accept="image/*"></label>
+  <label>Top autotile — 4x4 sheet, 16 tiles (optional) <input type="file" id="matAutotile" accept="image/*"></label>
+  <label>Shape <select id="matShape"></select></label>
+  <hr>
+  <div class="inline"><label><input type="checkbox" id="matTranslucent"> Light passes through</label></div>
+  <div class="inline"><label><input type="checkbox" id="matLightOn"> Emits light</label></div>
+  <div id="matLightFields" style="display:none;">
+    <label>Light color <input type="color" id="matLightColor" value="#ffcc55"></label>
+    <label>Radius (tiles) <input type="number" id="matLightRadius" value="5" min="1" max="20"></label>
+    <label>Intensity <input type="number" id="matLightIntensity" value="1.2" min="0.1" max="5" step="0.1"></label>
+  </div>
+  <hr>
+  <label>Damage/turn <input type="number" id="matDamage" value="0" min="0"></label>
+  <label>Slow (extra move cost) <input type="number" id="matSlow" value="0" min="0"></label>
+  <div class="inline"><label><input type="checkbox" id="matClimbable"> Climbable</label></div>
+  <div class="inline"><label><input type="checkbox" id="matExit"> Exit tile</label></div>
+  <hr>
+  <label>HP (blank = indestructible) <input type="number" id="matHp" min="0" placeholder="indestructible"></label>
+  <label>Destroyed -&gt; becomes (material/object id, blank = disappears) <input type="text" id="matDestroyedType" placeholder="e.g. rubble, ash_pile"></label>
+  <label>Vulnerable to (ctrl/cmd-click for multiple) <select id="matVulnerable" multiple size="4"></select></label>
+  <label>Resistant to <select id="matResistant" multiple size="4"></select></label>
+  <label>Immune to <select id="matImmune" multiple size="4"></select></label>
+  <hr>
+  <div class="row">
+    <button id="btnMatCreate">Create material</button>
+    <button id="btnMatCancel">Clear form</button>
+  </div>
+  <div id="matError"></div>
+  <hr>
+  <h3>Library</h3>
+  <div id="matLibList"></div>
+  <hr>
+  <div class="row">
+    <button id="btnMatExport">Export selected JSON</button>
+    <button id="btnMatImport">Import JSON</button>
+  </div>
+  <textarea id="matJsonBox" rows="4"></textarea>
 </div>
 <script type="module">
-import { getCameraMatrix, invert, transformMat4, createMat4 } from './src/math.js';
+import { getCameraMatrix, invert, transformMat4, createMat4, ortho, lookAt, multiply } from './src/math.js';
 import { buildDemoMap } from './src/map.js';
 import { findPath } from './src/pathfinding.js';
 import { VoxelStore, fromLegacyMap } from './src/voxel/store.js';
 import { buildMesh, buildBoxMesh } from './src/voxel/mesher.js';
-import { loadAtlasImage, BLOCKS, TEX, FACING, FACING_NAMES, PLACEHOLDER_COLORS, stringifyBlock } from './src/voxel/blocks.js';
+import { loadAtlasCanvas, BLOCKS, TEX, FACING, FACING_NAMES, PLACEHOLDER_COLORS, stringifyBlock, drawImageIntoGridCell, sliceSheet4x4, SHAPES } from './src/voxel/blocks.js';
 import { VoxelRenderer } from './src/voxel/renderer.js';
 import { raycastVoxels, adjacentCell } from './src/voxel/pick.js';
 import { EditorHistory, applyEdit, isBedrock } from './src/voxel/editor.js';
 import { findSurface, surfaceToLegacyMap } from './src/voxel/surface.js';
+import { APP_VERSION } from './src/version.js';
+import { resolveLighting, LIGHT_PRESETS } from './src/voxel/lighting.js';
+import {
+  planMaterialLayout, createCustomMaterial, deleteCustomMaterial,
+  loadMaterialLibrary, saveMaterialLibrary, addToLibrary, removeFromLibrary,
+} from './src/voxel/customMaterials.js';
 
 const canvas = document.getElementById('c');
 let store = fromLegacyMap(buildDemoMap(12, 12));
 const history = new EditorHistory();
+// A couple of demo torches so "toggle day/dungeon" shows something immediately, without
+// needing to place a torch yourself first.
+store.set(3, 3, 1, 'torch:N');
+store.set(8, 6, 3, 'torch:N');
 
-const atlasImg = await loadAtlasImage('src/voxel/atlas.png');
+// A mutable canvas (not a static <img>) — the material maker draws custom textures directly
+// into this SAME canvas at runtime, then re-uploads it to the GPU (renderer.setAtlasImage).
+const atlasCanvas = await loadAtlasCanvas('src/voxel/atlas.png?v=' + APP_VERSION);
+const atlasCtx = atlasCanvas.getContext('2d');
 
 const renderer = new VoxelRenderer(canvas);
-renderer.setAtlasImage(atlasImg);
+renderer.setAtlasImage(atlasCanvas);
 
 let dirty = true;
 function markDirty() { dirty = true; }
 
+// --- Lighting: 'day' (adjustable sun) or 'dungeon' (dark ambient, torches do the work) —
+// resolveLighting/tileLightRGB are the same functions Grimoire's 2D renderer uses for
+// torch/Light-cantrip/Darkness propagation (see src/voxel/lighting.js). Both modes now
+// always flow through a real resolveLighting() profile (previously 'day' short-circuited to
+// null/flat-white) — see mesher.js's computeFaceSunTable + renderer.js's shadow map for the
+// sun-direction/shadow math.
+let lightMode = 'day';
+
+/** Every placed block whose registry entry declares `light` becomes a lighting.js point,
+ * exactly the shape Grimoire's own torchPt() produces (col,row,radius,color,intensity). */
+function collectLightPoints(store) {
+  const points = [];
+  for (const { c, r, block } of store.entries()) {
+    const type = block.split(':')[0].split('#')[0];
+    const def = BLOCKS[type];
+    if (def && def.light) points.push({ col: c, row: r, ...def.light });
+  }
+  return points;
+}
+
+// --- Sun/Ambient panel state — null means "use LIGHT_PRESETS[lightMode] untouched", so the
+// default look for a fresh page load is byte-identical to the chosen preset until the user
+// actually moves a slider. Azimuth/elevation are lighting.js's own Y-up convention (x=east,
+// y=up, z=south — see mesher.js sunDirToVoxelSpace's doc comment for why this engine's own
+// Z-up mesh space needs that swap, done downstream in mesher.js, not here).
+let sunOverrides = null;
+
+function sunDirFromAzEl(azimuthDeg, elevationDeg) {
+  const az = (azimuthDeg * Math.PI) / 180;
+  const el = (elevationDeg * Math.PI) / 180;
+  return [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
+}
+function azElFromSunDir([x, y, z]) {
+  const len = Math.hypot(x, y, z) || 1;
+  return { azimuthDeg: (Math.atan2(x / len, z / len) * 180) / Math.PI, elevationDeg: (Math.asin(y / len) * 180) / Math.PI };
+}
+
+function currentLightProfile() {
+  const overrides = { mode: lightMode };
+  if (sunOverrides) {
+    overrides.sunDir = sunDirFromAzEl(sunOverrides.azimuthDeg, sunOverrides.elevationDeg);
+    overrides.sunColor = sunOverrides.sunColor;
+    overrides.keyStrength = sunOverrides.keyStrength;
+  }
+  const profile = resolveLighting(overrides, collectLightPoints(store));
+  if (sunOverrides) {
+    // resolveLighting only copies its own whitelisted lighting.js fields (sunDir/sunColor/
+    // keyStrength/etc — see lighting.js) from the overrides object; an unknown field like
+    // this one would be silently dropped if passed through there. mesher.js's
+    // makeLightSampler reads profile.voxelAmbientColor directly instead (see its own doc
+    // comment) — attach it straight onto the resolved profile here.
+    // "Ambient floor" is the target brightness of the color's OWN brightest channel — floor=0
+    // means true black regardless of color, floor=1 with white means a fully bright ambient.
+    const [cr, cg, cb] = sunOverrides.groundAmbient;
+    const maxC = Math.max(cr, cg, cb, 1e-6);
+    profile.voxelAmbientColor = [cr / maxC, cg / maxC, cb / maxC].map((c) => c * sunOverrides.ambientFloor);
+  }
+  return profile;
+}
+
+/** Build a light-space (orthographic projection * lookAt) matrix for the shadow-map pass —
+ * sunDir is lighting.js's own Y-up convention, which is ALREADY this renderer's world-space
+ * convention (unlike mesher.js's internal c,r,z grid space, no axis swap needed here). Frames
+ * an orthographic frustum around the store's bounding SPHERE (not just its box) so the shadow
+ * map covers the whole scene regardless of which way the sun is currently facing, at the cost
+ * of not being the tightest possible fit — acceptable for this engine's small demo maps. */
+function computeLightMVP(store, sunDir) {
+  const b = store.bounds();
+  if (b.maxC < b.minC) return null; // empty store — nothing to shadow
+  const cx = (b.minC + b.maxC + 1) / 2;
+  const cy = (b.minZ + b.maxZ + 1) / 2; // grid z (elevation) -> world Y
+  const cz = (b.minR + b.maxR + 1) / 2; // grid r (row) -> world Z
+  const dx = (b.maxC + 1 - b.minC) / 2;
+  const dy = (b.maxZ + 1 - b.minZ) / 2;
+  const dz = (b.maxR + 1 - b.minR) / 2;
+  const radius = Math.hypot(dx, dy, dz) + 1;
+  const len = Math.hypot(sunDir[0], sunDir[1], sunDir[2]) || 1;
+  const dir = [sunDir[0] / len, sunDir[1] / len, sunDir[2] / len];
+  const eye = [cx + dir[0] * radius * 3, cy + dir[1] * radius * 3, cz + dir[2] * radius * 3];
+  const target = [cx, cy, cz];
+  const up = Math.abs(dir[1]) > 0.99 ? [0, 0, 1] : [0, 1, 0]; // avoid a degenerate lookAt when the sun is ~straight up
+  const view = createMat4();
+  lookAt(view, eye, target, up);
+  const proj = createMat4();
+  ortho(proj, -radius, radius, -radius, radius, 0.1, radius * 6);
+  const out = createMat4();
+  multiply(out, proj, view);
+  return out;
+}
+
 function rebuildIfDirty() {
   if (!dirty) return;
-  renderer.setMesh(buildMesh(store));
+  const profile = currentLightProfile();
+  renderer.setMesh(buildMesh(store, { lightProfile: profile }));
+  // The sun is active whenever this profile carries a real, non-negligible directional
+  // strength — dungeon's own preset keyStrength (0.08) is deliberately near-zero (torches do
+  // the work down there), so skip the shadow-map pass entirely rather than paying for it to
+  // light almost nothing.
+  const keyStrength = profile.keyStrength || 0;
+  if (keyStrength > 0.01) {
+    renderer.setSun({
+      lightMVP: computeLightMVP(store, profile.sunDir || [0.55, 0.82, 0.28]),
+      color: profile.sunColor || [1, 1, 1],
+      strength: keyStrength,
+    });
+  } else {
+    renderer.setSun(); // no args -> defaults to inactive (see VoxelRenderer.setSun's default param)
+  }
   dirty = false;
 }
 
@@ -86,7 +298,6 @@ function resize() {
 window.addEventListener('resize', resize);
 
 // --- Brush / editor state ---
-const PALETTE_TYPES = Object.keys(BLOCKS);
 const brush = { type: 'stone', facing: FACING.N, slab: false };
 let paintMode = false;
 
@@ -97,11 +308,31 @@ function blockNeedsFacing(type) {
   return ['front', 'right', 'back', 'left'].some((k) => def[k] !== undefined);
 }
 
-function pendingBlockString() {
+function pendingBlockString(facingOverride) {
   const def = BLOCKS[brush.type];
-  const facing = blockNeedsFacing(brush.type) ? brush.facing : null;
+  const facing = blockNeedsFacing(brush.type) ? (facingOverride ?? brush.facing) : null;
   const slab = def.model ? false : brush.slab;
   return stringifyBlock({ type: brush.type, facing, slab });
+}
+
+/** Minecraft-style wall snap: when placing a directional model (torch, etc.) into an empty
+ * cell, auto-face it toward whichever adjacent solid neighbor it's being mounted against,
+ * instead of always using the brush's last manually-set facing. Returns null (no override,
+ * caller falls back to brush.facing) if the target has no solid horizontal neighbor at all
+ * (e.g. free floating in open air). */
+function computeWallSnapFacing(target) {
+  const neighbors = [
+    { dr: -1, facing: FACING.N },
+    { dc: 1, facing: FACING.E },
+    { dr: 1, facing: FACING.S },
+    { dc: -1, facing: FACING.W },
+  ];
+  for (const n of neighbors) {
+    const nc = target.c + (n.dc || 0);
+    const nr = target.r + (n.dr || 0);
+    if (store.has(nc, nr, target.z)) return n.facing;
+  }
+  return null;
 }
 
 function refreshHud() {
@@ -109,23 +340,119 @@ function refreshHud() {
   document.getElementById('modeLabel').textContent = unitMode ? 'UNIT MOVE' : paintMode ? 'paint' : 'place';
   document.getElementById('facingLabel').textContent = FACING_NAMES[brush.facing];
   document.getElementById('slabLabel').textContent = brush.slab ? 'on' : 'off';
+  document.getElementById('lightLabel').textContent = lightMode;
 }
 
-const paletteEl = document.getElementById('palette');
-for (const type of PALETTE_TYPES) {
-  const btn = document.createElement('div');
-  btn.className = 'swatch';
-  btn.title = type;
-  btn.style.background = PLACEHOLDER_COLORS[BLOCKS[type].all ?? BLOCKS[type].top ?? BLOCKS[type].front] || '#888';
-  btn.addEventListener('click', () => {
-    brush.type = type;
-    for (const s of paletteEl.children) s.classList.remove('selected');
-    btn.classList.add('selected');
-    refreshHud();
-  });
-  paletteEl.appendChild(btn);
+document.getElementById('btnLightMode').addEventListener('click', () => {
+  lightMode = lightMode === 'day' ? 'dungeon' : 'day';
+  resetSunSliders();
+  markDirty();
+  refreshHud();
+});
+
+// User-tuned day-mode default (2026-07-12, dialed in via the Sun/Ambient panel itself) — this
+// tool's OWN starting point/reset target for day mode, replacing the raw LIGHT_PRESETS.day
+// numbers there. Deliberately NOT written back into lighting.js's LIGHT_PRESETS.day itself:
+// that object is shared with Grimoire's own 2D renderer (lighting.js's file header says "do
+// not fork"), so changing its calibration here would silently retune Grimoire's day look too.
+const DAY_SUN_DEFAULT = {
+  azimuthDeg: 222,
+  elevationDeg: 26,
+  sunColor: hexToRGB01('#f2cc85'),
+  keyStrength: 2.5,
+  ambientFloor: 0.4,
+  groundAmbient: hexToRGB01('#4a4a4a'),
+};
+
+// --- Sun/Ambient panel — see currentLightProfile()/sunOverrides above. Sliders always show
+// the values currently in effect (either the active default/preset, or a hand-touched override).
+function resetSunSliders() {
+  // Day mode's "default"/"reset" target is the tuned DAY_SUN_DEFAULT above, not the raw
+  // Grimoire preset — set sunOverrides directly (not null) so it actually applies from the
+  // very first render, exactly as if the user had dragged every slider there themselves.
+  // Dungeon mode is untouched: still resets to the raw LIGHT_PRESETS.dungeon, sunOverrides=null.
+  if (lightMode === 'day') {
+    sunOverrides = { ...DAY_SUN_DEFAULT };
+    document.getElementById('sunModeLabel').textContent = lightMode;
+    document.getElementById('sunAzimuth').value = sunOverrides.azimuthDeg;
+    document.getElementById('sunElevation').value = sunOverrides.elevationDeg;
+    document.getElementById('sunColor').value = rgb01ToHex(sunOverrides.sunColor);
+    document.getElementById('sunStrength').value = sunOverrides.keyStrength;
+    document.getElementById('ambientFloor').value = sunOverrides.ambientFloor;
+    document.getElementById('ambientColor').value = rgb01ToHex(sunOverrides.groundAmbient);
+    refreshSunValLabels();
+    return;
+  }
+  sunOverrides = null;
+  const preset = LIGHT_PRESETS[lightMode] || LIGHT_PRESETS.day;
+  const { azimuthDeg, elevationDeg } = azElFromSunDir(preset.sunDir);
+  document.getElementById('sunModeLabel').textContent = lightMode;
+  document.getElementById('sunAzimuth').value = azimuthDeg;
+  document.getElementById('sunElevation').value = elevationDeg;
+  document.getElementById('sunColor').value = rgb01ToHex(preset.sunColor);
+  document.getElementById('sunStrength').value = preset.keyStrength;
+  document.getElementById('ambientFloor').value = preset.ambientFloor;
+  document.getElementById('ambientColor').value = rgb01ToHex(preset.groundAmbient);
+  refreshSunValLabels();
 }
-paletteEl.firstChild?.classList.add('selected');
+function refreshSunValLabels() {
+  document.getElementById('sunAzimuthVal').textContent = Math.round(document.getElementById('sunAzimuth').value) + '°';
+  document.getElementById('sunElevationVal').textContent = Math.round(document.getElementById('sunElevation').value) + '°';
+  document.getElementById('sunStrengthVal').textContent = Number(document.getElementById('sunStrength').value).toFixed(2);
+  document.getElementById('ambientFloorVal').textContent = Number(document.getElementById('ambientFloor').value).toFixed(2);
+}
+/** Any slider touch fully specifies sunOverrides from ALL current control values (not just
+ * the one that changed) — simpler than tracking partial overrides against the preset. */
+function onSunControlChange() {
+  sunOverrides = {
+    azimuthDeg: Number(document.getElementById('sunAzimuth').value),
+    elevationDeg: Number(document.getElementById('sunElevation').value),
+    sunColor: hexToRGB01(document.getElementById('sunColor').value),
+    keyStrength: Number(document.getElementById('sunStrength').value),
+    ambientFloor: Number(document.getElementById('ambientFloor').value),
+    groundAmbient: hexToRGB01(document.getElementById('ambientColor').value),
+  };
+  refreshSunValLabels();
+  markDirty();
+}
+['sunAzimuth', 'sunElevation', 'sunColor', 'sunStrength', 'ambientFloor', 'ambientColor'].forEach((id) => {
+  document.getElementById(id).addEventListener('input', onSunControlChange);
+});
+document.getElementById('btnSunPanel').addEventListener('click', () => {
+  document.getElementById('sunPanel').classList.toggle('open');
+});
+document.getElementById('btnSunReset').addEventListener('click', () => {
+  resetSunSliders();
+  markDirty();
+});
+resetSunSliders();
+
+// Rebuilt (not a one-time snapshot) so newly created/deleted material-maker materials show
+// up in the palette immediately, without a page reload.
+const paletteEl = document.getElementById('palette');
+function rebuildPalette() {
+  const prevSelected = brush.type;
+  paletteEl.innerHTML = '';
+  for (const type of Object.keys(BLOCKS)) {
+    const btn = document.createElement('div');
+    btn.className = 'swatch';
+    btn.title = type;
+    btn.style.background = PLACEHOLDER_COLORS[BLOCKS[type].all ?? BLOCKS[type].top ?? BLOCKS[type].front] || '#c060c0';
+    btn.addEventListener('click', () => {
+      brush.type = type;
+      for (const s of paletteEl.children) s.classList.remove('selected');
+      btn.classList.add('selected');
+      refreshHud();
+    });
+    if (type === prevSelected) btn.classList.add('selected');
+    paletteEl.appendChild(btn);
+  }
+  if (!BLOCKS[prevSelected]) {
+    brush.type = 'stone';
+    paletteEl.firstChild?.classList.add('selected');
+  }
+}
+rebuildPalette();
 
 document.getElementById('btnSlab').addEventListener('click', () => {
   brush.slab = !brush.slab;
@@ -230,6 +557,334 @@ document.getElementById('btnUnitMode').addEventListener('click', () => {
 
 refreshHud();
 
+// --- Material Maker (dev-mode content tool — see CONTENT_TOOLS_PLAN.md) ---
+// Uploaded images are stored as data URLs at native resolution in the library entry's
+// `spec` (survives localStorage/export-import), and only drawn into a real canvas — at the
+// TOP image's native pixel size, one canvas PER MATERIAL, not a shared global atlas cell —
+// at material-creation/replay time. Each material gets its own GPU texture (renderer
+// .setMaterialAtlas) and its own draw call; see mesher.js/renderer.js/customMaterials.js for
+// the rest of this pivot away from a single shared atlas.
+const materialCanvases = new Map(); // materialId -> { canvas, ctx, layout, cellPx } — kept
+// around (not thrown away after the initial draw) so an animated (GIF-sourced) face's
+// redraw-and-reupload loop has something to draw into later.
+function fileToDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+function dataURLToImage(dataURL) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataURL;
+  });
+}
+
+const matPanel = document.getElementById('matPanel');
+const matSidesEl = document.getElementById('matSides');
+const matErrorEl = document.getElementById('matError');
+const matLibListEl = document.getElementById('matLibList');
+let matSelectedLibId = null;
+
+function rebuildMatSideInputs() {
+  const n = Number(document.getElementById('matHeight').value);
+  const labels = n === 1 ? ['Side texture'] : n === 2 ? ['Top course side', 'Bottom course side'] : ['Cap (top) side', 'Mid side', 'Base (bottom) side'];
+  matSidesEl.innerHTML = '';
+  labels.forEach((label, i) => {
+    const lab = document.createElement('label');
+    lab.textContent = label + ' ';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.id = `matSide${i}`;
+    lab.appendChild(input);
+    matSidesEl.appendChild(lab);
+  });
+}
+document.getElementById('matHeight').addEventListener('change', rebuildMatSideInputs);
+rebuildMatSideInputs();
+
+// Depth-indexed shapes (e.g. column_cap/mid/base) are meant to be assigned via the array form
+// directly to BLOCKS[type].shape by hand (see CONTENT_TOOLS_PLAN.md) — this dropdown only
+// offers the single-shape-for-every-course case, the common one.
+const matShapeEl = document.getElementById('matShape');
+matShapeEl.innerHTML = '<option value="">Full block (default)</option>' +
+  Object.keys(SHAPES).map((name) => `<option value="${name}">${name}</option>`).join('');
+
+// D&D 5e's fixed damage-type vocabulary (matches customMaterials.js's own documented list) —
+// a multi-select dropdown instead of free-text so vulnerable/resistant/immune can't drift
+// from what Grimoire's rules engine actually recognizes via a typo.
+const DAMAGE_TYPES = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
+const damageTypeOptionsHtml = DAMAGE_TYPES.map((t) => `<option value="${t}">${t}</option>`).join('');
+for (const id of ['matVulnerable', 'matResistant', 'matImmune']) {
+  document.getElementById(id).innerHTML = damageTypeOptionsHtml;
+}
+
+document.getElementById('matLightOn').addEventListener('change', (e) => {
+  document.getElementById('matLightFields').style.display = e.target.checked ? 'block' : 'none';
+});
+
+function clearMatForm() {
+  document.getElementById('matName').value = '';
+  document.getElementById('matHeight').value = '1';
+  rebuildMatSideInputs();
+  document.getElementById('matTop').value = '';
+  document.getElementById('matBottom').value = '';
+  document.getElementById('matAutotile').value = '';
+  document.getElementById('matShape').value = '';
+  document.getElementById('matTranslucent').checked = false;
+  document.getElementById('matLightOn').checked = false;
+  document.getElementById('matLightFields').style.display = 'none';
+  document.getElementById('matLightColor').value = '#ffcc55';
+  document.getElementById('matLightRadius').value = '5';
+  document.getElementById('matLightIntensity').value = '1.2';
+  document.getElementById('matDamage').value = '0';
+  document.getElementById('matSlow').value = '0';
+  document.getElementById('matClimbable').checked = false;
+  document.getElementById('matExit').checked = false;
+  document.getElementById('matHp').value = '';
+  document.getElementById('matDestroyedType').value = '';
+  for (const id of ['matVulnerable', 'matResistant', 'matImmune']) {
+    for (const opt of document.getElementById(id).options) opt.selected = false;
+  }
+  matErrorEl.textContent = '';
+}
+
+/** Selected <option>s from a multi-select damage-type dropdown -> ["fire","cold"]. */
+function selectedDamageTypes(selectEl) {
+  return Array.from(selectEl.selectedOptions).map((opt) => opt.value);
+}
+
+function hexToRGB01(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+function rgb01ToHex([r, g, b]) {
+  const c = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+function collectMatProperties() {
+  const props = {};
+  if (document.getElementById('matTranslucent').checked) props.translucent = true;
+  if (document.getElementById('matLightOn').checked) {
+    props.light = {
+      color: hexToRGB01(document.getElementById('matLightColor').value),
+      radius: Number(document.getElementById('matLightRadius').value) || 5,
+      intensity: Number(document.getElementById('matLightIntensity').value) || 1,
+    };
+  }
+  const damage = Number(document.getElementById('matDamage').value) || 0;
+  const slow = Number(document.getElementById('matSlow').value) || 0;
+  if (damage > 0) props.damage = damage;
+  if (slow > 0) props.slow = slow;
+  if (document.getElementById('matClimbable').checked) props.climbable = true;
+  if (document.getElementById('matExit').checked) props.exit = true;
+
+  const hpRaw = document.getElementById('matHp').value;
+  if (hpRaw !== '') props.hp = Number(hpRaw) || 0;
+  const destroyedType = document.getElementById('matDestroyedType').value.trim();
+  if (destroyedType) props.destroyedType = destroyedType;
+  const vulnerable = selectedDamageTypes(document.getElementById('matVulnerable'));
+  if (vulnerable.length) props.vulnerable = vulnerable;
+  const resistant = selectedDamageTypes(document.getElementById('matResistant'));
+  if (resistant.length) props.resistant = resistant;
+  const immune = selectedDamageTypes(document.getElementById('matImmune'));
+  if (immune.length) props.immune = immune;
+
+  return props;
+}
+
+/** Draw a library entry's already-resolved images (data URLs, loaded into <img>) into a
+ * fresh canvas sized for THIS material's own layout, upload it as this material's own GPU
+ * texture, and register the block type — the ONE codepath shared by "create material from
+ * the form" and "replay saved library on page load / import". */
+async function drawAndRegisterMaterial(spec) {
+  const heightBlocks = spec.heightBlocks;
+  const hasCustomBottom = !!spec.bottomImage;
+  const hasAutotile = !!spec.autotileImage;
+  const layout = planMaterialLayout({ heightBlocks, hasAutotile, hasCustomBottom });
+
+  const topImg = await dataURLToImage(spec.topImage);
+  // Cell size = the top image's own resolution — each material can be as crisp (or as
+  // chunky) as whatever you upload, independent of every other material's choice.
+  const cellPx = topImg.naturalWidth || topImg.width || 32;
+  const canvas = document.createElement('canvas');
+  canvas.width = layout.cols * cellPx;
+  canvas.height = layout.rows * cellPx;
+  const ctx = canvas.getContext('2d');
+
+  drawImageIntoGridCell(ctx, topImg, layout.topIdx, layout.cols, cellPx);
+  for (let i = 0; i < heightBlocks; i++) {
+    const sideImg = await dataURLToImage(spec.sideImages[i]);
+    drawImageIntoGridCell(ctx, sideImg, layout.sideIdx[i], layout.cols, cellPx);
+  }
+  if (hasCustomBottom) {
+    const bottomImg = await dataURLToImage(spec.bottomImage);
+    drawImageIntoGridCell(ctx, bottomImg, layout.bottomIdx, layout.cols, cellPx);
+  }
+  if (hasAutotile) {
+    const sheetImg = await dataURLToImage(spec.autotileImage);
+    const tiles = sliceSheet4x4(sheetImg);
+    tiles.forEach((tileCanvas, i) => drawImageIntoGridCell(ctx, tileCanvas, layout.autotileIdx[i], layout.cols, cellPx));
+  }
+
+  const entry = createCustomMaterial({ name: spec.name, heightBlocks, layout, shape: spec.shape || undefined, properties: spec.properties });
+  materialCanvases.set(entry.id, { canvas, ctx, layout, cellPx });
+  renderer.setMaterialAtlas(entry.id, canvas);
+  return { ...entry, spec };
+}
+
+/** POST each of a material's uploaded source images to the dev server's /api/save-texture
+ * route (tools/serve.mjs) so they're checked into git as real files (src/voxel/textures/
+ * custom/), not just localStorage. Best-effort: silently skipped (console.warn only) if the
+ * route isn't reachable — e.g. voxel.html opened via file://, or served by something other
+ * than tools/serve.mjs. The material works identically either way; this is a durability
+ * bonus (survives clearing browser storage / moving machines), not a requirement. */
+async function saveTexturesToDisk(materialId, spec) {
+  const images = [{ name: `${materialId}__top`, dataURL: spec.topImage }];
+  spec.sideImages.forEach((dataURL, i) => images.push({ name: `${materialId}__side${i}`, dataURL }));
+  if (spec.bottomImage) images.push({ name: `${materialId}__bottom`, dataURL: spec.bottomImage });
+  if (spec.autotileImage) images.push({ name: `${materialId}__autotile`, dataURL: spec.autotileImage });
+  for (const img of images) {
+    try {
+      const res = await fetch('/api/save-texture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: img.name, dataURL: img.dataURL }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      console.warn(`save-texture: couldn't persist "${img.name}" to disk (non-fatal — it's still saved in localStorage):`, e.message);
+    }
+  }
+}
+
+function renderMatLibList() {
+  const lib = loadMaterialLibrary();
+  matLibListEl.innerHTML = '';
+  if (!lib.length) {
+    matLibListEl.textContent = '(no custom materials yet)';
+    return;
+  }
+  for (const entry of lib) {
+    const row = document.createElement('div');
+    row.className = 'libRow';
+    const span = document.createElement('span');
+    span.textContent = `${entry.name} (${entry.id})`;
+    span.title = entry.id;
+    span.style.cursor = 'pointer';
+    span.addEventListener('click', () => {
+      matSelectedLibId = entry.id;
+      document.getElementById('matJsonBox').value = JSON.stringify(entry, null, 2);
+    });
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'delete';
+    delBtn.addEventListener('click', () => {
+      // Deleting a MATERIAL (registry type) is distinct from removing placed blocks from the
+      // map (see CONTENT_TOOLS_PLAN.md 3b) — any already-placed instances just stop
+      // rendering, same as any block whose type has no registry entry. Atlas slots are not
+      // reclaimed (documented limitation, see deleteCustomMaterial).
+      deleteCustomMaterial(entry.id);
+      removeFromLibrary(entry.id);
+      materialCanvases.delete(entry.id);
+      if (brush.type === entry.id) brush.type = 'stone';
+      rebuildPalette();
+      renderMatLibList();
+      markDirty();
+    });
+    row.appendChild(span);
+    row.appendChild(delBtn);
+    matLibListEl.appendChild(row);
+  }
+}
+
+document.getElementById('btnMatPanel').addEventListener('click', () => {
+  matPanel.classList.toggle('open');
+});
+
+document.getElementById('btnMatCancel').addEventListener('click', clearMatForm);
+
+document.getElementById('btnMatCreate').addEventListener('click', async () => {
+  matErrorEl.textContent = '';
+  try {
+    const name = document.getElementById('matName').value.trim();
+    if (!name) throw new Error('name is required');
+    const heightBlocks = Number(document.getElementById('matHeight').value);
+    const topFile = document.getElementById('matTop').files[0];
+    if (!topFile) throw new Error('top face image is required');
+    const sideFiles = [];
+    for (let i = 0; i < heightBlocks; i++) {
+      const f = document.getElementById(`matSide${i}`).files[0];
+      if (!f) throw new Error(`side texture ${i + 1} of ${heightBlocks} is required`);
+      sideFiles.push(f);
+    }
+    const bottomFile = document.getElementById('matBottom').files[0] || null;
+    const autotileFile = document.getElementById('matAutotile').files[0] || null;
+
+    const spec = {
+      name,
+      heightBlocks,
+      topImage: await fileToDataURL(topFile),
+      sideImages: await Promise.all(sideFiles.map(fileToDataURL)),
+      bottomImage: bottomFile ? await fileToDataURL(bottomFile) : null,
+      autotileImage: autotileFile ? await fileToDataURL(autotileFile) : null,
+      shape: document.getElementById('matShape').value || null,
+      properties: collectMatProperties(),
+    };
+
+    const entry = await drawAndRegisterMaterial(spec);
+    addToLibrary(entry);
+    rebuildPalette();
+    renderMatLibList();
+    markDirty();
+    clearMatForm();
+    saveTexturesToDisk(entry.id, spec); // fire-and-forget — see saveTexturesToDisk doc comment
+  } catch (e) {
+    matErrorEl.textContent = 'Error: ' + e.message;
+  }
+});
+
+document.getElementById('btnMatExport').addEventListener('click', () => {
+  const lib = loadMaterialLibrary();
+  const entry = lib.find((e) => e.id === matSelectedLibId);
+  document.getElementById('matJsonBox').value = entry ? JSON.stringify(entry, null, 2) : JSON.stringify(lib, null, 2);
+});
+document.getElementById('btnMatImport').addEventListener('click', async () => {
+  matErrorEl.textContent = '';
+  try {
+    const parsed = JSON.parse(document.getElementById('matJsonBox').value);
+    const entries = Array.isArray(parsed) ? parsed : [parsed];
+    for (const raw of entries) {
+      if (!raw.spec) throw new Error(`entry "${raw.name || '?'}" has no "spec" to replay (not a material-maker export)`);
+      const entry = await drawAndRegisterMaterial(raw.spec);
+      addToLibrary(entry);
+      saveTexturesToDisk(entry.id, raw.spec); // fire-and-forget — see saveTexturesToDisk doc comment
+    }
+    rebuildPalette();
+    renderMatLibList();
+    markDirty();
+  } catch (e) {
+    matErrorEl.textContent = 'Import error: ' + e.message;
+  }
+});
+
+// Replay the saved library on load, so custom materials survive a page refresh.
+for (const entry of loadMaterialLibrary()) {
+  if (!entry.spec) continue; // stray/legacy entries without image data can't be replayed
+  try {
+    await drawAndRegisterMaterial(entry.spec);
+  } catch (e) {
+    console.error(`failed to replay saved material "${entry.id}":`, e);
+  }
+}
+rebuildPalette();
+renderMatLibList();
+
 // --- Picking: screen pixel -> grid-space ray, via full MVP inverse (works for ortho too) ---
 function screenToGridRay(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -263,6 +918,7 @@ function mergeBuffers(a, b) {
     positions: a.positions.concat(b.positions),
     uvs: a.uvs.concat(b.uvs),
     colors: a.colors.concat(b.colors),
+    sunLit: a.sunLit.concat(b.sunLit),
     indices: a.indices.concat(b.indices.map((i) => i + off)),
   };
 }
@@ -272,15 +928,23 @@ function updateGhost(hit, altHeld) {
     renderer.setGhostMesh(null);
     return;
   }
-  const target = paintMode ? { c: hit.c, r: hit.r, z: hit.z } : adjacentCell(hit);
-  if (!paintMode && store.has(target.c, target.r, target.z)) {
+  const def = BLOCKS[brush.type];
+  const isAttachment = !!(def && def.model);
+  const usePaint = paintMode && !isAttachment; // model attachments always place, never paint
+  const target = usePaint ? { c: hit.c, r: hit.r, z: hit.z } : adjacentCell(hit);
+  if (!usePaint && store.has(target.c, target.r, target.z)) {
     renderer.setGhostMesh(null);
     return;
   }
+  const snapFacing = isAttachment ? computeWallSnapFacing(target) : null;
   const ghostStore = new VoxelStore();
-  ghostStore.set(target.c, target.r, target.z, pendingBlockString());
+  ghostStore.set(target.c, target.r, target.z, pendingBlockString(snapFacing ?? undefined));
   const mesh = buildMesh(ghostStore);
-  renderer.setGhostMesh(mergeBuffers(mesh.opaque, mesh.translucent));
+  const byMaterial = {};
+  for (const [materialId, buf] of Object.entries(mesh.byMaterial)) {
+    byMaterial[materialId] = mergeBuffers(buf.opaque, buf.translucent);
+  }
+  renderer.setGhostMesh({ shared: mergeBuffers(mesh.opaque, mesh.translucent), byMaterial });
 }
 
 // --- Editing ---
@@ -289,6 +953,21 @@ function handleEditClick(hit, altHeld) {
   if (altHeld) {
     if (isBedrock(hit.block)) return;
     applyEdit(store, history, hit.c, hit.r, hit.z, null);
+    markDirty();
+    return;
+  }
+  const def = BLOCKS[brush.type];
+  // Model-shaped attachments (torch, furniture, doors...) coexist with the wall/floor
+  // they're mounted on — "paint" (retype the clicked cell) makes no sense for them and
+  // was the cause of "placing a torch/furniture replaces the block it touches" (Paint
+  // mode left on from earlier testing silently retyped the wall itself). Attachments
+  // always place into the adjacent empty cell, with an automatic Minecraft-style wall
+  // snap instead of always using the brush's last manually-set facing.
+  if (def && def.model) {
+    const adj = adjacentCell(hit);
+    if (store.has(adj.c, adj.r, adj.z)) return;
+    const snapFacing = computeWallSnapFacing(adj);
+    applyEdit(store, history, adj.c, adj.r, adj.z, pendingBlockString(snapFacing ?? undefined));
     markDirty();
     return;
   }
@@ -380,6 +1059,9 @@ window.addEventListener('keydown', (e) => {
     refreshHud();
   } else if (e.key === 'p' || e.key === 'P') {
     paintMode = !paintMode;
+    refreshHud();
+  } else if (e.key === 's' || e.key === 'S') {
+    brush.slab = !brush.slab;
     refreshHud();
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
     history.undo(store);

@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>wall check</title>
+<style>html,body{margin:0;background:#14161c;overflow:hidden;height:100%}canvas{display:block}
+#lbl{position:fixed;top:8px;left:8px;color:#fff;font:16px monospace;background:#000a;padding:6px 10px}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="lbl"></div>
+<script type="module">
+import { getCameraMatrix } from '../src/math.js';
+import { VoxelStore } from '../src/voxel/store.js';
+import { buildMesh } from '../src/voxel/mesher.js';
+import { loadAtlasImage } from '../src/voxel/blocks.js';
+import { VoxelRenderer } from '../src/voxel/renderer.js';
+
+const params = new URLSearchParams(location.search);
+const rot = Number(params.get('rot')) || 0.7853981633974483;
+
+// A 3-stack dungeon_wall so cap/mid/base are all visible at once.
+const store = new VoxelStore();
+store.set(0, 0, 0, 'dungeon_wall');
+store.set(0, 0, 1, 'dungeon_wall');
+store.set(0, 0, 2, 'dungeon_wall');
+
+const canvas = document.getElementById('c');
+const atlasImg = await loadAtlasImage('../src/voxel/atlas.png?v=' + Date.now());
+const renderer = new VoxelRenderer(canvas);
+renderer.setAtlasImage(atlasImg);
+renderer.setMesh(buildMesh(store));
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const cam = { rot, zoom: 3.5, panX: 0.5, panY: 0.5 };
+const aspect = canvas.width / canvas.height;
+const { matrix } = getCameraMatrix(cam.rot, cam.zoom, cam.panX, cam.panY, aspect);
+renderer.render(matrix);
+document.getElementById('lbl').textContent = 'rot=' + rot.toFixed(3);
+window.__wallCheckReady = true;
+</script>
+</body>
+</html>

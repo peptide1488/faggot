@@ -15,6 +15,7 @@ import { buildMesh, buildBoxMesh } from '../src/voxel/mesher.js';
 import { loadAtlasImage, TEX } from '../src/voxel/blocks.js';
 import { VoxelRenderer } from '../src/voxel/renderer.js';
 import { findSurface, surfaceToLegacyMap } from '../src/voxel/surface.js';
+import { APP_VERSION } from '../src/version.js';
 
 // A little staircase, same shape proven in tests/voxel-surface.test.js: flat ground, a
 // half-step (slab), a full step, then flat ground again — the checkpoint scenario
@@ -42,7 +43,7 @@ if (!path || path.length !== 5) throw new Error('unexpected path: ' + JSON.strin
 const stops = [path[0], path[2], path[4]]; // (0,1) flat, (2,1) slab, (4,1) top
 
 const canvas = document.getElementById('c');
-const atlasImg = await loadAtlasImage('../src/voxel/atlas.png');
+const atlasImg = await loadAtlasImage('../src/voxel/atlas.png?v=' + APP_VERSION);
 
 const renderer = new VoxelRenderer(canvas);
 renderer.setAtlasImage(atlasImg);

@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>shadow check</title>
+<style>html,body{margin:0;background:#14161c;overflow:hidden;height:100%}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import { getCameraMatrix } from '../src/math.js';
+import { VoxelStore } from '../src/voxel/store.js';
+import { buildMesh } from '../src/voxel/mesher.js';
+import { loadAtlasImage } from '../src/voxel/blocks.js';
+import { VoxelRenderer } from '../src/voxel/renderer.js';
+import { resolveLighting } from '../src/voxel/lighting.js';
+
+// Floor strip: torch at one end, a pillar in the middle, floor continuing past it. If
+// occlusion works, the far side of the pillar (away from the torch) should be darker than
+// the near side facing the torch.
+const store = new VoxelStore();
+for (let c = 0; c <= 8; c++) store.set(c, 0, 0, 'stone');
+store.set(1, 0, 1, 'torch:E');
+store.set(4, 0, 1, 'stone'); // pillar
+store.set(4, 0, 2, 'stone');
+
+const lightProfile = resolveLighting({
+  mode: 'dungeon',
+  points: [{ col: 1, row: 0, z: 1.5, radius: 8, color: [1, 0.55, 0.22], intensity: 1.8 }],
+});
+
+const canvas = document.getElementById('c');
+const atlasImg = await loadAtlasImage('../src/voxel/atlas.png?v=' + Date.now());
+const renderer = new VoxelRenderer(canvas);
+renderer.setAtlasImage(atlasImg);
+renderer.setMesh(buildMesh(store, { lightProfile }));
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const cam = { rot: 0.3, zoom: 2.2, panX: 4, panY: 0 };
+const aspect = canvas.width / canvas.height;
+const { matrix } = getCameraMatrix(cam.rot, cam.zoom, cam.panX, cam.panY, aspect);
+renderer.render(matrix);
+window.__shadowCheckReady = true;
+</script>
+</body>
+</html>

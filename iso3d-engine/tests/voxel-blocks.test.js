@@ -14,6 +14,12 @@ import {
   PLACEHOLDER_COLORS,
   BLOCKS,
   MODELS,
+  TEX_CUSTOM_START,
+  ATLAS_COLS,
+  ATLAS_ROWS,
+  allocateTexSlot,
+  resetCustomTexAllocation,
+  registerBlock,
 } from '../src/voxel/blocks.js';
 
 let passed = 0;
@@ -87,7 +93,9 @@ console.log('resolveFace — per-elevation side arrays (dungeon_wall)');
   assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 3 }) === TEX.WALL_BASE, '5-stack depth3 clamps to BASE');
   assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 4 }) === TEX.WALL_BASE, '5-stack depth4 clamps to BASE');
   // Lone block (depth 0) still shows cap, and top face is unaffected by depth.
-  assert(resolveFace('dungeon_wall', FACE.TOP, { depth: 0 }) === TEX.WALL_CAP, 'lone block top = CAP');
+  // Top face uses a dedicated top-down texture (STONE), not WALL_CAP — WALL_CAP is a
+  // side-view crop and looks wrong viewed straight down (found via live screenshot, 2026-07-12).
+  assert(resolveFace('dungeon_wall', FACE.TOP, { depth: 0 }) === TEX.STONE, 'lone block top = STONE (top-down texture, not a side-view crop)');
 }
 
 console.log('atlas UV math');
@@ -116,6 +124,53 @@ console.log('registry completeness');
   for (const [texIdStr] of Object.entries(TEX)) {
     assert(PLACEHOLDER_COLORS[TEX[texIdStr]] !== undefined, `TEX.${texIdStr} has a placeholder color`);
   }
+}
+
+console.log('allocateTexSlot / resetCustomTexAllocation');
+{
+  resetCustomTexAllocation();
+  const first = allocateTexSlot();
+  const second = allocateTexSlot();
+  assert(first === TEX_CUSTOM_START, 'first custom slot starts right after the reserved built-in/debug range');
+  assert(second === first + 1, 'each call hands out the next sequential id');
+
+  resetCustomTexAllocation();
+  assert(allocateTexSlot() === TEX_CUSTOM_START, 'reset rewinds allocation back to the start');
+
+  // Exhaust the atlas and confirm it throws a clear error instead of silently overflowing
+  // into another texture's cell.
+  resetCustomTexAllocation();
+  const capacity = ATLAS_COLS * ATLAS_ROWS;
+  let threw = false;
+  try {
+    for (let i = 0; i < capacity + 5; i++) allocateTexSlot();
+  } catch {
+    threw = true;
+  }
+  assert(threw, 'allocateTexSlot throws once the atlas is full rather than overflowing silently');
+  resetCustomTexAllocation();
+}
+
+console.log('registerBlock');
+{
+  assert(BLOCKS.mossy_test_material === undefined, 'sanity: this test type does not pre-exist');
+  const texId = allocateTexSlot();
+  registerBlock('mossy_test_material', { all: texId, solid: true, opaque: true });
+  assert(BLOCKS.mossy_test_material !== undefined, 'registerBlock adds the new type to the shared registry');
+  assert(resolveFace('mossy_test_material', FACE.TOP) === texId, 'the newly registered type resolves faces immediately, no other code changes needed');
+
+  // Replacing an existing custom type (material maker's "edit" flow) just overwrites it.
+  const texId2 = allocateTexSlot();
+  registerBlock('mossy_test_material', { all: texId2, solid: true, opaque: true });
+  assert(resolveFace('mossy_test_material', FACE.TOP) === texId2, 'registering the same type again replaces the definition');
+}
+
+console.log('torch / torch_off — same toggle pattern as door / door_open');
+{
+  assert(BLOCKS.torch.light !== undefined, 'torch has a light field');
+  assert(BLOCKS.torch_off.light === undefined, 'torch_off has no light field — emits nothing');
+  assert(BLOCKS.torch_off.model === BLOCKS.torch.model, 'torch_off reuses the exact same physical stick model as torch');
+  assert(MODELS[BLOCKS.torch_off.model] !== undefined, 'the shared model actually exists in MODELS');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

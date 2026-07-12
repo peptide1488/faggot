@@ -57,15 +57,27 @@ export const BLOCKS = {
   stone: { all: TEX.STONE, solid: true, opaque: true },
   dirt: { all: TEX.DIRT, solid: true, opaque: true },
   sand: { all: TEX.SAND, solid: true, opaque: true },
-  grass: { top: TEX.GRASS_TOP, side: TEX.GRASS_SIDE, bottom: TEX.DIRT, solid: true, opaque: true },
+  // Per-elevation side array (same mechanic dungeon_wall uses): only the TOP block of a
+  // stack shows the grass fringe; anything stacked underneath shows plain dirt, matching
+  // how a tall grass-topped column should actually look (not fringe repeated at every level).
+  grass: { top: TEX.GRASS_TOP, side: [TEX.GRASS_SIDE, TEX.DIRT], bottom: TEX.DIRT, solid: true, opaque: true },
   water: { all: TEX.WATER, solid: false, opaque: false, translucent: true },
   wood: { all: TEX.WOOD, solid: true, opaque: true },
   planks: { all: TEX.PLANKS, solid: true, opaque: true },
-  glass: { all: TEX.GLASS, solid: true, opaque: false, translucent: true },
+  glass: { all: TEX.GLASS, solid: true, opaque: false, translucent: true, model: 'window' },
   shelf: { front: TEX.BOOKS, all: TEX.PLANKS, solid: true, opaque: true },
   dungeon_wall: {
-    top: TEX.WALL_CAP,
+    // WALL_CAP/MID/BASE are side-view crops (cropped from a tall wall image meant to be
+    // seen from the side) — correct for the side courses, but wrong for the top face
+    // (viewed straight down), which needs an actual top-down texture. STONE until a
+    // dedicated top-down wall-cap texture exists (material maker will make that easy).
+    top: TEX.STONE,
     side: [TEX.WALL_CAP, TEX.WALL_MID, TEX.WALL_BASE],
+    // Never normally seen (undersides of floor-supported walls), but must resolve to
+    // SOMETHING — previously fell through resolveFace's `return def.all` fallback to
+    // undefined (no `all` on this def either), which silently produced NaN UVs instead of
+    // throwing. Reuse the base course's texture, the closest visual match.
+    bottom: TEX.WALL_BASE,
     solid: true,
     opaque: true,
   },
@@ -74,6 +86,26 @@ export const BLOCKS = {
   window: { all: TEX.GLASS, solid: true, opaque: false, translucent: true, model: 'window' },
   table: { all: TEX.PLANKS, solid: false, opaque: false, model: 'table' },
   chair: { all: TEX.WOOD, solid: false, opaque: false, model: 'chair' },
+  /** `light`: read by the editor/host to build a lighting.js point light at this cell —
+   * same shape as Grimoire's torchPt() (radius in tiles, color 0-1 RGB, intensity). */
+  torch: {
+    all: TEX.WOOD,
+    solid: false,
+    opaque: false,
+    model: 'torch',
+    light: { radius: 5, color: [1, 0.55, 0.22], intensity: 1.6 },
+  },
+  // Unlit — same physical stick model as `torch`, just no `light` field, so it emits nothing.
+  // A toggle is swapping the stored type (exactly the `door`/`door_open` pattern already
+  // used above) — actually triggering that swap (Mage Hand, a spell, being blown out) is
+  // Grimoire's rules layer to wire up, not this engine's job; this only provides the second
+  // placeable state to swap to/from.
+  torch_off: {
+    all: TEX.WOOD,
+    solid: false,
+    opaque: false,
+    model: 'torch',
+  },
 };
 
 /**
@@ -102,6 +134,94 @@ export const MODELS = {
     { from: [0.22, 0.7, 0.0], to: [0.3, 0.78, 0.4], faces: { all: TEX.WOOD } },
     { from: [0.7, 0.7, 0.0], to: [0.78, 0.78, 0.4], faces: { all: TEX.WOOD } },
   ],
+  // Small wall-mounted stick — the light itself comes from BLOCKS.torch.light, not from any
+  // special geometry here; this is just a thin post so it reads as an object, not a decal.
+  torch: [{ from: [0.44, 0.02, 0.15], to: [0.56, 0.14, 0.75], faces: { all: TEX.WOOD } }],
+};
+
+/**
+ * Shape presets — non-cube geometry that, unlike MODELS, is MATERIAL-AGNOSTIC: each box's
+ * faces are resolved through resolveFace() using the placed block's own material + facing,
+ * exactly like a full cube or slab already does, instead of baking in one fixed texture. This
+ * is what lets any material (built-in or custom) pair with any shape independently (see
+ * CONTENT_TOOLS_PLAN.md "Block shape presets"). Assign via `BLOCKS[type].shape = 'column_thin'`
+ * (or an array — see pickDepth — for a shape that varies by depth-below-stack-top, the same
+ * mechanic `side: [cap,mid,base]` textures already use, e.g. a flared column's base/mid/cap
+ * needing different box lists, not just different textures).
+ *
+ * Only shapes representable as axis-aligned boxes live here. True diagonal geometry (a ramp/
+ * slope) needs slanted quads, a genuinely new primitive beyond this box-list mechanism — not
+ * built, flagged in CONTENT_TOOLS_PLAN.md rather than faked with stepped boxes.
+ */
+export const SHAPES = {
+  // A thin full-height post through the cell's center — thick/thin post or tree trunk (round
+  // trunks would need cylindrical geometry; this is the square approximation).
+  column_thick: [{ from: [0.2, 0.2, 0.0], to: [0.8, 0.8, 0.99] }],
+  column_thin: [{ from: [0.35, 0.35, 0.0], to: [0.65, 0.65, 0.99] }],
+  // Depth-varying flared column (see pickDepth below) — a base block gets the wide-foot
+  // shape, middle blocks the plain shaft, a cap block the wide-top shape. Use as
+  // `shape: ['column_cap', 'column_mid', 'column_base']` on a multi-block-tall column.
+  column_base: [
+    { from: [0.15, 0.15, 0.0], to: [0.85, 0.85, 0.2] },
+    { from: [0.35, 0.35, 0.2], to: [0.65, 0.65, 0.99] },
+  ],
+  column_mid: [{ from: [0.35, 0.35, 0.0], to: [0.65, 0.65, 0.99] }],
+  column_cap: [
+    { from: [0.35, 0.35, 0.0], to: [0.65, 0.65, 0.8] },
+    { from: [0.15, 0.15, 0.8], to: [0.85, 0.85, 0.99] },
+  ],
+  // Thin partition wall, centered, running east-west through the cell (rotates with facing
+  // like any other shape).
+  wall_thin_middle: [{ from: [0.01, 0.42, 0.0], to: [0.99, 0.58, 0.99] }],
+  // A short inset box near the floor — trap/lever-plate footprint.
+  pressure_plate: [{ from: [0.15, 0.15, 0.0], to: [0.85, 0.85, 0.08] }],
+  // A thin vertical pane centered in the cell, no frame — glass-without-window-model.
+  pane: [{ from: [0.02, 0.46, 0.02], to: [0.98, 0.54, 0.98] }],
+  // A thin full-footprint horizontal panel — floor grate/mat, distinct from a half-height
+  // slab (much thinner) and from pressure_plate (full footprint, not inset).
+  flat_pane: [{ from: [0.01, 0.01, 0.0], to: [0.99, 0.99, 0.08] }],
+  // Reusable furniture primitives — a counter/shelf surface and a single corner post, meant
+  // to be combined across cells with any material (unlike the fixed-material MODELS.table).
+  table_top: [{ from: [0.02, 0.02, 0.45], to: [0.98, 0.98, 0.55] }],
+  table_leg: [{ from: [0.12, 0.12, 0.0], to: [0.28, 0.28, 0.45] }],
+  // A single ascending step, low tread toward the front (north/open side), a raised ledge on
+  // the back (south) half — canonical N facing means you climb it walking south.
+  step: [
+    { from: [0.01, 0.01, 0.0], to: [0.99, 0.99, 0.5] },
+    { from: [0.01, 0.5, 0.5], to: [0.99, 0.99, 0.99] },
+  ],
+  // Thin wall flush with the cell's outer (north) edge vs inner (south) edge — companions to
+  // wall_thin_middle for lining up a wall against one side of a room instead of through its
+  // center.
+  wall_thin_outer: [{ from: [0.01, 0.02, 0.0], to: [0.99, 0.18, 0.99] }],
+  wall_thin_inner: [{ from: [0.01, 0.82, 0.0], to: [0.99, 0.98, 0.99] }],
+  // Two thin wall segments meeting at the NW corner — turns a wall corner without a gap.
+  wall_corner: [
+    { from: [0.01, 0.02, 0.0], to: [0.99, 0.18, 0.99] },
+    { from: [0.02, 0.01, 0.0], to: [0.18, 0.99, 0.99] },
+  ],
+  // Two side posts (wall_thin_middle's position, split) with a door-width gap between them —
+  // the frame a door model (MODELS.door) is meant to sit inside.
+  door_jamb: [
+    { from: [0.01, 0.42, 0.0], to: [0.3, 0.58, 0.99] },
+    { from: [0.7, 0.42, 0.0], to: [0.99, 0.58, 0.99] },
+  ],
+  // A full ring (two posts, a sill, a lintel) around a central opening — same footprint as
+  // door_jamb plus top/bottom bars, for a window opening (glass is a separate material/shape
+  // placed in the same cell, or MODELS.window).
+  window_frame: [
+    { from: [0.01, 0.42, 0.0], to: [0.15, 0.58, 0.99] },
+    { from: [0.85, 0.42, 0.0], to: [0.99, 0.58, 0.99] },
+    { from: [0.15, 0.42, 0.0], to: [0.85, 0.58, 0.2] },
+    { from: [0.15, 0.42, 0.8], to: [0.85, 0.58, 0.99] },
+  ],
+  // Square-approximated barrel silhouette: narrow top/bottom, bulging middle (round barrels
+  // would need cylindrical geometry — see the file-level note on slopes/round shapes).
+  barrel: [
+    { from: [0.25, 0.25, 0.0], to: [0.75, 0.75, 0.15] },
+    { from: [0.15, 0.15, 0.15], to: [0.85, 0.85, 0.85] },
+    { from: [0.25, 0.25, 0.85], to: [0.75, 0.75, 0.99] },
+  ],
 };
 
 /** Parse a stored block value like "shelf:S#slab" -> { type, facing, slab }. */
@@ -124,7 +244,10 @@ export function stringifyBlock({ type, facing, slab }) {
   return s;
 }
 
-function pickDepth(value, depth) {
+/** Pick the depth-indexed entry of a per-elevation array (side textures, or a shape list —
+ * see SHAPES' column_cap/mid/base), clamping to the last entry on taller stacks. Plain
+ * (non-array) values pass through unchanged — most defs don't vary by depth at all. */
+export function pickDepth(value, depth) {
   if (Array.isArray(value)) return value[Math.min(depth, value.length - 1)];
   return value;
 }
@@ -165,6 +288,44 @@ export const ATLAS_ROWS = 8;
 export const ATLAS_CELL_PX = 32;
 export const ATLAS_PX = ATLAS_COLS * ATLAS_CELL_PX;
 
+// Reserved: 0-14 built-in materials (see TEX above), 15 = orientation/debug test texture
+// (tools/voxel_orientation_test.html — 4-quadrant + top-edge marker, used to verify UV
+// orientation; keep it, it's how the 2026-07-12 face-orientation bug got diagnosed).
+// Custom materials/objects from the material maker allocate starting here.
+export const TEX_CUSTOM_START = 16;
+let nextCustomTexId = TEX_CUSTOM_START;
+
+/**
+ * Hand out the next free atlas cell for a custom material/object texture (material maker).
+ * Throws once the atlas (ATLAS_COLS x ATLAS_ROWS cells) is full rather than silently
+ * overflowing into another texture's cell — growing to a bigger atlas is a real future
+ * need, not solved here (see CONTENT_TOOLS_PLAN.md), but corrupting existing textures
+ * silently would be much worse than a clear error.
+ */
+export function allocateTexSlot() {
+  if (nextCustomTexId >= ATLAS_COLS * ATLAS_ROWS) {
+    throw new Error(`Atlas is full (${ATLAS_COLS * ATLAS_ROWS} cells) — no more custom texture slots. Needs a bigger atlas.`);
+  }
+  return nextCustomTexId++;
+}
+
+/** Reset custom texture allocation. ONLY for tests, or reloading a material library from a
+ * clean slate — never call this mid-session while existing custom blocks still reference
+ * previously-allocated ids, or two materials will silently share one atlas cell. */
+export function resetCustomTexAllocation() {
+  nextCustomTexId = TEX_CUSTOM_START;
+}
+
+/**
+ * Register a new (or replace an existing) block type at runtime — the material maker's
+ * entry point into the engine. Mutates the shared BLOCKS registry in place, so every
+ * existing consumer (resolveFace, mesher culling/AO, surface.js, pick.js) sees the new
+ * material immediately with zero code changes anywhere else.
+ */
+export function registerBlock(type, def) {
+  BLOCKS[type] = def;
+}
+
 export const PLACEHOLDER_COLORS = {
   [TEX.GRASS_TOP]: '#4a9c3e',
   [TEX.GRASS_SIDE]: '#6b8f3a',
@@ -203,6 +364,35 @@ export function atlasUV(texId, atlasPx = ATLAS_PX) {
   };
 }
 
+/**
+ * Generic version of atlasUV/atlasCellRect, parameterized by grid shape instead of the fixed
+ * global ATLAS_COLS/ROWS/CELL_PX — used by customMaterials.js, where every material gets its
+ * OWN small texture/grid (its own "atlas") instead of sharing cells in the one global atlas.
+ * Kept separate from atlasUV/atlasCellRect (which stay exactly as-is, cols/rows fixed) so the
+ * built-in-material path is zero-risk untouched by the per-material-texture pivot.
+ */
+export function gridCellPixelRect(index, cols, cellPx) {
+  const col = index % cols;
+  const row = Math.floor(index / cols);
+  return { x: col * cellPx, y: row * cellPx, w: cellPx, h: cellPx };
+}
+
+/** Half-texel-inset UV rect for one cell of an arbitrary cols x rows grid of cellPx-sized
+ * cells — same bleed-avoidance as atlasUV, generalized to any grid shape/resolution. */
+export function computeGridUV(index, cols, rows, cellPx) {
+  const { x, y } = gridCellPixelRect(index, cols, cellPx);
+  const w = cols * cellPx;
+  const h = rows * cellPx;
+  const halfX = 0.5 / w;
+  const halfY = 0.5 / h;
+  return {
+    u0: x / w + halfX,
+    v0: y / h + halfY,
+    u1: (x + cellPx) / w - halfX,
+    v1: (y + cellPx) / h - halfY,
+  };
+}
+
 /** Load the real atlas PNG (browser-only). Falls back to the placeholder canvas if the
  * file is missing, so pages never hard-fail just because art hasn't been generated yet. */
 export function loadAtlasImage(url = 'src/voxel/atlas.png') {
@@ -233,4 +423,83 @@ export function drawPlaceholderAtlas(ctx) {
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, ATLAS_CELL_PX - 1, ATLAS_CELL_PX - 1);
   }
+}
+
+// --- Material maker atlas editing (browser-only). The renderer accepts any CanvasImageSource
+// for its atlas texture, so a mutable <canvas> works as a drop-in replacement for the static
+// PNG — draw into it at runtime, then re-upload via renderer.setAtlasImage(canvas) again. ---
+
+/** Like loadAtlasImage, but returns a mutable <canvas> with the atlas already drawn onto it
+ * — the material maker draws custom textures into this SAME canvas afterward, then the
+ * caller re-uploads it to the renderer (setAtlasImage) each time it changes. */
+export async function loadAtlasCanvas(url = 'src/voxel/atlas.png') {
+  const source = await loadAtlasImage(url);
+  const canvas = document.createElement('canvas');
+  canvas.width = ATLAS_PX;
+  canvas.height = ATLAS_PX;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, 0, 0);
+  return canvas;
+}
+
+/** Draw an arbitrary image/canvas source into one atlas cell, nearest-neighbor scaled to
+ * ATLAS_CELL_PX regardless of the source's native size — the material maker's per-face
+ * upload path. Caller is responsible for re-uploading the atlas canvas to the renderer
+ * afterward (drawing alone doesn't touch the GPU texture). */
+export function drawImageIntoAtlasCell(atlasCtx, image, texId) {
+  const { x, y } = atlasCellRect(texId);
+  atlasCtx.imageSmoothingEnabled = false;
+  atlasCtx.clearRect(x, y, ATLAS_CELL_PX, ATLAS_CELL_PX);
+  atlasCtx.drawImage(image, x, y, ATLAS_CELL_PX, ATLAS_CELL_PX);
+}
+
+/** Like drawImageIntoAtlasCell, but for a material's own per-material canvas/grid (see
+ * gridCellPixelRect/computeGridUV) instead of the one shared atlas. */
+export function drawImageIntoGridCell(ctx, image, index, cols, cellPx) {
+  const { x, y, w, h } = gridCellPixelRect(index, cols, cellPx);
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(x, y, w, h);
+  ctx.drawImage(image, x, y, w, h);
+}
+
+/** Read a user-uploaded image File (material maker file input) into an <img>, ready to hand
+ * to drawImageIntoAtlasCell. */
+export function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(e);
+    };
+    img.src = url;
+  });
+}
+
+/** Slice a 4x4 tile sheet image into 16 individual cell-sized canvases, row-major (index 0
+ * = sheet's top-left tile ... 15 = bottom-right), for an autotile material's topAutotile
+ * upload. The sheet's tile-N position must be authored to represent corner-mask N (bit0=NW
+ * corner matches, bit1=NE, bit2=SE, bit3=SW matches this material) — a direct index, not a
+ * blob-tileset convention — document this in the material maker UI, not just here. */
+export function sliceSheet4x4(image) {
+  const cellW = image.width / 4;
+  const cellH = image.height / 4;
+  const out = [];
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 4; col++) {
+      const c = document.createElement('canvas');
+      c.width = cellW;
+      c.height = cellH;
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(image, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH);
+      out.push(c);
+    }
+  }
+  return out;
 }
