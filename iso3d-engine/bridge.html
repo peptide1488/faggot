@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Iso3D ↔ Grimoire Bridge</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0c0e12; color: #e8ecf1; font-family: system-ui, sans-serif; }
+    #stage { position: absolute; inset: 0; }
+    #hud {
+      position: absolute; top: 12px; left: 12px; z-index: 2;
+      background: rgba(12,16,24,.9); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px; padding: 12px 14px; max-width: 320px;
+    }
+    h1 { margin: 0 0 6px; font-size: 15px; }
+    .muted { color: #8b95a5; font-size: 12px; line-height: 1.4; }
+    button {
+      margin: 4px 4px 0 0; padding: 6px 10px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.06);
+      color: inherit; cursor: pointer; font-size: 12px;
+    }
+    button:hover { border-color: #5b9fd4; }
+    #log {
+      position: absolute; bottom: 12px; left: 12px; z-index: 2;
+      width: min(400px, 94vw); max-height: 22vh; overflow: auto;
+      background: rgba(12,16,24,.9); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px; padding: 10px 12px; font-size: 12px;
+    }
+    #log div { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,.05); color: #c5cdd8; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="hud">
+    <h1>Grimoire bridge demo</h1>
+    <div class="muted">
+      Same session shape Grimoire uses (<code>map.tiles</code>, players, monsters).
+      Sprites load from <code>../dnd-character/sprites/</code> when served from parent folder,
+      or fall back to colored tokens.
+    </div>
+    <div style="margin-top:8px">
+      <button type="button" id="btnRot">Rotate 90°</button>
+      <button type="button" id="btnReset">Reset session</button>
+      <button type="button" id="btnFx">Test FX</button>
+    </div>
+    <div class="muted" style="margin-top:8px" id="info">…</div>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { Iso3DHost, makeDemoGrimoireSession, APP_VERSION } from './src/host.js';
+
+    const stage = document.getElementById('stage');
+    const logEl = document.getElementById('log');
+    const info = document.getElementById('info');
+    const lines = [];
+
+    function log(msg) {
+      lines.push(msg);
+      if (lines.length > 30) lines.shift();
+      logEl.innerHTML = lines.slice().reverse().map((l) => `<div>${l}</div>`).join('');
+    }
+
+    // Prefer Grimoire sprites if sibling folder is reachable
+    const assetBases = [
+      '../dnd-character/',
+      '/dnd-character/',
+      '',
+    ];
+
+    let host;
+    let session = makeDemoGrimoireSession();
+
+    function tryBase(i) {
+      if (host) host.destroy();
+      const base = assetBases[i] || '';
+      host = new Iso3DHost(stage, { assetBase: base });
+      host.setMapRotation(0);
+      host.setSession(session);
+      host.centerOnMap();
+      host.onTileClick = (x, y, unit) => {
+        if (unit) log(`Unit: ${unit.label} @ (${x},${y}) HP ${unit.hp}/${unit.maxHp}`);
+        else log(`Tile (${x}, ${y})`);
+      };
+      info.textContent = `Iso3D ${APP_VERSION} · assetBase="${base || '(none)'}" · click tiles`;
+      log(`Session loaded · ${session.players.length} PCs · ${session.monsters.length} monsters · assets: ${base || 'fallback tokens'}`);
+    }
+
+    tryBase(0);
+
+    document.getElementById('btnRot').onclick = () => host.rotate(1);
+    document.getElementById('btnReset').onclick = () => {
+      session = makeDemoGrimoireSession();
+      host.setSession(session, { resetCamera: true });
+      log('Session reset');
+    };
+    document.getElementById('btnFx').onclick = () => {
+      const p = session.players[0];
+      const m = session.monsters[0];
+      if (!p || !m) return;
+      host.handleGameEvent({
+        type: 'attack',
+        from: { x: p.x, y: p.y },
+        to: { x: m.x, y: m.y },
+        ranged: true,
+        hit: true,
+        crit: false,
+        dmg: 7,
+        dtype: 'piercing',
+        cover: 2,
+      });
+      log('FX: ranged hit 7 (cover +2)');
+    };
+  </script>
+</body>
+</html>

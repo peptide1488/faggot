@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>voxel castle checkpoint</title>
+<style>html,body{margin:0;background:#14161c;overflow:hidden;height:100%}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import { getCameraMatrix } from '../src/math.js';
+import { VoxelStore } from '../src/voxel/store.js';
+import { buildMesh } from '../src/voxel/mesher.js';
+import { loadAtlasImage } from '../src/voxel/blocks.js';
+import { VoxelRenderer } from '../src/voxel/renderer.js';
+import { EditorHistory, applyEdit } from '../src/voxel/editor.js';
+import { resolveLighting } from '../src/voxel/lighting.js';
+
+// Build a small 5x5 room by hand: stone floor, dungeon_wall perimeter, a door on the south
+// wall, a window on the north wall, and table+chair+shelf furniture inside. Exercises the
+// SAME production modules the interactive editor uses (store/editor/mesher/renderer),
+// including a real save-JSON -> fromJSON reload before the final render.
+let store = new VoxelStore();
+const history = new EditorHistory();
+
+for (let r = 0; r <= 5; r++) {
+  for (let c = 0; c <= 5; c++) {
+    store.set(c, r, 0, 'stone');
+  }
+}
+for (let c = 0; c <= 5; c++) {
+  store.set(c, 0, 1, 'dungeon_wall');
+  store.set(c, 5, 1, 'dungeon_wall');
+}
+for (let r = 0; r <= 5; r++) {
+  store.set(0, r, 1, 'dungeon_wall');
+  store.set(5, r, 1, 'dungeon_wall');
+}
+
+// Door on the south wall (r=5), via applyEdit (the real editor code path) — facing S.
+applyEdit(store, history, 2, 5, 1, 'door:S');
+// Window on the north wall (r=0), facing N.
+applyEdit(store, history, 3, 0, 1, 'window:N');
+// Furniture inside, also via applyEdit.
+applyEdit(store, history, 2, 2, 1, 'table:N');
+applyEdit(store, history, 2, 3, 1, 'chair:N');
+applyEdit(store, history, 4, 1, 1, 'shelf:S');
+
+// Round-trip through the real save/load path before rendering, so the screenshot proves
+// save/reload fidelity too, not just the freshly-built store.
+const saved = store.toJSON();
+const jsonText = JSON.stringify(saved);
+store = VoxelStore.fromJSON(JSON.parse(jsonText));
+
+const canvas = document.getElementById('c');
+const atlasImg = await loadAtlasImage('../src/voxel/atlas.png');
+
+const renderer = new VoxelRenderer(canvas);
+renderer.setAtlasImage(atlasImg);
+
+// Dungeon ambient (dark) + a warm torch on the wall next to the door — proves real colored
+// point lights (ported from Grimoire's lighting.js) reach the voxel mesher, not just the
+// flat directional/AO shading. Radius/color/intensity match the same torchPt shape Grimoire
+// uses for map torches (index.html), so this is the actual data shape the rules engine emits.
+const lightProfile = resolveLighting({
+  mode: 'dungeon',
+  points: [{ col: 1, row: 4, radius: 5, color: [1, 0.55, 0.22], intensity: 1.6, kind: 'torch' }],
+});
+renderer.setMesh(buildMesh(store, { lightProfile }));
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const b = store.bounds();
+const cam = {
+  rot: 0.7,
+  zoom: 20 / Math.max(b.maxC - b.minC, b.maxR - b.minR, 1),
+  panX: (b.minC + b.maxC) / 2,
+  panY: (b.minR + b.maxR) / 2,
+};
+const aspect = canvas.width / canvas.height;
+const { matrix } = getCameraMatrix(cam.rot, cam.zoom, cam.panX, cam.panY, aspect);
+renderer.render(matrix);
+
+window.__castleReady = true;
+window.__castleStats = { blockCount: store.size, historyOps: history.stack.length };
+</script>
+</body>
+</html>

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iso3D Engine v0.5.0</title>
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --panel: rgba(12, 16, 24, 0.9);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #e8ecf1;
+      --muted: #8b95a5;
+      --accent: #5b9fd4;
+      --good: #5dca7a;
+      --bad: #e06060;
+      --edit: #e0b04a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+    }
+    body.edit-mode canvas#gl { cursor: cell; }
+    canvas#gl {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: crosshair;
+    }
+    .panel {
+      position: absolute;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      backdrop-filter: blur(8px);
+      pointer-events: auto;
+      max-width: min(360px, 94vw);
+    }
+    #hud { top: 12px; left: 12px; z-index: 2; }
+    #rosterPanel {
+      top: 12px;
+      right: 12px;
+      width: min(220px, 40vw);
+      z-index: 2;
+    }
+    #editorPanel {
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(420px, 94vw);
+      z-index: 3;
+      border-color: rgba(224, 176, 74, 0.35);
+    }
+    #logPanel {
+      bottom: 12px;
+      left: 12px;
+      width: min(440px, 94vw);
+      max-height: 22vh;
+      display: flex;
+      flex-direction: column;
+      z-index: 2;
+    }
+    #editModeBadge {
+      position: absolute;
+      top: 12px;
+      right: 50%;
+      transform: translateX(50%);
+      background: rgba(224, 176, 74, 0.9);
+      color: #1a1408;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 4px 12px;
+      border-radius: 999px;
+      z-index: 4;
+      pointer-events: none;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .status {
+      font-size: 13px;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .status.win { color: var(--good); font-weight: 700; }
+    .status.lose { color: var(--bad); font-weight: 700; }
+    .status.edit { color: var(--edit); font-weight: 700; }
+    #unitInfo {
+      font-size: 12px;
+      line-height: 1.45;
+      margin-bottom: 10px;
+      min-height: 3em;
+    }
+    #unitInfo .hint, #unitInfo .muted { color: var(--muted); }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    button, .swatch {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled), .swatch:hover {
+      background: rgba(91, 159, 212, 0.25);
+      border-color: var(--accent);
+    }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+    button.active, .swatch.active {
+      border-color: var(--edit);
+      background: rgba(224, 176, 74, 0.2);
+      box-shadow: 0 0 0 1px rgba(224, 176, 74, 0.35);
+    }
+    button#btnHeal:not(:disabled) { border-color: rgba(109, 206, 122, 0.45); }
+    button#btnAttack:not(:disabled) { border-color: rgba(224, 96, 96, 0.4); }
+    button#btnEdit { border-color: rgba(224, 176, 74, 0.5); }
+    .swatch {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      position: relative;
+    }
+    .swatch span {
+      position: absolute;
+      inset: 0;
+      border-radius: 5px;
+      margin: 3px;
+    }
+    .swatch small {
+      position: absolute;
+      bottom: -14px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 9px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .swatch-row {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0 18px;
+      flex-wrap: wrap;
+    }
+    .help {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    #logTitle {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    #log {
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #c5cdd8;
+      flex: 1;
+    }
+    #log div {
+      padding: 2px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .roster-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .roster-item .name { flex: 1; }
+    .roster-item .hp { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .roster-item.dead { opacity: 0.4; text-decoration: line-through; }
+    .roster-item.active { background: rgba(255, 200, 60, 0.12); border-radius: 4px; }
+    .roster-item .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+    .roster-item.ally .dot { background: #4aa3e8; }
+    .roster-item.foe .dot { background: #e06060; }
+    kbd {
+      font-size: 10px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 4px;
+      background: rgba(255,255,255,0.05);
+    }
+    #tileInspect {
+      font-size: 11px;
+      color: var(--edit);
+      font-variant-numeric: tabular-nums;
+      min-height: 1.2em;
+      margin-bottom: 6px;
+    }
+    #editorToolLabel {
+      font-size: 12px;
+      color: var(--edit);
+      margin-bottom: 6px;
+    }
+    body.edit-mode #hud .combat-only { opacity: 0.35; pointer-events: none; }
+    #versionLabel {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      z-index: 5;
+      font-size: 11px;
+      color: rgba(255,255,255,0.45);
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+      letter-spacing: 0.04em;
+    }
+    #bootError {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+      max-width: 90vw;
+      background: rgba(40, 12, 12, 0.95);
+      border: 1px solid #e06060;
+      color: #ffc9c9;
+      padding: 16px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div id="bootError" hidden></div>
+  <div id="versionLabel">v0.5.0</div>
+  <div id="editModeBadge" hidden>EDIT MODE</div>
+
+  <div id="hud" class="panel">
+    <h1>Iso3D · Mini Tactics <span id="versionInline" style="font-weight:500;color:var(--muted);font-size:12px">v0.5.0</span></h1>
+    <div id="status" class="status">Loading…</div>
+    <div id="unitInfo"></div>
+    <div class="row combat-only">
+      <button id="btnMove" type="button">Move <kbd>M</kbd></button>
+      <button id="btnAttack" type="button">Attack <kbd>A</kbd></button>
+      <button id="btnHeal" type="button">Heal <kbd>H</kbd></button>
+      <button id="btnWait" type="button">Wait <kbd>W</kbd></button>
+      <button id="btnEnd" type="button">End Turn</button>
+    </div>
+    <div class="row">
+      <button id="btnRotate" type="button">Rotate <kbd>R</kbd></button>
+      <button id="btnRestart" type="button">New Battle <kbd>N</kbd></button>
+      <button id="btnEdit" type="button">Terrain <kbd>E</kbd></button>
+    </div>
+    <div class="help">
+      Blue = move · Red = attack · Green = heal<br />
+      <kbd>E</kbd> terrain editor · Shift-drag pan while editing
+    </div>
+  </div>
+
+  <div id="editorPanel" class="panel" hidden>
+    <h2>Terrain editor</h2>
+    <div id="editorToolLabel">Paint: Grass</div>
+    <div id="tileInspect"></div>
+    <div class="row">
+      <button type="button" data-tool="paint" class="active">Paint</button>
+      <button type="button" data-tool="raise">Raise <kbd>]</kbd></button>
+      <button type="button" data-tool="lower">Lower <kbd>[</kbd></button>
+      <button type="button" data-tool="flatten">Flatten</button>
+    </div>
+    <div class="swatch-row">
+      <button type="button" class="swatch active" data-terrain="0" title="Grass (1)">
+        <span style="background:#5a9a3e"></span><small>Grass</small>
+      </button>
+      <button type="button" class="swatch" data-terrain="1" title="Dirt (2)">
+        <span style="background:#8b6a45"></span><small>Dirt</small>
+      </button>
+      <button type="button" class="swatch" data-terrain="2" title="Water (3)">
+        <span style="background:#2a6fb0"></span><small>Water</small>
+      </button>
+      <button type="button" class="swatch" data-terrain="5" title="Cliff (4)">
+        <span style="background:#7a7368"></span><small>Cliff</small>
+      </button>
+      <button type="button" class="swatch" data-terrain="3" title="Sand">
+        <span style="background:#c9b56a"></span><small>Sand</small>
+      </button>
+      <button type="button" class="swatch" data-terrain="4" title="Mud">
+        <span style="background:#5c4528"></span><small>Mud</small>
+      </button>
+    </div>
+    <div class="row">
+      <button type="button" id="btnUndo">Undo <kbd>Z</kbd></button>
+      <button type="button" id="btnResetMap">Reset demo map</button>
+      <button type="button" id="btnExportMap">Copy JSON</button>
+      <button type="button" id="btnImportMap">Import JSON</button>
+    </div>
+    <div class="help">
+      Click-drag to paint · keys <kbd>1</kbd>–<kbd>4</kbd> = grass/dirt/water/cliff<br />
+      Cliff paint auto-raises · water flattens · raise builds real cliff faces
+    </div>
+  </div>
+
+  <div id="rosterPanel" class="panel">
+    <h2>Roster</h2>
+    <div id="roster"></div>
+  </div>
+
+  <div id="logPanel" class="panel">
+    <div id="logTitle">Combat log</div>
+    <div id="log"></div>
+  </div>
+
+  <!-- ?v= cache-bust when APP_VERSION bumps (see src/version.js) -->
+  <script type="module" src="./src/main.js?v=0.5.0"></script>
+  <script>
+    // If ES modules never start (file://, blocked script, stale cache), surface a hint
+    setTimeout(function () {
+      var s = document.getElementById('status');
+      if (!s) return;
+      var t = s.textContent || '';
+      if (t === 'Loading…' || t === 'Loading...' || t === 'Starting…') {
+        s.textContent = 'STUCK LOADING';
+        s.className = 'status lose';
+        var b = document.getElementById('bootError');
+        if (b) {
+          b.hidden = false;
+          b.textContent =
+            'App JS never finished booting (v0.5.0).\n\n' +
+            '1. Open via http://localhost:5173/  (not file://)\n' +
+            '2. Hard refresh: Ctrl+F5\n' +
+            '3. Press F12 → Console and look for red errors\n' +
+            '4. Confirm you see v0.5.0 bottom-right after load';
+        }
+      }
+    }, 2500);
+  </script>
+</body>
+</html>

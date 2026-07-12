@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>voxel unit/movement checkpoint</title>
+<style>html,body{margin:0;background:#14161c;overflow:hidden;height:100%}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import { getCameraMatrix } from '../src/math.js';
+import { findPath } from '../src/pathfinding.js';
+import { VoxelStore } from '../src/voxel/store.js';
+import { buildMesh, buildBoxMesh } from '../src/voxel/mesher.js';
+import { loadAtlasImage, TEX } from '../src/voxel/blocks.js';
+import { VoxelRenderer } from '../src/voxel/renderer.js';
+import { findSurface, surfaceToLegacyMap } from '../src/voxel/surface.js';
+
+// A little staircase, same shape proven in tests/voxel-surface.test.js: flat ground, a
+// half-step (slab), a full step, then flat ground again — the checkpoint scenario
+// ("knight walks around the voxel map, up steps, onto slabs").
+const store = new VoxelStore();
+for (let r = 0; r <= 2; r++) {
+  store.set(0, r, 0, 'grass');
+  store.set(1, r, 0, 'grass');
+  store.set(2, r, 0, 'grass');
+  store.set(2, r, 1, 'stone#slab'); // half-step
+  store.set(3, r, 0, 'grass');
+  store.set(3, r, 1, 'stone'); // full step
+  store.set(4, r, 0, 'grass');
+  store.set(4, r, 1, 'stone');
+}
+
+const cols = 5, rows = 3;
+const legacyMap = surfaceToLegacyMap(store, cols, rows);
+const path = findPath(legacyMap, 0, 1, 4, 1);
+if (!path || path.length !== 5) throw new Error('unexpected path: ' + JSON.stringify(path));
+
+// Render the knight standing at each waypoint's REAL surface height (proves the surface
+// derivation + real findPath output agree at every step, including the slab half-step) —
+// three stand-ins along the route: start, on the slab, and the far end atop the full step.
+const stops = [path[0], path[2], path[4]]; // (0,1) flat, (2,1) slab, (4,1) top
+
+const canvas = document.getElementById('c');
+const atlasImg = await loadAtlasImage('../src/voxel/atlas.png');
+
+const renderer = new VoxelRenderer(canvas);
+renderer.setAtlasImage(atlasImg);
+renderer.setMesh(buildMesh(store));
+
+const KNIGHT_SIZE = 0.28;
+const KNIGHT_HEIGHT = 1.6;
+const buffers = [];
+for (const stop of stops) {
+  const surf = findSurface(store, stop.x, stop.y);
+  const z = surf.standZ;
+  const box = {
+    from: [stop.x + 0.5 - KNIGHT_SIZE, stop.y + 0.5 - KNIGHT_SIZE, z],
+    to: [stop.x + 0.5 + KNIGHT_SIZE, stop.y + 0.5 + KNIGHT_SIZE, z + KNIGHT_HEIGHT],
+  };
+  buffers.push(buildBoxMesh(box, TEX.UNIT));
+}
+const merged = buffers.reduce((a, b) => ({
+  positions: a.positions.concat(b.positions),
+  uvs: a.uvs.concat(b.uvs),
+  colors: a.colors.concat(b.colors),
+  indices: a.indices.concat(b.indices.map((i) => i + a.positions.length / 3)),
+}));
+renderer.setUnitMesh(merged);
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const cam = { rot: 0.75, zoom: 20 / cols, panX: 2, panY: 1 };
+const aspect = canvas.width / canvas.height;
+const { matrix } = getCameraMatrix(cam.rot, cam.zoom, cam.panX, cam.panY, aspect);
+renderer.render(matrix);
+
+window.__unitCheckReady = true;
+window.__unitCheckStats = { path, stops };
+</script>
+</body>
+</html>

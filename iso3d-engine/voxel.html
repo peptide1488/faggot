@@ -1,0 +1,419 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Voxel Iso3D — test harness</title>
+<style>
+  html, body { margin: 0; background: #14161c; overflow: hidden; height: 100%; font-family: system-ui, sans-serif; }
+  canvas { display: block; cursor: crosshair; }
+  canvas.orbiting { cursor: grabbing; }
+  #hud {
+    position: fixed; top: 8px; left: 8px; color: #ddd; font: 12px monospace;
+    background: #0009; padding: 8px 10px; border-radius: 6px; max-width: 320px;
+  }
+  #hud .row { margin-bottom: 6px; }
+  #palette { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+  .swatch {
+    width: 22px; height: 22px; border: 2px solid #0000; border-radius: 3px; cursor: pointer;
+    font-size: 9px;
+  }
+  .swatch.selected { border-color: #fff; }
+  button { font: 11px monospace; cursor: pointer; }
+  textarea { width: 300px; font: 10px monospace; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div class="row">left click/drag = place/paint &middot; alt+click = remove &middot; right-drag = orbit &middot; wheel = zoom &middot; Q/E = rotate cam &middot; R = rotate brush &middot; P = paint/place toggle</div>
+  <div class="row">Brush: <span id="brushLabel"></span> &middot; Mode: <span id="modeLabel"></span> &middot; Facing: <span id="facingLabel"></span> &middot; Slab: <span id="slabLabel"></span></div>
+  <div id="palette"></div>
+  <div class="row">
+    <button id="btnSlab">toggle slab</button>
+    <button id="btnMode">toggle mode</button>
+    <button id="btnUndo">undo</button>
+    <button id="btnUnitMode">toggle unit-move</button>
+  </div>
+  <div class="row">
+    <button id="btnExport">Export JSON</button>
+    <button id="btnImport">Import JSON</button>
+  </div>
+  <textarea id="jsonBox" rows="4"></textarea>
+</div>
+<script type="module">
+import { getCameraMatrix, invert, transformMat4, createMat4 } from './src/math.js';
+import { buildDemoMap } from './src/map.js';
+import { findPath } from './src/pathfinding.js';
+import { VoxelStore, fromLegacyMap } from './src/voxel/store.js';
+import { buildMesh, buildBoxMesh } from './src/voxel/mesher.js';
+import { loadAtlasImage, BLOCKS, TEX, FACING, FACING_NAMES, PLACEHOLDER_COLORS, stringifyBlock } from './src/voxel/blocks.js';
+import { VoxelRenderer } from './src/voxel/renderer.js';
+import { raycastVoxels, adjacentCell } from './src/voxel/pick.js';
+import { EditorHistory, applyEdit, isBedrock } from './src/voxel/editor.js';
+import { findSurface, surfaceToLegacyMap } from './src/voxel/surface.js';
+
+const canvas = document.getElementById('c');
+let store = fromLegacyMap(buildDemoMap(12, 12));
+const history = new EditorHistory();
+
+const atlasImg = await loadAtlasImage('src/voxel/atlas.png');
+
+const renderer = new VoxelRenderer(canvas);
+renderer.setAtlasImage(atlasImg);
+
+let dirty = true;
+function markDirty() { dirty = true; }
+
+function rebuildIfDirty() {
+  if (!dirty) return;
+  renderer.setMesh(buildMesh(store));
+  dirty = false;
+}
+
+// --- Camera ---
+function centerCamera() {
+  const b = store.bounds();
+  const centerC = (b.minC + b.maxC) / 2;
+  const centerR = (b.minR + b.maxR) / 2;
+  const extent = Math.max(b.maxC - b.minC, b.maxR - b.minR, 1);
+  return { rot: 0.6, zoom: 20 / extent, panX: centerC, panY: centerR };
+}
+const cam = centerCamera();
+
+function resize() {
+  renderer.resize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', resize);
+
+// --- Brush / editor state ---
+const PALETTE_TYPES = Object.keys(BLOCKS);
+const brush = { type: 'stone', facing: FACING.N, slab: false };
+let paintMode = false;
+
+function blockNeedsFacing(type) {
+  const def = BLOCKS[type];
+  if (!def) return false;
+  if (def.model) return true;
+  return ['front', 'right', 'back', 'left'].some((k) => def[k] !== undefined);
+}
+
+function pendingBlockString() {
+  const def = BLOCKS[brush.type];
+  const facing = blockNeedsFacing(brush.type) ? brush.facing : null;
+  const slab = def.model ? false : brush.slab;
+  return stringifyBlock({ type: brush.type, facing, slab });
+}
+
+function refreshHud() {
+  document.getElementById('brushLabel').textContent = brush.type;
+  document.getElementById('modeLabel').textContent = unitMode ? 'UNIT MOVE' : paintMode ? 'paint' : 'place';
+  document.getElementById('facingLabel').textContent = FACING_NAMES[brush.facing];
+  document.getElementById('slabLabel').textContent = brush.slab ? 'on' : 'off';
+}
+
+const paletteEl = document.getElementById('palette');
+for (const type of PALETTE_TYPES) {
+  const btn = document.createElement('div');
+  btn.className = 'swatch';
+  btn.title = type;
+  btn.style.background = PLACEHOLDER_COLORS[BLOCKS[type].all ?? BLOCKS[type].top ?? BLOCKS[type].front] || '#888';
+  btn.addEventListener('click', () => {
+    brush.type = type;
+    for (const s of paletteEl.children) s.classList.remove('selected');
+    btn.classList.add('selected');
+    refreshHud();
+  });
+  paletteEl.appendChild(btn);
+}
+paletteEl.firstChild?.classList.add('selected');
+
+document.getElementById('btnSlab').addEventListener('click', () => {
+  brush.slab = !brush.slab;
+  refreshHud();
+});
+document.getElementById('btnMode').addEventListener('click', () => {
+  paintMode = !paintMode;
+  refreshHud();
+});
+document.getElementById('btnUndo').addEventListener('click', () => {
+  history.undo(store);
+  markDirty();
+});
+document.getElementById('btnExport').addEventListener('click', () => {
+  document.getElementById('jsonBox').value = JSON.stringify(store.toJSON());
+});
+document.getElementById('btnImport').addEventListener('click', () => {
+  try {
+    const data = JSON.parse(document.getElementById('jsonBox').value);
+    store = VoxelStore.fromJSON(data);
+    history.clear();
+    placeKnightOnFirstSurface();
+    markDirty();
+  } catch (e) {
+    alert('Invalid voxel JSON: ' + e.message);
+  }
+});
+
+// --- Unit (knight) + gameplay surface movement ---
+const KNIGHT_SIZE = 0.3;
+const KNIGHT_HEIGHT = 1.6;
+const STEP_TIME = 0.35; // seconds per tile
+const knight = { c: 0, r: 0, standZ: 1, path: null, pathIdx: 0, moving: false, t0: 0, fromC: 0, fromR: 0, fromZ: 0, toC: 0, toR: 0, toZ: 0 };
+let unitMode = false;
+
+function placeKnightOnFirstSurface() {
+  const b = store.bounds();
+  for (let r = b.minR; r <= b.maxR; r++) {
+    for (let c = b.minC; c <= b.maxC; c++) {
+      const s = findSurface(store, c, r);
+      if (s) {
+        knight.c = c;
+        knight.r = r;
+        knight.standZ = s.standZ;
+        knight.moving = false;
+        knight.path = null;
+        return;
+      }
+    }
+  }
+}
+placeKnightOnFirstSurface();
+
+function startLeg() {
+  const from = knight.path[knight.pathIdx - 1];
+  const to = knight.path[knight.pathIdx];
+  knight.fromC = from.x;
+  knight.fromR = from.y;
+  knight.fromZ = knight.standZ;
+  const surf = findSurface(store, to.x, to.y);
+  knight.toC = to.x;
+  knight.toR = to.y;
+  knight.toZ = surf ? surf.standZ : knight.standZ;
+  knight.t0 = performance.now();
+  knight.moving = true;
+}
+
+function tryMoveKnightTo(targetC, targetR) {
+  if (knight.moving) return;
+  const b = store.bounds();
+  const cols = b.maxC + 1;
+  const rows = b.maxR + 1;
+  const legacyMap = surfaceToLegacyMap(store, cols, rows);
+  const path = findPath(legacyMap, Math.round(knight.c), Math.round(knight.r), targetC, targetR);
+  if (!path || path.length < 2) return;
+  knight.path = path;
+  knight.pathIdx = 1;
+  startLeg();
+}
+
+function tickKnight() {
+  if (!knight.moving) return;
+  const elapsed = (performance.now() - knight.t0) / 1000;
+  const t = Math.min(1, elapsed / STEP_TIME);
+  knight.c = knight.fromC + (knight.toC - knight.fromC) * t;
+  knight.r = knight.fromR + (knight.toR - knight.fromR) * t;
+  knight.standZ = knight.fromZ + (knight.toZ - knight.fromZ) * t;
+  if (t >= 1) {
+    knight.c = knight.toC;
+    knight.r = knight.toR;
+    knight.standZ = knight.toZ;
+    knight.pathIdx++;
+    if (knight.pathIdx >= knight.path.length) knight.moving = false;
+    else startLeg();
+  }
+}
+
+document.getElementById('btnUnitMode').addEventListener('click', () => {
+  unitMode = !unitMode;
+  refreshHud();
+});
+
+refreshHud();
+
+// --- Picking: screen pixel -> grid-space ray, via full MVP inverse (works for ortho too) ---
+function screenToGridRay(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+  const ndcY = -(((clientY - rect.top) / rect.height) * 2 - 1);
+  const aspect = canvas.width / canvas.height;
+  const { matrix } = getCameraMatrix(cam.rot, cam.zoom, cam.panX, cam.panY, aspect);
+  const inv = invert(createMat4(), matrix);
+  if (!inv) return null;
+  const near = [0, 0, 0];
+  const far = [0, 0, 0];
+  transformMat4(near, [ndcX, ndcY, -1], inv);
+  transformMat4(far, [ndcX, ndcY, 1], inv);
+  const worldDir = [far[0] - near[0], far[1] - near[1], far[2] - near[2]];
+  // World space here is Y-up (x=c, y=elevation, z=r) — swap back to grid space (c, r, z).
+  const origin = [near[0], near[2], near[1]];
+  const dir = [worldDir[0], worldDir[2], worldDir[1]];
+  return { origin, dir };
+}
+
+function pickAt(clientX, clientY) {
+  const ray = screenToGridRay(clientX, clientY);
+  if (!ray) return null;
+  return raycastVoxels(store, ray.origin, ray.dir);
+}
+
+// --- Ghost preview ---
+function mergeBuffers(a, b) {
+  const off = a.positions.length / 3;
+  return {
+    positions: a.positions.concat(b.positions),
+    uvs: a.uvs.concat(b.uvs),
+    colors: a.colors.concat(b.colors),
+    indices: a.indices.concat(b.indices.map((i) => i + off)),
+  };
+}
+
+function updateGhost(hit, altHeld) {
+  if (!hit || altHeld) {
+    renderer.setGhostMesh(null);
+    return;
+  }
+  const target = paintMode ? { c: hit.c, r: hit.r, z: hit.z } : adjacentCell(hit);
+  if (!paintMode && store.has(target.c, target.r, target.z)) {
+    renderer.setGhostMesh(null);
+    return;
+  }
+  const ghostStore = new VoxelStore();
+  ghostStore.set(target.c, target.r, target.z, pendingBlockString());
+  const mesh = buildMesh(ghostStore);
+  renderer.setGhostMesh(mergeBuffers(mesh.opaque, mesh.translucent));
+}
+
+// --- Editing ---
+function handleEditClick(hit, altHeld) {
+  if (!hit) return;
+  if (altHeld) {
+    if (isBedrock(hit.block)) return;
+    applyEdit(store, history, hit.c, hit.r, hit.z, null);
+    markDirty();
+    return;
+  }
+  if (paintMode) {
+    applyEdit(store, history, hit.c, hit.r, hit.z, pendingBlockString());
+    markDirty();
+    return;
+  }
+  const adj = adjacentCell(hit);
+  if (store.has(adj.c, adj.r, adj.z)) return;
+  applyEdit(store, history, adj.c, adj.r, adj.z, pendingBlockString());
+  markDirty();
+}
+
+// --- Input ---
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+let orbiting = false;
+let leftDown = false;
+let lastX = 0;
+let lastY = 0;
+let lastEditKey = null;
+
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 2) {
+    orbiting = true;
+    canvas.classList.add('orbiting');
+    lastX = e.clientX;
+    lastY = e.clientY;
+    return;
+  }
+  if (e.button === 0) {
+    if (unitMode) {
+      const hit = pickAt(e.clientX, e.clientY);
+      if (hit) tryMoveKnightTo(hit.c, hit.r);
+      return;
+    }
+    leftDown = true;
+    lastEditKey = null;
+    const hit = pickAt(e.clientX, e.clientY);
+    handleEditClick(hit, e.altKey);
+    if (hit) lastEditKey = `${hit.c},${hit.r},${hit.z}`;
+  }
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 2) {
+    orbiting = false;
+    canvas.classList.remove('orbiting');
+  }
+  if (e.button === 0) leftDown = false;
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (orbiting) {
+    const dx = e.clientX - lastX;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    cam.rot += dx * 0.01;
+    return;
+  }
+  if (unitMode) return;
+  const hit = pickAt(e.clientX, e.clientY);
+  if (leftDown && hit) {
+    const key = `${hit.c},${hit.r},${hit.z}`;
+    if (key !== lastEditKey) {
+      handleEditClick(hit, e.altKey);
+      lastEditKey = key;
+    }
+  }
+  updateGhost(hit, e.altKey);
+});
+
+canvas.addEventListener(
+  'wheel',
+  (e) => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    cam.zoom = Math.min(4, Math.max(0.1, cam.zoom * factor));
+  },
+  { passive: false },
+);
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'q' || e.key === 'Q') cam.rot -= Math.PI / 2;
+  else if (e.key === 'e' || e.key === 'E') cam.rot += Math.PI / 2;
+  else if (e.key === 'r' || e.key === 'R') {
+    brush.facing = (brush.facing + 1) % 4;
+    refreshHud();
+  } else if (e.key === 'p' || e.key === 'P') {
+    paintMode = !paintMode;
+    refreshHud();
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    history.undo(store);
+    markDirty();
+  }
+});
+
+// --- Loop ---
+function tick() {
+  rebuildIfDirty();
+  tickKnight();
+  renderer.setUnitMesh(
+    buildBoxMesh(
+      {
+        from: [knight.c + 0.5 - KNIGHT_SIZE, knight.r + 0.5 - KNIGHT_SIZE, knight.standZ],
+        to: [knight.c + 0.5 + KNIGHT_SIZE, knight.r + 0.5 + KNIGHT_SIZE, knight.standZ + KNIGHT_HEIGHT],
+      },
+      TEX.UNIT,
+    ),
+  );
+  const aspect = canvas.width / canvas.height;
+  const { matrix } = getCameraMatrix(cam.rot, cam.zoom, cam.panX, cam.panY, aspect);
+  renderer.render(matrix);
+  requestAnimationFrame(tick);
+}
+
+resize();
+requestAnimationFrame(tick);
+window.__voxelReady = true;
+window.__voxel = {
+  store, history, brush, knight,
+  applyEdit: (c, r, z, v) => { applyEdit(store, history, c, r, z, v); markDirty(); },
+  moveKnightTo: (c, r) => tryMoveKnightTo(c, r),
+};
+</script>
+</body>
+</html>
