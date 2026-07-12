@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.5.58';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.58';
+import { Renderer } from './renderer.js?v=0.5.62';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.62';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.5.58';
+} from './adapter.js?v=0.5.62';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.5.58';
+} from './sprites.js?v=0.5.62';
 import {
   createFxState,
   spawnFloater,
@@ -31,23 +31,13 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.5.58';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.5.58';
-import { APP_VERSION } from './version.js?v=0.5.58';
-import { resolveLighting } from './lighting.js?v=0.5.58';
+} from './fx.js?v=0.5.62';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.5.62';
+import { APP_VERSION } from './version.js?v=0.5.62';
+import { resolveLighting } from './lighting.js?v=0.5.62';
 
-// Door art only has 6 usable pre-rendered angles (raw east/west renders are edge-on/blank
-// for a flat door prop) — this maps (wallAxis 0|1, camera _mapRot 0-3) to one of those 6,
-// substituting the nearest good diagonal for the 2 combinations that would land on the
-// blank edge-on angle. wallAxis 0 = door sits in an east-west-running wall (faces north/
-// south); wallAxis 1 = north-south-running wall (faces east/west). Each 90° of camera
-// rotation is 2 steps around this 8-point compass (45° per PixelLab rotation).
-const DOOR_COMPASS_SLOTS = ['s', 'se', 'se', 'ne', 'n', 'nw', 'nw', 'sw'];
-function resolveDoorRotUrl(wallAxis, rotUrls, mapRot) {
-  if (!rotUrls) return null;
-  const idx = (((wallAxis || 0) * 2 + (mapRot || 0) * 2) % 8 + 8) % 8;
-  return rotUrls[DOOR_COMPASS_SLOTS[idx]] || rotUrls.s || null;
-}
+// Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
+// billboards — see that file for why the old rotation-lookup approach was replaced.
 
 export {
   makeDemoGrimoireSession,
@@ -888,12 +878,16 @@ export class Iso3DHost {
       );
       const scr = this._project(mvp, x, y, z, w, h);
       if (!scr) continue;
-      // Doors: pick the angle matching the wall's orientation AND the live camera rotation
-      // (re-resolved every frame, not baked in at map-build time) instead of a fixed image.
-      const doorUrl = d.rotUrls ? resolveDoorRotUrl(d.wallAxis, d.rotUrls, this._mapRot) : null;
-      const entry = doorUrl ? loadSprite(doorUrl) : d.spriteUrl ? loadSprite(d.spriteUrl) : null;
+      // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now,
+      // not billboards — this loop never sees door decor entries anymore.
+      const entry = d.spriteUrl ? loadSprite(d.spriteUrl) : null;
       // Same source PNG (nearest-neighbor) — only world size changes. Trees ~1.5× taller canopy.
-      const worldH = isTree ? 3.0 : isBush ? 0.95 : 0.95;
+      // Doors are wall-mounted, not floor props — they need to fill a wall-height gap
+      // (walls render at ~2 elevation levels = 1.0 world units), not the tiny ground-clutter
+      // size (live report: "scale is all wrong" — door rendered barrel/torch-sized next to a
+      // much taller wall).
+      const isDoor = (d.kind || '').startsWith('door');
+      const worldH = isTree ? 3.0 : isBush ? 0.95 : isDoor ? 1.9 : 0.95;
       const uv = entry && entry.ready ? getFullImageUV(entry) : null;
       const aspect = uv && uv.fh ? uv.fw / uv.fh : 0.55;
       if (entry && entry.ready && uv) {
@@ -1534,4 +1528,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.5.58';
+export { Renderer } from './renderer.js?v=0.5.62';

@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Door rotation test</title>
+<title>Wang autotile test</title>
 <style>html,body{margin:0;height:100%;background:#223;overflow:hidden}#mount{position:fixed;inset:0;width:100vw;height:100vh}</style>
 </head>
 <body>
@@ -16,25 +16,30 @@
     const mount = document.getElementById('mount');
     const host = new I.Host(mount, { assetBase: '../' });
 
-    // 7x7 room: wall ring around the edge, one door in the TOP wall (east-west run,
-    // wallAxis 0) at (3,0), one door in the LEFT wall (north-south run, wallAxis 1) at (0,3).
-    const cols = 7, rows = 7;
+    // 8x8 stone room with a brick perimeter wall and one door in the south wall —
+    // tests real UV-mapped wall side faces (brick.png) + the door-as-3D-quad geometry.
+    const cols = 8, rows = 8;
     const tiles = {};
-    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-      const edge = x === 0 || x === cols - 1 || y === 0 || y === rows - 1;
-      tiles[x + ',' + y] = edge ? 'wall' : 'grass';
+    const height = {};
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const edge = x === 0 || y === 0 || x === cols - 1 || y === rows - 1;
+        tiles[x + ',' + y] = edge ? 'wall' : 'stone';
+      }
     }
-    tiles['3,0'] = 'wall'; // stays wall terrain-wise; door is a decor overlay
-    tiles['0,3'] = 'wall';
-    const decor = { '3,0': 'door', '0,3': 'door' };
-    const map = { cols, rows, tiles, height: {}, decor };
+    // Door gap in the south wall (row = rows-1), floor tile so it's walkable.
+    tiles['4,' + (rows - 1)] = 'stone';
+    const decor = { ['4,' + (rows - 1)]: 'door' };
+    const map = { cols, rows, tiles, height, decor };
     const session = { map, players: [], monsters: [] };
 
     window.__host = host;
-    host.setSession(session, { frameOn: { col: 0, row: 3, zoom: 3.2 } });
-    console.log('canvas size', host.glCanvas.width, host.glCanvas.height, host.glCanvas.clientWidth, host.glCanvas.clientHeight);
-    console.log('view units', host._view && host._view.units && host._view.units.length, 'decorSprites', JSON.stringify(host._view && host._view.decorSprites));
-    console.log('cam', JSON.stringify(host.renderer.getCamera()));
+    host.setSession(session, { resetCamera: true });
+    setTimeout(() => {
+      const s = host.renderer.sampler;
+      console.log('sampler ready', s.ready, 'has door tex', !!(s.images && s.images['sprites/decor/door.png']));
+      console.log('ground mesh groups', (host.renderer._groundMeshes || []).map(g => ({ url: g.url, count: g.count })));
+    }, 1200);
     window.__ready = true;
   }
   boot();

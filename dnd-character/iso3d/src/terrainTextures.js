@@ -38,6 +38,51 @@ export const TERRAIN_TEX_URLS = {
 export const TEX_TILE_REPEAT = 1;
 
 /**
+ * Non-terrain textures the renderer GPU-uploads the same way as ground (real per-pixel
+ * sampling, not billboards) — currently just the door, built as a wall-oriented 3D quad
+ * in buildMapMesh instead of a camera-facing sprite.
+ */
+export const DECOR_TEX_URLS = {
+  door: 'sprites/decor/door.png',
+  door_open: 'sprites/decor/door_open.png',
+};
+
+/**
+ * Wang (corner-based) autotile sets for smooth terrain-pair transitions (grass<->sand etc.),
+ * generated via PixelLab's create_topdown_tileset. Each tile's corners are 0 (lower/first
+ * terrain) or 1 (upper/second terrain); `x,y,w,h` locate it within the combined atlas image.
+ * Rendered as a "dual grid": one quad per map VERTEX (not per cell), sampling the 4 cells
+ * touching that vertex as the tile's NW/NE/SW/SE corners — see buildMapMesh in renderer.js.
+ */
+export const WANG_TILESETS = {
+  grass_sand: {
+    lower: 'grass',
+    upper: 'sand',
+    url: 'sprites/hq/terrain/wang/grass_sand.png',
+    atlasW: 128,
+    atlasH: 128,
+    tiles: [
+      { nw: 1, ne: 1, sw: 0, se: 1, x: 0, y: 0, w: 32, h: 32 },
+      { nw: 1, ne: 0, sw: 1, se: 0, x: 32, y: 0, w: 32, h: 32 },
+      { nw: 0, ne: 1, sw: 0, se: 0, x: 64, y: 0, w: 32, h: 32 },
+      { nw: 1, ne: 1, sw: 0, se: 0, x: 96, y: 0, w: 32, h: 32 },
+      { nw: 0, ne: 1, sw: 1, se: 0, x: 0, y: 32, w: 32, h: 32 },
+      { nw: 1, ne: 0, sw: 0, se: 0, x: 32, y: 32, w: 32, h: 32 },
+      { nw: 0, ne: 0, sw: 0, se: 0, x: 64, y: 32, w: 32, h: 32 },
+      { nw: 0, ne: 0, sw: 0, se: 1, x: 96, y: 32, w: 32, h: 32 },
+      { nw: 1, ne: 0, sw: 1, se: 1, x: 0, y: 64, w: 32, h: 32 },
+      { nw: 0, ne: 0, sw: 1, se: 1, x: 32, y: 64, w: 32, h: 32 },
+      { nw: 0, ne: 0, sw: 1, se: 0, x: 64, y: 64, w: 32, h: 32 },
+      { nw: 0, ne: 1, sw: 0, se: 1, x: 96, y: 64, w: 32, h: 32 },
+      { nw: 1, ne: 1, sw: 1, se: 1, x: 0, y: 96, w: 32, h: 32 },
+      { nw: 1, ne: 1, sw: 1, se: 0, x: 32, y: 96, w: 32, h: 32 },
+      { nw: 1, ne: 0, sw: 0, se: 1, x: 64, y: 96, w: 32, h: 32 },
+      { nw: 0, ne: 1, sw: 1, se: 1, x: 96, y: 96, w: 32, h: 32 },
+    ],
+  },
+};
+
+/**
  * @typedef {{ w:number, h:number, data:Uint8ClampedArray }} TexMap
  */
 
@@ -46,6 +91,8 @@ export class TerrainSampler {
     this.assetBase = assetBase || '';
     /** @type {Record<string, TexMap>} */
     this.maps = {};
+    /** @type {Record<string, HTMLImageElement>} raw decoded images, for real GPU texture upload */
+    this.images = {};
     this.loading = false;
     this.ready = false;
     this._onReady = [];
@@ -69,6 +116,16 @@ export class TerrainSampler {
     const jobs = [];
     const seen = new Set();
     for (const [key, rel] of Object.entries(TERRAIN_TEX_URLS)) {
+      if (!rel || seen.has(rel)) continue;
+      seen.add(rel);
+      jobs.push(this._loadOne(rel));
+    }
+    for (const wang of Object.values(WANG_TILESETS)) {
+      if (seen.has(wang.url)) continue;
+      seen.add(wang.url);
+      jobs.push(this._loadOne(wang.url));
+    }
+    for (const rel of Object.values(DECOR_TEX_URLS)) {
       if (!rel || seen.has(rel)) continue;
       seen.add(rel);
       jobs.push(this._loadOne(rel));
@@ -108,6 +165,9 @@ export class TerrainSampler {
           ctx.drawImage(img, 0, 0);
           const id = ctx.getImageData(0, 0, c.width, c.height);
           this.maps[rel] = { w: c.width, h: c.height, data: id.data };
+          // Keep the raw decoded Image too so the renderer can upload it as a real GPU
+          // texture (per-pixel GPU sampling) instead of only CPU-side color approximation.
+          this.images[rel] = img;
         } catch (e) {
           console.warn('[TerrainSampler] decode failed', rel, e);
         }

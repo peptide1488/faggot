@@ -10,35 +10,38 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.5.48';
+} from './math.js?v=0.5.62';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.5.48';
-import { TerrainSampler } from './terrainTextures.js?v=0.5.48';
+} from './map.js?v=0.5.62';
+import { TerrainSampler, TERRAIN_TEX_URLS, WANG_TILESETS, DECOR_TEX_URLS } from './terrainTextures.js?v=0.5.62';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.5.48';
+} from './lighting.js?v=0.5.62';
 
 const VS = `#version 300 es
 in vec3 aPos;
 in vec3 aNormal;
 in vec3 aColor;
+in vec2 aUV;
 uniform mat4 uMVP;
 out vec3 vColor;
 out vec3 vNormal;
 out vec3 vWorld;
+out vec2 vUV;
 void main() {
   vWorld = aPos;
   gl_Position = uMVP * vec4(aPos, 1.0);
   vColor = aColor;
   vNormal = aNormal;
+  vUV = aUV;
 }`;
 
 /**
@@ -51,6 +54,7 @@ precision mediump float;
 in vec3 vColor;
 in vec3 vNormal;
 in vec3 vWorld;
+in vec2 vUV;
 uniform vec3 uLightDir;
 uniform vec3 uLightColor;
 uniform vec3 uFillColor;
@@ -64,8 +68,20 @@ uniform int uNumLights;
 uniform vec3 uPtPos[32];
 uniform vec3 uPtCol[32];
 uniform float uPtRad[32];
+uniform sampler2D uTex;
+uniform float uUseTex;
 out vec4 fragColor;
 void main() {
+  // Real per-pixel GPU texture sampling for ground (uUseTex=1) instead of the old
+  // CPU-precomputed flat-quad-per-subcell color approximation. vColor carries only the
+  // shade/highlight tint in this mode (near-white baseline); walls/fallback geometry
+  // (uUseTex=0) keep vColor as the full baked albedo exactly as before.
+  vec4 texel = uUseTex > 0.5 ? texture(uTex, vUV) : vec4(1.0);
+  // Ground textures are fully opaque so this never fires for them — only door quads
+  // (and any future cutout prop sharing this same textured-quad path) actually have
+  // transparent pixels to cut away.
+  if (uUseTex > 0.5 && texel.a < 0.08) discard;
+  vec3 albedo = uUseTex > 0.5 ? texel.rgb * vColor : vColor;
   vec3 n = vNormal;
   float nlen = length(n);
   n = nlen > 1e-4 ? n / nlen : vec3(0.0, 1.0, 0.0);
@@ -116,9 +132,9 @@ void main() {
   float floorMin = clamp(uAmbientFloor, 0.02, 0.55);
   lighting = max(lighting, vec3(floorMin));
 
-  vec3 col = vColor * lighting;
+  vec3 col = albedo * lighting;
 
-  float waterHint = step(vWorld.y, 0.1) * smoothstep(0.15, 0.45, vColor.b - vColor.r * 0.8);
+  float waterHint = step(vWorld.y, 0.1) * smoothstep(0.15, 0.45, albedo.b - albedo.r * 0.8);
   col += keyC * waterHint * (0.08 + 0.05 * sin(vWorld.x * 6.0 + vWorld.z * 5.0 + uTime * 2.0));
 
   // Torch flicker tint near warm point lights
@@ -271,6 +287,28 @@ function addQuad(positions, normals, colors, v0, v1, v2, v3, n, c) {
   }
 }
 
+/**
+ * Same as addQuad but also emits real UV coords so the fragment shader can sample an
+ * actual bound texture per-pixel, instead of a single flat CPU-computed color. `c` here is
+ * a small shade/highlight tint (near-white), not the full albedo — the texture supplies
+ * the base color. `offU`/`offV` shift which crop of the (REPEAT-wrapped, seamless-tileable)
+ * texture this tile samples — without it, every tile of a given terrain type would show
+ * the byte-identical crop, and any distinctive feature in the source art (mud's puddle
+ * blobs, dirt's pebbles) would repeat in the same relative spot on every tile, reading as
+ * an obvious mechanical wallpaper grid instead of a varied ground (live report: "textures
+ * look identical" — real texture mapping now, but a per-tile mud patch was still an
+ * obvious repeat of the same few puddle shapes).
+ */
+function addTexQuad(positions, normals, colors, uvs, v0, v1, v2, v3, n, c, offU = 0, offV = 0) {
+  positions.push(...v0, ...v1, ...v2, ...v0, ...v2, ...v3);
+  const u0 = offU, u1 = offU + 1, v0u = offV, v1u = offV + 1;
+  uvs.push(u0, v0u, u1, v0u, u1, v1u, u0, v0u, u1, v1u, u0, v1u);
+  for (let i = 0; i < 6; i++) {
+    normals.push(...n);
+    colors.push(c[0], c[1], c[2]);
+  }
+}
+
 /** Deterministic 0..1 hash from grid coords. */
 function hash2(col, row, salt = 0) {
   let n = col * 374761393 + row * 668265263 + salt * 1274126177;
@@ -364,6 +402,13 @@ const STEP = 0.5; // world Y per height level
 const TEX_SUB = 8;
 /** Texture periods per map tile (1 = full seamless tile face). */
 const TEX_REPEAT = 1;
+/**
+ * gKeys that get real UV-mapped wall/cliff side faces (procedural UV from absolute world
+ * position, not hand-authored per map — see the "Real per-pixel UV-mapped wall face" pass
+ * in buildMapMesh). Anything else (window/void/natural cliff hillside/etc.) has no dedicated
+ * side texture and keeps the old flat-shaded strata-band fallback.
+ */
+const WALL_SIDE_TEX_KEYS = new Set(['wall', 'cave_wall', 'low_wall', 'wood', 'stone', 'dirt']);
 
 function applyHighlights(color, highlights, key, col, row) {
   let c = color;
@@ -405,11 +450,24 @@ function sampleTopColor(sampler, cell, type, col, row, h, u, v) {
     const glow = 0.9 + hash2(col, row, 11) * 0.1;
     return mulColor([0.78, 0.9, 1.0], glow);
   }
-  // Continuous UV across the map (not random crop) — looks like painted tiles
-  const phaseU = ((col + u) * TEX_REPEAT) % 1;
-  const phaseV = ((row + v) * TEX_REPEAT) % 1;
+  // Per-tile randomized crop offset. (col+u)%1 always collapses back to plain `u` for any
+  // integer col when TEX_REPEAT=1 — every tile was sampling the byte-identical crop of the
+  // texture, so any distinctive feature (a rock fleck, a clover clump) repeated in the exact
+  // same spot on every tile, reading as an obvious mechanical wallpaper grid despite the
+  // per-cell brightness jitter below (live report: floor "still looks blocky/repetitive").
+  // Since these source textures are seamless-tileable, a random per-tile offset just shows a
+  // different (equally valid) crop each tile instead of the identical one every time.
+  const offU = hash2(col, row, 3);
+  const offV = hash2(col, row, 13);
+  const phaseU = ((col + u) * TEX_REPEAT + offU) % 1;
+  const phaseV = ((row + v) * TEX_REPEAT + offV) % 1;
   if (sampler && sampler.ready) {
-    const s = sampler.sample(gKey, phaseU, phaseV);
+    // Raw sample() grabs a single texel every ~16px (128px texture / TEX_SUB=8 samples per
+    // tile) — pure nearest-neighbor undersampling aliases into a regular basket-weave/argyle
+    // moire pattern that has nothing to do with the actual source art (live report: new
+    // PixelLab terrain textures "look like shit" — the texture WAS loading, this is why it
+    // looked wrong). sampleAvg averages a texel neighborhood instead of hopping across gaps.
+    const s = sampler.sampleAvg(gKey, phaseU, phaseV, 4);
     if (s) {
       // Tiny per-cell shade so large flats aren't wallpaper-identical
       const shade = 0.96 + hash2(col, row, 7) * 0.08;
@@ -425,6 +483,20 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
   const positions = [];
   const normals = [];
   const colors = [];
+  // Per-texture-URL ground quads: real GPU-textured tiles (one quad per tile, UV 0..1),
+  // grouped so each group can be drawn in a single call with its texture bound. Falls back
+  // to the old CPU-baked-color path (pushed into positions/normals/colors above) only for
+  // terrain keys with no texture (window, void) or before the sampler has loaded.
+  /** @type {Map<string, {positions:number[], normals:number[], colors:number[], uvs:number[]}>} */
+  const groundGroups = new Map();
+  const groundGroupFor = (url) => {
+    let g = groundGroups.get(url);
+    if (!g) {
+      g = { positions: [], normals: [], colors: [], uvs: [] };
+      groundGroups.set(url, g);
+    }
+    return g;
+  };
   const { cols, rows } = map;
   const profile = lightProfile || resolveLighting(null);
   const heightFn = (c, r) => {
@@ -453,31 +525,58 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
         sunShadowFactor(heightFn, col, row, profile.sunDir, shadowStr) *
         (0.55 + 0.45 * Math.min(1, tileIllumination01(profile, col, row)));
 
-      // --- Top face: subdivided + RPM texture samples ---
-      for (let iy = 0; iy < TEX_SUB; iy++) {
-        for (let ix = 0; ix < TEX_SUB; ix++) {
-          const u0 = ix / TEX_SUB;
-          const u1 = (ix + 1) / TEX_SUB;
-          const v0 = iy / TEX_SUB;
-          const v1 = (iy + 1) / TEX_SUB;
-          const uc = (u0 + u1) * 0.5;
-          const vc = (v0 + v1) * 0.5;
-          let color = sampleTopColor(sampler, cell, type, col, row, h, uc, vc);
-          color = mulColor(color, shade);
-          color = applyHighlights(color, highlights, key, col, row);
-          const x0 = ox - hs + u0 * (hs * 2);
-          const x1 = ox - hs + u1 * (hs * 2);
-          const z0 = oz - hs + v0 * (hs * 2);
-          const z1 = oz - hs + v1 * (hs * 2);
-          addQuad(
-            positions, normals, colors,
-            [x0, yTop, z0],
-            [x1, yTop, z0],
-            [x1, yTop, z1],
-            [x0, yTop, z1],
-            [0, 1, 0],
-            color,
-          );
+      // --- Top face: one real GPU-textured quad per tile (per-pixel sampling), grouped
+      // by texture so each group draws in a single call. Falls back to the old
+      // subdivided flat-color approximation only when there's no texture for this key
+      // (window/void) or the sampler hasn't finished loading images yet.
+      const gKey = cell.gKey || 'grass';
+      const texUrl = TERRAIN_TEX_URLS[gKey];
+      const hasRealTex = !!(texUrl && sampler && sampler.ready && sampler.images && sampler.images[texUrl]);
+      if (hasRealTex) {
+        let tint = [1, 1, 1];
+        tint = mulColor(tint, shade);
+        if (h > 0) tint = mixColor(tint, [0.9, 0.9, 0.85], 0.06 * Math.min(h, 4));
+        tint = applyHighlights(tint, highlights, key, col, row);
+        const cellShade = 0.96 + hash2(col, row, 7) * 0.08;
+        tint = mulColor(tint, cellShade);
+        const g = groundGroupFor(texUrl);
+        addTexQuad(
+          g.positions, g.normals, g.colors, g.uvs,
+          [ox - hs, yTop, oz - hs],
+          [ox + hs, yTop, oz - hs],
+          [ox + hs, yTop, oz + hs],
+          [ox - hs, yTop, oz + hs],
+          [0, 1, 0],
+          tint,
+          hash2(col, row, 21),
+          hash2(col, row, 37),
+        );
+      } else {
+        for (let iy = 0; iy < TEX_SUB; iy++) {
+          for (let ix = 0; ix < TEX_SUB; ix++) {
+            const u0 = ix / TEX_SUB;
+            const u1 = (ix + 1) / TEX_SUB;
+            const v0 = iy / TEX_SUB;
+            const v1 = (iy + 1) / TEX_SUB;
+            const uc = (u0 + u1) * 0.5;
+            const vc = (v0 + v1) * 0.5;
+            let color = sampleTopColor(sampler, cell, type, col, row, h, uc, vc);
+            color = mulColor(color, shade);
+            color = applyHighlights(color, highlights, key, col, row);
+            const x0 = ox - hs + u0 * (hs * 2);
+            const x1 = ox - hs + u1 * (hs * 2);
+            const z0 = oz - hs + v0 * (hs * 2);
+            const z1 = oz - hs + v1 * (hs * 2);
+            addQuad(
+              positions, normals, colors,
+              [x0, yTop, z0],
+              [x1, yTop, z0],
+              [x1, yTop, z1],
+              [x0, yTop, z1],
+              [0, 1, 0],
+              color,
+            );
+          }
         }
       }
 
@@ -516,28 +615,67 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
 
         if (yTop <= neighborTop + 0.001) continue;
 
-        // Draw vertical face from neighborTop → yTop in strata bands
+        // --- Real per-pixel UV-mapped wall face (FFT's actual technique: every polygon,
+        // not just tops, gets genuine UV coordinates into a shared texture — not a flat
+        // CPU-shaded color band). UV tracks absolute world position (not quad-relative),
+        // so adjacent wall tiles' brick coursing lines up continuously and tall faces tile
+        // the texture by real height instead of stretching one image across it.
+        const sideTexKey = WALL_SIDE_TEX_KEYS.has(cell.gKey) ? cell.gKey : null;
+        const sideTexUrl = sideTexKey && TERRAIN_TEX_URLS[sideTexKey];
+        const hasWallTex = !!(sideTexUrl && sampler && sampler.ready && sampler.images && sampler.images[sideTexUrl]);
+        const [nx, , nz] = nb.n;
+
+        if (hasWallTex) {
+          const faceShade = mulColor([1, 1, 1], Math.min(1, shade * 0.92));
+          const g = groundGroupFor(sideTexUrl);
+          const uvXY = (v) => [v[0], v[1]];
+          const uvZY = (v) => [v[2], v[1]];
+          const pushFace = (v0, v1, v2, v3, uvFn) => {
+            g.positions.push(...v0, ...v1, ...v2, ...v0, ...v2, ...v3);
+            const t0 = uvFn(v0), t1 = uvFn(v1), t2 = uvFn(v2), t3 = uvFn(v3);
+            g.uvs.push(...t0, ...t1, ...t2, ...t0, ...t2, ...t3);
+            for (let i = 0; i < 6; i++) {
+              g.normals.push(...nb.n);
+              g.colors.push(faceShade[0], faceShade[1], faceShade[2]);
+            }
+          };
+          if (nz === 1) {
+            pushFace(
+              [ox - hs, neighborTop, oz + hs], [ox + hs, neighborTop, oz + hs],
+              [ox + hs, yTop, oz + hs], [ox - hs, yTop, oz + hs],
+              uvXY,
+            );
+          } else if (nz === -1) {
+            pushFace(
+              [ox + hs, neighborTop, oz - hs], [ox - hs, neighborTop, oz - hs],
+              [ox - hs, yTop, oz - hs], [ox + hs, yTop, oz - hs],
+              uvXY,
+            );
+          } else if (nx === 1) {
+            pushFace(
+              [ox + hs, neighborTop, oz + hs], [ox + hs, neighborTop, oz - hs],
+              [ox + hs, yTop, oz - hs], [ox + hs, yTop, oz + hs],
+              uvZY,
+            );
+          } else {
+            pushFace(
+              [ox - hs, neighborTop, oz - hs], [ox - hs, neighborTop, oz + hs],
+              [ox - hs, yTop, oz + hs], [ox - hs, yTop, oz - hs],
+              uvZY,
+            );
+          }
+          continue;
+        }
+
+        // Fallback: no real texture for this material (window/void/natural cliff/etc.) —
+        // old flat CPU-shaded strata bands.
         const bandH = 0.28;
         let y = neighborTop;
         let band = 0;
-        const sideKey =
-          cell.gKey === 'wall'
-            ? 'wall'
-            : cell.gKey === 'wood'
-              ? 'wood'
-              : cell.gKey === 'stone'
-                ? 'stone'
-                : null;
         while (y < yTop - 0.001) {
           const y2 = Math.min(yTop, y + bandH);
           let faceCol;
-          const vMid = ((y + y2) * 0.5) / Math.max(0.01, yTop + 0.5);
-          if (sideKey && sampler && sampler.ready) {
-            const s = sampler.sample(sideKey, hash2(col, row, band) * 0.3 + 0.2, vMid);
-            faceCol = s
-              ? mulColor(s, 0.92 - band * 0.05)
-              : strataColor(y, y2, col, row);
-          } else if (type === TERRAIN.CLIFF || h >= 1) {
+          if (type === TERRAIN.CLIFF || h >= 1) {
             faceCol = strataColor(y, y2, col, row);
             faceCol = mulColor(faceCol, 0.95 - band * 0.06);
           } else if (type === TERRAIN.DIRT) {
@@ -558,7 +696,6 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
           faceCol = mulColor(faceCol, Math.min(1, shade * 0.92));
 
           // Build face quad oriented by neighbor normal
-          const [nx, , nz] = nb.n;
           if (nz === 1) {
             addQuad(positions, normals, colors,
               [ox - hs, y, oz + hs], [ox + hs, y, oz + hs],
@@ -588,6 +725,176 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
     }
   }
 
+  // --- Wang autotile transitions: smooth grass/sand (etc.) boundaries instead of a hard
+  // seam between two flat-textured tiles. "Dual grid" technique — one quad per map VERTEX
+  // (not per cell), sampling the 4 cells touching that vertex as the tile's own NW/NE/SW/SE
+  // corners, drawn on top of the normal per-cell ground only where an actual boundary exists
+  // (a vertex whose 4 corners are all the same terrain needs no patch — normal cell texturing
+  // already shows the right thing there, so skipping those keeps this cheap).
+  if (sampler && sampler.ready) {
+    for (const wang of Object.values(WANG_TILESETS)) {
+      const atlasImg = sampler.images && sampler.images[wang.url];
+      if (!atlasImg) continue;
+      const g = groundGroupFor(wang.url);
+      for (let vy = 1; vy < rows; vy++) {
+        for (let vx = 1; vx < cols; vx++) {
+          const nwCell = map.cells[(vy - 1) * cols + (vx - 1)];
+          const neCell = map.cells[(vy - 1) * cols + vx];
+          const swCell = map.cells[vy * cols + (vx - 1)];
+          const seCell = map.cells[vy * cols + vx];
+          const cornerVal = (cell) => {
+            const k = cell.gKey || 'grass';
+            if (k === wang.lower) return 0;
+            if (k === wang.upper) return 1;
+            return -1; // not part of this pair — skip this vertex entirely
+          };
+          const nw = cornerVal(nwCell);
+          const ne = cornerVal(neCell);
+          const sw = cornerVal(swCell);
+          const se = cornerVal(seCell);
+          if (nw < 0 || ne < 0 || sw < 0 || se < 0) continue;
+          if (nw === ne && ne === sw && sw === se) continue; // uniform — no patch needed
+          const tile = wang.tiles.find((t) => t.nw === nw && t.ne === ne && t.sw === sw && t.se === se);
+          if (!tile) continue;
+          const vxWorld = vx - (cols - 1) / 2 - 0.5;
+          const vzWorld = vy - (rows - 1) / 2 - 0.5;
+          const yTopHere = Math.max(nwCell.h, neCell.h, swCell.h, seCell.h) * STEP + 0.01;
+          const u0 = tile.x / wang.atlasW;
+          const u1 = (tile.x + tile.w) / wang.atlasW;
+          const v0 = tile.y / wang.atlasH;
+          const v1 = (tile.y + tile.h) / wang.atlasH;
+          const hsw = TILE;
+          g.positions.push(
+            vxWorld - hsw, yTopHere, vzWorld - hsw,
+            vxWorld + hsw, yTopHere, vzWorld - hsw,
+            vxWorld + hsw, yTopHere, vzWorld + hsw,
+            vxWorld - hsw, yTopHere, vzWorld - hsw,
+            vxWorld + hsw, yTopHere, vzWorld + hsw,
+            vxWorld - hsw, yTopHere, vzWorld + hsw,
+          );
+          g.uvs.push(u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1);
+          for (let i = 0; i < 6; i++) {
+            g.normals.push(0, 1, 0);
+            g.colors.push(1, 1, 1);
+          }
+        }
+      }
+    }
+  }
+
+  // --- Door quads: real world-oriented 3D slabs (front+back faces plus thin edge faces for
+  // actual depth — not a single infinitely-thin plane) fixed to the actual wall plane, not a
+  // camera-facing billboard. A billboard can never truly align with a specific wall's
+  // orientation from every camera angle — this reads the map's own tile data to find which
+  // pair of neighbors is the wall the door sits in, then builds the slab spanning that gap at
+  // the real wall height. Handles both open and closed door decor kinds, each with its own
+  // texture (transparent margins cut out via the alpha-discard added to the main shader above).
+  const DOOR_KIND_TEX = { door: DECOR_TEX_URLS.door, door_open: DECOR_TEX_URLS.door_open };
+  const DOOR_THICK = 0.1;
+  if (map.decor) {
+    const WALL_GKEYS = new Set(['wall', 'cave_wall', 'low_wall', 'window']);
+    const isWallCell = (c) => !!c && WALL_GKEYS.has(c.gKey);
+    for (const [key, kind] of Object.entries(map.decor)) {
+      const doorUrl = DOOR_KIND_TEX[kind];
+      if (!doorUrl) continue;
+      const doorImg = sampler && sampler.ready && sampler.images && sampler.images[doorUrl];
+      if (!doorImg) continue;
+      const [cs, rs] = key.split(',');
+      const col = Number(cs);
+      const row = Number(rs);
+      if (!Number.isFinite(col) || !Number.isFinite(row)) continue;
+      const doorCell = map.cells[row * cols + col];
+      if (!doorCell) continue;
+      const westCell = cellAt(map, col - 1, row);
+      const eastCell = cellAt(map, col + 1, row);
+      const northCell = cellAt(map, col, row - 1);
+      const southCell = cellAt(map, col, row + 1);
+      const ewWall = isWallCell(westCell) || isWallCell(eastCell);
+      const nsWall = isWallCell(northCell) || isWallCell(southCell);
+      // Wall runs east-west (continues at col-1/col+1) -> door faces north-south, and
+      // vice versa. If both or neither match, default to the east-west run (arbitrary
+      // but harmless — this only affects which axis the panel spans).
+      const runsEastWest = ewWall || !nsWall;
+      const wallH = Math.max(
+        isWallCell(westCell) ? westCell.h : 0,
+        isWallCell(eastCell) ? eastCell.h : 0,
+        isWallCell(northCell) ? northCell.h : 0,
+        isWallCell(southCell) ? southCell.h : 0,
+        2,
+      );
+      const yTopDoor = wallH * STEP;
+      const ox = col - (cols - 1) / 2;
+      const oz = row - (rows - 1) / 2;
+      const hs = TILE;
+      const ht = DOOR_THICK / 2;
+      const g = groundGroupFor(doorUrl);
+      // v0=top-left v1=top-right v2=bottom-right v3=bottom-left (in width-increasing order).
+      // UV is pinned directly per-corner (not via addTexQuad's offset convention) so top of
+      // quad = top of image — UNPACK_FLIP_Y_WEBGL is off for these textures, so V=0 samples
+      // the image's top row; getting v0/v3 swapped here is exactly what upside-downs it.
+      const pushFace = (v0, v1, v2, v3, n) => {
+        g.positions.push(...v0, ...v1, ...v2, ...v0, ...v2, ...v3);
+        g.uvs.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+        for (let i = 0; i < 6; i++) {
+          g.normals.push(...n);
+          g.colors.push(1, 1, 1);
+        }
+      };
+      // Thin edge strips (top/bottom/left/right of the slab) sample the texture's own
+      // center so they read as a plausible solid frame tone without needing separate art.
+      const pushEdge = (v0, v1, v2, v3, n) => {
+        g.positions.push(...v0, ...v1, ...v2, ...v0, ...v2, ...v3);
+        g.uvs.push(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5);
+        for (let i = 0; i < 6; i++) {
+          g.normals.push(...n);
+          g.colors.push(1, 1, 1);
+        }
+      };
+      // axisIsEW: width spans X (door faces north-south) vs width spans Z (door faces east-west).
+      const axisIsEW = runsEastWest;
+      const widthMin = axisIsEW ? ox - hs : oz - hs;
+      const widthMax = axisIsEW ? ox + hs : oz + hs;
+      const thickCenter = axisIsEW ? oz : ox;
+      const toXYZ = (w, y, t) => (axisIsEW ? [w, y, t] : [t, y, w]);
+      const tf = thickCenter - ht;
+      const tb = thickCenter + ht;
+      const nFront = axisIsEW ? [0, 0, -1] : [-1, 0, 0];
+      const nBack = axisIsEW ? [0, 0, 1] : [1, 0, 0];
+      const nMin = axisIsEW ? [-1, 0, 0] : [0, 0, -1];
+      const nMax = axisIsEW ? [1, 0, 0] : [0, 0, 1];
+      pushFace(
+        toXYZ(widthMin, yTopDoor, tf), toXYZ(widthMax, yTopDoor, tf),
+        toXYZ(widthMax, 0, tf), toXYZ(widthMin, 0, tf),
+        nFront,
+      );
+      pushFace(
+        toXYZ(widthMax, yTopDoor, tb), toXYZ(widthMin, yTopDoor, tb),
+        toXYZ(widthMin, 0, tb), toXYZ(widthMax, 0, tb),
+        nBack,
+      );
+      pushEdge(
+        toXYZ(widthMin, yTopDoor, tb), toXYZ(widthMax, yTopDoor, tb),
+        toXYZ(widthMax, yTopDoor, tf), toXYZ(widthMin, yTopDoor, tf),
+        [0, 1, 0],
+      );
+      pushEdge(
+        toXYZ(widthMin, 0, tf), toXYZ(widthMax, 0, tf),
+        toXYZ(widthMax, 0, tb), toXYZ(widthMin, 0, tb),
+        [0, -1, 0],
+      );
+      pushEdge(
+        toXYZ(widthMin, yTopDoor, tf), toXYZ(widthMin, yTopDoor, tb),
+        toXYZ(widthMin, 0, tb), toXYZ(widthMin, 0, tf),
+        nMin,
+      );
+      pushEdge(
+        toXYZ(widthMax, yTopDoor, tb), toXYZ(widthMax, yTopDoor, tf),
+        toXYZ(widthMax, 0, tf), toXYZ(widthMax, 0, tb),
+        nMax,
+      );
+    }
+  }
+
   // Soft ground under everything (void fill)
   {
     const s = Math.max(cols, rows) * 0.55 + 2;
@@ -600,11 +907,24 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
     );
   }
 
+  const ground = [];
+  for (const [url, g] of groundGroups) {
+    ground.push({
+      url,
+      positions: new Float32Array(g.positions),
+      normals: new Float32Array(g.normals),
+      colors: new Float32Array(g.colors),
+      uvs: new Float32Array(g.uvs),
+      count: g.positions.length / 3,
+    });
+  }
+
   return {
     positions: new Float32Array(positions),
     normals: new Float32Array(normals),
     colors: new Float32Array(colors),
     count: positions.length / 3,
+    ground,
   };
 }
 
@@ -713,6 +1033,7 @@ export class Renderer {
       pos: gl.getAttribLocation(this.program, 'aPos'),
       normal: gl.getAttribLocation(this.program, 'aNormal'),
       color: gl.getAttribLocation(this.program, 'aColor'),
+      uv: gl.getAttribLocation(this.program, 'aUV'),
     };
     this.uniforms = {
       mvp: gl.getUniformLocation(this.program, 'uMVP'),
@@ -726,6 +1047,8 @@ export class Renderer {
       ambientFloor: gl.getUniformLocation(this.program, 'uAmbientFloor'),
       keyStrength: gl.getUniformLocation(this.program, 'uKeyStrength'),
       numLights: gl.getUniformLocation(this.program, 'uNumLights'),
+      tex: gl.getUniformLocation(this.program, 'uTex'),
+      useTex: gl.getUniformLocation(this.program, 'uUseTex'),
       ptPos: [],
       ptCol: [],
       ptRad: [],
@@ -740,6 +1063,8 @@ export class Renderer {
     this.unitVAO = this._createMeshVAO();
     this.mapCount = 0;
     this.unitCount = 0;
+    /** Per-texture ground meshes: [{ url, vaoObj, count }] — real GPU-textured tiles. */
+    this._groundMeshes = [];
 
     // Depth-tested sprite billboards
     const bbsVs = compile(gl, gl.VERTEX_SHADER, BBS_VS);
@@ -845,6 +1170,7 @@ export class Renderer {
     const pos = gl.createBuffer();
     const norm = gl.createBuffer();
     const col = gl.createBuffer();
+    const uv = gl.createBuffer();
 
     gl.bindBuffer(gl.ARRAY_BUFFER, pos);
     gl.enableVertexAttribArray(this.attribs.pos);
@@ -858,8 +1184,12 @@ export class Renderer {
     gl.enableVertexAttribArray(this.attribs.color);
     gl.vertexAttribPointer(this.attribs.color, 3, gl.FLOAT, false, 0, 0);
 
+    gl.bindBuffer(gl.ARRAY_BUFFER, uv);
+    gl.enableVertexAttribArray(this.attribs.uv);
+    gl.vertexAttribPointer(this.attribs.uv, 2, gl.FLOAT, false, 0, 0);
+
     gl.bindVertexArray(null);
-    return { vao, pos, norm, col };
+    return { vao, pos, norm, col, uv };
   }
 
   _upload(meshTarget, mesh) {
@@ -871,7 +1201,33 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, meshTarget.col);
     gl.bufferData(gl.ARRAY_BUFFER, mesh.colors, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, meshTarget.uv);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      mesh.uvs || new Float32Array((mesh.positions.length / 3) * 2),
+      gl.DYNAMIC_DRAW,
+    );
     gl.bindVertexArray(null);
+  }
+
+  /** Rebuild the per-texture-URL ground VAOs (real GPU-textured tiles). */
+  _uploadGroundMeshes(groundList) {
+    const gl = this.gl;
+    // Clean up the previous batch's GL objects before replacing (mesh rebuilds are
+    // infrequent — only on _dirtyMap — but leaking VAOs/buffers on every map edit adds up).
+    for (const gm of this._groundMeshes || []) {
+      gl.deleteVertexArray(gm.vaoObj.vao);
+      gl.deleteBuffer(gm.vaoObj.pos);
+      gl.deleteBuffer(gm.vaoObj.norm);
+      gl.deleteBuffer(gm.vaoObj.col);
+      gl.deleteBuffer(gm.vaoObj.uv);
+    }
+    this._groundMeshes = groundList.map((g) => {
+      const vaoObj = this._createMeshVAO();
+      this._upload(vaoObj, g);
+      const tex = this.sampler.images[g.url] ? this._ensureTex(this.sampler.images[g.url], true) : null;
+      return { tex, vaoObj, count: g.count, url: g.url };
+    });
   }
 
   setMap(map) {
@@ -1044,6 +1400,7 @@ export class Renderer {
       );
       this._upload(this.mapVAO, mesh);
       this.mapCount = mesh.count;
+      this._uploadGroundMeshes(mesh.ground || []);
       this._dirtyMap = false;
     }
     if (this._dirtyUnits) {
@@ -1131,9 +1488,23 @@ export class Renderer {
     this._uploadPointLights(gl, this.uniforms);
 
     // Terrain first — writes depth so walls can hide sprites
+    u1(this.uniforms.useTex, 0);
     if (this.mapCount > 0) {
       gl.bindVertexArray(this.mapVAO.vao);
       gl.drawArrays(gl.TRIANGLES, 0, this.mapCount);
+    }
+    // Real GPU-textured ground tiles — one draw call per distinct terrain texture.
+    if (this._groundMeshes && this._groundMeshes.length) {
+      u1(this.uniforms.useTex, 1);
+      gl.activeTexture(gl.TEXTURE0);
+      if (this.uniforms.tex != null) gl.uniform1i(this.uniforms.tex, 0);
+      for (const gm of this._groundMeshes) {
+        if (!gm.tex || gm.count <= 0) continue;
+        gl.bindTexture(gl.TEXTURE_2D, gm.tex);
+        gl.bindVertexArray(gm.vaoObj.vao);
+        gl.drawArrays(gl.TRIANGLES, 0, gm.count);
+      }
+      u1(this.uniforms.useTex, 0);
     }
     if (this.unitCount > 0) {
       gl.bindVertexArray(this.unitVAO.vao);
@@ -1161,16 +1532,24 @@ export class Renderer {
     this._billboards = list || [];
   }
 
-  _ensureTex(img) {
+  /**
+   * @param {HTMLImageElement} img
+   * @param {boolean} [repeat] REPEAT wrap instead of CLAMP_TO_EDGE — for seamless-tileable
+   *   ground textures sampled with a per-tile UV offset (see buildMapMesh), so adjacent
+   *   tiles of the same terrain type show a different crop instead of an identical repeat.
+   *   Billboards (default, clamp) must never wrap — a UV sliver past 1.0 would smear.
+   */
+  _ensureTex(img, repeat) {
     const gl = this.gl;
-    const key = img.src || img;
+    const key = (img.src || img) + (repeat ? '|repeat' : '');
     let tex = this._glTex.get(key);
     if (tex) return tex;
     tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     try {

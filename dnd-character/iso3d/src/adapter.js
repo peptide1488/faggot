@@ -3,8 +3,8 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.5.58';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.58';
+import { TERRAIN, createMap } from './map.js?v=0.5.62';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.62';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {
@@ -32,31 +32,6 @@ export const GRIMOIRE_TERRAIN_MAP = {
   web: TERRAIN.SAND,
   floor: TERRAIN.GRASS,
 };
-
-/** Grimoire terrain keys that constitute "a wall segment" for wall-axis detection below. */
-const WALL_LIKE_TERRAIN = new Set(['wall', 'cave_wall', 'low_wall', 'window']);
-function isWallLike(tName) {
-  return !!tName && WALL_LIKE_TERRAIN.has(tName);
-}
-
-/**
- * The door object only has 6 usable pre-rendered angles (PixelLab's raw east/west renders
- * are edge-on/blank for a flat door — a paper-thin prop has no side view). host.js picks one
- * of these per-frame from (wallAxis, camera _mapRot) — see resolveDoorRotUrl there.
- */
-const DOOR_ROT_URLS = {
-  s: 'sprites/decor/door.png',
-  se: 'sprites/decor/door_se.png',
-  ne: 'sprites/decor/door_ne.png',
-  n: 'sprites/decor/door_n.png',
-  nw: 'sprites/decor/door_nw.png',
-  sw: 'sprites/decor/door_sw.png',
-};
-function DOOR_ROT_URLS_RESOLVED(assetBase) {
-  const out = {};
-  for (const [k, rel] of Object.entries(DOOR_ROT_URLS)) out[k] = joinUrl(assetBase, rel);
-  return out;
-}
 
 /**
  * Canonical walk-sheet layout (RPG Maker / RPM / most tactics packs).
@@ -310,6 +285,10 @@ export function grimoireSessionToView(session, opts = {}) {
   );
   if (light) map.light = light;
   else if (session.map && session.map.light) map.light = session.map.light;
+  // Doors are built as real 3D wall-oriented quads in buildMapMesh (renderer.js), which
+  // needs the raw col,row->kind decor map (not the billboard-only decorSprites list below)
+  // to find door cells and detect their wall axis.
+  map.decor = decor;
 
   const units = [];
 
@@ -399,10 +378,14 @@ export function grimoireSessionToView(session, opts = {}) {
   }
 
   // Decor billboards for Iso3D overlay (skip cube-UV / bad props)
-  const rawTiles = (session.map && session.map.tiles) || {};
+  // Doors (open or closed) are NOT billboards — a camera-facing sprite can never truly align
+  // with a specific wall's orientation (that's why the old 6-rotation-lookup hack existed and
+  // still had gaps at the blank edge-on angles). They're built as real world-oriented 3D slabs
+  // directly in buildMapMesh (renderer.js), which detects wall axis itself from the map's own
+  // tile data — see the "door quads" pass there. Skip them here entirely.
   const decorSprites = [];
   for (const [key, kind] of Object.entries(decor || {})) {
-    if (!kind || !ISO3D_BILLBOARD_DECOR.has(kind)) continue;
+    if (!kind || kind === 'door' || kind === 'door_open' || !ISO3D_BILLBOARD_DECOR.has(kind)) continue;
     const [cs, rs] = key.split(',');
     const col = Number(cs);
     const row = Number(rs);
@@ -421,21 +404,6 @@ export function grimoireSessionToView(session, opts = {}) {
       scale: isTree ? 2.8 : isBush ? 1.5 : 1.35,
       maxH: isTree ? 150 : isBush ? 44 : 42,
     };
-    // Wall-mounted props (doors) need a different pre-rendered angle depending on both
-    // which way their host wall runs AND the live camera rotation — otherwise every door
-    // looks identical regardless of wall orientation or which way you've rotated the map
-    // (live report: door always shows the same face). host.js resolves rotUrls -> the
-    // right one of 6 usable angles every time _mapRot changes; wallAxis (0=east-west wall,
-    // 1=north-south wall) comes from the door's own neighboring tiles here since adapter.js
-    // only runs once per state build and doesn't see live camera rotation.
-    if (kind === 'door' && DOOR_ROT_URLS) {
-      entry.wallAxis = isWallLike(rawTiles[`${col - 1},${row}`]) || isWallLike(rawTiles[`${col + 1},${row}`])
-        ? 0
-        : isWallLike(rawTiles[`${col},${row - 1}`]) || isWallLike(rawTiles[`${col},${row + 1}`])
-          ? 1
-          : 0;
-      entry.rotUrls = DOOR_ROT_URLS_RESOLVED(assetBase);
-    }
     decorSprites.push(entry);
   }
 
