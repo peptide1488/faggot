@@ -757,3 +757,11 @@ Coverage: `rules-test.js` duplicates the Grease/Web assertions under the new mod
 names against a fake DM-session-shaped state (not just QB), plus new assertions that a
 Cloudkill-style cloud deals real repeat-round damage and stops the moment its hazard
 expires, and that a no-damage cloud (Stinking Cloud) applies Poisoned instead.
+
+**Visual**: a gas hazard cell now gets a `.gashazard` CSS class (sickly green pulsing haze,
+`mapGridHTML`) in the classic 2D/DM grid view — real bug, since `SPELL_GAS` deliberately
+doesn't repaint the floor (unlike Grease/Web's `SPELL_TERRAIN`), so without this a gas cloud
+looked like plain floor despite still dealing damage every round. **Not yet done**: the
+WebGL Iso3D view (`iso3d/src/adapter.js`) has no equivalent — a gas cell there still reads
+as whatever the underlying terrain already was, since the iso3d adapter isn't handed
+`session.hazards` at all today. Flagged as a follow-up, not attempted this pass.
