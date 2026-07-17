@@ -3,9 +3,9 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.5.91';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.91';
-import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.5.91';
+import { TERRAIN, createMap } from './map.js?v=0.5.92';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.92';
+import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.5.92';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {
@@ -100,7 +100,7 @@ export function resolveSpritePath(key, kind = 'character') {
 }
 
 /** Cache-bust unit sheets (SW is cache-first for images — without ?v= old art sticks forever). */
-const _SV = 'v131';
+const _SV = 'v132';
 /** Grimoire class/monster sprite key → sheet path (all HQ). */
 export const DEFAULT_SPRITE_PATHS = {
   fighter: `sprites/hq/characters/fighter.png?${_SV}`,
