@@ -1,5 +1,5 @@
 // Grimoire — D&D 5e Character Keeper — offline app-shell service worker
-const CACHE = 'grimoire-v120.134';
+const CACHE = 'grimoire-v120.135';
 const ASSETS = [
   './',
   './index.html',

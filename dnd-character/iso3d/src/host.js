@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.5.90';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.90';
+import { Renderer } from './renderer.js?v=0.5.91';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.91';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.5.90';
+} from './adapter.js?v=0.5.91';
 import {
   loadSprite,
   clearSpriteCache,
@@ -22,7 +22,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.5.90';
+} from './sprites.js?v=0.5.91';
 import {
   createFxState,
   spawnFloater,
@@ -32,10 +32,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.5.90';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.5.90';
-import { APP_VERSION } from './version.js?v=0.5.90';
-import { resolveLighting } from './lighting.js?v=0.5.90';
+} from './fx.js?v=0.5.91';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.5.91';
+import { APP_VERSION } from './version.js?v=0.5.91';
+import { resolveLighting } from './lighting.js?v=0.5.91';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -806,62 +806,6 @@ export class Iso3DHost {
     return this._wh;
   }
 
-  /**
-   * Snap billboard world height so projected screen height is an integer pixel count,
-   * preferring integer source-texel scales (…½, ⅓, 1×, 2×, 3×…). Stops the “mush”
-   * when NEAREST samples fractional texels under perspective zoom.
-   *
-   * MAX_CORRECTION guards against a real bug hit live ("sprite scaling all fucked up
-   * when zooming"): snapping to the nearest integer scale (k=round(pxPerTexel)) is only a
-   * SMALL correction when the object is already large on screen (high k — e.g. a fully
-   * zoomed-in tree), because consecutive integers k and k+1 are close together in ratio.
-   * But at low k — a SMALL object like a unit billboard, which sits near k=1 across most
-   * of the normal zoom range — consecutive integers are far apart in ratio (k=1 spans
-   * roughly 0.67x-1.09x of the true size), so "snap to nearest k" forces the on-screen
-   * size to sit PINNED at one fixed pixel height while the camera zoom (and every other
-   * sprite/tile around it, which either sit at a kinder k or skip this rounding) keeps
-   * growing smoothly — then suddenly jump a whole integer step. Rather than special-case
-   * "small vs large" objects, just refuse to snap when the correction it would apply is
-   * large enough to be visible as a freeze/jump, and fall through to the true (smooth,
-   * un-snapped) projected size instead — crisp pixel-snapping only ever engages when it's
-   * actually a minor nudge.
-   */
-  _snapBillboardSize(worldH, worldW, x, y, z, mvp, canvasW, canvasH, srcFw, srcFh) {
-    if (!(worldH > 0) || !mvp) return { height: worldH, width: worldW };
-    const p0 = this._project(mvp, x, y, z, canvasW, canvasH);
-    const p1 = this._project(mvp, x, y + worldH, z, canvasW, canvasH);
-    if (!p0 || !p1) return { height: worldH, width: worldW };
-    const screenH = Math.abs(p1.y - p0.y);
-    if (!(screenH > 0.5)) return { height: worldH, width: worldW };
-
-    const fh = Math.max(1, srcFh | 0 || 64);
-    const fw = Math.max(1, srcFw | 0 || fh);
-    const REF_CELL = 32;
-    const pxPerTexel = screenH / REF_CELL;
-
-    let targetScreenH;
-    if (pxPerTexel >= 0.92) {
-      // Upscale / near 1:1 — snap to integer pixels-per-texel
-      const k = Math.max(1, Math.round(pxPerTexel));
-      targetScreenH = REF_CELL * k;
-    } else {
-      // Downscale — each screen pixel covers an integer number of source texels
-      const n = Math.max(1, Math.round(1 / Math.max(pxPerTexel, 1e-6)));
-      targetScreenH = Math.max(1, Math.round(REF_CELL / n));
-    }
-    // Always whole framebuffer pixels
-    targetScreenH = Math.max(1, Math.round(targetScreenH));
-
-    const scale = targetScreenH / screenH;
-    const MAX_CORRECTION = 0.12;
-    if (Math.abs(scale - 1) > MAX_CORRECTION) return { height: worldH, width: worldW };
-    const height = worldH * scale;
-    // Keep aspect from source frame
-    const aspect = worldW / worldH;
-    const width = height * aspect;
-    return { height, width };
-  }
-
   _tileScreen(col, row) {
     if (!this._view || !this._mvpCache) return null;
     const map = this._view.map;
@@ -985,22 +929,14 @@ export class Iso3DHost {
           k === 'campfire' ||
           k.includes('crystal');
         const isFlameFamily = isLitFlame || k === 'torch_unlit';
-        let bw = worldH * aspect;
-        let bh = worldH;
-        const snapped = this._snapBillboardSize(
-          bh,
-          bw,
-          x,
-          y,
-          z,
-          mvp,
-          w,
-          h,
-          uv.fw,
-          uv.fh,
-        );
-        bw = snapped.width;
-        bh = snapped.height;
+        // No pixel-snapping (see the unit billboard code below for the full story): a real
+        // bug hit live ("mostly the sprite trees doing this") — at LOW zoom even a big
+        // worldH tree has a small screenH, landing in the same low-integer snap regime
+        // that caused units to freeze-then-jump. Snapping isn't actually safe at ANY
+        // billboard size once the camera can zoom out far enough; just use the true
+        // continuously-projected size everywhere.
+        const bw = worldH * aspect;
+        const bh = worldH;
         glBillboards.push({
           img: entry.img,
           origin: [x, y, z],
@@ -1110,15 +1046,9 @@ export class Iso3DHost {
             // in _spriteFrame — no separate size cue needed.
             const worldH = 1.35 * (1 + bob);
             const worldW = worldH * aspect;
-            // No pixel-snapping here (unlike decor's _snapBillboardSize call below): a unit's
-            // worldH is small enough that "snap to the nearest integer texel scale" pins its
-            // on-screen size to a fixed pixel count for a wide stretch of the zoom range, then
-            // pops by a big relative jump at the boundary — a real bug hit live ("scaling jumps
-            // around when zooming") that persisted even after narrowing the snap tolerance,
-            // because ANY snap-then-hold-then-jump is visible on an object this small. Trees/
-            // decor are large enough on screen that the snap window is a much smaller fraction
-            // of their size and reads as smooth; units aren't, so they just use the true
-            // continuously-projected size and let the camera's own projection scale them.
+            // No pixel-snapping — worldH/worldW are the true, continuously-projected size
+            // (see the decor billboard loop above for the full story on why snapping to an
+            // integer texel scale was removed there too, not just here).
             glBillboards.push({
               img: entry.img,
               origin: [x, y, z],
@@ -1644,4 +1574,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.5.90';
+export { Renderer } from './renderer.js?v=0.5.91';
