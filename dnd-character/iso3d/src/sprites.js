@@ -2,7 +2,7 @@
  * Sprite sheet loader + 2D overlay draw.
  *
  * Resolution-agnostic: art is drawn to a *target on-screen height*, so a 32×32
- * RPM frame and a 64×96 FFT-style frame can share the same battlefield scale.
+ * A 48×64 frame and a 64×96 frame can share the same battlefield scale.
  * Swap packs by changing paths / SPRITE_PACK — not by rewriting the renderer.
  */
 
@@ -46,6 +46,35 @@ export function setNearestNeighbor(ctx, nearest = true) {
  * @param {string} url
  * @param {() => void} [onReady]
  */
+/** Scan non-transparent pixels so billboards size to the ART, not empty padding. */
+function alphaBBox(img) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, c.width, c.height);
+    let l = width, t = height, r = 0, b = 0, any = false;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (data[(y * width + x) * 4 + 3] > 12) {
+          any = true;
+          if (x < l) l = x;
+          if (y < t) t = y;
+          if (x > r) r = x;
+          if (y > b) b = y;
+        }
+      }
+    }
+    if (!any) return null;
+    return { l, t, r: r + 1, b: b + 1 };
+  } catch (_) {
+    return null;
+  }
+}
+
 export function loadSprite(url, onReady) {
   if (!url) return null;
   let e = cache.get(url);
@@ -53,12 +82,13 @@ export function loadSprite(url, onReady) {
     if (e.ready && onReady) onReady();
     return e;
   }
-  e = { img: new Image(), ready: false, failed: false, w: 0, h: 0 };
+  e = { img: new Image(), ready: false, failed: false, w: 0, h: 0, content: null };
   cache.set(url, e);
   e.img.onload = () => {
     e.ready = true;
     e.w = e.img.naturalWidth;
     e.h = e.img.naturalHeight;
+    e.content = alphaBBox(e.img);
     if (onReady) onReady();
   };
   e.img.onerror = () => {
@@ -66,6 +96,7 @@ export function loadSprite(url, onReady) {
     e.ready = false;
     console.warn('[Iso3D] sprite failed to load', url);
   };
+  e.img.crossOrigin = 'anonymous';
   e.img.src = url;
   return e;
 }
@@ -132,16 +163,33 @@ export function getSpriteFrameUV(entry, facing = 'down', frame = 0, colsOrOpts, 
 
 /**
  * Full-image UV (decor billboards).
+ * Uses alpha content box when available so transparent padding does NOT make
+ * trees look like tiny saplings inside a tall empty billboard.
  */
 export function getFullImageUV(entry) {
   if (!entry || !entry.ready || entry.failed) return null;
+  const w = entry.w || 1;
+  const h = entry.h || 1;
+  const c = entry.content;
+  if (c && c.r > c.l && c.b > c.t) {
+    // texImage2D: image top → v=0. Billboard: aCorner.y=0 feet, y=1 head.
+    // feet sample content bottom, head sample content top.
+    return {
+      u0: c.l / w,
+      u1: c.r / w,
+      v0: c.b / h, // feet
+      v1: c.t / h, // head
+      fw: c.r - c.l,
+      fh: c.b - c.t,
+    };
+  }
   // feet = image bottom (v=1), head = image top (v=0)
-  return { u0: 0, v0: 1, u1: 1, v1: 0, fw: entry.w, fh: entry.h };
+  return { u0: 0, v0: 1, u1: 1, v1: 0, fw: w, fh: h };
 }
 
 /**
  * Infer walk-sheet grid from pixel size.
- * - Square sheet → 4×4 (RPM / many RPG Maker packs)
+ * - Square sheet → 4×4 (standard walk grid)
  * - 2:1 width → 4×2
  * - Explicit cols/rows in layout always win
  */
@@ -216,7 +264,7 @@ export function drawSpriteFrame(ctx, entry, facing, cx, cy, scaleOrOpts = 1.4, l
   } else if (typeof scaleOrOpts === 'number' && Math.abs(scaleOrOpts - 1.4) > 0.01 && Math.abs(scaleOrOpts - 1.75) > 0.01) {
     scale *= scaleOrOpts / 1.4;
   }
-  // Default host used 1.75 as a bump on low-res RPM — fold a mild boost into target path only when using bare number 1.75
+  // Mild boost when using bare number 1.75 (legacy host default)
   if (typeof scaleOrOpts === 'number' && Math.abs(scaleOrOpts - 1.75) < 0.01) {
     scale = (targetH * 1.12) / Math.max(1, fh);
   }

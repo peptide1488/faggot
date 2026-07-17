@@ -1,0 +1,317 @@
+{
+  "done": {
+    "characters:fighter": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\fighter.png",
+      "ts": 1784181332.0280793
+    },
+    "characters:ranger": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\ranger.png",
+      "ts": 1784176776.619329
+    },
+    "characters:barbarian": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\barbarian.png",
+      "ts": 1784176786.147064
+    },
+    "characters:paladin": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\paladin.png",
+      "ts": 1784176830.4309096
+    },
+    "characters:rogue": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\rogue.png",
+      "ts": 1784176906.0079298
+    },
+    "characters:monk": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\monk.png",
+      "ts": 1784176922.0551815
+    },
+    "characters:bard": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\bard.png",
+      "ts": 1784176926.4962218
+    },
+    "characters:wizard": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\wizard.png",
+      "ts": 1784177060.3863697
+    },
+    "characters:druid": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\druid.png",
+      "ts": 1784177067.3253431
+    },
+    "characters:cleric": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\cleric.png",
+      "ts": 1784177082.0878413
+    },
+    "characters:warlock": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\warlock.png",
+      "ts": 1784177166.1782866
+    },
+    "characters:artificer": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\artificer.png",
+      "ts": 1784177172.9392958
+    },
+    "characters:sorcerer": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\sorcerer.png",
+      "ts": 1784177192.9800894
+    },
+    "characters:human": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\characters\\human.png",
+      "ts": 1784177256.700325
+    },
+    "monsters:skeleton": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\monsters\\skeleton.png",
+      "ts": 1784181583.5832565
+    },
+    "monsters:goblin": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\monsters\\goblin.png",
+      "ts": 1784181410.5672338
+    },
+    "monsters:orc": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\monsters\\orc.png",
+      "ts": 1784177436.3371875
+    },
+    "monsters:ogre": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\monsters\\ogre.png",
+      "ts": 1784177442.225342
+    },
+    "terrain:grass": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\grass.png",
+      "ts": 1784177773.3743174
+    },
+    "decor:tree": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\tree.png",
+      "ts": 1784177900.6494973
+    },
+    "decor:rock": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\rock.png",
+      "ts": 1784178057.8447046
+    },
+    "decor:bush": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\bush.png",
+      "ts": 1784177931.153248
+    },
+    "terrain:sand": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\sand.png",
+      "ts": 1784177769.2129765
+    },
+    "terrain:dirt": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\dirt.png",
+      "ts": 1784177770.901429
+    },
+    "terrain:snow": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\snow.png",
+      "ts": 1784177787.0165787
+    },
+    "terrain:mud": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\mud.png",
+      "ts": 1784177787.870294
+    },
+    "terrain:stone": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\stone.png",
+      "ts": 1784177792.8510067
+    },
+    "terrain:water": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\water.png",
+      "ts": 1784177807.6870525
+    },
+    "terrain:wood": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\wood.png",
+      "ts": 1784177807.799225
+    },
+    "terrain:grass_side": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\grass_side.png",
+      "ts": 1784177823.166027
+    },
+    "terrain:brick_top": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\brick_top.png",
+      "ts": 1784177828.3880563
+    },
+    "terrain:cave_top": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\cave_top.png",
+      "ts": 1784177832.292521
+    },
+    "terrain:wood_side": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\wood_side.png",
+      "ts": 1784177841.3147118
+    },
+    "terrain:cave_wall": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\cave_wall.png",
+      "ts": 1784177858.2565377
+    },
+    "terrain:brick": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\terrain\\brick.png",
+      "ts": 1784177858.783935
+    },
+    "decor:tree_snow": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\tree_snow.png",
+      "ts": 1784177882.7767913
+    },
+    "decor:tree2": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\tree2.png",
+      "ts": 1784177890.258022
+    },
+    "decor:jungle_tree": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\jungle_tree.png",
+      "ts": 1784177906.7138276
+    },
+    "decor:jungle_tree2": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\jungle_tree2.png",
+      "ts": 1784177908.2918491
+    },
+    "decor:bush3": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\bush3.png",
+      "ts": 1784177936.4655893
+    },
+    "decor:bush2": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\bush2.png",
+      "ts": 1784177938.210824
+    },
+    "decor:jungle_bush": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\jungle_bush.png",
+      "ts": 1784177968.0386672
+    },
+    "decor:bush_snow": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\bush_snow.png",
+      "ts": 1784177968.5121984
+    },
+    "decor:bush_haunted": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\bush_haunted.png",
+      "ts": 1784177974.8201792
+    },
+    "decor:flower": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\flower.png",
+      "ts": 1784178000.4304016
+    },
+    "decor:mushroom": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\mushroom.png",
+      "ts": 1784178005.971292
+    },
+    "decor:hedge_snow": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\hedge_snow.png",
+      "ts": 1784178017.0022435
+    },
+    "decor:hedge": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\hedge.png",
+      "ts": 1784178024.603678
+    },
+    "decor:rocks": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\rocks.png",
+      "ts": 1784178034.9506872
+    },
+    "decor:crystal": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\crystal.png",
+      "ts": 1784178056.3273606
+    },
+    "decor:ore": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\ore.png",
+      "ts": 1784178063.5767884
+    },
+    "decor:log": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\log.png",
+      "ts": 1784178086.1135907
+    },
+    "decor:campfire": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\campfire.png",
+      "ts": 1784178087.2715569
+    },
+    "decor:barrel": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\barrel.png",
+      "ts": 1784178095.0653787
+    },
+    "decor:oil_barrel": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\oil_barrel.png",
+      "ts": 1784178107.9395483
+    },
+    "decor:powder_barrel": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\powder_barrel.png",
+      "ts": 1784178126.5683575
+    },
+    "decor:acid_barrel": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\acid_barrel.png",
+      "ts": 1784178130.2958932
+    },
+    "decor:crate": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\crate.png",
+      "ts": 1784178145.4714432
+    },
+    "decor:chest": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\chest.png",
+      "ts": 1784178160.9015326
+    },
+    "decor:sign": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\sign.png",
+      "ts": 1784178171.6167629
+    },
+    "decor:sign_post": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\sign_post.png",
+      "ts": 1784178183.781013
+    },
+    "decor:tent": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\tent.png",
+      "ts": 1784178197.2138195
+    },
+    "decor:table": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\table.png",
+      "ts": 1784178216.3915749
+    },
+    "decor:bell": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\bell.png",
+      "ts": 1784178229.005301
+    },
+    "decor:bench": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\bench.png",
+      "ts": 1784178244.7618647
+    },
+    "decor:fence": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\fence.png",
+      "ts": 1784178246.7388048
+    },
+    "decor:cauldron": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\cauldron.png",
+      "ts": 1784178255.5282729
+    },
+    "decor:lever": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\lever.png",
+      "ts": 1784178270.8469563
+    },
+    "decor:switch": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\switch.png",
+      "ts": 1784178277.0806596
+    },
+    "decor:cauldron_tipped": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\cauldron_tipped.png",
+      "ts": 1784178279.7227647
+    },
+    "decor:trap_safe": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\trap_safe.png",
+      "ts": 1784178306.756927
+    },
+    "decor:trap": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\trap.png",
+      "ts": 1784178307.1364577
+    },
+    "decor:door": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\door.png",
+      "ts": 1784178317.1826432
+    },
+    "decor:door_open": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\door_open.png",
+      "ts": 1784178329.2675965
+    },
+    "decor:grate": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\grate.png",
+      "ts": 1784178332.6518362
+    },
+    "decor:grate_open": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\decor\\grate_open.png",
+      "ts": 1784178348.7157335
+    },
+    "monsters:ghost": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\monsters\\ghost.png",
+      "ts": 1784178492.6639564
+    },
+    "monsters:zombie": {
+      "path": "C:\\Users\\andrew\\Desktop\\faggot\\dnd-character\\sprites\\hq\\monsters\\zombie.png",
+      "ts": 1784178504.65356
+    }
+  },
+  "failed": {}
+}

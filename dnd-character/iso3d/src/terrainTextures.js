@@ -1,86 +1,90 @@
 /**
- * Load RPG Paper Maker terrain PNGs and sample pixel colors for mesh painting.
+ * Load terrain PNGs and sample pixel colors for mesh painting.
  * Paths are relative to the Grimoire app root (same origin as index.html).
+ *
+ * Art direction: Final Fantasy Tactics / Ogre Battle soft painted tiles
+ * (tools/process_fft_pack.py). Not voxel Minecraft atlas.
  */
 
 /**
- * Grimoire tile key → ground texture PNG.
- * Prefer seamless 128×128 HQ pixel tiles (see tools/gen_hq_terrain.py).
+ * Grimoire tile key → TOP-face texture PNG (128×128 FFT-style).
  */
+// ?v= cache-bust after PixelLab 32→128 terrain regen
+const _TV = 'v122';
 export const TERRAIN_TEX_URLS = {
-  grass: 'sprites/hq/terrain/grass.png',
-  brush: 'sprites/hq/terrain/grass.png',
-  wood: 'sprites/hq/terrain/wood.png',
-  floor: 'sprites/hq/terrain/wood.png',
-  stone: 'sprites/hq/terrain/stone.png',
-  wall: 'sprites/hq/terrain/brick.png',
-  cave_wall: 'sprites/hq/terrain/cave_wall.png',
-  low_wall: 'sprites/hq/terrain/brick.png',
+  grass: `sprites/hq/terrain/grass.png?${_TV}`,
+  brush: `sprites/hq/terrain/grass.png?${_TV}`,
+  wood: `sprites/hq/terrain/wood.png?${_TV}`,
+  floor: `sprites/hq/terrain/wood.png?${_TV}`,
+  stone: `sprites/hq/terrain/stone.png?${_TV}`,
+  wall: `sprites/hq/terrain/brick_top.png?${_TV}`,
+  cave_wall: `sprites/hq/terrain/cave_top.png?${_TV}`,
+  low_wall: `sprites/hq/terrain/brick_top.png?${_TV}`,
   window: null, // no texture — rendered as a plain glassy color, see TERRAIN_COLORS override
-  sand: 'sprites/hq/terrain/sand.png',
-  snow: 'sprites/hq/terrain/snow.png',
-  ice: 'sprites/hq/terrain/snow.png',
-  mud: 'sprites/hq/terrain/mud.png',
-  rubble: 'sprites/hq/terrain/stone.png',
-  dirt: 'sprites/hq/terrain/dirt.png',
-  water: 'sprites/hq/terrain/water.png',
+  sand: `sprites/hq/terrain/sand.png?${_TV}`,
+  snow: `sprites/hq/terrain/snow.png?${_TV}`,
+  ice: `sprites/hq/terrain/snow.png?${_TV}`,
+  mud: `sprites/hq/terrain/mud.png?${_TV}`,
+  rubble: `sprites/hq/terrain/stone.png?${_TV}`,
+  dirt: `sprites/hq/terrain/dirt.png?${_TV}`,
+  water: `sprites/hq/terrain/water.png?${_TV}`,
   lava: 'sprites/terrain/lava_sheet.png',
   void: null,
   pit: null,
-  fog: 'sprites/hq/terrain/stone.png',
-  acid: 'sprites/hq/terrain/mud.png',
-  grease: 'sprites/hq/terrain/mud.png',
-  web: 'sprites/hq/terrain/stone.png',
-  caltrops: 'sprites/hq/terrain/stone.png',
+  fog: `sprites/hq/terrain/stone.png?${_TV}`,
+  acid: `sprites/hq/terrain/mud.png?${_TV}`,
+  grease: `sprites/hq/terrain/mud.png?${_TV}`,
+  web: `sprites/hq/terrain/stone.png?${_TV}`,
+  caltrops: `sprites/hq/terrain/stone.png?${_TV}`,
+};
+
+/**
+ * Cliff / bank SIDE faces — when set, used instead of the top texture so grass
+ * banks show dirt+grass fringe and walls show brick coursing (matches voxel engine).
+ * Keys absent here fall back to TERRAIN_TEX_URLS[key] if the renderer enables sides.
+ */
+export const TERRAIN_SIDE_TEX_URLS = {
+  grass: `sprites/hq/terrain/grass_side.png?${_TV}`,
+  brush: `sprites/hq/terrain/grass_side.png?${_TV}`,
+  dirt: `sprites/hq/terrain/dirt.png?${_TV}`,
+  mud: `sprites/hq/terrain/mud.png?${_TV}`,
+  sand: `sprites/hq/terrain/sand.png?${_TV}`,
+  stone: `sprites/hq/terrain/stone.png?${_TV}`,
+  wood: `sprites/hq/terrain/wood_side.png?${_TV}`,
+  floor: `sprites/hq/terrain/wood_side.png?${_TV}`,
+  wall: `sprites/hq/terrain/brick.png?${_TV}`,
+  low_wall: `sprites/hq/terrain/brick.png?${_TV}`,
+  cave_wall: `sprites/hq/terrain/cave_wall.png?${_TV}`,
+  rubble: `sprites/hq/terrain/stone.png?${_TV}`,
 };
 
 /** How many times the texture repeats across one map tile (higher = finer ground detail). */
 export const TEX_TILE_REPEAT = 1;
 
 /**
- * Non-terrain textures the renderer GPU-uploads the same way as ground (real per-pixel
- * sampling, not billboards) — currently just the door, built as a wall-oriented 3D quad
- * in buildMapMesh instead of a camera-facing sprite.
+ * Decor kinds drawn as pure meshes only (never billboards / PNG props).
+ * Adapter skips these when building decorSprites; renderer builds solid geometry.
  */
-export const DECOR_TEX_URLS = {
-  door: 'sprites/decor/door.png',
-  door_open: 'sprites/decor/door_open.png',
-};
+export const MESH_DECOR_KINDS = new Set([
+  'door', 'door_open',
+  'grate', 'grate_open',
+  'trap', 'trap_safe', 'trap2', 'trap3', 'trap_safe2', 'trap_safe3',
+  'plank', 'loose_rock',
+  'oil_barrel', 'acid_barrel', 'powder_barrel',
+  'cauldron', 'cauldron_tipped',
+  'crate', 'chest', 'barrel',
+  'lever', 'switch',
+  'drawbridge', 'drawbridge_down',
+  'fence', 'hedge', 'table', 'chair', 'tent',
+  'sign', 'sign_post',
+]);
 
 /**
- * Wang (corner-based) autotile sets for smooth terrain-pair transitions (grass<->sand etc.),
- * generated via PixelLab's create_topdown_tileset. Each tile's corners are 0 (lower/first
- * terrain) or 1 (upper/second terrain); `x,y,w,h` locate it within the combined atlas image.
- * Rendered as a "dual grid": one quad per map VERTEX (not per cell), sampling the 4 cells
- * touching that vertex as the tile's NW/NE/SW/SE corners — see buildMapMesh in renderer.js.
+ * Wang autotile blends — empty while FFT terrain pack is active (old
+ * grass_sand atlas was a different art style and clashed). Re-add entries
+ * when a matching FFT blend sheet is authored.
  */
-export const WANG_TILESETS = {
-  grass_sand: {
-    lower: 'grass',
-    upper: 'sand',
-    url: 'sprites/hq/terrain/wang/grass_sand.png',
-    atlasW: 128,
-    atlasH: 128,
-    tiles: [
-      { nw: 1, ne: 1, sw: 0, se: 1, x: 0, y: 0, w: 32, h: 32 },
-      { nw: 1, ne: 0, sw: 1, se: 0, x: 32, y: 0, w: 32, h: 32 },
-      { nw: 0, ne: 1, sw: 0, se: 0, x: 64, y: 0, w: 32, h: 32 },
-      { nw: 1, ne: 1, sw: 0, se: 0, x: 96, y: 0, w: 32, h: 32 },
-      { nw: 0, ne: 1, sw: 1, se: 0, x: 0, y: 32, w: 32, h: 32 },
-      { nw: 1, ne: 0, sw: 0, se: 0, x: 32, y: 32, w: 32, h: 32 },
-      { nw: 0, ne: 0, sw: 0, se: 0, x: 64, y: 32, w: 32, h: 32 },
-      { nw: 0, ne: 0, sw: 0, se: 1, x: 96, y: 32, w: 32, h: 32 },
-      { nw: 1, ne: 0, sw: 1, se: 1, x: 0, y: 64, w: 32, h: 32 },
-      { nw: 0, ne: 0, sw: 1, se: 1, x: 32, y: 64, w: 32, h: 32 },
-      { nw: 0, ne: 0, sw: 1, se: 0, x: 64, y: 64, w: 32, h: 32 },
-      { nw: 0, ne: 1, sw: 0, se: 1, x: 96, y: 64, w: 32, h: 32 },
-      { nw: 1, ne: 1, sw: 1, se: 1, x: 0, y: 96, w: 32, h: 32 },
-      { nw: 1, ne: 1, sw: 1, se: 0, x: 32, y: 96, w: 32, h: 32 },
-      { nw: 1, ne: 0, sw: 0, se: 1, x: 64, y: 96, w: 32, h: 32 },
-      { nw: 0, ne: 1, sw: 1, se: 1, x: 96, y: 96, w: 32, h: 32 },
-    ],
-  },
-};
+export const WANG_TILESETS = {};
 
 /**
  * @typedef {{ w:number, h:number, data:Uint8ClampedArray }} TexMap
@@ -120,15 +124,15 @@ export class TerrainSampler {
       seen.add(rel);
       jobs.push(this._loadOne(rel));
     }
+    for (const [key, rel] of Object.entries(TERRAIN_SIDE_TEX_URLS)) {
+      if (!rel || seen.has(rel)) continue;
+      seen.add(rel);
+      jobs.push(this._loadOne(rel));
+    }
     for (const wang of Object.values(WANG_TILESETS)) {
       if (seen.has(wang.url)) continue;
       seen.add(wang.url);
       jobs.push(this._loadOne(wang.url));
-    }
-    for (const rel of Object.values(DECOR_TEX_URLS)) {
-      if (!rel || seen.has(rel)) continue;
-      seen.add(rel);
-      jobs.push(this._loadOne(rel));
     }
     return Promise.all(jobs).then(() => {
       this.ready = true;

@@ -449,7 +449,7 @@
 <div id="modalRoot"></div>
 
 <script src="iso-renderer.js"></script>
-<script type="module" src="iso3d/boot.js?v=0.5.59&t=59"></script>
+<script type="module" src="iso3d/boot.js?v=0.5.89&t=89"></script>
 <script>
 "use strict";
 /* ----------------------------------------------------------------------------
@@ -2993,6 +2993,7 @@ function fmtLogTime(t){ const d=new Date(t), now=new Date();
 
 function render(){
   if(_suppressRender) return;
+  try{
   renderHeader();
   renderNetBar();
   if(QB && QB.active){ $('#tabs').style.display='none'; const fab0=$('#diceFab'); if(fab0) fab0.style.display='none'; renderQuickBattle(); return; }
@@ -3012,6 +3013,19 @@ function render(){
   else if(tab==='spells') renderSpells(c);
   else if(tab==='items') renderItems(c);
   else if(tab==='notes') renderNotes(c);
+  }catch(err){
+    // A throw mid-render used to leave a blank shell so it felt like the battle "exited".
+    console.error('[render]', err);
+    try{
+      if(QB&&QB.active){
+        app.innerHTML=`<div class="card"><h2>Battle UI glitch</h2><p class="muted" style="font-size:13px">${esc(err&&err.message||err)}</p>
+          <button class="btn block" id="qbRenderRetry">Retry battle UI</button>
+          <button class="btn ghost block" id="qbRenderExit" style="margin-top:8px">Exit battle</button></div>`;
+        const r=$('#qbRenderRetry'); if(r) r.onclick=()=>render();
+        const x=$('#qbRenderExit'); if(x) x.onclick=()=>qbExit();
+      }
+    }catch(e2){}
+  }
 }
 
 function renderHeader(){
@@ -4604,25 +4618,35 @@ function syncIso3DHost(session, highlightOpts){
         window.__iso3dCamKeep=false;
       }
       host.setMapRotation(mapRotation);
-      // Frame the player when: opening targeting (close zoom), remounting a modal, or
-      // first paint after QB start (__iso3dCamKeep cleared / __iso3dForceFrame set).
+      // Frame the player when: battle start (__iso3dForceFrame), first paint, remount, or
+      // targeting modal. Prefer PC over map-center — map-center was the "lost in blue" bug.
       let frameOn=null;
-      const p0=session.players&&session.players[0];
-      if(p0&&p0.x!=null){
-        if(inModal&&(window.__iso3dForceFrame||remounted)){
-          frameOn={col:p0.x,row:p0.y,zoom:1.9};
-          window.__iso3dForceFrame=false;
-        } else if(!inModal&&(window.__iso3dForceFrame||!window.__iso3dCamKeep||remounted)){
-          frameOn={col:p0.x,row:p0.y,zoom:1.55};
-          window.__iso3dForceFrame=false;
-        }
+      const p0=(session.players||[]).find(u=>u&&(u.id==='pc'||u.side==='pc'))||(session.players&&session.players[0]);
+      const wantFrame=!!(window.__iso3dForceFrame||!window.__iso3dCamKeep||remounted);
+      if(p0&&p0.x!=null&&wantFrame){
+        frameOn={col:p0.x|0, row:p0.y|0, zoom:inModal?1.9:1.55};
+        // Keep ForceFrame until frameOnCell succeeds (setSession / host may run before map is live)
       }
       host.setSession(session,{
         highlights:highlights,
-        resetCamera:!frameOn&&!inModal&&!window.__iso3dCamKeep,
+        resetCamera:false, // never dump to map-center when we have a PC to frame
         frameOn:frameOn||undefined,
       });
-      if(!inModal) window.__iso3dCamKeep=true;
+      if(frameOn){
+        // Confirm frame after layout; clear force only on success
+        requestAnimationFrame(()=>{
+          try{
+            if(host.frameOnCell(frameOn.col, frameOn.row, frameOn.zoom)!==false){
+              window.__iso3dCamKeep=true;
+              window.__iso3dForceFrame=false;
+            }
+          }catch(e){}
+        });
+      } else if(!inModal){
+        window.__iso3dCamKeep=true;
+      }
+      // 2D scroll backup (iso3d mode still has map cells for hit-testing)
+      if(p0&&p0.x!=null&&wantFrame) scrollMapToCell(p0.x|0, p0.y|0);
       host.onTileClick=(x,y,unit)=>{
         // Prefer the same mapgrid as this mount (modal or main)
         const root=mount.closest('.mapgrid')||mount.closest('.sheet')||document;
@@ -4667,28 +4691,57 @@ function enableIso3DBattleView(){
   localStorage.setItem('grimoire.iso','1');
   localStorage.setItem('grimoire.iso3d','1');
 }
-/** Snap Iso3D camera onto a unit (usually the PC). Retries until host + layout are ready. */
-function frameIso3DOnUnit(session, zoom){
-  if(!isoView||!iso3dView||!session) return;
-  const p=(session.players||[]).find(u=>u&&(u.id==='pc'||u.side==='pc'))||(session.players&&session.players[0]);
+/** Scroll 2D / classic-iso mapwrap so a grid cell is in the middle of the viewport. */
+function scrollMapToCell(x, y){
+  try{
+    const cell=document.querySelector('.mcell[data-cell="'+x+','+y+'"]');
+    if(!cell) return false;
+    const wrap=cell.closest('.mapwrap');
+    if(!wrap){ try{ cell.scrollIntoView({block:'center', inline:'center', behavior:'auto'}); }catch(e){ cell.scrollIntoView(true); } return true; }
+    const cr=cell.getBoundingClientRect(), wr=wrap.getBoundingClientRect();
+    wrap.scrollLeft += (cr.left+cr.width/2) - (wr.left+wr.width/2);
+    wrap.scrollTop  += (cr.top+cr.height/2) - (wr.top+wr.height/2);
+    return true;
+  }catch(e){ return false; }
+}
+/**
+ * Always center the battle camera on the local PC (Iso3D pan + 2D scroll).
+ * Retries until host/map DOM are ready — battle start used to land on map center
+ * when frameOnCell ran before setMap finished.
+ */
+function frameBattleCameraOnPlayer(session, zoom){
+  session=session||QB||(net&&net.session);
+  if(!session) return;
+  const p=(session.players||[]).find(u=>u&&(u.id==='pc'||u.side==='pc'||u.id==='me'))
+    ||(session.players&&session.players[0]);
   if(!p||p.x==null||p.y==null) return;
   const z=zoom!=null?zoom:1.55;
+  window.__iso3dForceFrame=true;
+  window.__iso3dCamKeep=false;
+  let attempts=0;
   const tryFrame=()=>{
-    const host=window.__iso3dHost;
-    if(!host||typeof host.frameOnCell!=='function') return false;
-    try{
-      host.frameOnCell(p.x|0, p.y|0, z);
-      window.__iso3dCamKeep=true;
-      window.__iso3dForceFrame=false;
-      return true;
-    }catch(e){ return false; }
+    attempts++;
+    scrollMapToCell(p.x|0, p.y|0);
+    if(isoView&&iso3dView){
+      const host=window.__iso3dHost;
+      if(!host||typeof host.frameOnCell!=='function') return false;
+      try{
+        const ok=host.frameOnCell(p.x|0, p.y|0, z);
+        if(ok===false) return false; // map not ready
+        window.__iso3dCamKeep=true;
+        window.__iso3dForceFrame=false;
+        return true;
+      }catch(e){ return false; }
+    }
+    // top-down / classic iso: scroll is enough once cell exists
+    return !!document.querySelector('.mcell[data-cell="'+(p.x|0)+','+(p.y|0)+'"]');
   };
   if(tryFrame()) return;
   requestAnimationFrame(()=>{ if(!tryFrame()) requestAnimationFrame(tryFrame); });
-  setTimeout(tryFrame, 80);
-  setTimeout(tryFrame, 250);
-  setTimeout(tryFrame, 500);
+  [50,120,250,450,800,1200].forEach(ms=>setTimeout(()=>{ if(window.__iso3dForceFrame||attempts<8) tryFrame(); }, ms));
 }
+/** @deprecated use frameBattleCameraOnPlayer */
+function frameIso3DOnUnit(session, zoom){ frameBattleCameraOnPlayer(session, zoom); }
 function loadPeer(cb){ if(window.Peer) return cb();
   const s=document.createElement('script'); s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
   s.onload=()=>cb(); s.onerror=()=>flashBanner('No internet — multiplayer needs a connection'); document.head.appendChild(s); }
@@ -5797,55 +5850,50 @@ function monsterSprite(k){ return MONSTER_PIX[k] || RACE_PIX[({goblin:'Goblin',o
 
 // ---- real sprite-sheet support (opt-in, iso view only) ----
 // Drop PNGs into ./sprites/characters/<key>.png (by class, lowercased) or
-// ./sprites/monsters/<key>.png (matching a MONSTER_PIX/mo.sprite key) and they're picked
-// up automatically — no code change needed. Nothing here works without those files present;
-// every character/monster keeps rendering its existing pixelArt token until a matching file
-// loads successfully. Expected sheet layout (matches RPG Maker/RPG Paper Maker "walk" sheets):
-// a grid of square frames, `dirRows` rows (top→bottom = facing down/left/right/up by default),
-// `cols` columns = walk-cycle frames. Row order is configurable per-entry since not every
-// asset pack uses the same convention — verify visually against the real file and adjust.
+// Original chunky pixel walk sheets under sprites/hq/ (tools/gen_pixel_sprites.py).
+// Layout: 4×4 grid, rows = down/left/right/up, cols = walk cycle. No RPG Maker pack.
 const SPRITE_DIR_ORDER=['down','left','right','up'];
-/** HQ unit art where present; RPM only for keys without HQ. Layout: 4×4 walk grid when multi-frame. */
+const _s4={cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER};
+// ?v= busts SW cache-first on unit sheets (without it, old wizard sticks forever)
+const _SV='v131';
 const SPRITE_MANIFEST={
-  // Classes
-  fighter:{file:'sprites/hq/characters/fighter.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  barbarian:{file:'sprites/hq/characters/barbarian.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  paladin:{file:'sprites/hq/characters/paladin.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  ranger:{file:'sprites/characters/ranger.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  rogue:{file:'sprites/characters/rogue.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  monk:{file:'sprites/characters/monk.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  bard:{file:'sprites/characters/bard.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  cleric:{file:'sprites/characters/cleric.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  druid:{file:'sprites/characters/druid.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  wizard:{file:'sprites/characters/wizard.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  sorcerer:{file:'sprites/characters/sorcerer.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  warlock:{file:'sprites/characters/warlock.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  artificer:{file:'sprites/characters/artificer.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  // Monsters
-  skeleton:{file:'sprites/monsters/skeleton.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  zombie:{file:'sprites/monsters/zombie.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  spider:{file:'sprites/monsters/spider.png', cols:4, rows:2, dirOrder:['down','right','left','up']},
-  ogre:{file:'sprites/monsters/ogre.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  demon:{file:'sprites/monsters/demon.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  slime:{file:'sprites/monsters/slime.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  goblin:{file:'sprites/hq/monsters/goblin.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  ghost:{file:'sprites/monsters/ghost.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  wolf:{file:'sprites/monsters/wolf.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  human:{file:'sprites/hq/characters/human.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  orc:{file:'sprites/monsters/orc.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  bear:{file:'sprites/monsters/bear.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  snake:{file:'sprites/monsters/snake.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  bat:{file:'sprites/monsters/bat.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  rat:{file:'sprites/monsters/rat.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  harpy:{file:'sprites/monsters/harpy.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  imp:{file:'sprites/monsters/imp.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  specter:{file:'sprites/monsters/specter.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  mushroom:{file:'sprites/monsters/mushroom.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  dog:{file:'sprites/monsters/dog.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  cat:{file:'sprites/monsters/cat.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  dragon:{file:'sprites/monsters/ogre.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  eye:{file:'sprites/monsters/slime.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
-  lizardfolk:{file:'sprites/hq/monsters/goblin.png', cols:4, rows:4, dirOrder:SPRITE_DIR_ORDER},
+  fighter:{file:`sprites/hq/characters/fighter.png?${_SV}`, ..._s4},
+  barbarian:{file:`sprites/hq/characters/barbarian.png?${_SV}`, ..._s4},
+  paladin:{file:`sprites/hq/characters/paladin.png?${_SV}`, ..._s4},
+  ranger:{file:`sprites/hq/characters/ranger.png?${_SV}`, ..._s4},
+  rogue:{file:`sprites/hq/characters/rogue.png?${_SV}`, ..._s4},
+  monk:{file:`sprites/hq/characters/monk.png?${_SV}`, ..._s4},
+  bard:{file:`sprites/hq/characters/bard.png?${_SV}`, ..._s4},
+  cleric:{file:`sprites/hq/characters/cleric.png?${_SV}`, ..._s4},
+  druid:{file:`sprites/hq/characters/druid.png?${_SV}`, ..._s4},
+  wizard:{file:`sprites/hq/characters/wizard.png?${_SV}`, ..._s4},
+  sorcerer:{file:`sprites/hq/characters/sorcerer.png?${_SV}`, ..._s4},
+  warlock:{file:`sprites/hq/characters/warlock.png?${_SV}`, ..._s4},
+  artificer:{file:`sprites/hq/characters/artificer.png?${_SV}`, ..._s4},
+  skeleton:{file:`sprites/hq/monsters/skeleton.png?${_SV}`, ..._s4},
+  zombie:{file:`sprites/hq/monsters/zombie.png?${_SV}`, ..._s4},
+  spider:{file:`sprites/hq/monsters/spider.png?${_SV}`, ..._s4},
+  ogre:{file:`sprites/hq/monsters/ogre.png?${_SV}`, ..._s4},
+  demon:{file:`sprites/hq/monsters/demon.png?${_SV}`, ..._s4},
+  slime:{file:`sprites/hq/monsters/slime.png?${_SV}`, ..._s4},
+  goblin:{file:`sprites/hq/monsters/goblin.png?${_SV}`, ..._s4},
+  ghost:{file:`sprites/hq/monsters/ghost.png?${_SV}`, ..._s4},
+  wolf:{file:`sprites/hq/monsters/wolf.png?${_SV}`, ..._s4},
+  human:{file:`sprites/hq/characters/human.png?${_SV}`, ..._s4},
+  orc:{file:`sprites/hq/monsters/orc.png?${_SV}`, ..._s4},
+  bear:{file:`sprites/hq/monsters/bear.png?${_SV}`, ..._s4},
+  snake:{file:`sprites/hq/monsters/snake.png?${_SV}`, ..._s4},
+  bat:{file:`sprites/hq/monsters/bat.png?${_SV}`, ..._s4},
+  rat:{file:`sprites/hq/monsters/rat.png?${_SV}`, ..._s4},
+  harpy:{file:`sprites/hq/monsters/harpy.png?${_SV}`, ..._s4},
+  imp:{file:`sprites/hq/monsters/imp.png?${_SV}`, ..._s4},
+  specter:{file:`sprites/hq/monsters/specter.png?${_SV}`, ..._s4},
+  mushroom:{file:`sprites/hq/monsters/mushroom.png?${_SV}`, ..._s4},
+  dog:{file:'sprites/hq/monsters/dog.png', ..._s4},
+  cat:{file:'sprites/hq/monsters/cat.png', ..._s4},
+  dragon:{file:'sprites/hq/monsters/ogre.png', ..._s4},
+  eye:{file:'sprites/hq/monsters/slime.png', ..._s4},
+  lizardfolk:{file:'sprites/hq/monsters/goblin.png', ..._s4},
 };
 const spriteReady=new Set(), spriteChecking=new Set();
 function spriteEntry(key){ return SPRITE_MANIFEST[key]||null; }
@@ -5874,44 +5922,35 @@ function spriteTokenHTML(key, facing){ const e=spriteEntry(key); if(!e) return n
   const frameW=(e.nativeW||cols*32)/cols, frameH=(e.nativeH||rows*32)/rows, w=frameW*SPRITE_ZOOM, h=frameH*SPRITE_ZOOM;
   return `<div style="width:${w}px;height:${h}px;background-image:url('${e.file}');background-repeat:no-repeat;background-size:${cols*100}% ${rows*100}%;background-position:0% ${posY}%;image-rendering:pixelated"></div>`; }
 
-// ---- decoration sprites — billboards (pixelized HQ, not RPM Paper Maker scrap) ----
+// ---- decoration sprites — full trees only; no mini-tree keys ----
 const DECOR_MANIFEST={
-  tree:{file:'sprites/hq/decor/tree_px.png'},
-  tree2:{file:'sprites/hq/decor/tree2_px.png'},
-  tree_dead:{file:'sprites/hq/decor/tree_dead_px.png'},
-  tree_snow:{file:'sprites/hq/decor/tree_px.png'},
-  jungle_tree:{file:'sprites/hq/decor/tree_px.png'},
-  bush:{file:'sprites/hq/decor/bush_px.png'},
-  bush2:{file:'sprites/hq/decor/bush_px.png'},
-  bush_snow:{file:'sprites/hq/decor/bush_px.png'},
-  rock:{file:'sprites/decor/rock.png'},
-  stump:{file:'sprites/decor/stump.png'},
-  log:{file:'sprites/decor/log.png'},
-  mushroom:{file:'sprites/decor/mushroom.png'},
-  crystal:{file:'sprites/decor/crystal.png'},
-  torch:{file:'sprites/decor/campfire.png'},
-  campfire:{file:'sprites/decor/campfire.png'},
-  // Unlit: stump silhouette (no flame) — clearly not a light source
-  torch_unlit:{file:'sprites/decor/stump.png'},
-  // Interactables — reuse nearest existing props (+ emoji fallback in token HTML)
-  door:{file:'sprites/decor/door.png', emoji:'🚪'},
-  door_open:{file:'sprites/decor/door_open.png', emoji:'🚪'},
-  grate:{file:'sprites/decor/grate.png', emoji:'⬛'},
-  grate_open:{file:'sprites/decor/grate_open.png', emoji:'⬜'},
-  plank:{file:'sprites/decor/log.png', emoji:'🪵'},
-  loose_rock:{file:'sprites/decor/rocks.png', emoji:'🪨'},
-  lever:{file:'sprites/decor/sign_post.png', emoji:'🎚️'},
-  switch:{file:'sprites/decor/sign.png', emoji:'🔘'},
-  trap:{file:'sprites/decor/trap.png', emoji:'⚠️'},
-  trap_safe:{file:'sprites/decor/trap_safe.png', emoji:'✅'},
-  cauldron:{file:'sprites/decor/cauldron.png', emoji:'🫧'},
-  cauldron_tipped:{file:'sprites/decor/cauldron_tipped.png', emoji:'💚'},
-  bell:{file:'sprites/decor/crystal.png', emoji:'🔔'},
-  drawbridge:{file:'sprites/decor/log.png', emoji:'🌉'},
-  drawbridge_down:{file:'sprites/decor/log.png', emoji:'🌉'},
-  oil_barrel:{file:'sprites/decor/oil_barrel.png', emoji:'🛢️'},
-  acid_barrel:{file:'sprites/decor/acid_barrel.png', emoji:'🧪'},
-  powder_barrel:{file:'sprites/decor/powder_barrel.png', emoji:'💣'},
+  tree:{file:'sprites/hq/decor/tree.png?v122'},
+  tree2:{file:'sprites/hq/decor/tree2.png?v122'},
+  bush:{file:'sprites/hq/decor/bush.png?v122'},
+  bush2:{file:'sprites/hq/decor/bush2.png?v122'},
+  rock:{file:'sprites/hq/decor/rock.png?v122'},
+  crystal:{file:'sprites/hq/decor/crystal.png?v122'},
+  torch:{file:'sprites/hq/decor/torch.png?v123'},
+  torch_unlit:{file:'sprites/hq/decor/torch_unlit.png?v123'},
+  campfire:{file:'sprites/hq/decor/campfire.png?v123'},
+  door:{file:'sprites/hq/decor/door.png', emoji:'🚪'},
+  door_open:{file:'sprites/hq/decor/door_open.png', emoji:'🚪'},
+  grate:{file:'sprites/hq/decor/grate.png', emoji:'⬛'},
+  grate_open:{file:'sprites/hq/decor/grate_open.png', emoji:'⬜'},
+  plank:{file:'sprites/hq/decor/log.png', emoji:'🪵'},
+  loose_rock:{file:'sprites/hq/decor/rocks.png', emoji:'🪨'},
+  lever:{file:'sprites/hq/decor/lever.png', emoji:'🎚️'},
+  switch:{file:'sprites/hq/decor/switch.png', emoji:'🔘'},
+  trap:{file:'sprites/hq/decor/trap.png', emoji:'⚠️'},
+  trap_safe:{file:'sprites/hq/decor/trap_safe.png', emoji:'✅'},
+  cauldron:{file:'sprites/hq/decor/cauldron.png', emoji:'🫧'},
+  cauldron_tipped:{file:'sprites/hq/decor/cauldron_tipped.png', emoji:'💚'},
+  bell:{file:'sprites/hq/decor/crystal.png', emoji:'🔔'},
+  drawbridge:{file:'sprites/hq/decor/log.png', emoji:'🌉'},
+  drawbridge_down:{file:'sprites/hq/decor/log.png', emoji:'🌉'},
+  oil_barrel:{file:'sprites/hq/decor/oil_barrel.png', emoji:'🛢️'},
+  acid_barrel:{file:'sprites/hq/decor/acid_barrel.png', emoji:'🧪'},
+  powder_barrel:{file:'sprites/hq/decor/powder_barrel.png', emoji:'💣'},
 };
 const decorReady=new Set(), decorChecking=new Set();
 function ensureDecorProbe(key){ const e=DECOR_MANIFEST[key]; if(!e||decorReady.has(key)||decorChecking.has(key)) return;
@@ -5923,7 +5962,8 @@ function ensureDecorProbe(key){ const e=DECOR_MANIFEST[key]; if(!e||decorReady.h
 // the width (earlier attempt) let a tall narrow sheet like tree.png (96x360) balloon to 180px
 // tall, dangling far past the tile it's planted on. Capping both dimensions keeps the tree a
 // believable size while still never stretching/squashing the art.
-const DECOR_MAX_W=64, DECOR_MAX_H=110;
+// Trees need a taller cap so they don't look like bushes in 2D map view.
+const DECOR_MAX_W=72, DECOR_MAX_H=140;
 function decorTokenHTML(key){ const e=DECOR_MANIFEST[key]; if(!e) return '';
   if(e.emoji) return `<div style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);font-size:32px;line-height:1;filter:drop-shadow(0 2px 1px rgba(0,0,0,.35))">${e.emoji}</div>`;
   if(!decorReady.has(key)){ ensureDecorProbe(key); return ''; }
@@ -6659,10 +6699,10 @@ function openMageHandUI(c, s, me){
 // Spells that paint temporary terrain onto the battle map (Quick Battle only): the
 // tiles a blast covers become this TERRAIN key for `rounds` (6s each), then revert.
 const SPELL_TERRAIN={'Grease':{terrain:'grease', rounds:10}, 'Web':{terrain:'web', rounds:600}};
-/* ---- preset battle maps (v120.65 remake: lighting · pits · low walls · traps · barrels) ---- */
+/* ---- preset battle maps (v120.107 — from-scratch FFT pack maps) ---- */
 const MAP_PRESETS=(()=>{ const P={};
   const fill=(t,w,h,k)=>{ for(let y=0;y<h;y++)for(let x=0;x<w;x++) t[x+','+y]=k; };
-  const box=(t,w,h)=>{ for(let x=0;x<w;x++){t[x+',0']='wall';t[x+','+(h-1)]='wall';} for(let y=0;y<h;y++){t['0,'+y]='wall';t[(w-1)+','+y]='wall';} };
+  const box=(t,w,h,k)=>{ k=k||'wall'; for(let x=0;x<w;x++){t[x+',0']=k;t[x+','+(h-1)]=k;} for(let y=0;y<h;y++){t['0,'+y]=k;t[(w-1)+','+y]=k;} };
   const rect=(t,x0,y0,x1,y1,k)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) t[x+','+y]=k; };
   const put=(t,a,k)=>a.forEach(([x,y])=>t[x+','+y]=k);
   const hrect=(ht,x0,y0,x1,y1,lvl)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) ht[x+','+y]=lvl; };
@@ -6675,355 +6715,422 @@ const MAP_PRESETS=(()=>{ const P={};
     const dkey=def.decor&&def.decor[o.state||def.default];
     if(dkey) dc[k]=dkey;
   }); };
+  const doorway=(t,x,y,floor)=>{ t[x+','+y]=floor||'stone'; };
+  // Plants: ONLY tree | tree2 | bush. No rock/crystal as outdoor clutter.
+  // Trees spaced far apart so canopies don't stack into a mess.
 
-  // ═══════════════════════════════════════════════════════════════
-  // OUTDOOR / DAY
-  // ═══════════════════════════════════════════════════════════════
-
-  // ★ Default QB arena — every major system in one outdoor lab
-  (function mechanicsLab(){ const w=32,h=24,t={},ht={},dc={},ix={}; fill(t,w,h,'grass'); box(t,w,h);
-    // Maze (full walls = structure)
-    for(let y=4;y<=16;y++) t['10,'+y]='wall';
-    for(let x=10;x<=18;x++) t[x+',10']='wall';
-    for(let y=10;y<=16;y++) t['18,'+y]='wall';
-    t['10,6']='grass'; t['10,14']='grass'; t['14,10']='grass'; t['18,13']='grass';
-    for(let x=4;x<=8;x++) t[x+',8']='wall'; t['6,8']='grass';
-    // Difficult terrain + undergrowth
-    rect(t,2,16,8,20,'mud'); put(t,[[4,12],[5,12],[4,13],[5,13],[6,14]],'brush');
-    // AoE plaza
-    rect(t,20,4,28,14,'sand'); rect(t,22,6,26,12,'grass');
-    // Elevation: jump ledge, climb mesa, drop ridge
-    hrect(ht,3,3,7,6,1); rect(t,3,3,7,6,'stone');
-    hrect(ht,22,16,28,20,2); rect(t,22,16,28,20,'stone');
-    hrect(ht,12,2,17,5,2); rect(t,12,2,17,5,'stone');
-    hrect(ht,12,6,14,7,1); rect(t,12,6,14,7,'stone');
-    // Pit gap near plaza (Fly / jump around) + lava strip
-    put(t,[[20,16],[21,16],[20,17]],'pit');
-    put(t,[[24,14],[25,14],[26,14]],'lava');
-    // Outdoor low walls as cover on plaza edge
-    put(t,[[21,8],[21,9],[27,8],[27,9]],'low_wall');
-    // Trees / bushes
-    put(dc,[[3,10],[5,14],[8,5],[11,18],[15,12],[19,3],[21,15],[25,3],[27,10],[6,18],[14,20],[29,18]],'tree');
-    put(dc,[[4,7],[7,12],[13,14],[16,8],[20,10],[24,14],[9,17],[23,5]],'bush');
-    put(dc,[[28,20]],'tree2'); put(dc,[[15,16]],'rock'); put(dc,[[5,19]],'stump');
-    put(dc,[[26,8],[11,4]],'mushroom');
-    put(dc,[[23,10]],'campfire'); // plaza campfire
-    // Interactables
-    ix['10,6']={type:'door', state:'closed'};
-    ix['10,14']={type:'door', state:'open'};
-    ix['9,6']={type:'lever', state:'off', link:'10,6'};
-    ix['14,12']={type:'trap', state:'armed'};
-    ix['16,16']={type:'bell', state:'idle'};
-    ix['22,7']={type:'oil_barrel', state:'intact'};
-    ix['25,9']={type:'powder_barrel', state:'intact'};
-    ix['23,10']={type:'torch', state:'lit'}; // campfire as torch interact
+  // ═══════════════════════════════════════════════════
+  // OPEN FIELD — default day skirmish
+  // ═══════════════════════════════════════════════════
+  (function openField(){
+    const w=28,h=18,t={},ht={},dc={},ix={};
+    fill(t,w,h,'grass');
+    // Pond NW
+    rect(t,3,2,8,6,'water');
+    // Dirt track
+    for(let x=10;x<=22;x++){ t[x+',9']='dirt'; t[x+',10']='dirt'; }
+    for(let y=6;y<=12;y++) t['14,'+y]='dirt';
+    // Sand bank SE
+    rect(t,18,12,25,16,'sand');
+    // Low cover
+    put(t,[[11,5],[12,5],[16,7],[17,7],[20,4],[6,11],[7,11]],'low_wall');
+    // Hills
+    hrect(ht,22,2,26,5,1); rect(t,22,2,26,5,'stone');
+    hrect(ht,1,13,4,16,1);
+    // Full trees — corners & edges only
+    put(dc,[[2,8],[2,14],[9,1],[15,2],[24,1],[26,8],[25,15],[12,15],[5,16]],'tree');
+    put(dc,[[20,14],[8,14]],'tree2');
+    // Bushes near path only
+    put(dc,[[10,8],[13,11],[18,8],[16,12],[9,12],[21,11]],'bush');
+    // Camp
+    put(dc,[[15,13]],'campfire');
+    put(dc,[[16,13]],'crate'); put(dc,[[17,13]],'barrel');
+    put(dc,[[12,12],[13,12]],'fence');
+    ix['15,13']={type:'torch',state:'lit'};
+    ix['11,12']={type:'trap',state:'armed'};
+    ix['18,11']={type:'oil_barrel',state:'intact'};
     syncIx(ix,dc);
-    P['Mechanics Lab']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'day', points:[campPt(23,10)]},
-      blurb:'Day arena · maze doors/lever · trap · bell · pits/lava (Fly) · low-wall cover · barrels · jump/climb'}; })();
+    P['Open Field']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[campPt(15,13)]},
+      blurb:'Day field · pond · dirt track · hills · full trees · bushes · camp'};
+  })();
 
-  (function field(){ const w=26,h=18,t={},ht={},dc={},ix={}; fill(t,w,h,'grass');
-    rect(t,10,1,13,4,'water'); rect(t,2,6,4,8,'mud'); rect(t,6,7,9,9,'sand');
-    put(t,[[5,3],[6,3],[5,4],[12,7],[13,7]],'brush');
-    put(t,[[8,2],[3,1],[11,8],[18,10],[19,10],[14,12]],'low_wall');
-    // Small pond-side pit
-    put(t,[[12,5],[13,5]],'pit');
-    hrect(ht,0,0,2,2,1); ht['1,1']=2;
-    put(dc,[[4,2],[7,1],[2,4],[9,3],[14,5],[1,7],[18,3],[20,8]],'tree');
-    put(dc,[[22,6],[16,12]],'tree2'); put(dc,[[11,2]],'tree_dead');
-    put(dc,[[6,2],[11,6],[3,3],[15,10],[8,12],[12,14]],'bush');
-    put(dc,[[16,2],[5,14]],'rock'); put(dc,[[5,10]],'stump'); put(dc,[[19,12]],'log');
-    put(dc,[[22,4],[8,8]],'mushroom'); put(dc,[[15,14]],'campfire');
-    ix['15,14']={type:'torch', state:'lit'};
-    ix['17,11']={type:'trap', state:'armed'};
-    ix['10,10']={type:'oil_barrel', state:'intact'};
-    syncIx(ix,dc);
-    P['Open Field']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'day', points:[campPt(15,14)]},
-      blurb:'Day field · low walls · campfire · pit by water · trap · oil barrel · hills'}; })();
-
-  (function cliffRun(){ const w=16,h=12,t={},ht={},dc={},ix={}; fill(t,w,h,'grass'); box(t,w,h);
-    hrect(ht,3,3,6,5,1); rect(t,3,3,6,5,'stone');
-    hrect(ht,9,2,13,6,2); rect(t,9,2,13,6,'stone');
-    rect(t,9,7,13,9,'mud');
-    for(let y=3;y<=6;y++) t['7,'+y]='pit';
-    put(t,[[8,4],[8,5]],'pit');
-    for(let x=2;x<=6;x++) t[x+',9']='lava';
-    put(t,[[3,10],[4,10]],'lava');
-    t['7,2']='stone'; hrect(ht,7,2,7,2,1);
-    put(t,[[2,7],[3,7]],'low_wall');
-    put(dc,[[2,2],[14,3],[4,8]],'tree'); put(dc,[[5,7],[11,10]],'bush');
-    put(dc,[[5,5]],'campfire');
-    ix['5,5']={type:'torch', state:'lit'};
-    ix['10,8']={type:'trap', state:'armed'}; // mud approach
-    ix['4,4']={type:'oil_barrel', state:'intact'};
-    syncIx(ix,dc);
-    P['Cliff Run']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'day', points:[campPt(5,5)]},
-      blurb:'Day cliffs · pit gap (Fly) · lava (Fly ignores) · jump/climb · campfire · trap'}; })();
-
-  (function fireballField(){ const w=14,h=12,t={},ht={},dc={},ix={}; fill(t,w,h,'sand'); box(t,w,h);
-    put(t,[[4,4],[4,5],[4,6],[9,4],[9,5],[9,6]],'low_wall');
-    rect(t,5,3,8,7,'grass');
-    put(t,[[6,9],[7,9]],'pit'); // south hazard
-    put(dc,[[2,2],[11,2],[2,9],[11,9]],'tree'); put(dc,[[6,9],[7,2]],'bush');
-    ix['6,5']={type:'oil_barrel', state:'intact'};
-    ix['7,6']={type:'oil_barrel', state:'intact'};
-    ix['5,6']={type:'acid_barrel', state:'intact'};
-    ix['8,4']={type:'powder_barrel', state:'intact'};
-    ix['3,8']={type:'trap', state:'armed'};
-    syncIx(ix,dc);
-    P['Fireball Field']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'day', points:[]},
-      blurb:'Day killbox · low-wall cover · oil/acid/powder barrels · pit · trap'}; })();
-
-  (function sunsetRidge(){ const w=28,h=18,t={},ht={},dc={},ix={}; fill(t,w,h,'grass'); box(t,w,h);
-    rect(t,1,1,6,4,'sand'); rect(t,18,12,24,16,'mud');
-    hrect(ht,2,2,5,14,2); rect(t,2,2,5,14,'stone');
-    hrect(ht,6,4,8,10,1); rect(t,6,4,8,10,'stone');
-    rect(t,12,3,22,11,'grass');
-    put(t,[[12,8],[13,8],[14,8],[16,9],[17,9],[15,12]],'low_wall');
-    // Shallow ravine (pit) east of ridge — Fly / go around
-    put(t,[[9,6],[9,7],[9,8],[10,7]],'pit');
-    put(dc,[[10,5],[14,8],[16,4],[20,6],[22,10],[11,12],[18,14],[9,9]],'tree');
-    put(dc,[[13,6],[15,11],[19,5]],'bush'); put(dc,[[7,12]],'rock');
-    put(dc,[[16,14]],'campfire');
-    ix['16,14']={type:'torch', state:'lit'};
-    ix['14,10']={type:'trap', state:'armed'};
-    ix['18,8']={type:'oil_barrel', state:'intact'};
-    ix['12,6']={type:'bell', state:'idle'};
-    syncIx(ix,dc);
-    P['Sunset Ridge']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'sunset', points:[campPt(16,14)]},
-      blurb:'Sunset light · long cliff shadows · pits · low walls · campfire · trap · barrel'}; })();
-
-  (function chasm(){ const w=26,h=18,t={},ht={},dc={},ix={}; fill(t,w,h,'grass');
-    for(let x=0;x<w;x++){ t[x+',4']='pit'; t[x+',5']='pit'; }
-    // Fixed wood span mid-map + raisable drawbridge span further east
-    [7,8].forEach(x=>{ t[x+',4']='wood'; t[x+',5']='wood'; });
-    t['16,4']='pit'; t['17,4']='pit'; t['16,5']='pit'; t['17,5']='pit';
-    put(t,[[1,2],[2,3],[24,6],[12,8]],'low_wall');
-    rect(t,1,7,2,8,'mud'); put(t,[[2,2],[12,7]],'brush');
-    put(dc,[[4,2],[20,2],[10,10]],'tree'); put(dc,[[6,8]],'bush');
-    put(dc,[[5,10]],'campfire');
-    ix['5,10']={type:'torch', state:'lit'};
-    ix['6,3']={type:'lever', state:'off', links:['16,4','17,4','16,5','17,5']};
-    ix['16,4']={type:'drawbridge', state:'raised', span:['16,4','17,4','16,5','17,5']};
-    ix['17,4']={type:'drawbridge', state:'raised', span:['16,4','17,4','16,5','17,5']};
-    ix['16,5']={type:'drawbridge', state:'raised', span:['16,4','17,4','16,5','17,5']};
-    ix['17,5']={type:'drawbridge', state:'raised', span:['16,4','17,4','16,5','17,5']};
-    ix['14,7']={type:'trap', state:'armed'};
-    ix['9,2']={type:'oil_barrel', state:'intact'};
-    syncIx(ix,dc);
-    P['Chasm Bridge']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'day', points:[campPt(5,10)]},
-      blurb:'Day chasm · fixed bridge + lever drawbridge · pits (Fly) · trap · barrel'}; })();
-
-  (function swamp(){ const w=26,h=20,t={},ht={},dc={},ix={}; fill(t,w,h,'mud');
-    rect(t,2,2,5,4,'water'); rect(t,9,5,12,8,'water'); rect(t,6,8,8,9,'acid');
-    put(t,[[1,6],[4,7],[7,2],[10,2],[13,4],[12,9],[3,9],[8,5]],'brush');
-    rect(t,5,5,6,6,'fog');
-    rect(t,12,1,13,2,'grass'); hrect(ht,12,1,13,2,1);
-    // Sinkhole pits
-    put(t,[[15,10],[16,10],[16,11]],'pit');
-    put(t,[[18,6],[19,6]],'low_wall'); // ruined boardwalk
-    put(dc,[[14,3],[20,12],[8,14]],'tree_dead'); put(dc,[[11,11],[4,12]],'bush');
-    put(dc,[[13,2]],'campfire');
-    ix['13,2']={type:'torch', state:'lit'};
-    ix['10,10']={type:'trap', state:'armed'};
-    ix['7,10']={type:'acid_barrel', state:'intact'};
-    ix['17,8']={type:'oil_barrel', state:'intact'};
-    ix['12,12']={type:'plank', state:'set'}; t['12,12']='pit'; // plank over pit
-    syncIx(ix,dc);
-    P['Swamp']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'day', points:[campPt(13,2)]},
-      blurb:'Day swamp · acid pools · pits · fog · plank · trap · acid/oil barrels'}; })();
-
-  (function frozen(){ const w=26,h=18,t={},ht={},dc={},ix={}; fill(t,w,h,'snow');
-    rect(t,5,3,9,6,'ice');
-    // Outdoor ice ridges = height + low_wall, not full dungeon walls
-    put(t,[[2,2],[12,2],[3,7],[11,7],[7,1],[7,8]],'low_wall');
-    put(t,[[1,5],[13,5]],'brush');
-    hrect(ht,0,0,1,h-1,1); hrect(ht,w-2,0,w-1,h-1,1);
-    // Thin ice = pit (fell through)
-    put(t,[[6,4],[7,5],[8,4]],'pit');
-    put(dc,[[4,10],[15,4],[18,12]],'tree_snow'); put(dc,[[10,12]],'bush_snow');
-    ix['9,9']={type:'trap', state:'armed'};
-    ix['5,8']={type:'oil_barrel', state:'intact'};
-    syncIx(ix,dc);
-    P['Frozen Lake']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'day', points:[]},
-      blurb:'Day snow · ice · thin-ice pits · low-wall ridges · trap'}; })();
-
-  // ═══════════════════════════════════════════════════════════════
-  // DUNGEON / NIGHT (torch pools)
-  // ═══════════════════════════════════════════════════════════════
-
-  (function torchlitCrypt(){ const w=24,h=16,t={},ht={},dc={},ix={}; fill(t,w,h,'stone'); box(t,w,h);
-    for(let y=1;y<h-1;y++){ t['8,'+y]='wall'; t['15,'+y]='wall'; }
-    t['8,4']='stone'; t['8,11']='stone'; t['15,4']='stone'; t['15,11']='stone';
-    for(let x=1;x<w-1;x++){ if(x!==8&&x!==15) t[x+',8']='wall'; }
-    t['4,8']='stone'; t['12,8']='stone'; t['20,8']='stone';
-    rect(t,1,1,7,7,'stone'); rect(t,16,1,22,7,'stone'); rect(t,1,9,7,14,'stone'); rect(t,16,9,22,14,'stone');
-    put(t,[[3,3],[20,3],[3,12],[20,12]],'rubble');
-    hrect(ht,18,11,21,13,1); rect(t,18,11,21,13,'stone');
-    const torchCells=[[2,2],[6,2],[2,6],[6,6],[17,2],[21,2],[17,6],[21,6],[2,10],[6,10],[2,13],[6,13],[17,10],[21,13],[12,4],[12,12]];
-    put(dc,torchCells,'torch'); put(dc,[[19,12]],'crystal');
-    ix['8,4']={type:'door', state:'closed'};
-    ix['8,11']={type:'door', state:'closed'};
-    ix['15,4']={type:'door', state:'closed'};
-    ix['15,11']={type:'door', state:'open'};
-    ix['3,5']={type:'lever', state:'off', links:['18,8','19,8']};
-    t['18,8']='pit'; t['19,8']='pit';
-    ix['18,8']={type:'drawbridge', state:'raised', span:['18,8','19,8']};
-    ix['19,8']={type:'drawbridge', state:'raised', span:['18,8','19,8']};
-    ix['17,12']={type:'switch', state:'off', link:'20,11'};
-    ix['20,11']={type:'grate', state:'closed'};
-    ix['5,3']={type:'loose_rock', state:'blocking'};
-    t['4,3']='pit'; ix['4,3']={type:'plank', state:'set'};
-    ix['12,6']={type:'trap', state:'armed'};
-    ix['21,12']={type:'cauldron', state:'full'};
-    ix['19,11']={type:'bell', state:'idle'};
-    [[2,2],[12,4],[21,13]].forEach(([cx,cy])=>{ ix[cx+','+cy]={type:'torch', state:'lit'}; });
-    ix['4,6']={type:'oil_barrel', state:'intact'};
-    ix['6,12']={type:'oil_barrel', state:'intact'};
-    ix['17,4']={type:'acid_barrel', state:'intact'};
-    ix['21,10']={type:'powder_barrel', state:'intact'};
-    syncIx(ix,dc);
-    const pts=torchCells.map(([c,r])=>torchPt(c,r));
-    pts.push(crystalPt(19,12));
-    P['Torchlit Crypt']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'dungeon', points:pts},
-      blurb:'Dungeon dark · torches · doors/lever→drawbridge · grate · trap · cauldron · bell · barrels · pits'}; })();
-
-  (function dungeon(){ const w=26,h=20,t={},ht={},dc={},ix={}; fill(t,w,h,'stone'); box(t,w,h);
-    for(let y=1;y<h-1;y++) if(y!==5) t['7,'+y]='wall';
-    for(let x=1;x<7;x++) if(x!==3) t[x+',5']='wall';
-    for(let x=7;x<w-1;x++) if(x!==10) t[x+',6']='wall';
-    put(t,[[2,2],[3,2]],'rubble'); rect(t,11,2,12,3,'fog');
-    put(t,[[4,8],[5,8]],'acid'); put(t,[[10,2]],'brush');
-    put(t,[[14,10],[15,10],[15,11]],'pit');
-    hrect(ht,11,7,12,8,1);
-    const torches=[[2,4],[5,2],[3,8],[9,4],[12,9],[16,4],[20,8],[22,12],[10,12],[18,2]];
-    put(dc,torches,'torch'); put(dc,[[12,8]],'crystal');
-    ix['3,5']={type:'door', state:'closed'};
-    ix['10,6']={type:'door', state:'closed'};
-    ix['2,7']={type:'lever', state:'off', link:'3,5'};
-    ix['8,8']={type:'trap', state:'armed'};
-    ix['13,4']={type:'oil_barrel', state:'intact'};
-    ix['19,10']={type:'acid_barrel', state:'intact'};
-    ix['11,10']={type:'bell', state:'idle'};
-    ix['16,8']={type:'grate', state:'closed'};
-    ix['15,7']={type:'switch', state:'off', link:'16,8'};
-    torches.slice(0,4).forEach(([c,r])=>{ ix[c+','+r]={type:'torch', state:'lit'}; });
-    syncIx(ix,dc);
-    P['Dungeon']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'dungeon', points:torches.map(([c,r])=>torchPt(c,r)).concat([crystalPt(12,8)])},
-      blurb:'Dungeon · torch pools · doors/lever · grate/switch · pits · acid · trap · barrels'}; })();
-
-  (function cave(){ const w=26,h=20,t={},ht={},dc={},ix={}; fill(t,w,h,'stone'); box(t,w,h);
-    // box() draws generic brick 'wall' — swap the whole border to natural cave rock so this
-    // doesn't read as a brick/wood-lined room (live report: "cave map looks like wood").
-    Object.keys(t).forEach(k=>{ if(t[k]==='wall') t[k]='cave_wall'; });
-    put(t,[[3,3],[4,3],[8,2],[10,5],[5,7],[6,8],[12,8],[2,6],[7,4],[11,3]],'cave_wall');
-    put(t,[[3,4],[9,6],[6,2]],'rubble');
-    // Real cave lake, not a token 2-tile puddle
-    rect(t,2,7,5,10,'water');
-    put(t,[[11,2],[12,2],[11,3],[12,3],[13,3],[14,3]],'lava');
-    put(t,[[7,7],[8,8]],'brush'); rect(t,9,8,10,9,'fog');
-    put(t,[[5,5],[6,5],[14,6],[15,6],[15,7],[18,10]],'pit');
-    hrect(ht,11,6,13,7,1); hrect(ht,2,3,3,4,1);
-    const torches=[[1,2],[4,6],[8,10],[13,12],[16,5],[20,8],[22,14],[10,14]];
-    put(dc,torches,'torch'); put(dc,[[12,7]],'crystal'); put(dc,[[19,4]],'rock');
-    ix['8,5']={type:'trap', state:'armed'};
-    ix['16,8']={type:'oil_barrel', state:'intact'};
-    ix['10,8']={type:'powder_barrel', state:'intact'};
-    ix['6,10']={type:'loose_rock', state:'blocking'};
-    ix['3,10']={type:'plank', state:'set'}; t['3,10']='pit';
-    torches.slice(0,3).forEach(([c,r])=>{ ix[c+','+r]={type:'torch', state:'lit'}; });
-    syncIx(ix,dc);
-    P['Cave']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'dungeon', points:torches.map(([c,r])=>torchPt(c,r)).concat([crystalPt(12,7)])},
-      blurb:'Cave dark · sparse torches · lava · pits (Fly) · fog · trap · barrels · plank'}; })();
-
-  (function tavern(){ const w=22,h=18,t={},ht={},dc={},ix={}; fill(t,w,h,'wood'); box(t,w,h);
-    delete t['6,'+(h-1)]; t['6,'+(h-1)]='wood'; // door out
-    // Windows in the north wall — daylight spills into an otherwise dim tavern.
-    t['14,0']='window'; t['18,0']='window';
-    for(let x=1;x<5;x++) t[x+',2']='wall';
-    put(t,[[3,5],[3,6],[8,4],[9,4],[8,7],[9,7]],'wall');
-    // Fireplace = lava tile (hazard) with campfire light
-    t[(w-2)+',1']='lava';
-    put(t,[[1,8],[11,8]],'brush');
-    hrect(ht,5,7,7,8,1); // stage
-    // Cellar pit under trapdoor
-    put(t,[[14,12],[15,12]],'pit');
-    put(dc,[[2,6],[10,6]],'stump'); put(dc,[[4,8],[12,3]],'mushroom'); put(dc,[[8,2]],'rock');
-    put(dc,[[w-2,2]],'campfire');
-    const torches=[[2,1],[10,1],[4,10],[12,10],[16,4],[18,10]];
+  // ═══════════════════════════════════════════════════
+  // CASTLE YARD — outdoor paths + keep
+  // ═══════════════════════════════════════════════════
+  (function castleYard(){
+    const w=26,h=18,t={},ht={},dc={},ix={};
+    fill(t,w,h,'grass');
+    box(t,w,h,'wall');
+    // Perimeter walkway
+    rect(t,1,1,w-2,2,'stone');
+    rect(t,1,h-3,w-2,h-2,'stone');
+    rect(t,1,1,2,h-2,'stone');
+    rect(t,w-3,1,w-2,h-2,'stone');
+    // Cross paths
+    rect(t,2,8,w-3,9,'stone');
+    rect(t,11,2,13,h-3,'stone');
+    // Keep (NW building)
+    rect(t,4,3,10,7,'stone');
+    for(let x=4;x<=10;x++){ t[x+',3']='wall'; t[x+',7']='wall'; }
+    for(let y=3;y<=7;y++){ t['4,'+y]='wall'; t['10,'+y]='wall'; }
+    doorway(t,7,7,'stone');
+    // SE tower
+    rect(t,17,11,22,15,'stone');
+    for(let x=17;x<=22;x++){ t[x+',11']='wall'; t[x+',15']='wall'; }
+    for(let y=11;y<=15;y++){ t['17,'+y]='wall'; t['22,'+y]='wall'; }
+    doorway(t,17,13,'stone');
+    // Gate south
+    doorway(t,11,h-1,'stone'); doorway(t,12,h-1,'stone');
+    // Trees: only outside courtyard greens (not on paths)
+    put(dc,[[3,4],[5,2],[9,2],[15,2],[20,3],[23,6],[23,12],[20,16],[8,15],[3,12],[2,7]],'tree');
+    put(dc,[[14,15],[24,9]],'tree2');
+    // Courtyard: bushes only (no trees in the open court)
+    put(dc,[[9,10],[14,10],[15,6],[8,6],[16,12]],'bush');
+    // Furniture
+    put(dc,[[12,11]],'crate'); put(dc,[[13,11]],'barrel');
+    put(dc,[[6,5]],'table'); put(dc,[[5,5],[7,5]],'chair');
+    const torches=[[5,4],[9,4],[18,12],[21,12],[3,9],[20,5]];
     put(dc,torches,'torch');
-    ix['6,'+(h-1)]={type:'door', state:'open'};
-    ix['14,12']={type:'plank', state:'set'}; // trapdoor plank over cellar pit
-    ix['8,10']={type:'trap', state:'armed'};
-    ix['12,6']={type:'oil_barrel', state:'intact'};
-    ix['13,6']={type:'oil_barrel', state:'intact'};
-    ix['15,4']={type:'acid_barrel', state:'intact'};
-    ix['5,6']={type:'bell', state:'idle'};
-    ix[(w-2)+',2']={type:'torch', state:'lit'};
-    torches.forEach(([c,r])=>{ ix[c+','+r]={type:'torch', state:'lit'}; });
+    ix['7,7']={type:'door',state:'closed'};
+    ix['17,13']={type:'door',state:'open'};
+    ix['11,'+(h-1)]={type:'door',state:'open'};
+    ix['12,'+(h-1)]={type:'door',state:'open'};
+    ix['14,8']={type:'trap',state:'armed'};
+    ix['15,11']={type:'oil_barrel',state:'intact'};
+    torches.forEach(([c,r])=>{ ix[c+','+r]={type:'torch',state:'lit'}; });
+    syncIx(ix,dc);
+    P['Castle']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:torches.map(([c,r])=>torchPt(c,r))},
+      blurb:'Day castle · stone paths · keep · tower · trees outside · bushes in yard'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // MEADOWS — clean open fight
+  // ═══════════════════════════════════════════════════
+  (function meadows(){
+    const w=24,h=16,t={},ht={},dc={},ix={};
+    fill(t,w,h,'grass');
+    put(t,[[8,4],[9,4],[10,4],[14,8],[15,8],[6,10]],'brush');
+    put(t,[[11,6],[12,6],[12,7]],'low_wall');
+    hrect(ht,18,2,22,5,1); rect(t,18,2,22,5,'stone');
+    put(dc,[[2,2],[4,1],[1,8],[3,13],[10,1],[16,2],[21,7],[20,13],[12,13],[6,14]],'tree');
+    put(dc,[[8,8],[13,5],[15,11],[9,11],[17,9]],'bush');
+    put(dc,[[13,10]],'campfire'); put(dc,[[14,10]],'crate');
+    ix['13,10']={type:'torch',state:'lit'};
+    ix['11,9']={type:'trap',state:'armed'};
+    syncIx(ix,dc);
+    P['Mechanics Lab']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[campPt(13,10)]},
+      blurb:'Day meadow · simple cover · camp · full trees · bushes'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // CLIFF RUN
+  // ═══════════════════════════════════════════════════
+  (function cliff(){
+    const w=18,h=14,t={},ht={},dc={},ix={};
+    fill(t,w,h,'grass'); box(t,w,h);
+    hrect(ht,2,2,7,5,1); rect(t,2,2,7,5,'stone');
+    hrect(ht,10,2,15,7,2); rect(t,10,2,15,7,'stone');
+    hrect(ht,8,2,9,3,1); rect(t,8,2,9,3,'stone');
+    for(let y=3;y<=7;y++) t['8,'+y]='pit';
+    for(let x=2;x<=7;x++) t[x+',10']='lava';
+    rect(t,10,8,15,11,'mud');
+    put(t,[[2,8],[3,8],[4,8]],'low_wall');
+    put(dc,[[2,12],[15,12],[5,7],[12,12]],'tree');
+    put(dc,[[6,8],[11,11],[14,9],[3,6]],'bush');
+    put(dc,[[4,4]],'campfire'); put(dc,[[13,5]],'crate');
+    ix['4,4']={type:'torch',state:'lit'};
+    ix['11,9']={type:'trap',state:'armed'};
+    ix['3,4']={type:'oil_barrel',state:'intact'};
+    syncIx(ix,dc);
+    P['Cliff Run']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[campPt(4,4)]},
+      blurb:'Day cliffs · pit canyon · lava · trees · camp'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // FIREBALL FIELD — arena
+  // ═══════════════════════════════════════════════════
+  (function fireball(){
+    const w=16,h=14,t={},ht={},dc={},ix={};
+    fill(t,w,h,'sand'); box(t,w,h);
+    rect(t,5,3,10,8,'grass');
+    put(t,[[4,4],[4,5],[4,6],[4,7],[11,4],[11,5],[11,6],[11,7]],'low_wall');
+    put(t,[[7,11],[8,11]],'pit');
+    put(dc,[[2,2],[13,2],[2,11],[13,11]],'tree');
+    put(dc,[[7,2],[8,12],[1,6],[14,6],[6,10]],'bush');
+    put(dc,[[6,3],[9,3]],'crate'); put(dc,[[5,9],[10,9]],'barrel');
+    ix['7,5']={type:'oil_barrel',state:'intact'};
+    ix['8,6']={type:'oil_barrel',state:'intact'};
+    ix['6,6']={type:'acid_barrel',state:'intact'};
+    ix['3,8']={type:'trap',state:'armed'};
+    syncIx(ix,dc);
+    P['Fireball Field']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[]},
+      blurb:'Day killbox · dual cover · barrels · corner trees'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // SUNSET RIDGE
+  // ═══════════════════════════════════════════════════
+  (function sunset(){
+    const w=28,h=16,t={},ht={},dc={},ix={};
+    fill(t,w,h,'grass'); box(t,w,h);
+    rect(t,1,1,6,3,'sand');
+    rect(t,20,11,26,14,'mud');
+    hrect(ht,3,2,6,13,2); rect(t,3,2,6,13,'stone');
+    hrect(ht,7,4,9,10,1); rect(t,7,4,9,10,'stone');
+    put(t,[[10,6],[10,7],[10,8],[11,7]],'pit');
+    put(t,[[13,7],[14,7],[15,7],[16,8]],'low_wall');
+    put(dc,[[11,3],[15,5],[18,2],[22,4],[24,8],[12,12],[19,13],[8,13],[25,3]],'tree');
+    put(dc,[[14,4],[16,10],[20,6],[22,11],[10,9]],'bush');
+    put(dc,[[17,12]],'campfire'); put(dc,[[18,12]],'tent'); put(dc,[[19,12]],'crate');
+    put(dc,[[12,8],[13,8]],'fence');
+    ix['17,12']={type:'torch',state:'lit'};
+    ix['15,9']={type:'trap',state:'armed'};
+    ix['18,9']={type:'oil_barrel',state:'intact'};
+    syncIx(ix,dc);
+    P['Sunset Ridge']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'sunset',points:[campPt(17,12)]},
+      blurb:'Sunset · ridge · ravine · camp · full trees'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // CHASM BRIDGE
+  // ═══════════════════════════════════════════════════
+  (function chasm(){
+    const w=26,h=16,t={},ht={},dc={},ix={};
+    fill(t,w,h,'grass');
+    for(let x=0;x<w;x++){ t[x+',6']='pit'; t[x+',7']='pit'; t[x+',8']='pit'; }
+    [6,7,8].forEach(x=>{ t[x+',6']='wood'; t[x+',7']='wood'; t[x+',8']='wood'; });
+    put(t,[[2,3],[3,4],[20,10],[12,11]],'low_wall');
+    hrect(ht,20,2,24,5,1); rect(t,20,2,24,5,'stone');
+    put(dc,[[3,2],[11,2],[20,11],[9,12],[23,11],[2,11]],'tree');
+    put(dc,[[5,10],[14,11],[18,3],[8,4]],'bush');
+    put(dc,[[5,11]],'campfire'); put(dc,[[9,4],[10,4]],'fence');
+    put(dc,[[3,10]],'crate');
+    ix['5,11']={type:'torch',state:'lit'};
+    ix['5,5']={type:'lever',state:'off',links:['16,6','17,6','16,7','17,7','16,8','17,8']};
+    ['16,6','17,6','16,7','17,7','16,8','17,8'].forEach(k=>{
+      t[k]='pit';
+      ix[k]={type:'drawbridge',state:'raised',span:['16,6','17,6','16,7','17,7','16,8','17,8']};
+    });
+    ix['14,10']={type:'trap',state:'armed'};
+    syncIx(ix,dc);
+    P['Chasm Bridge']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[campPt(5,11)]},
+      blurb:'Day chasm · wood span · lever drawbridge · trees'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // SWAMP
+  // ═══════════════════════════════════════════════════
+  (function swamp(){
+    const w=26,h=18,t={},ht={},dc={},ix={};
+    fill(t,w,h,'mud');
+    rect(t,2,2,6,5,'water');
+    rect(t,10,4,14,8,'water');
+    rect(t,7,9,10,11,'acid');
+    rect(t,17,2,21,4,'water');
+    put(t,[[1,7],[4,8],[8,2],[11,2],[3,10],[15,8]],'brush');
+    rect(t,5,6,7,7,'fog');
+    rect(t,14,12,16,14,'fog');
+    put(t,[[8,14],[9,14],[10,14],[11,14],[12,14]],'wood');
+    put(t,[[15,10],[16,10],[16,11]],'pit');
+    put(dc,[[14,2],[21,11],[8,15],[3,14],[23,5],[2,15]],'tree');
+    put(dc,[[11,11],[5,12],[17,14],[8,8],[19,9],[13,15]],'bush');
+    put(dc,[[13,3]],'campfire'); put(dc,[[18,8]],'crate');
+    ix['13,3']={type:'torch',state:'lit'};
+    ix['10,10']={type:'trap',state:'armed'};
+    ix['8,11']={type:'acid_barrel',state:'intact'};
+    syncIx(ix,dc);
+    P['Swamp']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[campPt(13,3)]},
+      blurb:'Day swamp · water/acid/fog · boardwalk · trees · bushes'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // FROZEN LAKE
+  // ═══════════════════════════════════════════════════
+  (function frozen(){
+    const w=26,h=16,t={},ht={},dc={},ix={};
+    fill(t,w,h,'snow');
+    rect(t,6,3,14,9,'ice');
+    put(t,[[3,2],[15,2],[4,8],[14,8],[10,1],[18,5]],'low_wall');
+    hrect(ht,0,0,1,h-1,1); hrect(ht,w-2,0,w-1,h-1,1);
+    put(t,[[8,5],[9,6],[10,5],[11,7]],'pit');
+    put(dc,[[3,11],[15,3],[19,13],[7,13],[22,9],[2,9],[21,3]],'tree');
+    put(dc,[[11,11],[5,9],[17,7],[13,2],[9,11]],'bush');
+    put(dc,[[13,11],[14,11]],'fence');
+    put(dc,[[20,7]],'crate'); put(dc,[[12,10]],'tent');
+    ix['10,9']={type:'trap',state:'armed'};
+    ix['6,8']={type:'oil_barrel',state:'intact'};
+    syncIx(ix,dc);
+    P['Frozen Lake']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[]},
+      blurb:'Day snow · ice lake · trees · bushes · tent'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // TORCHLIT CRYPT — indoor, no outdoor trees
+  // ═══════════════════════════════════════════════════
+  (function crypt(){
+    const w=24,h=16,t={},ht={},dc={},ix={};
+    fill(t,w,h,'stone'); box(t,w,h);
+    for(let y=1;y<h-1;y++){ t['8,'+y]='wall'; t['15,'+y]='wall'; }
+    for(let x=1;x<w-1;x++){ if(x!==8&&x!==15) t[x+',7']='wall'; }
+    doorway(t,8,3); doorway(t,8,11); doorway(t,15,3); doorway(t,15,11);
+    doorway(t,4,7); doorway(t,11,7); doorway(t,19,7);
+    put(t,[[2,2],[20,2],[2,12],[20,12]],'rubble');
+    hrect(ht,17,10,21,13,1); rect(t,17,10,21,13,'stone');
+    t['16,7']='pit'; t['17,7']='pit';
+    const torches=[[2,2],[5,2],[2,5],[11,2],[13,2],[18,2],[21,2],[2,9],[5,9],[11,9],[18,9],[21,12],[11,4],[11,11]];
+    put(dc,torches,'torch');
+    put(dc,[[18,11]],'crystal');
+    put(dc,[[3,3]],'crate'); put(dc,[[4,3]],'chest'); put(dc,[[19,3]],'barrel');
+    put(dc,[[11,10]],'table'); put(dc,[[10,10],[12,10]],'chair');
+    ix['8,3']={type:'door',state:'closed'};
+    ix['8,11']={type:'door',state:'closed'};
+    ix['15,3']={type:'door',state:'closed'};
+    ix['15,11']={type:'door',state:'open'};
+    ix['4,7']={type:'door',state:'open'};
+    ix['11,7']={type:'door',state:'closed'};
+    ix['19,7']={type:'door',state:'closed'};
+    ix['3,5']={type:'lever',state:'off',links:['16,7','17,7']};
+    ix['16,7']={type:'drawbridge',state:'raised',span:['16,7','17,7']};
+    ix['17,7']={type:'drawbridge',state:'raised',span:['16,7','17,7']};
+    ix['11,5']={type:'trap',state:'armed'};
+    ix['12,12']={type:'trap',state:'armed'};
+    ix['20,11']={type:'cauldron',state:'full'};
+    torches.slice(0,4).forEach(([c,r])=>{ ix[c+','+r]={type:'torch',state:'lit'}; });
+    syncIx(ix,dc);
+    P['Torchlit Crypt']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'dungeon',points:torches.map(([c,r])=>torchPt(c,r)).concat([crystalPt(18,11)])},
+      blurb:'Crypt · rooms · doors · furniture · no outdoor trees'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // DUNGEON
+  // ═══════════════════════════════════════════════════
+  (function dungeon(){
+    const w=26,h=18,t={},ht={},dc={},ix={};
+    fill(t,w,h,'stone'); box(t,w,h);
+    for(let y=1;y<h-1;y++) if(y!==5&&y!==11) t['7,'+y]='wall';
+    for(let x=1;x<7;x++){ if(x!==3) t[x+',5']='wall'; if(x!==3) t[x+',11']='wall'; }
+    for(let x=7;x<w-1;x++) if(x!==11&&x!==18) t[x+',8']='wall';
+    for(let y=1;y<=8;y++) if(y!==4) t['14,'+y]='wall';
+    doorway(t,3,5); doorway(t,3,11); doorway(t,7,5); doorway(t,7,11);
+    doorway(t,11,8); doorway(t,18,8); doorway(t,14,4);
+    put(t,[[2,2],[3,2],[12,2]],'rubble');
+    rect(t,12,2,14,3,'fog');
+    put(t,[[4,7],[5,7]],'acid');
+    put(t,[[16,11],[17,11]],'pit');
+    const torches=[[2,3],[5,2],[2,7],[5,7],[2,13],[9,3],[12,4],[16,3],[20,4],[22,11],[11,13]];
+    put(dc,torches,'torch');
+    put(dc,[[12,11]],'crystal');
+    put(dc,[[2,3]],'crate'); put(dc,[[9,5]],'chest'); put(dc,[[20,10]],'barrel');
+    put(dc,[[10,11]],'table'); put(dc,[[11,11]],'chair');
+    ix['3,5']={type:'door',state:'closed'};
+    ix['3,11']={type:'door',state:'closed'};
+    ix['7,5']={type:'door',state:'open'};
+    ix['7,11']={type:'door',state:'closed'};
+    ix['11,8']={type:'door',state:'closed'};
+    ix['18,8']={type:'door',state:'closed'};
+    ix['14,4']={type:'door',state:'closed'};
+    ix['9,7']={type:'trap',state:'armed'};
+    ix['12,3']={type:'oil_barrel',state:'intact'};
+    torches.slice(0,4).forEach(([c,r])=>{ ix[c+','+r]={type:'torch',state:'lit'}; });
+    syncIx(ix,dc);
+    P['Dungeon']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'dungeon',points:torches.map(([c,r])=>torchPt(c,r)).concat([crystalPt(12,11)])},
+      blurb:'Dungeon · cells · halls · doors · traps'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // CAVE
+  // ═══════════════════════════════════════════════════
+  (function cave(){
+    const w=26,h=18,t={},ht={},dc={},ix={};
+    fill(t,w,h,'stone'); box(t,w,h,'cave_wall');
+    put(t,[[4,3],[5,3],[5,4],[9,2],[11,5],[6,8],[12,7],[15,5],[17,3],[19,8],[13,11]],'cave_wall');
+    put(t,[[4,5],[10,6],[14,4]],'rubble');
+    rect(t,2,10,7,13,'water');
+    put(t,[[12,2],[13,2],[12,3],[13,3],[14,3],[15,4]],'lava');
+    rect(t,10,11,12,13,'fog');
+    put(t,[[6,6],[15,8],[16,8],[19,11]],'pit');
+    hrect(ht,13,7,16,9,1);
+    const torches=[[1,2],[5,7],[9,12],[13,14],[16,4],[20,7],[23,13],[3,15]];
+    put(dc,torches,'torch');
+    put(dc,[[14,8]],'crystal');
+    put(dc,[[17,10]],'crate'); put(dc,[[9,8]],'barrel');
+    ix['9,6']={type:'trap',state:'armed'};
+    ix['17,9']={type:'oil_barrel',state:'intact'};
+    torches.slice(0,3).forEach(([c,r])=>{ ix[c+','+r]={type:'torch',state:'lit'}; });
+    syncIx(ix,dc);
+    P['Cave']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'dungeon',points:torches.map(([c,r])=>torchPt(c,r)).concat([crystalPt(14,8)])},
+      blurb:'Cave · pillars · lake · lava · pits'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // TAVERN — indoor
+  // ═══════════════════════════════════════════════════
+  (function tavern(){
+    const w=22,h=16,t={},ht={},dc={},ix={};
+    fill(t,w,h,'wood'); box(t,w,h);
+    doorway(t,7,h-1,'wood'); doorway(t,8,h-1,'wood');
+    t['3,0']='window'; t['10,0']='window'; t['16,0']='window';
+    for(let x=1;x<=5;x++) t[x+',3']='wall';
+    for(let y=3;y<=7;y++) t['5,'+y]='wall';
+    doorway(t,5,5,'wood');
+    put(t,[[9,3],[10,3],[13,3],[14,3]],'wall');
+    t['20,1']='lava';
+    hrect(ht,2,9,6,11,1); rect(t,2,9,6,11,'wood');
+    put(t,[[14,12],[15,12]],'pit');
+    put(dc,[[2,5],[3,5]],'table'); put(dc,[[2,6],[4,5],[4,6]],'chair');
+    put(dc,[[8,6],[9,6]],'table'); put(dc,[[8,7],[10,6]],'chair');
+    put(dc,[[13,6],[14,6]],'table'); put(dc,[[13,7],[15,6]],'chair');
+    put(dc,[[2,4],[3,4]],'crate'); put(dc,[[4,4],[7,2],[8,2]],'barrel');
+    put(dc,[[18,9]],'crate'); put(dc,[[19,9]],'chest');
+    put(dc,[[20,2]],'campfire');
+    const torches=[[2,1],[7,1],[12,1],[17,1],[2,13],[9,13],[18,11]];
+    put(dc,torches,'torch');
+    ix['7,'+(h-1)]={type:'door',state:'open'};
+    ix['8,'+(h-1)]={type:'door',state:'open'};
+    ix['5,5']={type:'door',state:'closed'};
+    ix['14,12']={type:'plank',state:'set'};
+    ix['15,12']={type:'plank',state:'set'};
+    ix['9,9']={type:'trap',state:'armed'};
+    ix['11,4']={type:'oil_barrel',state:'intact'};
+    torches.forEach(([c,r])=>{ ix[c+','+r]={type:'torch',state:'lit'}; });
+    ix['20,2']={type:'torch',state:'lit'};
     syncIx(ix,dc);
     const pts=torches.map(([c,r])=>torchPt(c,r));
-    pts.push(campPt(w-2,2));
-    pts.push(windowPt(14,0), windowPt(18,0));
-    P['Tavern']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'dungeon', points:pts},
-      blurb:'Dim tavern · torch/fireplace light · windows · cellar pits · barrels · trap · stage'}; })();
+    pts.push(campPt(20,2));
+    pts.push(windowPt(3,0),windowPt(10,0),windowPt(16,0));
+    P['Tavern']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'dungeon',points:pts},
+      blurb:'Tavern · tables · kitchen · fireplace · cellar'};
+  })();
 
-  (function castle(){ const w=26,h=20,t={},ht={},dc={},ix={}; fill(t,w,h,'stone'); box(t,w,h);
-    // Gate open (south)
-    t['6,'+(h-1)]='stone'; t['7,'+(h-1)]='stone';
-    // Inner keep walls
-    for(let x=5;x<10;x++){ t[x+',3']='wall'; t[x+',8']='wall'; }
-    for(let y=3;y<=8;y++){ t['5,'+y]='wall'; t['9,'+y]='wall'; }
-    delete t['7,8']; t['7,8']='stone';
-    // Keep windows — arrow-slit daylight into the otherwise torch-lit interior.
-    t['7,3']='window'; t['9,5']='window';
-    // Outer curtain-wall windows — the perimeter wall from box() was 100% solid stone/wall
-    // with no daylight at all; arrow-slits along the plain north/south runs (avoiding the
-    // gate at 6-7,h-1 and the corner turret posts) so the courtyard itself isn't torch-only.
-    const outerWindows=[[4,0],[10,0],[16,0],[21,0],[3,h-1],[11,h-1],[15,h-1],[22,h-1]];
-    put(t,outerWindows,'window');
-    // Moat
-    rect(t,1,1,1,h-2,'water'); rect(t,w-2,1,w-2,h-2,'water');
-    // Moat pits at gate approach (drawbridge covers)
-    t['6,'+(h-2)]='pit'; t['7,'+(h-2)]='pit';
-    put(t,[[2,2],[12,2],[2,9],[12,9]],'wall');
-    hrect(ht,6,4,8,7,1);
-    // Battlements as height + low_wall feel on outer walls (visual height only)
-    hrect(ht,0,0,0,h-1,2); hrect(ht,w-1,0,w-1,h-1,2);
-    put(t,[[14,10],[15,10],[16,10],[14,14]],'low_wall'); // courtyard rubble
-    put(t,[[18,6],[19,6]],'pit');
-    const torches=[[3,3],[11,3],[3,10],[11,10],[7,5],[16,4],[20,8],[16,14],[4,14]];
-    put(dc,torches,'torch'); put(dc,[[7,6]],'crystal');
-    ix['7,8']={type:'door', state:'closed'}; // keep door
-    ix['6,5']={type:'lever', state:'off', links:['6,'+(h-2),'7,'+(h-2)]};
-    ix['6,'+(h-2)]={type:'drawbridge', state:'raised', span:['6,'+(h-2),'7,'+(h-2)]};
-    ix['7,'+(h-2)]={type:'drawbridge', state:'raised', span:['6,'+(h-2),'7,'+(h-2)]};
-    ix['10,12']={type:'trap', state:'armed'};
-    ix['15,8']={type:'oil_barrel', state:'intact'};
-    ix['16,8']={type:'powder_barrel', state:'intact'};
-    ix['8,10']={type:'bell', state:'idle'};
-    ix['6,'+(h-1)]={type:'door', state:'open'};
-    ix['7,'+(h-1)]={type:'door', state:'open'};
-    torches.slice(0,5).forEach(([c,r])=>{ ix[c+','+r]={type:'torch', state:'lit'}; });
-    syncIx(ix,dc);
-    P['Castle']={cols:w,rows:h,tiles:t,height:ht,decor:dc, interact:ix,
-      light:{mode:'dungeon', ambientFloor:0.09, points:torches.map(([c,r])=>torchPt(c,r)).concat([crystalPt(7,6), windowPt(7,3), windowPt(9,5)], outerWindows.map(([c,r])=>windowPt(c,r)))},
-      blurb:'Keep · moat pits · lever drawbridge · courtyard low walls · windows · barrels · trap · torch light'}; })();
-
-  return P; })();
+return P; })();
 function savedMaps(){ try{ return JSON.parse(localStorage.getItem('grimoire.maps')||'{}'); }catch(e){ return {}; } }
-function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{}), height:Object.assign({},d.height||{}), decor:Object.assign({},d.decor||{}), interact:d.interact?JSON.parse(JSON.stringify(d.interact)):{}, light:d.light?JSON.parse(JSON.stringify(d.light)):undefined}; net.session.lights=[]; syncInteractDecor(net.session); dmBroadcast(); render(); }
+function sanitizeDecorInPlace(decor){
+  if(!decor) return {};
+  const out={};
+  Object.keys(decor).forEach(k=>{
+    let kind=String(decor[k]||'').toLowerCase(); if(!kind) return;
+    if(kind==='tree'||kind==='tree2'){ out[k]=kind; return; }
+    if(kind.includes('tree')){ out[k]='tree'; return; } // never mini-trees
+    if(kind.includes('bush')){ out[k]=kind==='bush2'||kind==='bush3'?kind:'bush'; return; }
+    if(kind==='stump'||kind==='log'||kind==='mushroom'||kind==='flower'){ out[k]='bush'; return; }
+    out[k]=kind; // mesh/interact props pass through
+  });
+  return out;
+}
+function loadMapData(d){ if(!d||!net||net.role!=='dm') return; net.session.map={cols:d.cols, rows:d.rows, tiles:Object.assign({},d.tiles||{}), height:Object.assign({},d.height||{}), decor:sanitizeDecorInPlace(Object.assign({},d.decor||{})), interact:d.interact?JSON.parse(JSON.stringify(d.interact)):{}, light:d.light?JSON.parse(JSON.stringify(d.light)):undefined}; net.session.lights=[]; syncInteractDecor(net.session); dmBroadcast(); render(); }
 
 /* ---- CAMPAIGNS: a saved DM session (map, monsters, party progress, battle state, log)
    in localStorage 'grimoire.campaigns'. Flow is join-then-pick: players connect to the
@@ -7199,6 +7306,8 @@ function renderDM(){
     <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Decorate:</span>${Object.keys(DECOR).map(k=>`<button class="chip ${net.sel==='d:'+k?'on':''}" data-place="d:${k}">${DECOR[k].name}</button>`).join('')}<button class="chip ${net.sel==='d:erase'?'on':''}" data-place="d:erase">✕ Erase</button></div>
     <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">🟥 ${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">🟩 ${esc(p.name)}</button>`).join('')}</div>
     <div class="addrow" style="margin-top:8px"><select id="mPreset" style="flex:2"><option value="">— load a map —</option><optgroup label="Presets">${Object.keys(MAP_PRESETS).map(k=>`<option value="p:${esc(k)}">${esc(k)}</option>`).join('')}</optgroup>${Object.keys(savedMaps()).length?`<optgroup label="Saved">${Object.keys(savedMaps()).map(n=>`<option value="s:${esc(n)}">💾 ${esc(n)}</option>`).join('')}</optgroup>`:''}</select><button class="btn sm" id="mLoad">Load</button><button class="btn ghost sm" id="mSave">💾 Save</button></div>
+    <div class="addrow" style="margin-top:6px"><button class="btn ghost sm" id="mImportJson" title="Import map JSON from voxel engine Export for Grimoire">📥 Import map JSON</button><input type="file" id="mImportFile" accept="application/json,.json" hidden></div>
+    <p class="muted" style="font-size:11px;margin:4px 0 0">Voxel maps: export from iso3d-engine → <b>Export for Grimoire</b>, then import here (or <b>Save → Grimoire library</b> if both apps share the same origin).</p>
     <button class="btn ghost sm block" id="mClear" style="margin-top:8px">Clear all terrain</button>
     <div class="addrow" style="margin-top:8px"><span class="muted" style="font-size:12px;flex:none">Grid</span><input id="mCols" type="number" value="${s.map.cols}" style="max-width:60px"><span class="muted">×</span><input id="mRows" type="number" value="${s.map.rows}" style="max-width:60px"><button class="btn ghost sm" id="mResize">Resize</button></div>
   </div>
@@ -7271,7 +7380,36 @@ function renderDM(){
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain & elevation?')){ s.map.tiles={}; s.map.height={}; s.map.decor={}; dmBroadcast(); render(); } }; }
   { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
   { const ms=$('#mSave'); if(ms) ms.onclick=()=>{ const nm=prompt('Save current map as:'); if(!nm) return; const all=savedMaps(); all[nm]={cols:s.map.cols,rows:s.map.rows,tiles:Object.assign({},s.map.tiles||{}),height:Object.assign({},s.map.height||{}),decor:Object.assign({},s.map.decor||{})}; try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(e){} flashBanner('Map saved: '+nm); render(); }; }
-  $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(30,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(30,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
+  // Import battle map JSON from voxel engine ("Export for Grimoire")
+  { const mi=$('#mImportJson'), mf=$('#mImportFile');
+    if(mi&&mf){ mi.onclick=()=>mf.click();
+      mf.onchange=()=>{ const f=mf.files&&mf.files[0]; mf.value=''; if(!f) return;
+        const reader=new FileReader();
+        reader.onload=()=>{ try{
+          let d=JSON.parse(String(reader.result||''));
+          // Accept raw bake or { map: {...} } / { session: { map } }
+          if(d&&d.map&&d.map.tiles) d=d.map;
+          if(d&&d.session&&d.session.map) d=d.session.map;
+          if(!d||!d.cols||!d.rows||!d.tiles){ flashBanner('Not a Grimoire/voxel map JSON'); return; }
+          // Clamp size (UI was 30; allow larger voxel bakes)
+          d.cols=Math.max(2,Math.min(48,Number(d.cols)||10));
+          d.rows=Math.max(2,Math.min(48,Number(d.rows)||8));
+          // Normalize tile keys Grimoire TERRAIN knows
+          const ok=new Set(Object.keys(TERRAIN));
+          const tiles={};
+          Object.keys(d.tiles||{}).forEach(k=>{ let t=d.tiles[k]; if(t==='dirt') t='mud'; if(t==='floor') t='grass'; if(!ok.has(t)) t='grass'; tiles[k]=t; });
+          d.tiles=tiles;
+          const nm=prompt('Load map into session'+(d.name?` ("${d.name}")`:'')+'. Also save to library as:', d.name||f.name.replace(/\.json$/i,'')||'Imported map');
+          if(nm===null) return;
+          if(nm.trim()){ const all=savedMaps(); all[nm.trim()]={cols:d.cols,rows:d.rows,tiles:Object.assign({},d.tiles),height:Object.assign({},d.height||{}),decor:Object.assign({},d.decor||{})}; try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(e){} }
+          loadMapData(d);
+          flashBanner('Imported map '+(d.cols)+'×'+(d.rows)+(nm&&nm.trim()?' · saved as '+nm.trim():''));
+        }catch(e){ flashBanner('Import failed: '+(e.message||e)); } };
+        reader.readAsText(f);
+      };
+    }
+  }
+  $('#mResize').onclick=()=>{ s.map.cols=Math.max(2,Math.min(48,Number($('#mCols').value)||10)); s.map.rows=Math.max(2,Math.min(48,Number($('#mRows').value)||8)); dmBroadcast(); render(); };
 }
 function deployMonster(m){ if(!net||net.role!=='dm') return;
   const same=net.session.monsters.filter(x=>x.base===m.n);
@@ -7784,6 +7922,10 @@ function startQuickBattle(c, crMax, count, mapKey){
   c.conditions={};
   c.effects=[];
   c.concentration={active:false,spell:''};
+  // Don't open a fight already dead — 0 HP left over from the last battle made the UI look
+  // like the encounter "instantly ended" (lose screen) the moment anything checked end state.
+  if(!c.hp) c.hp={max:8,cur:8,temp:0};
+  if((c.hp.cur|0)<=0){ c.hp.cur=c.hp.max|0; c.death={succ:0,fail:0}; }
   const presetKeys=Object.keys(MAP_PRESETS);
   const key=mapKey&&MAP_PRESETS[mapKey]?mapKey:(MAP_PRESETS['Mechanics Lab']?'Mechanics Lab':rndPick(presetKeys));
   const map=MAP_PRESETS[key];
@@ -7795,7 +7937,7 @@ function startQuickBattle(c, crMax, count, mapKey){
   const monsters=chosen.map((m,i)=>{ counts[m.n]=(counts[m.n]||0)+1; const spd=(typeof m.spd==='number')?m.spd:(parseInt(m.spd)||30); const fly=/fly/i.test(String(m.spd||''));
     return {id:'qm'+i, side:'mon', base:m.n, name:m.n+(chosen.filter(x=>x.n===m.n).length>1?' '+counts[m.n]:''), num:chosen.filter(x=>x.n===m.n).length>1?counts[m.n]:0,
       x:0,y:0, hp:m.hp, max:m.hp, ac:m.ac, sprite:m.sprite, atk:m.atk, speed:spd, attacks:m.attacks||1, attacksLeft:m.attacks||1, moveLeft:spd, reactionUsed:false, brain:'tactical', fly, init:rnd(20)+(m.init||0)}; });
-  QB={active:true, over:null, mapKey:key, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles), height:Object.assign({},map.height||{}), decor:Object.assign({},map.decor||{}), interact:map.interact?JSON.parse(JSON.stringify(map.interact)):{}, light:map.light?JSON.parse(JSON.stringify(map.light)):undefined}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[], lights:[]};
+  QB={active:true, over:null, mapKey:key, map:{cols:map.cols, rows:map.rows, tiles:Object.assign({},map.tiles), height:Object.assign({},map.height||{}), decor:sanitizeDecorInPlace(Object.assign({},map.decor||{})), interact:map.interact?JSON.parse(JSON.stringify(map.interact)):{}, light:map.light?JSON.parse(JSON.stringify(map.light)):undefined}, players:[pc], monsters, order:[], turn:0, battle:{active:true, round:1}, moveMode:false, log:[], lights:[]};
   syncInteractDecor(QB);
   qbPlaceUnits();
   // battle resources for the PC (mirror startBattle without its render)
@@ -7804,15 +7946,16 @@ function startQuickBattle(c, crMax, count, mapKey){
   order.sort((a,b)=>b.roll-a.roll); QB.order=order; QB.turn=0;
   qbLog('⚔ Battle begins on '+key+' — '+monsters.length+' enemies. Initiative: '+order.map(o=>o.name+' '+o.roll).join(', '));
   if(map.blurb) qbLog('🗺 '+map.blurb);
-  // Iso3D: always snap camera to the PC after the battlefield mounts (not map center)
+  // Always center camera on the PC at battle start (Iso3D pan + 2D scroll) — not map center.
   window.__iso3dCamKeep=false;
   window.__iso3dForceFrame=true;
   sfx('success'); save(); render(); flashBanner('Quick Battle! '+key);
-  frameIso3DOnUnit(QB, 1.55);
+  frameBattleCameraOnPlayer(QB, 1.55);
   qbBeginTurn();
-  // qbBeginTurn re-renders — frame again after that paint
-  setTimeout(()=>frameIso3DOnUnit(QB, 1.55), 60);
-  setTimeout(()=>frameIso3DOnUnit(QB, 1.55), 200);
+  // qbBeginTurn re-renders — frame again after that paint / host mount
+  setTimeout(()=>frameBattleCameraOnPlayer(QB, 1.55), 60);
+  setTimeout(()=>frameBattleCameraOnPlayer(QB, 1.55), 200);
+  setTimeout(()=>frameBattleCameraOnPlayer(QB, 1.55), 500);
 }
 function qbPlaceUnits(){ const s=QB, cols=s.map.cols, rows=s.map.rows;
   const free=(x,y)=>{ if(x<0||y<0||x>=cols||y>=rows) return false;
@@ -8781,7 +8924,17 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
   }
   draw();
 }
-function qbExit(){ QB=null; render(); }
+function qbExit(){
+  QB=null;
+  // Apply deferred service-worker reload after the fight so mid-battle updates
+  // don't wipe QB (see controllerchange handler).
+  if(window.__swReloadPending){
+    window.__swReloadPending=false;
+    location.reload();
+    return;
+  }
+  render();
+}
 
 /* reconnect when a backgrounded player tab regains focus / network */
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && net && net.role==='player'){ try{ if(net.conn&&net.conn.open) return; }catch(e){} scheduleReconnect(); } });
@@ -8825,11 +8978,27 @@ document.addEventListener('click',e=>{
 $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStorage.setItem(LS_CUR,curId); tab='char'; render(); });
 
 /* ---- service worker (auto-update on new version) ---- */
-const APP_VERSION='v120.90';
+// Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
+const APP_VERSION='v120.133';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
-  navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
+  // NEVER hard-reload during Quick Battle — QB lives only in memory, and skipWaiting+claim
+  // mid-fight was kicking players back to the character sheet (had to "start again").
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(_reloaded) return;
+    // Defer while a fight (or the QB setup modal) is live — reload wipes in-memory QB.
+    const busy=(typeof QB!=='undefined' && QB && QB.active)
+      || !!document.getElementById('qbModal')
+      || !!(net && net.session && net.session.battle && net.session.battle.active);
+    if(busy){
+      window.__swReloadPending=true;
+      try{ flashBanner('Update ready — will apply when you leave battle'); }catch(e){}
+      return;
+    }
+    _reloaded=true;
+    location.reload();
+  });
   // updateViaCache:'none' — without this, the browser applies normal HTTP caching to sw.js
   // itself (no-cache-header dev servers like `python -m http.server` make this worst-case:
   // the update *byte-compare* can silently run against a stale cached copy of sw.js, so a

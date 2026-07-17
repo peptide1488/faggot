@@ -675,7 +675,7 @@ T('rotXY(rot=0) is the identity', rotXY(3,4,10,10,0).join()==='3,4');
   T('target creature does not block its own tile', losClear(bod,0,1,2,1)===true);
 })();
 T('decorAt returns empty string for an undecorated cell, not undefined/null', decorAt({map:{decor:{}}},0,0)==='');
-T('startQuickBattle copies preset decor into QB.map (same pattern as height)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height\|\|\{\}\), decor:Object\.assign\(\{\},map\.decor/.test(src));
+T('startQuickBattle copies preset decor into QB.map (same pattern as height)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height\|\|\{\}\), decor:sanitizeDecorInPlace\(Object\.assign\(\{\},map\.decor/.test(src));
 T('Open Field and Tavern presets carry real decor placements', Object.keys(MAP_PRESETS['Open Field'].decor||{}).length>0 && Object.keys(MAP_PRESETS['Tavern'].decor||{}).length>0);
 
 /* ---- unified sprite scale: render size derives from each sheet's real resolution, not a fixed box ---- */

@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.5.62';
+} from './math.js?v=0.5.89';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.5.62';
-import { TerrainSampler, TERRAIN_TEX_URLS, WANG_TILESETS, DECOR_TEX_URLS } from './terrainTextures.js?v=0.5.62';
+} from './map.js?v=0.5.89';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.89';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.5.62';
+} from './lighting.js?v=0.5.89';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -95,22 +95,26 @@ void main() {
   float diff = wrap * wrap;
 
   float hemi = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
-  // Allow very dark sky/ground for dungeons (don't force bright day ambient)
+  // Allow very dark sky/ground for dungeons (don't force bright day ambient).
+  // Day maps with real albedo textures need a bit more ambient than the old
+  // flat-color era — otherwise midtone stone/grass reads muddy under key*diff.
   vec3 skyA = uSkyColor;
   vec3 gndA = uGroundColor;
-  float ambScale = mix(0.35, 0.72, clamp(uAmbientFloor * 1.6, 0.0, 1.0));
+  float ambScale = mix(0.42, 0.82, clamp(uAmbientFloor * 1.55, 0.0, 1.0));
   vec3 ambient = mix(gndA, skyA, hemi) * ambScale;
 
   vec3 keyC = uLightColor;
   vec3 fillC = uFillColor;
   vec3 fillDir = normalize(vec3(-L.x, 0.55, -L.z));
-  float fill = max(dot(n, fillDir), 0.0) * 0.35;
+  float fill = max(dot(n, fillDir), 0.0) * 0.32;
 
   float upright = 1.0 - smoothstep(0.2, 0.9, abs(n.y));
-  fill += upright * 0.12;
+  fill += upright * 0.1;
 
   float keyStr = uKeyStrength > 0.01 ? uKeyStrength : 0.7;
-  vec3 lighting = ambient + keyC * diff * keyStr + fillC * fill;
+  // Slight wrap on key so hard Lambert doesn't black out NW cliff faces
+  float keyDiff = mix(diff, max(ndl, 0.0), 0.35);
+  vec3 lighting = ambient + keyC * keyDiff * keyStr + fillC * fill;
 
   // Point lights (torches / spell lights) — world-space
   int nL = uNumLights;
@@ -206,7 +210,13 @@ uniform float uPtRad[32];
 out vec4 fragColor;
 void main() {
   vec4 c = texture(uTex, vUV);
-  if (c.a < 0.08) discard;
+  // Hard alpha cutout only. Earlier we also discarded dark RGB (lum < 0.14) to kill black
+  // outline boxes — that also ate tree trunks / bark and left washed-out green canopies
+  // with "broken transparency". Real HQ PixelLab art has opaque dark bark; trust alpha.
+  if (c.a < 0.50) discard;
+  // Magenta / hot-pink chroma leftovers (old plate workflow)
+  if (c.r > 0.78 && c.b > 0.68 && c.g < 0.45 && c.a > 0.5) discard;
+
   vec3 rgb = c.rgb;
   if (uGray > 0.5) {
     float g = dot(rgb, vec3(0.299, 0.587, 0.114));
@@ -215,13 +225,13 @@ void main() {
 
   // Base ambient (dungeon floors stay dim unless near a torch)
   float floorMin = clamp(uAmbientFloor, 0.02, 0.55);
-  vec3 amb = max(uAmbColor, vec3(0.04)) * mix(0.55, 1.2, floorMin);
+  vec3 amb = max(uAmbColor, vec3(0.05)) * mix(0.65, 1.25, floorMin);
   vec3 lighting = amb;
   // Billboards have no real surface normal to dot with the sun, so approximate the same
   // directional key light terrain gets with a flat (angle-independent) contribution — without
   // this, trees/units never receive sunlight at all and look dim/black next to sunlit ground
   // no matter how bright the map is (live report: "trees ... are all black" on day maps).
-  lighting += uKeyColor * uKeyStrength * 0.65;
+  lighting += uKeyColor * uKeyStrength * 0.85;
 
   int nL = uNumLights;
   if (nL > 32) nL = 32;
@@ -247,7 +257,8 @@ void main() {
   float d = uDarken > 0.01 ? uDarken : 1.0;
   rgb *= lighting * d;
 
-  fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a * uAlpha);
+  // Fully opaque cutout (no translucent fringe boxes)
+  fragColor = vec4(clamp(rgb, 0.0, 1.0), uAlpha);
 }`;
 
 /** Default sun: high over “northwest” of the map — readable cliff faces, warm tops. */
@@ -408,7 +419,11 @@ const TEX_REPEAT = 1;
  * in buildMapMesh). Anything else (window/void/natural cliff hillside/etc.) has no dedicated
  * side texture and keeps the old flat-shaded strata-band fallback.
  */
-const WALL_SIDE_TEX_KEYS = new Set(['wall', 'cave_wall', 'low_wall', 'wood', 'stone', 'dirt']);
+// Any key in TERRAIN_SIDE_TEX_URLS (or this set) gets real UV-mapped wall faces.
+const WALL_SIDE_TEX_KEYS = new Set([
+  ...Object.keys(TERRAIN_SIDE_TEX_URLS || {}),
+  'wall', 'cave_wall', 'low_wall', 'wood', 'stone', 'dirt', 'grass', 'brush', 'mud', 'sand',
+]);
 
 function applyHighlights(color, highlights, key, col, row) {
   let c = color;
@@ -521,9 +536,17 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
 
       const hs = TILE;
       // Vertex-paint: cliff cast shadows from low sun + local torch pool
+      // Cast-shadow factor (cliff occlusion). Illumination for UNTEXTURED path only —
+      // textured ground uses this as a soft multiply then the FS applies real sun/ambient/
+      // torches. Baking tileIllumination into vertex tint *and* FS lighting crushed maps
+      // after we switched to real GPU textures (double-dark / muddy stone).
+      const castShadow = sunShadowFactor(heightFn, col, row, profile.sunDir, shadowStr);
+      const tileIllum = Math.min(1, tileIllumination01(profile, col, row));
+      // Legacy flat-color path: keep the old combined shade (albedo lived in vColor).
       const shade =
-        sunShadowFactor(heightFn, col, row, profile.sunDir, shadowStr) *
-        (0.55 + 0.45 * Math.min(1, tileIllumination01(profile, col, row)));
+        castShadow * (0.55 + 0.45 * tileIllum);
+      // Textured path: near-white tint; soft cast only (never crush below ~0.8).
+      const texTintShade = 0.82 + 0.18 * castShadow;
 
       // --- Top face: one real GPU-textured quad per tile (per-pixel sampling), grouped
       // by texture so each group draws in a single call. Falls back to the old
@@ -534,10 +557,10 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
       const hasRealTex = !!(texUrl && sampler && sampler.ready && sampler.images && sampler.images[texUrl]);
       if (hasRealTex) {
         let tint = [1, 1, 1];
-        tint = mulColor(tint, shade);
-        if (h > 0) tint = mixColor(tint, [0.9, 0.9, 0.85], 0.06 * Math.min(h, 4));
+        tint = mulColor(tint, texTintShade);
+        if (h > 0) tint = mixColor(tint, [0.95, 0.95, 0.92], 0.04 * Math.min(h, 4));
         tint = applyHighlights(tint, highlights, key, col, row);
-        const cellShade = 0.96 + hash2(col, row, 7) * 0.08;
+        const cellShade = 0.98 + hash2(col, row, 7) * 0.04;
         tint = mulColor(tint, cellShade);
         const g = groundGroupFor(texUrl);
         addTexQuad(
@@ -621,12 +644,16 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
         // so adjacent wall tiles' brick coursing lines up continuously and tall faces tile
         // the texture by real height instead of stretching one image across it.
         const sideTexKey = WALL_SIDE_TEX_KEYS.has(cell.gKey) ? cell.gKey : null;
-        const sideTexUrl = sideTexKey && TERRAIN_TEX_URLS[sideTexKey];
+        const sideTexUrl = sideTexKey && (
+          (TERRAIN_SIDE_TEX_URLS && TERRAIN_SIDE_TEX_URLS[sideTexKey]) ||
+          TERRAIN_TEX_URLS[sideTexKey]
+        );
         const hasWallTex = !!(sideTexUrl && sampler && sampler.ready && sampler.images && sampler.images[sideTexUrl]);
         const [nx, , nz] = nb.n;
 
         if (hasWallTex) {
-          const faceShade = mulColor([1, 1, 1], Math.min(1, shade * 0.92));
+          // Soft cast only — same rule as textured tops (FS does real lighting).
+          const faceShade = mulColor([1, 1, 1], Math.min(1, texTintShade * 0.96));
           const g = groundGroupFor(sideTexUrl);
           const uvXY = (v) => [v[0], v[1]];
           const uvZY = (v) => [v[2], v[1]];
@@ -782,116 +809,246 @@ function buildMapMesh(map, highlights, sampler, lightProfile) {
     }
   }
 
-  // --- Door quads: real world-oriented 3D slabs (front+back faces plus thin edge faces for
-  // actual depth — not a single infinitely-thin plane) fixed to the actual wall plane, not a
-  // camera-facing billboard. A billboard can never truly align with a specific wall's
-  // orientation from every camera angle — this reads the map's own tile data to find which
-  // pair of neighbors is the wall the door sits in, then builds the slab spanning that gap at
-  // the real wall height. Handles both open and closed door decor kinds, each with its own
-  // texture (transparent margins cut out via the alpha-discard added to the main shader above).
-  const DOOR_KIND_TEX = { door: DECOR_TEX_URLS.door, door_open: DECOR_TEX_URLS.door_open };
-  const DOOR_THICK = 0.1;
+  // --- Structure decor: pure solid meshes (no PNG sprites) ---
+  // Doors align to the wall axis; traps/grates sit on the floor; barrels/crates are boxes.
+  // Camera-facing billboards only handle organic props (trees/bushes/flames) in the adapter.
+  const pushSolidBox = (cx, y0, cz, hw, hh, hd, col) => {
+    const x0 = cx - hw, x1 = cx + hw;
+    const y1 = y0 + hh;
+    const z0 = cz - hd, z1 = cz + hd;
+    const faces = [
+      [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], [0, 1, 0], 1.12],
+      [[x0, y0, z1], [x1, y0, z1], [x1, y0, z0], [x0, y0, z0], [0, -1, 0], 0.78],
+      [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1], 0.94],
+      [[x1, y0, z1], [x0, y0, z1], [x0, y1, z1], [x1, y1, z1], [0, 0, 1], 0.98],
+      [[x0, y0, z1], [x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [-1, 0, 0], 0.9],
+      [[x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [1, 0, 0], 1.02],
+    ];
+    for (const [a, b, c, d, n, sh] of faces) {
+      const cc = mulColor(col, sh);
+      addQuad(positions, normals, colors, a, b, c, d, n, cc);
+    }
+  };
+
+  // Muted FFT / Ogre Battle prop palette (no neon plastic cubes)
+  const BOX_PROPS = {
+    oil_barrel: { w: 0.28, d: 0.28, h: 0.42, col: [0.42, 0.36, 0.28] },
+    acid_barrel: { w: 0.28, d: 0.28, h: 0.42, col: [0.4, 0.48, 0.32] },
+    powder_barrel: { w: 0.28, d: 0.28, h: 0.42, col: [0.48, 0.38, 0.3] },
+    barrel: { w: 0.28, d: 0.28, h: 0.42, col: [0.5, 0.38, 0.26] },
+    cauldron: { w: 0.34, d: 0.34, h: 0.32, col: [0.32, 0.34, 0.38] },
+    cauldron_tipped: { w: 0.38, d: 0.28, h: 0.22, col: [0.32, 0.34, 0.38] },
+    crate: { w: 0.36, d: 0.36, h: 0.36, col: [0.58, 0.46, 0.3] },
+    chest: { w: 0.4, d: 0.28, h: 0.28, col: [0.55, 0.42, 0.22] },
+    loose_rock: { w: 0.32, d: 0.28, h: 0.16, col: [0.55, 0.52, 0.48] },
+    plank: { w: 0.45, d: 0.12, h: 0.06, col: [0.58, 0.46, 0.3] },
+  };
+
+  const FLOOR_PLATES = {
+    trap: { col: [0.62, 0.22, 0.18], h: 0.05 },
+    trap2: { col: [0.55, 0.18, 0.14], h: 0.05 },
+    trap3: { col: [0.7, 0.28, 0.12], h: 0.05 },
+    trap_safe: { col: [0.32, 0.55, 0.32], h: 0.04 },
+    trap_safe2: { col: [0.28, 0.5, 0.38], h: 0.04 },
+    trap_safe3: { col: [0.4, 0.58, 0.3], h: 0.04 },
+    grate: { col: [0.38, 0.4, 0.42], h: 0.04, bars: true },
+    grate_open: { col: [0.28, 0.3, 0.32], h: 0.03, bars: true, open: true },
+  };
+
   if (map.decor) {
     const WALL_GKEYS = new Set(['wall', 'cave_wall', 'low_wall', 'window']);
     const isWallCell = (c) => !!c && WALL_GKEYS.has(c.gKey);
+    const WOOD_DOOR = [0.48, 0.32, 0.16];
+    const WOOD_FRAME = [0.32, 0.22, 0.12];
+    const IRON = [0.45, 0.46, 0.5];
+    const DOOR_THICK = 0.08;
+
     for (const [key, kind] of Object.entries(map.decor)) {
-      const doorUrl = DOOR_KIND_TEX[kind];
-      if (!doorUrl) continue;
-      const doorImg = sampler && sampler.ready && sampler.images && sampler.images[doorUrl];
-      if (!doorImg) continue;
+      if (!kind) continue;
       const [cs, rs] = key.split(',');
       const col = Number(cs);
       const row = Number(rs);
       if (!Number.isFinite(col) || !Number.isFinite(row)) continue;
-      const doorCell = map.cells[row * cols + col];
-      if (!doorCell) continue;
-      const westCell = cellAt(map, col - 1, row);
-      const eastCell = cellAt(map, col + 1, row);
-      const northCell = cellAt(map, col, row - 1);
-      const southCell = cellAt(map, col, row + 1);
-      const ewWall = isWallCell(westCell) || isWallCell(eastCell);
-      const nsWall = isWallCell(northCell) || isWallCell(southCell);
-      // Wall runs east-west (continues at col-1/col+1) -> door faces north-south, and
-      // vice versa. If both or neither match, default to the east-west run (arbitrary
-      // but harmless — this only affects which axis the panel spans).
-      const runsEastWest = ewWall || !nsWall;
-      const wallH = Math.max(
-        isWallCell(westCell) ? westCell.h : 0,
-        isWallCell(eastCell) ? eastCell.h : 0,
-        isWallCell(northCell) ? northCell.h : 0,
-        isWallCell(southCell) ? southCell.h : 0,
-        2,
-      );
-      const yTopDoor = wallH * STEP;
+      const cell = map.cells[row * cols + col];
+      if (!cell) continue;
+      const elev = cell.h || 0;
+      const yTop = elev * STEP + 0.02;
       const ox = col - (cols - 1) / 2;
       const oz = row - (rows - 1) / 2;
-      const hs = TILE;
-      const ht = DOOR_THICK / 2;
-      const g = groundGroupFor(doorUrl);
-      // v0=top-left v1=top-right v2=bottom-right v3=bottom-left (in width-increasing order).
-      // UV is pinned directly per-corner (not via addTexQuad's offset convention) so top of
-      // quad = top of image — UNPACK_FLIP_Y_WEBGL is off for these textures, so V=0 samples
-      // the image's top row; getting v0/v3 swapped here is exactly what upside-downs it.
-      const pushFace = (v0, v1, v2, v3, n) => {
-        g.positions.push(...v0, ...v1, ...v2, ...v0, ...v2, ...v3);
-        g.uvs.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
-        for (let i = 0; i < 6; i++) {
-          g.normals.push(...n);
-          g.colors.push(1, 1, 1);
+
+      // --- Doors: wall-aligned solid slabs (closed full panel / open side leaves) ---
+      if (kind === 'door' || kind === 'door_open') {
+        const westCell = cellAt(map, col - 1, row);
+        const eastCell = cellAt(map, col + 1, row);
+        const northCell = cellAt(map, col, row - 1);
+        const southCell = cellAt(map, col, row + 1);
+        const ewWall = isWallCell(westCell) || isWallCell(eastCell);
+        const nsWall = isWallCell(northCell) || isWallCell(southCell);
+        const runsEastWest = ewWall || !nsWall;
+        const wallH = Math.max(
+          isWallCell(westCell) ? westCell.h : 0,
+          isWallCell(eastCell) ? eastCell.h : 0,
+          isWallCell(northCell) ? northCell.h : 0,
+          isWallCell(southCell) ? southCell.h : 0,
+          2,
+        );
+        const doorH = wallH * STEP * 0.92;
+        const halfW = TILE * 0.92;
+        const halfT = DOOR_THICK / 2;
+        const open = kind === 'door_open';
+
+        // Frame posts at both ends of the doorway
+        if (runsEastWest) {
+          pushSolidBox(ox - halfW + 0.04, yTop, oz, 0.05, doorH, halfT + 0.02, WOOD_FRAME);
+          pushSolidBox(ox + halfW - 0.04, yTop, oz, 0.05, doorH, halfT + 0.02, WOOD_FRAME);
+          pushSolidBox(ox, yTop + doorH - 0.05, oz, halfW, 0.06, halfT + 0.02, WOOD_FRAME);
+          if (open) {
+            // Leaves swung open against the jambs (thin panels along Z)
+            pushSolidBox(ox - halfW + 0.12, yTop, oz - 0.18, 0.04, doorH * 0.9, 0.2, WOOD_DOOR);
+            pushSolidBox(ox + halfW - 0.12, yTop, oz + 0.18, 0.04, doorH * 0.9, 0.2, WOOD_DOOR);
+          } else {
+            pushSolidBox(ox, yTop, oz, halfW - 0.06, doorH - 0.04, halfT, WOOD_DOOR);
+            // Iron band + handle
+            pushSolidBox(ox, yTop + doorH * 0.35, oz, halfW - 0.1, 0.04, halfT + 0.01, IRON);
+            pushSolidBox(ox, yTop + doorH * 0.65, oz, halfW - 0.1, 0.04, halfT + 0.01, IRON);
+            pushSolidBox(ox + halfW * 0.35, yTop + doorH * 0.48, oz + halfT + 0.02, 0.04, 0.08, 0.03, IRON);
+          }
+        } else {
+          pushSolidBox(ox, yTop, oz - halfW + 0.04, halfT + 0.02, doorH, 0.05, WOOD_FRAME);
+          pushSolidBox(ox, yTop, oz + halfW - 0.04, halfT + 0.02, doorH, 0.05, WOOD_FRAME);
+          pushSolidBox(ox, yTop + doorH - 0.05, oz, halfT + 0.02, 0.06, halfW, WOOD_FRAME);
+          if (open) {
+            pushSolidBox(ox - 0.18, yTop, oz - halfW + 0.12, 0.2, doorH * 0.9, 0.04, WOOD_DOOR);
+            pushSolidBox(ox + 0.18, yTop, oz + halfW - 0.12, 0.2, doorH * 0.9, 0.04, WOOD_DOOR);
+          } else {
+            pushSolidBox(ox, yTop, oz, halfT, doorH - 0.04, halfW - 0.06, WOOD_DOOR);
+            pushSolidBox(ox, yTop + doorH * 0.35, oz, halfT + 0.01, 0.04, halfW - 0.1, IRON);
+            pushSolidBox(ox, yTop + doorH * 0.65, oz, halfT + 0.01, 0.04, halfW - 0.1, IRON);
+            pushSolidBox(ox + halfT + 0.02, yTop + doorH * 0.48, oz + halfW * 0.35, 0.03, 0.08, 0.04, IRON);
+          }
         }
-      };
-      // Thin edge strips (top/bottom/left/right of the slab) sample the texture's own
-      // center so they read as a plausible solid frame tone without needing separate art.
-      const pushEdge = (v0, v1, v2, v3, n) => {
-        g.positions.push(...v0, ...v1, ...v2, ...v0, ...v2, ...v3);
-        g.uvs.push(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5);
-        for (let i = 0; i < 6; i++) {
-          g.normals.push(...n);
-          g.colors.push(1, 1, 1);
+        continue;
+      }
+
+      // --- Floor plates: traps / pressure plates / grates ---
+      const plate = FLOOR_PLATES[kind];
+      if (plate) {
+        const half = TILE * (plate.open ? 0.38 : 0.42);
+        const ph = plate.h;
+        pushSolidBox(ox, yTop, oz, half, ph, half, plate.col);
+        // Raised rim so plates read as objects, not flat paint
+        const rim = mulColor(plate.col, 0.75);
+        const rh = ph + 0.02;
+        const rw = 0.035;
+        pushSolidBox(ox, yTop, oz - half + rw, half, rh, rw, rim);
+        pushSolidBox(ox, yTop, oz + half - rw, half, rh, rw, rim);
+        pushSolidBox(ox - half + rw, yTop, oz, rw, rh, half - rw * 2, rim);
+        pushSolidBox(ox + half - rw, yTop, oz, rw, rh, half - rw * 2, rim);
+        if (plate.bars) {
+          const barCol = plate.open ? [0.2, 0.22, 0.24] : [0.5, 0.52, 0.55];
+          const nBars = plate.open ? 2 : 4;
+          for (let i = 0; i < nBars; i++) {
+            const t = (i + 1) / (nBars + 1);
+            const bx = ox - half + t * half * 2;
+            pushSolidBox(bx, yTop + ph * 0.5, oz, 0.025, ph * 0.8, half * 0.85, barCol);
+          }
+          for (let i = 0; i < nBars; i++) {
+            const t = (i + 1) / (nBars + 1);
+            const bz = oz - half + t * half * 2;
+            pushSolidBox(ox, yTop + ph * 0.5, bz, half * 0.85, ph * 0.8, 0.025, barCol);
+          }
+        } else if (!kind.includes('safe')) {
+          // Spike nubs on armed traps
+          const spike = mulColor(plate.col, 1.25);
+          for (const [dx, dz] of [[-0.15, -0.15], [0.15, -0.15], [-0.15, 0.15], [0.15, 0.15], [0, 0]]) {
+            pushSolidBox(ox + dx, yTop + ph, oz + dz, 0.03, 0.08, 0.03, spike);
+          }
         }
-      };
-      // axisIsEW: width spans X (door faces north-south) vs width spans Z (door faces east-west).
-      const axisIsEW = runsEastWest;
-      const widthMin = axisIsEW ? ox - hs : oz - hs;
-      const widthMax = axisIsEW ? ox + hs : oz + hs;
-      const thickCenter = axisIsEW ? oz : ox;
-      const toXYZ = (w, y, t) => (axisIsEW ? [w, y, t] : [t, y, w]);
-      const tf = thickCenter - ht;
-      const tb = thickCenter + ht;
-      const nFront = axisIsEW ? [0, 0, -1] : [-1, 0, 0];
-      const nBack = axisIsEW ? [0, 0, 1] : [1, 0, 0];
-      const nMin = axisIsEW ? [-1, 0, 0] : [0, 0, -1];
-      const nMax = axisIsEW ? [1, 0, 0] : [0, 0, 1];
-      pushFace(
-        toXYZ(widthMin, yTopDoor, tf), toXYZ(widthMax, yTopDoor, tf),
-        toXYZ(widthMax, 0, tf), toXYZ(widthMin, 0, tf),
-        nFront,
-      );
-      pushFace(
-        toXYZ(widthMax, yTopDoor, tb), toXYZ(widthMin, yTopDoor, tb),
-        toXYZ(widthMin, 0, tb), toXYZ(widthMax, 0, tb),
-        nBack,
-      );
-      pushEdge(
-        toXYZ(widthMin, yTopDoor, tb), toXYZ(widthMax, yTopDoor, tb),
-        toXYZ(widthMax, yTopDoor, tf), toXYZ(widthMin, yTopDoor, tf),
-        [0, 1, 0],
-      );
-      pushEdge(
-        toXYZ(widthMin, 0, tf), toXYZ(widthMax, 0, tf),
-        toXYZ(widthMax, 0, tb), toXYZ(widthMin, 0, tb),
-        [0, -1, 0],
-      );
-      pushEdge(
-        toXYZ(widthMin, yTopDoor, tf), toXYZ(widthMin, yTopDoor, tb),
-        toXYZ(widthMin, 0, tb), toXYZ(widthMin, 0, tf),
-        nMin,
-      );
-      pushEdge(
-        toXYZ(widthMax, yTopDoor, tb), toXYZ(widthMax, yTopDoor, tf),
-        toXYZ(widthMax, 0, tf), toXYZ(widthMax, 0, tb),
-        nMax,
-      );
+        continue;
+      }
+
+      // --- Solid box props (barrels, crates, chests…) ---
+      const box = BOX_PROPS[kind];
+      if (box) {
+        pushSolidBox(ox, yTop, oz, box.w, box.h, box.d, box.col);
+        if (kind.includes('barrel') || kind === 'barrel') {
+          pushSolidBox(ox, yTop + box.h * 0.85, oz, box.w * 0.92, box.h * 0.12, box.d * 0.92, mulColor(box.col, 1.15));
+        }
+        if (kind === 'chest') {
+          pushSolidBox(ox, yTop + box.h * 0.55, oz, box.w * 0.95, box.h * 0.2, box.d * 0.95, mulColor(box.col, 1.1));
+          pushSolidBox(ox, yTop + box.h * 0.4, oz + box.d + 0.02, 0.05, 0.06, 0.03, IRON);
+        }
+        continue;
+      }
+
+      // Lever / switch
+      if (kind === 'lever' || kind === 'switch') {
+        const postCol = [0.4, 0.38, 0.35];
+        const handleCol = kind === 'lever' ? [0.7, 0.25, 0.2] : [0.85, 0.75, 0.2];
+        pushSolidBox(ox, yTop, oz, 0.06, 0.55, 0.06, postCol);
+        pushSolidBox(ox + 0.12, yTop + 0.42, oz, 0.16, 0.06, 0.05, handleCol);
+        continue;
+      }
+
+      // Drawbridge
+      if (kind === 'drawbridge' || kind === 'drawbridge_down') {
+        const wood = [0.5, 0.35, 0.18];
+        if (kind === 'drawbridge') {
+          pushSolidBox(ox, yTop, oz - TILE * 0.35, TILE * 0.45, 0.9, 0.06, wood);
+        } else {
+          pushSolidBox(ox, yTop + 0.04, oz, TILE * 0.45, 0.08, TILE * 0.45, wood);
+        }
+        continue;
+      }
+
+      // Fence / hedge
+      if (kind === 'fence' || kind === 'hedge') {
+        const fcol = kind === 'hedge' ? [0.22, 0.42, 0.2] : [0.45, 0.32, 0.18];
+        const fh = kind === 'hedge' ? 0.55 : 0.45;
+        pushSolidBox(ox, yTop, oz, TILE * 0.42, fh, 0.06, fcol);
+        if (kind === 'fence') {
+          pushSolidBox(ox - TILE * 0.35, yTop, oz, 0.05, fh + 0.08, 0.07, mulColor(fcol, 0.85));
+          pushSolidBox(ox + TILE * 0.35, yTop, oz, 0.05, fh + 0.08, 0.07, mulColor(fcol, 0.85));
+        }
+        continue;
+      }
+
+      // Table / chair
+      if (kind === 'table') {
+        const wood = [0.5, 0.36, 0.2];
+        pushSolidBox(ox, yTop + 0.28, oz, 0.38, 0.05, 0.28, wood);
+        for (const [dx, dz] of [[-0.3, -0.2], [0.3, -0.2], [-0.3, 0.2], [0.3, 0.2]]) {
+          pushSolidBox(ox + dx, yTop, oz + dz, 0.04, 0.28, 0.04, mulColor(wood, 0.9));
+        }
+        continue;
+      }
+      if (kind === 'chair') {
+        const wood = [0.48, 0.34, 0.18];
+        pushSolidBox(ox, yTop + 0.18, oz, 0.16, 0.04, 0.16, wood);
+        pushSolidBox(ox, yTop + 0.18, oz - 0.14, 0.16, 0.28, 0.03, wood);
+        for (const [dx, dz] of [[-0.12, -0.12], [0.12, -0.12], [-0.12, 0.12], [0.12, 0.12]]) {
+          pushSolidBox(ox + dx, yTop, oz + dz, 0.03, 0.18, 0.03, mulColor(wood, 0.9));
+        }
+        continue;
+      }
+
+      // Tent
+      if (kind === 'tent') {
+        const canvas = [0.55, 0.42, 0.28];
+        pushSolidBox(ox, yTop, oz, 0.35, 0.15, 0.3, canvas);
+        pushSolidBox(ox, yTop + 0.15, oz, 0.28, 0.2, 0.22, mulColor(canvas, 1.08));
+        pushSolidBox(ox, yTop + 0.35, oz, 0.12, 0.12, 0.1, mulColor(canvas, 1.15));
+        continue;
+      }
+
+      // Sign / sign post
+      if (kind === 'sign' || kind === 'sign_post') {
+        const post = [0.4, 0.3, 0.18];
+        const board = [0.55, 0.42, 0.22];
+        pushSolidBox(ox, yTop, oz, 0.04, 0.7, 0.04, post);
+        pushSolidBox(ox, yTop + 0.55, oz + 0.02, 0.22, 0.16, 0.03, board);
+        continue;
+      }
     }
   }
 
@@ -1021,8 +1178,10 @@ function buildUnitMesh(units, map, activeId) {
 export class Renderer {
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
-    this.gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
+    // antialias:false — MSAA softens pixel-art billboards into mush when not 1:1.
+    this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
     if (!this.gl) throw new Error('WebGL2 not supported');
+    this._dpr = 1;
 
     const gl = this.gl;
     const vs = compile(gl, gl.VERTEX_SHADER, VS);
@@ -1140,7 +1299,7 @@ export class Renderer {
     this.pointLights = [];
     this._lightProfile = resolveLighting(null);
 
-    // RPM terrain textures → vertex colors (async; rebuild mesh when ready)
+    // Terrain textures → vertex colors (async; rebuild mesh when ready)
     this.sampler = new TerrainSampler(opts.assetBase || '');
     this.sampler.loadAll().then(() => {
       this._dirtyMap = true;
@@ -1153,11 +1312,13 @@ export class Renderer {
     gl.clearColor(this.skyColor[0], this.skyColor[1], this.skyColor[2], 1);
     gl.useProgram(this.program);
 
-    // Immediate clear so the canvas isn't left transparent/black before first mesh
-    const w0 = canvas.clientWidth || canvas.width || 800;
-    const h0 = canvas.clientHeight || canvas.height || 600;
+    // Immediate clear — HiDPI backing store (see syncSize)
+    const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 3);
+    const w0 = Math.max(1, Math.floor((canvas.clientWidth || 800) * dpr));
+    const h0 = Math.max(1, Math.floor((canvas.clientHeight || 600) * dpr));
     canvas.width = w0;
     canvas.height = h0;
+    this._dpr = dpr;
     gl.viewport(0, 0, w0, h0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   }
@@ -1290,14 +1451,27 @@ export class Renderer {
     this.cam.rot += (steps * Math.PI) / 2;
   }
 
+  /**
+   * Match canvas buffer to CSS size × devicePixelRatio so 4K / HiDPI stays sharp.
+   * (clientWidth alone = CSS px; without DPR the browser upscales a soft buffer.)
+   */
   syncSize() {
-    const w = this.canvas.clientWidth || 800;
-    const h = this.canvas.clientHeight || 600;
+    const dpr = Math.min(
+      typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+      3,
+    );
+    const cssW = this.canvas.clientWidth || 800;
+    const cssH = this.canvas.clientHeight || 600;
+    const w = Math.max(1, Math.floor(cssW * dpr));
+    const h = Math.max(1, Math.floor(cssH * dpr));
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
     }
-    return { w, h, aspect: w / Math.max(1, h) };
+    this._dpr = dpr;
+    const gl = this.gl;
+    if (gl) gl.viewport(0, 0, w, h);
+    return { w, h, aspect: w / Math.max(1, h), dpr };
   }
 
   /**
@@ -1667,9 +1841,12 @@ export class Renderer {
   pickTile(clientX, clientY) {
     if (!this._map) return null;
     const rect = this.canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    const { w, h, aspect } = this.syncSize();
+    const { w, h, aspect, dpr } = this.syncSize();
+    // client coords are CSS px; buffer is HiDPI — scale into framebuffer space
+    const scaleX = w / Math.max(1, rect.width);
+    const scaleY = h / Math.max(1, rect.height);
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
 
     const ndcX = (x / w) * 2 - 1;
     const ndcY = 1 - (y / h) * 2;

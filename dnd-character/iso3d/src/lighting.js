@@ -7,19 +7,19 @@
 /** @typedef {{ col:number, row:number, radius:number, color?:number[], intensity?:number, kind?:string }} PointLight */
 
 export const LIGHT_PRESETS = {
-  /** Full daylight — current default look */
+  /** Full daylight — tuned for real GPU albedo textures (not flat vertex color) */
   day: {
     id: 'day',
     sunDir: [0.55, 0.82, 0.28],
-    sunColor: [1.0, 0.95, 0.85],
-    fillColor: [0.5, 0.58, 0.78],
+    sunColor: [1.0, 0.96, 0.88],
+    fillColor: [0.55, 0.62, 0.8],
     skyColor: [0.58, 0.74, 0.92],
-    groundAmbient: [0.32, 0.3, 0.26],
-    ambientFloor: 0.42,
-    keyStrength: 0.7,
+    groundAmbient: [0.36, 0.34, 0.3],
+    ambientFloor: 0.5,
+    keyStrength: 0.62,
     /** Rules ambient: bright outdoors */
     ambientLevel: 2,
-    shadowStrength: 0.25,
+    shadowStrength: 0.22,
   },
   /** Low sun — long cliff shadows, warm gold */
   sunset: {

@@ -3,16 +3,17 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.5.62';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.62';
+import { Renderer } from './renderer.js?v=0.5.89';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.89';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.5.62';
+} from './adapter.js?v=0.5.89';
 import {
   loadSprite,
+  clearSpriteCache,
   drawSpriteFrame,
   drawBillboard,
   drawFallbackToken,
@@ -21,7 +22,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.5.62';
+} from './sprites.js?v=0.5.89';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +32,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.5.62';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.5.62';
-import { APP_VERSION } from './version.js?v=0.5.62';
-import { resolveLighting } from './lighting.js?v=0.5.62';
+} from './fx.js?v=0.5.89';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.5.89';
+import { APP_VERSION } from './version.js?v=0.5.89';
+import { resolveLighting } from './lighting.js?v=0.5.89';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -112,8 +113,19 @@ export class Iso3DHost {
       (e) => {
         e.preventDefault();
         const cam = this.renderer.getCamera();
+        // Scale by the actual deltaY magnitude, not a fixed step per event — a real bug hit
+        // live ("sprites jump and rapidly fuck up when zooming"): a mouse wheel fires one
+        // event per discrete notch, so a flat +-0.08 per event felt fine, but a trackpad (or
+        // any precision-scroll device) fires MANY wheel events per second for one gesture,
+        // each with a small deltaY — applying the SAME full 0.08 step to every one of those
+        // burst events made the zoom (and therefore every on-screen size derived from it)
+        // rocket through many discrete jumps almost instantly instead of tracking the gesture
+        // smoothly. Clamp the per-event delta so one large spike (a fast mouse notch, or a
+        // trackpad hiccup) still can't overshoot by much.
+        const clampedDelta = Math.max(-100, Math.min(100, e.deltaY));
+        const factor = Math.exp(-clampedDelta * 0.0012);
         this.renderer.setCamera({
-          zoom: cam.zoom + (e.deltaY > 0 ? -0.08 : 0.08),
+          zoom: cam.zoom * factor,
         });
       },
       { passive: false },
@@ -154,6 +166,8 @@ export class Iso3DHost {
     for (const u of this._view.units) {
       if (u.spriteUrl) loadSprite(u.spriteUrl);
     }
+    // Drop any cached tiny-tree bitmaps from earlier sessions
+    clearSpriteCache();
     for (const d of this._view.decorSprites || []) {
       if (d.spriteUrl) loadSprite(d.spriteUrl);
     }
@@ -753,11 +767,13 @@ export class Iso3DHost {
    * Look at a grid cell (e.g. the PC at QB start, or caster when targeting).
    * Zoom defaults a bit closer than full-map so the unit is clearly in frame.
    */
+  /**
+   * @returns {boolean} false if map not ready yet (caller should retry)
+   */
   frameOnCell(col, row, zoom) {
     const map = this._view?.map || this.renderer?._map;
-    if (!map) {
-      this.centerOnMap();
-      return;
+    if (!map || map.cols == null || map.rows == null) {
+      return false;
     }
     const { x, z } = gridToWorld(col | 0, row | 0, map.cols, map.rows);
     const zDef = zoom != null ? zoom : 1.85;
@@ -766,17 +782,84 @@ export class Iso3DHost {
       panY: z,
       zoom: Math.max(0.55, Math.min(2.9, zDef)),
     });
+    return true;
   }
 
   _syncSize() {
-    const w = this.container?.clientWidth || 800;
-    const h = this.container?.clientHeight || 600;
+    // Keep overlay + GL buffer at the same HiDPI resolution (see Renderer.syncSize).
+    const dpr = Math.min(
+      typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+      3,
+    );
+    const cssW = this.container?.clientWidth || 800;
+    const cssH = this.container?.clientHeight || 600;
+    const w = Math.max(1, Math.floor(cssW * dpr));
+    const h = Math.max(1, Math.floor(cssH * dpr));
     if (this.overlay.width !== w || this.overlay.height !== h) {
       this.overlay.width = w;
       this.overlay.height = h;
     }
-    this._wh = { w, h };
+    // GL canvas CSS already 100%; buffer size is owned by renderer.syncSize()
+    this.renderer.syncSize();
+    this._dpr = dpr;
+    this._wh = { w, h, dpr };
     return this._wh;
+  }
+
+  /**
+   * Snap billboard world height so projected screen height is an integer pixel count,
+   * preferring integer source-texel scales (…½, ⅓, 1×, 2×, 3×…). Stops the “mush”
+   * when NEAREST samples fractional texels under perspective zoom.
+   *
+   * MAX_CORRECTION guards against a real bug hit live ("sprite scaling all fucked up
+   * when zooming"): snapping to the nearest integer scale (k=round(pxPerTexel)) is only a
+   * SMALL correction when the object is already large on screen (high k — e.g. a fully
+   * zoomed-in tree), because consecutive integers k and k+1 are close together in ratio.
+   * But at low k — a SMALL object like a unit billboard, which sits near k=1 across most
+   * of the normal zoom range — consecutive integers are far apart in ratio (k=1 spans
+   * roughly 0.67x-1.09x of the true size), so "snap to nearest k" forces the on-screen
+   * size to sit PINNED at one fixed pixel height while the camera zoom (and every other
+   * sprite/tile around it, which either sit at a kinder k or skip this rounding) keeps
+   * growing smoothly — then suddenly jump a whole integer step. Rather than special-case
+   * "small vs large" objects, just refuse to snap when the correction it would apply is
+   * large enough to be visible as a freeze/jump, and fall through to the true (smooth,
+   * un-snapped) projected size instead — crisp pixel-snapping only ever engages when it's
+   * actually a minor nudge.
+   */
+  _snapBillboardSize(worldH, worldW, x, y, z, mvp, canvasW, canvasH, srcFw, srcFh) {
+    if (!(worldH > 0) || !mvp) return { height: worldH, width: worldW };
+    const p0 = this._project(mvp, x, y, z, canvasW, canvasH);
+    const p1 = this._project(mvp, x, y + worldH, z, canvasW, canvasH);
+    if (!p0 || !p1) return { height: worldH, width: worldW };
+    const screenH = Math.abs(p1.y - p0.y);
+    if (!(screenH > 0.5)) return { height: worldH, width: worldW };
+
+    const fh = Math.max(1, srcFh | 0 || 64);
+    const fw = Math.max(1, srcFw | 0 || fh);
+    const REF_CELL = 32;
+    const pxPerTexel = screenH / REF_CELL;
+
+    let targetScreenH;
+    if (pxPerTexel >= 0.92) {
+      // Upscale / near 1:1 — snap to integer pixels-per-texel
+      const k = Math.max(1, Math.round(pxPerTexel));
+      targetScreenH = REF_CELL * k;
+    } else {
+      // Downscale — each screen pixel covers an integer number of source texels
+      const n = Math.max(1, Math.round(1 / Math.max(pxPerTexel, 1e-6)));
+      targetScreenH = Math.max(1, Math.round(REF_CELL / n));
+    }
+    // Always whole framebuffer pixels
+    targetScreenH = Math.max(1, Math.round(targetScreenH));
+
+    const scale = targetScreenH / screenH;
+    const MAX_CORRECTION = 0.12;
+    if (Math.abs(scale - 1) > MAX_CORRECTION) return { height: worldH, width: worldW };
+    const height = worldH * scale;
+    // Keep aspect from source frame
+    const aspect = worldW / worldH;
+    const width = height * aspect;
+    return { height, width };
   }
 
   _tileScreen(col, row) {
@@ -866,8 +949,16 @@ export class Iso3DHost {
             Math.max(0, Math.min(this._view.map.cols - 1, d.col | 0))
         ];
       const elev = cell?.h ?? 0;
-      const isTree = (d.kind || '').includes('tree');
-      const isBush = (d.kind || '').includes('bush');
+      const knd = d.kind || '';
+      const url = d.spriteUrl || '';
+      // HARD RULE: tree height if flagged, kind is tree/tree2, OR url is a tree texture.
+      // Never allow a "half-height tree" code path — that was the tiny-grey-tree bug.
+      const isTree =
+        d.isFullTree === true ||
+        knd === 'tree' ||
+        knd === 'tree2' ||
+        /tree(_px|2)?\.png/i.test(url);
+      const isBush = !isTree && (knd.startsWith('bush') || /bush/i.test(url));
       // Trees plant slightly into the ground so trunks don't float
       const y = elev * STEP + (isTree ? -0.02 : isBush ? -0.01 : 0);
       const { x, z } = gridToWorld(
@@ -878,18 +969,14 @@ export class Iso3DHost {
       );
       const scr = this._project(mvp, x, y, z, w, h);
       if (!scr) continue;
-      // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now,
-      // not billboards — this loop never sees door decor entries anymore.
+      // Structure gadgets (doors/traps/barrels…) are mesh-only — this loop is trees/bushes/flames.
       const entry = d.spriteUrl ? loadSprite(d.spriteUrl) : null;
-      // Same source PNG (nearest-neighbor) — only world size changes. Trees ~1.5× taller canopy.
-      // Doors are wall-mounted, not floor props — they need to fill a wall-height gap
-      // (walls render at ~2 elevation levels = 1.0 world units), not the tiny ground-clutter
-      // size (live report: "scale is all wrong" — door rendered barrel/torch-sized next to a
-      // much taller wall).
-      const isDoor = (d.kind || '').startsWith('door');
-      const worldH = isTree ? 3.0 : isBush ? 0.95 : isDoor ? 1.9 : 0.95;
+      // Trees: one tall size only. Bushes: short. No middle size.
+      const worldH = isTree ? 4.2 : isBush ? 1.05 : 0.95;
       const uv = entry && entry.ready ? getFullImageUV(entry) : null;
-      const aspect = uv && uv.fh ? uv.fw / uv.fh : 0.55;
+      // Clamp aspect so wide/skinny frames never shrink the billboard into a speck
+      let aspect = uv && uv.fh ? uv.fw / uv.fh : 0.7;
+      if (isTree) aspect = Math.max(0.55, Math.min(0.9, aspect));
       if (entry && entry.ready && uv) {
         const k = d.kind || '';
         // Lit flames only — torch_unlit must not self-glow
@@ -897,27 +984,36 @@ export class Iso3DHost {
           k === 'torch' ||
           k === 'campfire' ||
           k.includes('crystal');
-        // Only the torch/campfire/crystal family has a "cold/dead" unlit state — every other
-        // prop (trees, bushes, chests, barrels...) should just take the scene lighting as-is.
-        // This used to apply the 0.55 dead-torch darken to ALL decor, so trees/bushes rendered
-        // near-black no matter how bright the map was (live report: "trees ... are all black").
         const isFlameFamily = isLitFlame || k === 'torch_unlit';
+        let bw = worldH * aspect;
+        let bh = worldH;
+        const snapped = this._snapBillboardSize(
+          bh,
+          bw,
+          x,
+          y,
+          z,
+          mvp,
+          w,
+          h,
+          uv.fw,
+          uv.fh,
+        );
+        bw = snapped.width;
+        bh = snapped.height;
         glBillboards.push({
           img: entry.img,
           origin: [x, y, z],
-          width: worldH * aspect,
-          height: worldH,
+          width: bw,
+          height: bh,
           u0: uv.u0,
           v0: uv.v0,
           u1: uv.u1,
           v1: uv.v1,
           depth: this._depthKey(d.col, d.row, elev, 0, scr.y),
           alpha: 1,
-          // Scene lighting applied in billboard shader (same torches as terrain)
-          darken: isFlameFamily ? (isLitFlame ? 1 : 0.55) : 1, // unlit torches look cold/dead
+          darken: isFlameFamily ? (isLitFlame ? 1 : 0.55) : 1,
           emissive: isLitFlame,
-          // Bushes only: don't depth-WRITE so range/blast tints show through tiny grass.
-          // Real trees write depth (and block spell LoE) like solid props.
           softCover: isBush && !isTree,
         });
       }
@@ -1006,10 +1102,20 @@ export class Iso3DHost {
                 ? Math.sin(pose.walkDist * Math.PI * 2) * 0.035
                 : 0;
             const worldH = (attacking ? 1.42 : 1.35) * (1 + bob);
+            const worldW = worldH * aspect * (attacking ? 1.06 : 1);
+            // No pixel-snapping here (unlike decor's _snapBillboardSize call below): a unit's
+            // worldH is small enough that "snap to the nearest integer texel scale" pins its
+            // on-screen size to a fixed pixel count for a wide stretch of the zoom range, then
+            // pops by a big relative jump at the boundary — a real bug hit live ("scaling jumps
+            // around when zooming") that persisted even after narrowing the snap tolerance,
+            // because ANY snap-then-hold-then-jump is visible on an object this small. Trees/
+            // decor are large enough on screen that the snap window is a much smaller fraction
+            // of their size and reads as smooth; units aren't, so they just use the true
+            // continuously-projected size and let the camera's own projection scale them.
             glBillboards.push({
               img: entry.img,
               origin: [x, y, z],
-              width: worldH * aspect * (attacking ? 1.06 : 1),
+              width: worldW,
               height: worldH,
               u0: uv.u0,
               v0: uv.v0,
@@ -1447,8 +1553,11 @@ export class Iso3DHost {
   _pickUnitScreen(clientX, clientY) {
     if (!this._view?.units?.length || !this._mvpCache) return null;
     const rect = this.glCanvas.getBoundingClientRect();
-    const mx = clientX - rect.left;
-    const my = clientY - rect.top;
+    // HiDPI: framebuffer px ≠ CSS px
+    const scaleX = (this._wh.w || rect.width) / Math.max(1, rect.width);
+    const scaleY = (this._wh.h || rect.height) / Math.max(1, rect.height);
+    const mx = (clientX - rect.left) * scaleX;
+    const my = (clientY - rect.top) * scaleY;
     const w = this._wh.w || rect.width;
     const h = this._wh.h || rect.height;
     if (w < 1 || h < 1) return null;
@@ -1528,4 +1637,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.5.62';
+export { Renderer } from './renderer.js?v=0.5.89';
