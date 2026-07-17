@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.5.89';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.89';
+import { Renderer } from './renderer.js?v=0.5.90';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.90';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.5.89';
+} from './adapter.js?v=0.5.90';
 import {
   loadSprite,
   clearSpriteCache,
@@ -22,7 +22,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.5.89';
+} from './sprites.js?v=0.5.90';
 import {
   createFxState,
   spawnFloater,
@@ -32,10 +32,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.5.89';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.5.89';
-import { APP_VERSION } from './version.js?v=0.5.89';
-import { resolveLighting } from './lighting.js?v=0.5.89';
+} from './fx.js?v=0.5.90';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.5.90';
+import { APP_VERSION } from './version.js?v=0.5.90';
+import { resolveLighting } from './lighting.js?v=0.5.90';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -1094,15 +1094,22 @@ export class Iso3DHost {
               depth,
             });
           } else {
-            const attacking = this._attackAnims.has(u.id);
             const walking = !!(pose && pose.walking);
             // Subtle bob while walking so even sparse sheets read as motion
             const bob =
               walking && pose.walkDist != null
                 ? Math.sin(pose.walkDist * Math.PI * 2) * 0.035
                 : 0;
-            const worldH = (attacking ? 1.42 : 1.35) * (1 + bob);
-            const worldW = worldH * aspect * (attacking ? 1.06 : 1);
+            // No attack-triggered size bump (there used to be a +5%/+6% h/w multiplier
+            // while `_attackAnims.has(u.id)`): that changed the billboard's world-space
+            // size the INSTANT an attack starts/ends, a real hard pop with no easing —
+            // a real bug hit live ("sprites jump"), worse at high zoom since the same 5%
+            // is a bigger absolute pixel jump the larger the sprite is on screen, and easy
+            // to blame on the zoom math since attacks and zooming often happen together
+            // mid-battle. The attack lunge is still conveyed by the walk-frame pose swap
+            // in _spriteFrame — no separate size cue needed.
+            const worldH = 1.35 * (1 + bob);
+            const worldW = worldH * aspect;
             // No pixel-snapping here (unlike decor's _snapBillboardSize call below): a unit's
             // worldH is small enough that "snap to the nearest integer texel scale" pins its
             // on-screen size to a fixed pixel count for a wide stretch of the zoom range, then
@@ -1637,4 +1644,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.5.89';
+export { Renderer } from './renderer.js?v=0.5.90';
