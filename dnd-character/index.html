@@ -1111,6 +1111,14 @@ function openSpellTarget(c, name, level){
           if(selfIn && dmgTotal){ const ev=Engine.castApply(playerNetAdapter, 'me', 'me', Object.assign(sp(dmgTotal), {save:mc.save||'dex', cond:null}));
             if(ev.dmg>0) logChange(c,'💥 Caught in own '+name+' — '+ev.dmg+' damage'+(ev.saved?' (saved — half)':'')); }
           applyFireBlastHazards(s, ctr, aoeR, name, mc.dtype);
+          // Local echo (instant visual feedback), same pattern as playerNetAdapter.hurt's
+          // monster-damage echo — the DM is authoritative for the shared map/hazards, so
+          // also tell it what happened; its next broadcast overwrites this with the real
+          // state (picking up anyone else's hazards too).
+          if(SPELL_TERRAIN[name]||SPELL_GAS[name]){
+            paintHazardTerrain(s,ctr,aoeR,name,dc0);
+            if(net.conn){ try{ net.conn.send({t:'paintHazard', ctr, aoeR, name, dc:dc0}); }catch(e){} }
+          }
           flashBanner(name+' hits '+aff.length+(dmgTotal?' for '+dmgTotal:'')+(mc.save&&saves?' · '+saves+' saved (half)':'')+(alliesIn.length?' · ⚠ '+alliesIn.map(p=>p.name).join(', ')+' caught in the area!':''));
           if(alliesIn.length) logChange(c,'⚠ '+name+' also caught: '+alliesIn.map(p=>p.name).join(', '));
           if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
@@ -4772,8 +4780,11 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
+  else if(d.t==='paintHazard'){ paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc); dmBroadcast(); render(); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
-  else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true; dmBroadcast(); render(); } }
+  else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true;
+    if(net.session.battle&&net.session.battle.active) sendTerrainHazardCheck(net.session,p,d.x,d.y);
+    dmBroadcast(); render(); } }
   else if(d.t==='endturn'){ const cur=net.session.order&&net.session.order[net.session.turn]; if(cur&&cur.id===conn.peer) dmNextTurn(); }
   else if(d.t==='moncond'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===d.cond)) mo.conds.push({name:d.cond,rounds:d.rounds||10}); dmBroadcast(); render(); flashBanner(mo.name+' → '+d.cond); } }
   else if(d.t==='provoke'){ const p=net.session.players.find(x=>x.cid===d.cid)||net.session.players.find(x=>x.id===conn.peer);
@@ -4806,9 +4817,9 @@ function rollInitiative(){ const s=net.session; const o=[];
 function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo){ mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; } } }
 function orderDead(o){ if(o.k!=='m') return false; const mo=net.session.monsters.find(m=>m.id===o.id); return mo&&mo.hp<=0; }
 function tickMonsterConds(){ const s=net.session; (s.monsters||[]).forEach(mo=>{ if(mo.conds){ mo.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); mo.conds=mo.conds.filter(x=>x.rounds==null||x.rounds>0); } }); }
-function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; tickMonsterConds(); dmBroadcast(); render(); return; }
+function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; tickMonsterConds(); tickGasHazards(s); expireHazards(s); dmBroadcast(); render(); return; }
   const oldR=s.battle.round; let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
-  if(s.battle.round>oldR) tickMonsterConds();
+  if(s.battle.round>oldR){ tickMonsterConds(); tickGasHazards(s); expireHazards(s); }
   dmRefreshActor(); dmBroadcast(); render(); }
 function dmPrevTurn(){ const s=net.session; if(!s.order||!s.order.length) return;
   let guard=0; do{ if((s.turn||0)===0){ s.turn=s.order.length-1; if(s.battle.round>1) s.battle.round--; } else s.turn--; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
@@ -4871,6 +4882,30 @@ function playerOnData(d){ if(!d) return;
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
   else if(d.t==='oachance'){ const c=playerChar(); if(c) playerOpportunityPrompt(c, d); }
   else if(d.t==='cond'){ const c=playerChar(); if(c){ if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
+  else if(d.t==='hazard'){
+    // DM-hosted hazard check (gas cloud OR Grease/Web terrain) — the DM device can't roll
+    // our save (it only ever syncs hp/ac/conds, never ability scores), so it asks us to
+    // resolve it locally where the full sheet lives, then reports back via the same
+    // 'apply'/'cond' shape the DM already understands (see tickGasHazards's and
+    // sendTerrainHazardCheck's DM-mode branches).
+    const c=playerChar(); if(!c) return;
+    const ability=d.ability||'con';
+    const bonus=mod(abil(c,ability))+(c.saveProf&&c.saveProf[ability]?profBonus(c):0);
+    const roll=rnd(20)+bonus, saved=roll>=d.dc;
+    const cond=d.cond||'Poisoned';
+    if(d.dmg){
+      const dmgTotal=(rollNotation(d.dmg)||{total:0}).total;
+      const applied=saved?Math.floor(dmgTotal/2):dmgTotal;
+      if(applied>0){ applyHp(c,-applied); if(net.conn) try{ net.conn.send({t:'apply',delta:-applied}); }catch(e){} }
+      flashBanner('🌫️ '+d.name+' — you take '+applied+' '+(d.dtype||'')+(saved?' (saved — half)':''));
+    } else if(!saved){
+      if(!c.conditions) c.conditions={};
+      c.conditions[cond]=true; save();
+      if(net.conn) try{ net.conn.send({t:'cond',name:cond,on:true}); }catch(e){}
+      flashBanner((d.name?d.name+' — ':'')+'you are '+cond);
+    } else flashBanner((d.name?d.name+' — ':'')+'you resist it');
+    render();
+  }
 }
 // A monster left this player's reach — offer one melee opportunity attack (uses the reaction).
 function playerOpportunityPrompt(c, d){
@@ -6696,9 +6731,22 @@ function openMageHandUI(c, s, me){
   }
   draw(null);
 }
-// Spells that paint temporary terrain onto the battle map (Quick Battle only): the
-// tiles a blast covers become this TERRAIN key for `rounds` (6s each), then revert.
+// Spells that paint temporary terrain onto the battle map — works in Quick Battle, DM,
+// and player-net alike (see paintHazardTerrain). The tiles a blast covers become this
+// TERRAIN key for `rounds` (6s each), then revert.
 const SPELL_TERRAIN={'Grease':{terrain:'grease', rounds:10}, 'Web':{terrain:'web', rounds:600}};
+// Lingering damage/condition clouds (Cloudkill, Insect Plague) — unlike SPELL_TERRAIN,
+// these don't repaint the floor (no `terrain` key), they just mark cells as a hazard
+// zone that ticks every round via tickGasHazards: a Con save (hz.dc, set at cast from
+// the caster's spell DC) or take `dmg` (half on a save), or — for save-no-damage clouds
+// like Stinking Cloud — apply Poisoned on a failed save instead. Real 5e Cloudkill also
+// drifts 10 ft/round away from the caster; simplified to a stationary cloud here (no
+// engine concept of a hazard "owner" to drift away from) — noted in AUDIT.md.
+const SPELL_GAS={
+  'Cloudkill':{dmg:'5d8', dtype:'poison', rounds:100},
+  'Insect Plague':{dmg:'4d10', dtype:'piercing', rounds:100},
+  'Stinking Cloud':{rounds:15},   // no damage — Poisoned (can't take actions) on a failed save
+};
 /* ---- preset battle maps (v120.107 — from-scratch FFT pack maps) ---- */
 const MAP_PRESETS=(()=>{ const P={};
   const fill=(t,w,h,k)=>{ for(let y=0;y<h;y++)for(let x=0;x<w;x++) t[x+','+y]=k; };
@@ -7370,12 +7418,12 @@ function renderDM(){
         if(cost>(mo.moveLeft||0)){ if(!dashAvail){ flashBanner(mo.name+' too far — needs its action to Dash'); return; } mo.moveLeft=(mo.moveLeft||0)+(mo.speed||30); mo.attacksLeft=0; flashBanner('🏃 '+mo.name+' Dashes (action used)'); }
         mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
-      if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; Events.emit({type:'hazard', unitId:mo.id, terrain:ter, deadly:true}); flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); Events.emit({type:'hazard', unitId:mo.id, terrain:ter, dmg:d}); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } }
+      if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; Events.emit({type:'hazard', unitId:mo.id, terrain:ter, deadly:true}); flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); Events.emit({type:'hazard', unitId:mo.id, terrain:ter, dmg:d}); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } checkTerrainHazardCond(s,mo,x,y,false); }
       Events.emit({type:'move', id:mo.id, by:mo.name, to:{x:mo.x,y:mo.y}, fly:mfly});
       if(wasBattle){ const leaving=s.players.filter(p=>(p.hpCur||0)>0 && leavesReach(fromX,fromY,mo.x,mo.y,p.x,p.y,1)); leaving.forEach(p=>dmSend(p.id,{t:'oachance',mon:mo.id,name:mo.name,ac:mo.ac})); if(leaving.length) flashBanner('⚔ '+mo.name+' provokes opportunity attack'+(leaving.length>1?'s':'')+' from '+leaving.map(p=>p.name).join(', ')); }
     } }
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && isFullWall(ter)){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
-      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, deadly:true}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, dmg:d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } } } }
+      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, deadly:true}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, dmg:d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } sendTerrainHazardCheck(s,p,x,y); } } }
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain & elevation?')){ s.map.tiles={}; s.map.height={}; s.map.decor={}; dmBroadcast(); render(); } }; }
   { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
@@ -7793,7 +7841,7 @@ function qbName(u){ return u.name; }
 function qbReach(u){ if(u.side==='pc'){ return 1; } const a=parseMonsterAttacks(u.atk).filter(x=>x.hit!=null); const t=Math.max(1,...a.map(x=>x.tiles||1).filter(n=>n<=2)); return t||1; }
 function qbAlive(u){ return qbHP(u)>0; }
 function qbUnitById(id){ return QB.players.find(p=>p.id===id)||QB.monsters.find(m=>m.id===id); }
-function qbLog(m,s){ s=s||QB; s.log.unshift({m, t:Date.now()}); if(s.log.length>40) s.log.pop(); }
+function qbLog(m,s){ s=s||QB; s.log=s.log||[]; s.log.unshift({m, t:Date.now()}); if(s.log.length>40) s.log.pop(); }
 function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } }   // damage wakes sleepers (PHB)
 // adapter binding the unified Engine to Quick Battle's state
 const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
@@ -8010,7 +8058,7 @@ function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
     QB.moveMode=false; save(); render(); }
 }
 function qbNextTurn(){ if(!QB) return; if(QB.paused){ setTimeout(qbNextTurn,200); return; } if(QB.over){ render(); return; }
-  let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0){ QB.battle.round++; QB.monsters.forEach(m=>{ if(m.conds){ m.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); m.conds=m.conds.filter(x=>x.rounds==null||x.rounds>0); } }); qbExpireHazards(QB); tickSessionLights(QB); } guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
+  let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0){ QB.battle.round++; QB.monsters.forEach(m=>{ if(m.conds){ m.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); m.conds=m.conds.filter(x=>x.rounds==null||x.rounds>0); } }); tickGasHazards(QB); expireHazards(QB); tickSessionLights(QB); } guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
   qbBeginTurn();
 }
 function qbEndPcTurn(){ const o=qbCurrent(); if(o&&o.k==='p'){ const c=QB.players[0].c; if(timeStopExtraTurn(c)) return; QB.moveMode=false; qbNextTurn(); } }
@@ -8735,31 +8783,108 @@ function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while ragin
 function qbApplyCond(mo,name){ const sc=SPELL_COND[name]; if(sc){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===sc.c)) mo.conds.push({name:sc.c,rounds:sc.r});
   if(sc.c==='No Reactions') mo.reactionUsed=true; } }   // Shocking Grasp: actually blocks its opportunity attack, not just a display tag
 // paint temporary terrain (Grease, etc.) onto the tiles a blast covers; remembers what
-// was underneath so it can revert when the hazard expires (see qbExpireHazards)
-function qbPaintTerrain(s,ctr,aoeR,name,dc){ const st=SPELL_TERRAIN[name]; if(!st) return;
+// was underneath so it can revert when the hazard expires (see expireHazards).
+// Mode-agnostic — works on QB, a DM net.session, or any {map,battle,hazards}-shaped
+// state — Grease/Web/gas hazards used to only paint terrain in Quick Battle; DM-hosted
+// and player-net battles called a different function (applyFireBlastHazards, torches/
+// barrels only) that never painted lasting terrain at all.
+function paintHazardTerrain(s,ctr,aoeR,name,dc){ const st=SPELL_TERRAIN[name]||SPELL_GAS[name]; if(!st) return;
   s.map.tiles=s.map.tiles||{}; const cells=[];
   for(let x=Math.max(0,ctr.x-aoeR); x<=Math.min(s.map.cols-1,ctr.x+aoeR); x++)
     for(let y=Math.max(0,ctr.y-aoeR); y<=Math.min(s.map.rows-1,ctr.y+aoeR); y++){
       if(!inBlast(ctr.x,ctr.y,x,y,aoeR)) continue;
       const k=x+','+y, prevDef=TERRAIN[s.map.tiles[k]]; if(prevDef&&(prevDef.solid||prevDef.deadly)) continue;
-      cells.push({x,y,prev:s.map.tiles[k]||null}); s.map.tiles[k]=st.terrain;
+      cells.push({x,y,prev:s.map.tiles[k]||null});
+      if(st.terrain) s.map.tiles[k]=st.terrain;   // gas hazards (no st.terrain) leave the floor untouched
     }
-  s.hazards=s.hazards||[]; s.hazards.push({cells, until:s.battle.round+st.rounds, name, dc});
+  s.hazards=s.hazards||[]; s.hazards.push({cells, until:s.battle.round+st.rounds, name, dc, gas:!st.terrain});
 }
-function qbExpireHazards(s){ if(!s.hazards||!s.hazards.length) return;
+function expireHazards(s){ if(!s.hazards||!s.hazards.length) return;
   s.hazards=s.hazards.filter(hz=>{ if(s.battle.round<hz.until) return true;
     hz.cells.forEach(c=>{ const k=c.x+','+c.y; if(c.prev) s.map.tiles[k]=c.prev; else delete s.map.tiles[k]; });
     qbLog('🌿 The '+hz.name+' fades away', s); return false; }); }
-function qbHazardAt(s,x,y){ if(!s.hazards) return null; return s.hazards.find(hz=>hz.cells.some(c=>c.x===x&&c.y===y))||null; }
+function hazardAt(s,x,y){ if(!s.hazards) return null; return s.hazards.find(hz=>hz.cells.some(c=>c.x===x&&c.y===y))||null; }
 // Dex save or suffer a condition when a creature ends its move on hazardous terrain
-// (Grease → Prone, Web → Restrained).
-function qbCheckTerrainProne(s,unit,x,y,isPc){ const tdef=TERRAIN[terrainAt(s,x,y)]; if(!tdef||!(tdef.prone||tdef.restrain)) return;
+// (Grease → Prone, Web → Restrained). Mode-agnostic, same reasoning as paintHazardTerrain.
+function checkTerrainHazardCond(s,unit,x,y,isPc){ const tdef=TERRAIN[terrainAt(s,x,y)]; if(!tdef||!(tdef.prone||tdef.restrain)) return;
   const cond=tdef.restrain?'Restrained':'Prone';
-  const hz=qbHazardAt(s,x,y); const dc=hz?hz.dc:10;
+  const hz=hazardAt(s,x,y); const dc=hz?hz.dc:10;
   const bonus=isPc?(mod(abil(unit,'dex'))+(unit.saveProf&&unit.saveProf.dex?profBonus(unit):0)):monsterSaveBonus(unit);
   const roll=rnd(20)+bonus;
   if(roll<dc){ if(isPc){ unit.conditions=unit.conditions||{}; unit.conditions[cond]=true; } else { unit.conds=unit.conds||[]; if(!unit.conds.some(c=>c.name===cond)) unit.conds.push({name:cond,rounds:cond==='Restrained'?10:1}); }
     qbLog((tdef.e||'🛢️')+' '+unit.name+' '+(cond==='Restrained'?'gets tangled in the webs':'slips and falls prone')+' ('+roll+' vs DC '+dc+')', s); } }
+/**
+ * DM-hosted equivalent of checkTerrainHazardCond for a PLAYER specifically (monsters use
+ * checkTerrainHazardCond directly — the DM has their full stat block). The DM only syncs
+ * a player's hp/ac/conds summary, never ability scores, so it can't roll their Dex save
+ * itself; sends a 'hazard' message and lets the player's own device resolve+report back
+ * (same reasoning as tickGasHazards's DM-mode player branch).
+ */
+function sendTerrainHazardCheck(s,p,x,y){ const tdef=TERRAIN[terrainAt(s,x,y)]; if(!tdef||!(tdef.prone||tdef.restrain)) return;
+  if(typeof dmSend!=='function') return;
+  const cond=tdef.restrain?'Restrained':'Prone';
+  const hz=hazardAt(s,x,y); const dc=hz?hz.dc:10;
+  dmSend(p.id,{t:'hazard', name:tdef.name||cond, dc, ability:'dex', cond}); }
+/**
+ * Tick every gas hazard (Cloudkill, Insect Plague, Stinking Cloud) once per round: every
+ * creature currently standing in its cells rolls a Con save against the DC stashed at
+ * cast time (hz.dc) — on a fail, damage-cloud spells (hz has gs.dmg) deal full damage
+ * (half on a save), no-damage clouds (Stinking Cloud) apply Poisoned instead. Simplified
+ * to "once when the round advances" rather than each creature's own turn-start, so one
+ * call site (alongside expireHazards) covers QB, DM, and player-net alike — see
+ * AUDIT.md for why real Cloudkill's per-turn/on-entry timing and 10-ft/round drift
+ * aren't modeled exactly.
+ */
+function tickGasHazards(s){ if(!s.hazards||!s.hazards.length) return;
+  s.hazards.forEach(hz=>{ if(!hz.gas) return; const gs=SPELL_GAS[hz.name]; if(!gs) return;
+    const cellSet=new Set(hz.cells.map(c=>c.x+','+c.y));
+    const resolve=(name,isPc,unit,x,y,applyDmg,applyPoison)=>{
+      if(x==null||!cellSet.has(x+','+y)) return;
+      const bonus=isPc?(mod(abil(unit,'con'))+(unit.saveProf&&unit.saveProf.con?profBonus(unit):0)):monsterSaveBonus(unit);
+      const roll=rnd(20)+bonus, saved=roll>=hz.dc;
+      if(gs.dmg){
+        const dmgTotal=(rollNotation(gs.dmg)||{total:0}).total;
+        const applied=saved?Math.floor(dmgTotal/2):dmgTotal;
+        if(applied>0) applyDmg(applied);
+        qbLog('🌫️ '+hz.name+' — '+name+' takes '+applied+' '+gs.dtype+(saved?' (saved — half)':''), s);
+      } else {
+        if(!saved) applyPoison();
+        qbLog('🌫️ '+hz.name+' — '+name+(saved?' resists the fumes':' is Poisoned'), s);
+      }
+    };
+    (s.players||[]).forEach(p=>{
+      if(p.c){
+        // Quick Battle: the full character object (ability scores, save proficiency)
+        // lives right here, so roll and apply locally same as monsters.
+        if(p.c.hp&&p.c.hp.cur<=0) return;
+        resolve(p.name||p.c.name, true, p.c, p.x, p.y,
+          applied=>{ applyHp(p.c,-applied); if(p.hpCur!=null) p.hpCur=p.c.hp.cur; },
+          ()=>{ p.c.conditions=p.c.conditions||{}; p.c.conditions['Poisoned']=true; });
+      } else if(typeof dmSend==='function'){
+        // DM-hosted session: the DM only holds a synced summary (hp/ac/conds), never the
+        // player's ability scores — it genuinely cannot roll a Con save for them (same
+        // reason dmMonsterAttack's save-based attacks are DM-adjudicated by hand rather
+        // than auto-rolled). Instead of a manual per-hazard-per-round DM prompt (bad UX for
+        // several creatures every round), send the player's own device — which DOES have
+        // their full sheet — the hazard to resolve locally; it reports the result back via
+        // the existing 'apply'/'cond' message types dmOnData already understands.
+        if(p.x==null||!cellSet.has(p.x+','+p.y)||(p.hpCur!=null&&p.hpCur<=0)) return;
+        dmSend(p.id,{t:'hazard', name:hz.name, dc:hz.dc, dmg:gs.dmg||null, dtype:gs.dtype||null});
+      }
+    });
+    (s.monsters||[]).forEach(m=>{
+      if(m.hp<=0) return;
+      resolve(m.name, false, m, m.x, m.y,
+        applied=>{ m.hp=Math.max(0,m.hp-applied); },
+        ()=>{ m.conds=m.conds||[]; if(!m.conds.some(c=>c.name==='Poisoned')) m.conds.push({name:'Poisoned',rounds:1}); });
+    });
+  });
+}
+// Back-compat aliases — old QB-specific names, kept so nothing else needs updating.
+function qbPaintTerrain(s,ctr,aoeR,name,dc){ return paintHazardTerrain(s,ctr,aoeR,name,dc); }
+function qbExpireHazards(s){ return expireHazards(s); }
+function qbHazardAt(s,x,y){ return hazardAt(s,x,y); }
+function qbCheckTerrainProne(s,unit,x,y,isPc){ return checkTerrainHazardCond(s,unit,x,y,isPc); }
 function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.players[0];
   if(!canCast(c,name,level)) return;   // pre-check; castSpell re-checks + spends on confirm
   const mc=scaleCantrip(c,name,parseSpellMechanics(name)), tilesR=spellRangeTiles(name), seek=spellSeeks(name), aoeR=SPELL_AOE[name]||0;
@@ -8847,9 +8972,10 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
           if(dmgTotal && inBlast(ctr.x,ctr.y,me.x,me.y,aoeR)){
             const ev=Engine.castApply(qbAdapter, 'pc', 'pc', Object.assign(sp(dmgTotal), {save:mc.save||'dex', cond:null}));
             if(ev.dmg>0) qbLog('💥 '+c.name+' is caught in the blast — '+ev.dmg+' damage'+(ev.saved?' (saved — half)':'')); }
-          qbPaintTerrain(s,ctr,aoeR,name,dc0);
+          paintHazardTerrain(s,ctr,aoeR,name,dc0);
           applyFireBlastHazards(s, ctr, aoeR, name, mc.dtype);
           if(SPELL_TERRAIN[name]) qbLog('🛢️ '+name+' coats the ground — difficult terrain, Dex save or prone');
+          else if(SPELL_GAS[name]) qbLog('🌫️ '+name+' lingers — anyone in it takes it again each round until it clears');
           else qbLog(name+' blasts '+aff.length+' enemies'+(dmgTotal?' (rolled '+dmgTotal+(mc.save?'; saves halve':'')+')':''));
           pushRoll({label:name+' (blast)', total:dmgTotal, detail:mc.dmg||'', kind:'dmg'});
           finish();
@@ -8979,7 +9105,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.137';
+const APP_VERSION='v120.138';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

@@ -710,3 +710,50 @@ corpse-on-the-map requirement and no "control cap" (2× proficiency bonus HD) �
 just replaces your last Animate Dead servant, same one-summon-per-spell-name rule Conjure Elemental
 already uses. Real 5e lets a necromancer accumulate multiple raised undead across casts without
 recasting each day, which this app doesn't model.
+
+## Gas hazards + hazard system now works in DM/player-net, not just Quick Battle
+
+Two related gaps, fixed together since they share the same underlying mechanism:
+
+**Cloudkill/Insect Plague/Stinking Cloud were one-shot blasts, like Fireball.** Real 5e
+Cloudkill etc. is a lingering cloud that keeps hurting anyone inside it round after round;
+this engine only ever applied damage once, at the moment of casting. Fixed with a new
+`SPELL_GAS` table (parallel to the existing `SPELL_TERRAIN` used by Grease/Web) and
+`tickGasHazards`, called from the same round-advance point as `expireHazards`. Simplified
+from RAW in two ways, both intentional: (1) ticks once when the round advances rather than
+at each individual creature's own turn-start or the moment they enter the cloud — avoids
+needing a per-unit turn-start hook in three separate turn systems (QB/DM/player-net) for a
+timing difference that's rarely going to matter at the table; (2) the cloud is stationary —
+real Cloudkill drifts 10 ft/round away from the caster, and this engine has no notion of a
+hazard "owner" to drift away from.
+
+**The whole hazard/terrain system (Grease, Web, and now gas) was Quick-Battle-only.**
+`qbPaintTerrain`/`qbExpireHazards`/`qbHazardAt`/`qbCheckTerrainProne` only ever ran against
+`QB`; a DM-hosted or player-net battle calling `openSpellTarget`'s blast path used a
+different function (`applyFireBlastHazards`, torches/barrels only) that never painted
+lasting terrain at all — casting Grease in a multiplayer game gave a one-time prone-check
+on whoever was standing in the blast at cast, no difficult terrain, no catching movers
+later. Renamed to mode-agnostic names (`paintHazardTerrain`/`expireHazards`/`hazardAt`/
+`checkTerrainHazardCond`; old names kept as thin aliases) and wired into `dmNextTurn` and
+the DM's manual monster/player move handlers.
+
+The one real wrinkle: a DM-hosted session only ever syncs a connected player's hp/ac/conds
+summary, never their ability scores — the DM device genuinely cannot roll a player's Con/Dex
+save itself (same reason `dmMonsterAttack`'s save-based monster attacks are adjudicated by
+hand rather than auto-rolled). Rather than a manual per-hazard-per-round DM prompt for every
+affected player (bad UX with more than one player in a cloud), the DM sends a new `hazard`
+message to the affected player's own device — which does have their full sheet — and it
+resolves the save locally, then reports the result back through the existing `apply`/`cond`
+message shapes `dmOnData` already understands. Monsters skip this round-trip entirely (the
+DM has full monster data locally, same as it always did for `dmMonsterAttack`).
+
+Player-cast blast spells that paint a hazard (`openSpellTarget`'s `resolveBlast`, running on
+the casting player's own device) follow the same "local echo + tell the DM" pattern already
+used for monster damage (`playerNetAdapter.hurt`): paint locally for instant feedback, and
+send a new `paintHazard` message so the DM's authoritative session picks it up too — the
+next broadcast reconciles the two.
+
+Coverage: `rules-test.js` duplicates the Grease/Web assertions under the new mode-agnostic
+names against a fake DM-session-shaped state (not just QB), plus new assertions that a
+Cloudkill-style cloud deals real repeat-round damage and stops the moment its hazard
+expires, and that a no-damage cloud (Stinking Cloud) applies Poisoned instead.

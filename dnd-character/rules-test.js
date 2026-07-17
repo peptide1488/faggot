@@ -29,6 +29,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
+  'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
@@ -545,6 +546,53 @@ T('web terrain is difficult and restrains creatures', TERRAIN['web'].diff===true
   const c=newCharacter('Tangled'); c.abilities.dex=10;
   qbCheckTerrainProne(gs4, c, 1, 1, true);
   T('a PC that fails its save is Restrained by web, not Prone', c.conditions && c.conditions['Restrained']===true && !c.conditions['Prone']);
+}
+
+/* ---- hazard system is mode-agnostic (was Quick-Battle-only: qbPaintTerrain/
+   qbExpireHazards/qbHazardAt/qbCheckTerrainProne only ever ran against QB; a DM-hosted
+   or player-net session calling the exact same code with a {map,battle,players,monsters}
+   -shaped state (not literally `=== QB`) must behave identically). Same assertions as the
+   QB Grease/Web tests above, run under the new mode-agnostic names against a fake
+   DM-session-shaped object instead of QB. ---- */
+{ const dmS={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[], players:[], monsters:[]};
+  paintHazardTerrain(dmS, {x:2,y:2}, 1, 'Grease', 13);
+  T('paintHazardTerrain works against a DM-session-shaped state, not just QB', hazardAt(dmS,2,2) && hazardAt(dmS,2,2).dc===13);
+  T('untouched tiles outside the blast stay unpainted (DM-shaped state)', dmS.map.tiles['0,0']===undefined);
+  dmS.battle.round=11; expireHazards(dmS);
+  T('expireHazards works against a DM-session-shaped state', Object.keys(dmS.map.tiles).length===0 && dmS.hazards.length===0);
+}
+{ const dmS2={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[], players:[], monsters:[]};
+  paintHazardTerrain(dmS2, {x:1,y:1}, 0, 'Grease', 999);   // DC 999 → always fails the save
+  const mo={name:'Goblin',x:1,y:1,base:'Goblin'};
+  checkTerrainHazardCond(dmS2, mo, 1, 1, false);
+  T('checkTerrainHazardCond works against a DM-session-shaped state', mo.conds && mo.conds.some(c=>c.name==='Prone'));
+}
+
+/* ---- gas hazards (Cloudkill, Insect Plague, Stinking Cloud): unlike Grease/Web, these
+   deal repeating damage (or a repeating condition) every round a creature remains in the
+   cloud, not just a one-time blast at cast — see tickGasHazards + SPELL_GAS. ---- */
+T('Cloudkill and Insect Plague are registered as gas hazards', SPELL_GAS['Cloudkill'] && SPELL_GAS['Insect Plague'] && SPELL_GAS['Stinking Cloud']);
+{ const gs5={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[], players:[], monsters:[
+    {id:'m1', name:'Goblin', hp:200, max:200, x:2, y:2, base:'Goblin'} ]};   // high HP: must survive 2 real 5d8 hits without flooring at 0
+  paintHazardTerrain(gs5, {x:2,y:2}, 0, 'Cloudkill', 999);   // DC 999 → always fails the save
+  T('a gas hazard does not repaint the floor (unlike Grease/Web)', gs5.map.tiles['2,2']===undefined);
+  const hpBefore=gs5.monsters[0].hp;
+  tickGasHazards(gs5);
+  const hpAfterRound1=gs5.monsters[0].hp;
+  T('a creature standing in Cloudkill takes real damage on the first tick', hpAfterRound1<hpBefore);
+  tickGasHazards(gs5);
+  const hpAfterRound2=gs5.monsters[0].hp;
+  T('a creature that stays in Cloudkill takes damage again on a second tick', hpAfterRound2<hpAfterRound1);
+  gs5.battle.round=101; expireHazards(gs5);
+  const hpAfterExpiry=gs5.monsters[0].hp;
+  tickGasHazards(gs5);
+  T('Cloudkill stops ticking once its hazard has expired', gs5.monsters[0].hp===hpAfterExpiry && gs5.hazards.length===0);
+}
+{ const gs6={map:{cols:5,rows:5,tiles:{}}, battle:{round:1}, log:[], players:[], monsters:[
+    {id:'m1', name:'Goblin', hp:20, max:20, x:1, y:1, base:'Goblin'} ]};
+  paintHazardTerrain(gs6, {x:1,y:1}, 0, 'Stinking Cloud', 999);
+  tickGasHazards(gs6);
+  T('Stinking Cloud deals no damage — Poisoned (lose actions) instead', gs6.monsters[0].hp===20 && gs6.monsters[0].conds.some(c=>c.name==='Poisoned'));
 }
 
 /* ---- coverage audit: a spell described with area/condition language must have a
