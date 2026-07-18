@@ -3,9 +3,9 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.5.95';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.95';
-import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.5.95';
+import { TERRAIN, createMap } from './map.js?v=0.5.96';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.96';
+import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.5.96';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {
@@ -235,8 +235,15 @@ export function sanitizeMapDecor(decor) {
       out[key] = 'bush';
       continue;
     }
-    // Pass through non-plant props if still allowed
-    if (DEFAULT_DECOR_PATHS[k]) out[key] = k;
+    // Pass through non-plant props if still allowed — billboard sprites (torch, crystal,
+    // ...) AND mesh-only structure gadgets (door, trap, chest, lever, ...). Only the latter
+    // check was missing here, so every door/trap/chest/lever/cauldron/drawbridge/grate/
+    // barrel/chest map authors placed was silently dropped before it ever reached the
+    // renderer — they showed up fine in the classic 2D view (a different code path) but
+    // never appeared as 3D geometry in the WebGL view (live report: "we need 3d models for
+    // the doors" — the models existed in renderer.js all along, this filter just never let
+    // the decor entry through to trigger them).
+    if (DEFAULT_DECOR_PATHS[k] || MESH_DECOR_KINDS.has(k)) out[key] = k;
     // else drop unknown plant-like junk
   }
   return out;
