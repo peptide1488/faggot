@@ -91,33 +91,35 @@ forcing it through `SPELL_COND`/`SPELL_AOE`:
   fixed together: a `Faerie Fire` or `Guided` condition on a target now genuinely grants
   attackers advantage.
 - **Sanctuary** — the cast stashes a save DC on the effect (`effects[].dc`); every monster
-  attack targeting the warded PC now rolls a Wis save in `qbApplyIntent` before the attack is
-  allowed to proceed, consuming the attack on a failure (matches "loses the attack" — this app
-  has no second ally target to redirect to in Quick Battle).
+  attack targeting the warded PC rolls a Wis save before the attack is allowed to proceed,
+  consuming the attack on a failure (matches "loses the attack" — this app has no second
+  ally target to redirect to).
 - **Magic Weapon** — dynamic per-weapon choice menu (`SPELL_CHOICES['Magic Weapon']` is a
-  function of the caster, not a static list) sets `item.magicBonus`, read by `qbPcAttacks`.
-  Tracked as a normal concentration effect; ending/expiring it clears the item's bonus via
-  `clearItemEffect`. Scoped to Quick Battle's own attack list — the sheet/DM-session weapon
-  displays don't read `magicBonus` yet.
+  function of the caster, not a static list) sets `item.magicBonus`. Tracked as a normal
+  concentration effect; ending/expiring it clears the item's bonus via `clearItemEffect`.
 - **Power Word Kill / Power Word Stun** — `POWER_WORD_HP` maps each spell to its HP threshold;
   `powerWordResolve` is a pure no-save, no-attack-roll check against the target's current HP.
-  Routed to enemy targeting only inside Quick Battle (`spellTargetsEnemy` checks `QB.active`) —
-  other targeting paths (DM/player-net) still treat these as narrative.
 - **Eyebite** — reworded to state "Wis save" so it parses as a save spell; on targeting a foe,
-  `qbEyebiteChoice` opens a 3-option picker (Asleep/Frightened/Panicked+3d6 psychic+Poisoned).
-  `eyebiteResolve` rolls one save that gates the *whole* chosen effect (a success means nothing
-  happens at all — not half damage, unlike a normal save spell).
+  a 3-option picker opens (Asleep/Frightened/Panicked+3d6 psychic+Poisoned). Resolution rolls
+  one save that gates the *whole* chosen effect (a success means nothing happens at all — not
+  half damage, unlike a normal save spell).
 - **Holy Aura** — the DC is stashed on cast, same as Sanctuary. The reactive half (hostile
-  attacker hits a warded creature → Con save or Blinded) is checked from `qbResolveAttack`'s
-  hit branch via the pure `holyAuraResolve`, since that's the only place that knows a hit
-  actually landed. Simplification: doesn't grant *advantage on saving throws* to warded allies —
+  attacker hits a warded creature → Con save or Blinded) is checked from the hit-resolution
+  path via the pure `holyAuraResolve`, since that's the only place that knows a hit actually
+  landed. Simplification: doesn't grant *advantage on saving throws* to warded allies —
   that's a separate, unimplemented "advantage on all saves" mechanic this engine doesn't have
   anywhere else either.
 
-All seven are QB-only (Quick Battle) unless noted otherwise above; the DM/session and
-player-net targeting paths (`openSpellTarget`, `attackFlow`) don't yet have the equivalent
-hooks for the ones that needed one (Sanctuary's attack-gate, Power Word's HP-threshold check,
-Eyebite's choice picker, Holy Aura's reactive trigger).
+**Update (later session, exact version not recorded — this paragraph was stale until found
+2026-07-18): all seven now have full DM-hosted and player-net parity, not just Quick
+Battle.** `sessionAdapter` (used by `dmMonsterAttack`) exposes `sanctuaryDC`/`holyAuraDC` by
+reading the synced values off the DM's player mirror (`playerHello`/`dmOnData` already sync
+them); `weaponToHit`/`weaponDmgBonus` take the carried item directly so `magicBonus` applies
+regardless of which attack menu built the call, not just `qbPcAttacks`; `spellTargetsEnemy`
+has no `QB.active` gate on Power Word Kill/Stun; `openSpellTarget` (the DM/player-net
+targeting path) has its own Eyebite-picker and Power-Word branches mirroring Quick Battle's.
+`rules-test.js` covers the DM-session side explicitly (search for `sessionAdapter` in the
+Sanctuary/Holy Aura tests) alongside the original Quick-Battle-only assertions above.
 
 ### Restrained/Grappled zero your speed (v94)
 Web and Entangle correctly tagged the target `Restrained`, but nothing ever zeroed its
