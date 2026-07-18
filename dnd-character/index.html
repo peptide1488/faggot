@@ -4853,24 +4853,22 @@ function scrollMapToCell(x, y){
  * Retries until host/map DOM are ready — battle start used to land on map center
  * when frameOnCell ran before setMap finished.
  */
-function frameBattleCameraOnPlayer(session, zoom){
+/** Pan/frame the battle camera (Iso3D + classic scroll) onto a specific grid cell. */
+function frameCameraOnCell(session, x, y, zoom){
   session=session||QB||(net&&net.session);
-  if(!session) return;
-  const p=(session.players||[]).find(u=>u&&(u.id==='pc'||u.side==='pc'||u.id==='me'))
-    ||(session.players&&session.players[0]);
-  if(!p||p.x==null||p.y==null) return;
+  if(!session||x==null||y==null) return;
   const z=zoom!=null?zoom:1.55;
   window.__iso3dForceFrame=true;
   window.__iso3dCamKeep=false;
   let attempts=0;
   const tryFrame=()=>{
     attempts++;
-    scrollMapToCell(p.x|0, p.y|0);
+    scrollMapToCell(x|0, y|0);
     if(isoView&&iso3dView){
       const host=window.__iso3dHost;
       if(!host||typeof host.frameOnCell!=='function') return false;
       try{
-        const ok=host.frameOnCell(p.x|0, p.y|0, z);
+        const ok=host.frameOnCell(x|0, y|0, z);
         if(ok===false) return false; // map not ready
         window.__iso3dCamKeep=true;
         window.__iso3dForceFrame=false;
@@ -4878,11 +4876,37 @@ function frameBattleCameraOnPlayer(session, zoom){
       }catch(e){ return false; }
     }
     // top-down / classic iso: scroll is enough once cell exists
-    return !!document.querySelector('.mcell[data-cell="'+(p.x|0)+','+(p.y|0)+'"]');
+    return !!document.querySelector('.mcell[data-cell="'+(x|0)+','+(y|0)+'"]');
   };
   if(tryFrame()) return;
   requestAnimationFrame(()=>{ if(!tryFrame()) requestAnimationFrame(tryFrame); });
   [50,120,250,450,800,1200].forEach(ms=>setTimeout(()=>{ if(window.__iso3dForceFrame||attempts<8) tryFrame(); }, ms));
+}
+function frameBattleCameraOnPlayer(session, zoom){
+  session=session||QB||(net&&net.session);
+  if(!session) return;
+  const p=(session.players||[]).find(u=>u&&(u.id==='pc'||u.side==='pc'||u.id==='me'))
+    ||(session.players&&session.players[0]);
+  if(!p||p.x==null||p.y==null) return;
+  frameCameraOnCell(session, p.x, p.y, zoom);
+}
+/** DM overview: frame the whole map rather than any one combatant. */
+function frameCameraOnMapCenter(session, zoom){
+  session=session||(net&&net.session);
+  if(!session||!session.map) return;
+  const cx=Math.floor(((session.map.cols|0)-1)/2), cy=Math.floor(((session.map.rows|0)-1)/2);
+  frameCameraOnCell(session, cx, cy, zoom!=null?zoom:1.1);
+}
+/** Look up a unit (player or monster) by its order-entry id — works for QB and net.session alike. */
+function sessionUnitById(s, id){ return (s&&s.players||[]).find(u=>u.id===id)||(s&&s.monsters||[]).find(u=>u.id===id); }
+/** Camera "follows the spotlight": pan to whoever's turn is currently active. */
+function frameCameraOnActiveUnit(session, zoom){
+  session=session||QB||(net&&net.session);
+  if(!session||!session.order||!session.order.length) return;
+  const entry=session.order[session.turn|0];
+  const u=entry&&sessionUnitById(session, entry.id);
+  if(!u||u.x==null||u.y==null) return;
+  frameCameraOnCell(session, u.x, u.y, zoom);
 }
 /** @deprecated use frameBattleCameraOnPlayer */
 function frameIso3DOnUnit(session, zoom){ frameBattleCameraOnPlayer(session, zoom); }
@@ -4956,10 +4980,10 @@ function tickMonsterConds(){ const s=net.session; (s.monsters||[]).forEach(mo=>{
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; tickMonsterConds(); tickGasHazards(s); expireHazards(s); dmBroadcast(); render(); return; }
   const oldR=s.battle.round; let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
   if(s.battle.round>oldR){ tickMonsterConds(); tickGasHazards(s); expireHazards(s); }
-  dmRefreshActor(); dmBroadcast(); render(); }
+  dmRefreshActor(); dmBroadcast(); render(); frameCameraOnActiveUnit(s, 1.55); }
 function dmPrevTurn(){ const s=net.session; if(!s.order||!s.order.length) return;
   let guard=0; do{ if((s.turn||0)===0){ s.turn=s.order.length-1; if(s.battle.round>1) s.battle.round--; } else s.turn--; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
-  dmBroadcast(); render(); flashBanner('Back to '+(s.order[s.turn]?s.order[s.turn].name:'previous')); }
+  dmBroadcast(); render(); flashBanner('Back to '+(s.order[s.turn]?s.order[s.turn].name:'previous')); frameCameraOnActiveUnit(s, 1.55); }
 function dmSend(pid,msg){ const c=net.conns.find(x=>x.peer===pid); if(c){ try{ c.send(msg); }catch(e){} } }
 function dmExit(){ if(net&&net.campaign) saveCampaign(net.campaign,true); try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
@@ -5006,13 +5030,20 @@ function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
   try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
-  if(d.t==='session'){ net.session=d.session; const c=playerChar();
+  if(d.t==='session'){ const wasActive=net.session&&net.session.battle&&net.session.battle.active; net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
       else if(!d.session.battle.active && c.battle){ c.battle=null; save(); }
       else if(c.battle){ const cur=d.session.order&&d.session.order[d.session.turn]; const myTurn=cur&&cur.id===net.peer.id;
         if((myTurn && !net.wasMyTurn) || (!d.session.order||!d.session.order.length) && c.battle.round!==d.session.battle.round){   // my turn started (or no initiative → round change) → reset resources
           c.battle.round=d.session.battle.round; resetTurnState(c); save(); }
         net.wasMyTurn=myTurn; }
+    }
+    // Camera: center on me the moment battle starts, then follow whoever's turn is active —
+    // same "spotlight follows the action" behavior as QB/DM, driven off the synced session.
+    if(d.session.battle.active && !wasActive){ setTimeout(()=>frameBattleCameraOnPlayer(net.session,1.55),60); net.lastActiveId=null; }
+    else if(d.session.battle.active){
+      const cur=d.session.order&&d.session.order[d.session.turn];
+      if(cur&&cur.id!==net.lastActiveId){ net.lastActiveId=cur.id; frameCameraOnActiveUnit(net.session,1.55); }
     }
     render();
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
@@ -7516,7 +7547,10 @@ function renderDM(){
     if(confirm('Delete campaign "'+nm+'"? This cannot be undone.')){ deleteCampaign(nm); render(); } }; }
   $('#dmRU').onclick=()=>{ s.battle.round++; dmBroadcast(); render(); };
   $('#dmRD').onclick=()=>{ s.battle.round=Math.max(1,s.battle.round-1); dmBroadcast(); render(); };
-  $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; rollInitiative(); } dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
+  $('#dmBattle').onclick=()=>{ s.battle.active=!s.battle.active; if(s.battle.active){ s.battle.round=1; rollInitiative();
+      // DM oversees everyone — start on a full view of the map, not any one combatant.
+      setTimeout(()=>frameCameraOnMapCenter(s, 1.1), 60); }
+    dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
   { const iv=$('#dmIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
   { const i3=$('#dmIso3dBtn'); if(i3) i3.onclick=toggleIso3dView; }
   { const rv=$('#dmRotBtn'); if(rv) rv.onclick=rotateMap; }
@@ -8191,6 +8225,8 @@ function qbPlaceUnits(){ const s=QB, cols=s.map.cols, rows=s.map.rows;
 }
 function qbCurrent(){ return QB.order[QB.turn]; }
 function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
+  // Camera follows the spotlight — pan to whoever's turn is starting (PC or monster).
+  frameCameraOnActiveUnit(QB, 1.55);
   if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; render();
     setTimeout(()=>qbRunBrain(mo), 500); }
   else { const c=QB.players[0].c;   // PC turn — refresh resources, then wait for input
@@ -9249,7 +9285,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.143';
+const APP_VERSION='v120.144';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
