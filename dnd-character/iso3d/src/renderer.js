@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.6.5';
+} from './math.js?v=0.6.6';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.6.5';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.5';
+} from './map.js?v=0.6.6';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.6';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.6.5';
+} from './lighting.js?v=0.6.6';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1677,6 +1677,28 @@ export class Renderer {
         }
       } catch (_) {}
       return; // sky still visible
+    }
+    // Diagnostic: mesh build can succeed (no exception) yet still produce zero geometry —
+    // e.g. this._map momentarily has no/empty cells — which silently skips every drawArrays
+    // call below (all gated by count>0), leaving only the sky clearColor visible. This is
+    // the one failure mode the mesh-build-exception and billboard-list diagnostics can't
+    // see: a live report of a fully blank battlefield (sky gradient, no terrain, no units,
+    // during a real ongoing battle) showed NO banner from either of those, and reloading
+    // the page fixed it — consistent with a transient malformed map reaching setMap(), not
+    // a thrown error or a stuck GL/context state.
+    const hasGroundTex = this._groundMeshes && this._groundMeshes.some((gm) => gm.count > 0);
+    if (this.mapCount === 0 && !hasGroundTex && this._map) {
+      const now = performance.now();
+      if (!this._lastEmptyMeshWarn || now - this._lastEmptyMeshWarn > 2000) {
+        this._lastEmptyMeshWarn = now;
+        const cols = this._map.cols, rows = this._map.rows;
+        const nCells = this._map.cells ? this._map.cells.length : -1;
+        try {
+          if (typeof window !== 'undefined' && typeof window.flashBanner === 'function') {
+            window.flashBanner(`⚠ Iso3D: map mesh empty (cols=${cols} rows=${rows} cells=${nCells})`);
+          }
+        } catch (_) {}
+      }
     }
 
     const { matrix, eye, right } = getCameraMatrix(
