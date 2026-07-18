@@ -819,5 +819,34 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('nearbySpawnTiles never returns a tile already occupied by a live monster', !nearbySpawnTiles(s,5,5,3).some(t=>s.monsters.some(m=>m.hp>0&&m.x===t.x&&m.y===t.y&&!(t.x===5&&t.y===5))));
 })();
 
+/* ---- Light cantrip: touch an object — self, a spot, or (with a save if hostile) a
+   creature's gear. See openLightTarget/applySpellLight/castSpell's suppressLight+followId. ---- */
+(function(){
+  const wiz=newCharacter('Lightbringer'); wiz.cls='Wizard'; wiz.level=1; wiz.spellAbility='int';
+  wiz.spells=(wiz.spells||[]).concat({name:'Light', level:0, prepared:true});
+  setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0,
+    battle:{active:true,round:1}, lights:[],
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:2,y:0,hp:7,max:7,ac:15}],
+    players:[{id:'pc',side:'pc',name:wiz.name,c:wiz,x:0,y:0,hpCur:wiz.hp.cur,hpMax:wiz.hp.max}] });
+
+  wiz.battle=freshTurnState(wiz);
+  castSpell(wiz,'Light',0);
+  // One active Light instance per caster (re-casting refreshes/moves it, doesn't stack)
+  T('Light with no target follows the caster (default self-attach, unchanged behavior)', getQB().lights.length===1 && getQB().lights[0].follow==='pc');
+
+  applySpellLight(getQB(), wiz, 'Light', {x:3,y:3}, null);
+  T('Light placed on a spot (followId:null) does not follow anyone', getQB().lights.length===1 && getQB().lights[0].follow==null && getQB().lights[0].col===3);
+
+  applySpellLight(getQB(), wiz, 'Light', {x:2,y:0}, 'm1');
+  T("Light touched onto another creature's object follows THAT creature, not the caster", getQB().lights.length===1 && getQB().lights[0].follow==='m1');
+
+  const before=(wiz.effects||[]).length;
+  resetTurnState(wiz);
+  const ok=castSpell(wiz,'Light',0,null,{suppressLight:true});
+  T('a suppressed cast (hostile resisted the Dex save) still spends the action/resources', ok===true);
+  T("...but adds no session light and no tracked 'Light' effect on the sheet", getQB().lights.length===1 && getQB().lights[0].follow==='m1' /* untouched by the suppressed cast */ && (wiz.effects||[]).length===before);
+  setQB(null);
+})();
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

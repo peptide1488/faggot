@@ -1050,6 +1050,7 @@ function openSpellTarget(c, name, level){
       return;
     }
   }
+  if(name==='Light'){ openLightTarget(c,level); return; }
   if(SPELL_TELEPORT[name]){ if(!canCast(c,name,level)) return;   // teleport → pick a destination, token actually moves
     const ts=net.session, tme=myMapPos();
     openTeleportTarget(c,name,level,ts,tme,(x,y)=>{
@@ -1802,7 +1803,7 @@ function canCast(c, name, level){
   if(level>0){ const tot=spellSlots(c)[level]||0, used=Math.min(tot,(c.slots[level]&&c.slots[level].used)||0); if(tot-used<=0){ flashBanner('No level '+level+' spell slots left'); return false; } }
   return true;
 }
-function castSpell(c, name, level, lightAt){
+function castSpell(c, name, level, lightAt, spellOpts){
   level=Number(level)||0;
   if(!canCast(c,name,level)) return false;
   const free=(name && wishFreeName===name); if(free) wishFreeName=null;   // Wish duplication: consume the grant
@@ -1820,10 +1821,17 @@ function castSpell(c, name, level, lightAt){
   if(!tmpl && isConcentration(name)) tmpl={rounds:null, conc:true, note:SPELL_DESC[name]||'Concentration — one such spell at a time.'};
   // Light / darkness / glow spells — pool on the map (at target if provided, else caster)
   let lightMsg='';
-  if(SPELL_LIGHTS[name]){
+  // Light touched onto an object held/worn by a hostile creature that made its Dex save:
+  // the spell is still cast (slot/action spent, handled above) but nothing lights up —
+  // see openLightTarget's resolveLightOnCreature for the save roll.
+  const suppressLight=!!(spellOpts&&spellOpts.suppressLight);
+  // A resisted Light has no effect at all — including no tracked buff on the caster's
+  // own sheet (SPELL_EFFECTS['Light'] would otherwise apply unconditionally, above).
+  if(suppressLight) tmpl=null;
+  if(SPELL_LIGHTS[name] && !suppressLight){
     const s=battleSession();
     if(s){
-      applySpellLight(s, c, name, lightAt||null);
+      applySpellLight(s, c, name, lightAt||null, spellOpts&&spellOpts.followId!==undefined?spellOpts.followId:undefined);
       const def=SPELL_LIGHTS[name];
       if(def&&!def.grantDarkvision){
         lightMsg=def.dark
@@ -1834,9 +1842,11 @@ function castSpell(c, name, level, lightAt){
       // Out of battle: still track the effect on the sheet
       lightMsg=' · (no battle map — light tracked as an effect)';
     }
+  } else if(suppressLight){
+    lightMsg=' · resisted — no light appears';
   }
   // Light cantrip always gets a tracked effect (PHB 1 hour; dismiss by ending the effect)
-  if(name==='Light' && !tmpl) tmpl=SPELL_EFFECTS['Light'];
+  if(name==='Light' && !tmpl && !suppressLight) tmpl=SPELL_EFFECTS['Light'];
   const ba=(ct==='bonus')?' · bonus action':(ct==='reaction')?' · reaction':'';
   if(tmpl){ addEffect(c, name, tmpl);
     if(name==='Sanctuary'||name==='Holy Aura'){ const e=c.effects[c.effects.length-1]; e.dc=8+profBonus(c)+mod(abil(c,c.spellAbility)); }   // attackers must beat this save (Sanctuary: to target you; Holy Aura: after hitting you, or be blinded)
@@ -2160,6 +2170,115 @@ function openSummonSpellUI(c, name, level){
   }
   drawPick();
 }
+/**
+ * Light cantrip targeting (PHB: touch one object no larger than 10 ft — bright light
+ * 20 ft / dim 20 ft more, 1 hour). The object can be yours, an ally's, a spot on the
+ * ground, or something held/worn by a hostile creature — the latter gets a Dex save
+ * to avoid the spell (PHB). Works in QB and DM/player-net battles alike (both hook
+ * points call this — see openSpellTarget's Mage-Hand-style special case and
+ * qbOpenSpells's cast-button handler).
+ */
+function openLightTarget(c, level){
+  const s=battleSession();
+  const me=s&&((s.players||[]).find(p=>p.c===c||p.cid===c.id)||(s.players&&s.players[0]));
+  const inBattleNow=QB&&!QB.over||(net&&net.session&&net.session.battle&&net.session.battle.active);
+  if(!s||!me||!s.map||!inBattleNow){
+    if(!castSpell(c,'Light',level)) return;
+    return;
+  }
+  const range=2; // Touch — same tile-range convention as other touch spells (see SUMMON_CATALOG)
+  const reattach=()=>{ if(isoView&&iso3dView&&s) try{ syncIso3DHost(s===QB?QB:s); }catch(e){} };
+  function drawChoice(){
+    $('#modalRoot').innerHTML=`<div class="modal" id="ltModal"><div class="sheet"><div class="grip"></div>
+      <h2>💡 Light</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Touch one object no larger than 10 ft — it sheds bright light 20 ft and dim light 20 ft more for 1 hour.</p>
+      <button class="btn block" id="ltSelf" style="margin-bottom:8px;text-align:left">🧍 <b>Yourself</b><small style="display:block;opacity:.8">An object you're holding or wearing — follows you.</small></button>
+      <button class="btn block" id="ltSpot" style="margin-bottom:8px;text-align:left">📍 <b>An object on the ground</b><small style="display:block;opacity:.8">Pick a tile within touch range — stays put.</small></button>
+      <button class="btn block" id="ltCreature" style="text-align:left">🎯 <b>A creature's object</b><small style="display:block;opacity:.8">Pick a creature within touch range — follows them. Hostile creatures get a Dex save.</small></button>
+      <button class="btn ghost block" id="ltClose" style="margin-top:10px">Cancel</button></div></div>`;
+    $('#ltClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    $('#ltModal').onclick=e=>{ if(e.target.id==='ltModal') $('#modalRoot').innerHTML=''; };
+    $('#ltSelf').onclick=()=>{ $('#modalRoot').innerHTML=''; if(!castSpell(c,'Light',level)) return; };
+    $('#ltSpot').onclick=()=>drawPlace(false);
+    $('#ltCreature').onclick=()=>drawPlace(true);
+  }
+  function creatureAt(x,y){
+    const mon=(s.monsters||[]).find(m=>m.hp>0&&m.x===x&&m.y===y);
+    if(mon) return {target:mon, kind:'mon'};
+    const ply=(s.players||[]).find(p=>p.x===x&&p.y===y);
+    if(ply) return {target:ply, kind:'ply'};
+    return null;
+  }
+  function drawPlace(wantCreature){
+    const rangeTiles=new Set();
+    for(let y=0;y<(s.map.rows|0);y++) for(let x=0;x<(s.map.cols|0);x++){
+      if(gridDist(me.x,me.y,x,y)>range) continue;
+      const occ=!!creatureAt(x,y);
+      if(wantCreature?occ:!occ) rangeTiles.add(x+','+y);
+    }
+    const opts={ rangeTiles, rangeFrom:{x:me.x,y:me.y,tiles:range} };
+    let body=`<h2>💡 Light</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">${wantCreature?'Pick a creature within touch range (gold tiles).':'Pick a spot within touch range (gold tiles).'}</p>
+      ${mapGridHTML(s,false,opts)}
+      <button class="btn ghost block" id="ltBack" style="margin-top:8px">← Back</button>
+      <button class="btn ghost block" id="ltClose2" style="margin-top:6px">Cancel</button>`;
+    $('#modalRoot').innerHTML=`<div class="modal" id="ltModal2"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
+    if(isoView&&iso3dView) try{ syncIso3DHost(s, opts); }catch(e){}
+    $('#ltClose2').onclick=()=>{ $('#modalRoot').innerHTML=''; reattach(); };
+    $('#ltBack').onclick=()=>{ drawChoice(); };
+    $('#ltModal2').onclick=e=>{ if(e.target.id==='ltModal2'){ $('#modalRoot').innerHTML=''; reattach(); } };
+    document.querySelectorAll('#ltModal2 [data-cell]').forEach(el=>el.onclick=()=>{
+      const [x,y]=el.dataset.cell.split(',').map(Number);
+      if(gridDist(me.x,me.y,x,y)>range){ flashBanner('Out of touch range'); return; }
+      const hit=creatureAt(x,y);
+      if(wantCreature){
+        if(!hit){ flashBanner('No creature there'); return; }
+        openObjectPick(hit.target, hit.kind, x, y);
+      } else {
+        if(hit){ flashBanner('Occupied — use "A creature\'s object" instead'); return; }
+        $('#modalRoot').innerHTML=''; reattach();
+        if(!castSpell(c,'Light',level,{x,y},{followId:null})) return;
+      }
+    });
+  }
+  function openObjectPick(target, kind, x, y){
+    const objs=['⚔️ Their weapon','🛡️ Their shield or armor','🎒 A held trinket'];
+    $('#modalRoot').innerHTML=`<div class="modal" id="ltObjModal"><div class="sheet"><div class="grip"></div>
+      <h2>💡 Light — ${esc(target.name||target.c&&target.c.name||'target')}</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Which object do you touch?</p>
+      ${objs.map((o,i)=>`<button class="btn block" data-lo="${i}" style="margin-bottom:8px;text-align:left">${o}</button>`).join('')}
+      <button class="btn ghost block" id="ltObjClose" style="margin-top:6px">Cancel</button></div></div>`;
+    $('#ltObjClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    $('#ltObjModal').onclick=e=>{ if(e.target.id==='ltObjModal') $('#modalRoot').innerHTML=''; };
+    document.querySelectorAll('#ltObjModal [data-lo]').forEach(b=>b.onclick=()=>{
+      const objName=objs[Number(b.dataset.lo)].replace(/^\S+\s/,'');
+      $('#modalRoot').innerHTML='';
+      resolveOnCreature(target, kind, x, y, objName);
+    });
+  }
+  function resolveOnCreature(target, kind, x, y, objName){
+    const tname=target.name||(target.c&&target.c.name)||'the target';
+    const followId=target.id||tname;
+    // Only monsters count as hostile here — allies (players) never resist their own party's Light.
+    if(kind==='mon'){
+      const dc=8+profBonus(c)+mod(abil(c,c.spellAbility));
+      const roll=rnd(20)+monsterSaveBonus(target);
+      if(roll>=dc){
+        if(!castSpell(c,'Light',level,null,{suppressLight:true})) return;
+        logChange(c,'💡 Light on '+tname+"'s "+objName.toLowerCase()+' — resisted (DC '+dc+', rolled '+roll+')');
+        flashBanner(tname+' resists — Light fizzles on the '+objName.toLowerCase()+' (DC '+dc+', rolled '+roll+')');
+        return;
+      }
+      if(!castSpell(c,'Light',level,{x,y},{followId})) return;
+      logChange(c,'💡 Light — '+tname+' fails the DC '+dc+' Dex save (rolled '+roll+'), '+objName.toLowerCase()+' begins glowing');
+      flashBanner('💡 Light — '+tname+"'s "+objName.toLowerCase()+' glows');
+      return;
+    }
+    if(!castSpell(c,'Light',level,{x,y},{followId})) return;
+    flashBanner('💡 Light — '+tname+"'s "+objName.toLowerCase()+' glows');
+  }
+  drawChoice();
+}
 function openSpellChoices(c,name){ const raw=SPELL_CHOICES[name]; const opts=(typeof raw==='function')?raw(c):(raw||[]);
   $('#modalRoot').innerHTML=`<div class="modal" id="scModal"><div class="sheet"><div class="grip"></div>
     <h2>✨ ${esc(name)} — choose the outcome</h2>
@@ -2364,6 +2483,15 @@ function castModal(c, name, baseLevel){
         if(!castSpell(c,name,useLvl)) return;
         if(QB&&QB.active) qbLog('✋ '+c.name+' casts Mage Hand');
         setTimeout(()=>openMageHandUI(c,s,me),60);
+        return;
+      }
+    }
+    // Light in battle → self/spot/creature picker (see openLightTarget) instead of the
+    // old always-self-attach cast
+    if(name==='Light'){
+      const s=battleSession();
+      if(s&&(QB&&!QB.over||(net&&net.session&&net.session.battle&&net.session.battle.active))){
+        openLightTarget(c,useLvl);
         return;
       }
     }
@@ -5664,14 +5792,20 @@ function addSessionLight(s, name, col, row, meta){
   s.lights.push(entry);
   return entry;
 }
-/** Resolve where a light-producing spell should sit, then add it. */
-function applySpellLight(s, c, name, at){
+/**
+ * Resolve where a light-producing spell should sit, then add it.
+ * @param {string|null|undefined} followId - override which unit (if any) the light
+ *   follows: undefined = default (self-attach spells like Light follow the caster),
+ *   null = fixed in place, a unit id/name = follows that specific creature (Light
+ *   touched onto an ally's or a hostile's gear — see openLightTarget).
+ */
+function applySpellLight(s, c, name, at, followId){
   const def=SPELL_LIGHTS[name]; if(!s||!def) return;
   if(def.grantDarkvision) return; // handled via SPELL_EFFECTS / addEffect
   const me=(s.players||[]).find(p=>p.c===c||p.id==='pc'||(c&&(p.cid===c.id||p.id===c.id)))||(s.players&&s.players[0]);
   let col=at&&at.x!=null?at.x:(me&&me.x!=null?me.x:0);
   let row=at&&at.y!=null?at.y:(me&&me.y!=null?me.y:0);
-  const follow=(def.attach==='self'&&me)?(me.id||me.name||'pc'):null;
+  const follow=followId!==undefined ? followId : ((def.attach==='self'&&me)?(me.id||me.name||'pc'):null);
   if(follow&&at==null){ col=me.x|0; row=me.y|0; }
   addSessionLight(s, name, col, row, {by:c&&c.name, follow:follow||undefined});
   const tag=def.dark?'🌑':'💡';
@@ -8775,6 +8909,7 @@ function qbOpenSpells(c){ if(isRaging(c)){ flashBanner('Can’t cast while ragin
         qbLog('✋ '+c.name+' casts Mage Hand');
         setTimeout(()=>openMageHandUI(c,QB,QB.players[0]),60);
       }
+      else if(name==='Light'){ $('#modalRoot').innerHTML=''; openLightTarget(c,lvl); }
       else if(SPELL_HANDLERS[name]&&SPELL_HANDLERS[name].kind==='summon'){
         $('#modalRoot').innerHTML='';
         openSummonSpellUI(c, name, lvl);
@@ -9114,7 +9249,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.142';
+const APP_VERSION='v120.143';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
