@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.2';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.2';
+import { Renderer } from './renderer.js?v=0.6.3';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.3';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.2';
+} from './adapter.js?v=0.6.3';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.2';
+} from './sprites.js?v=0.6.3';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.2';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.2';
-import { APP_VERSION } from './version.js?v=0.6.2';
-import { resolveLighting } from './lighting.js?v=0.6.2';
+} from './fx.js?v=0.6.3';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.3';
+import { APP_VERSION } from './version.js?v=0.6.3';
+import { resolveLighting } from './lighting.js?v=0.6.3';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -186,11 +186,26 @@ export class Iso3DHost {
       highlights: this._highlightOpts || undefined,
       spritePaths: opts.spritePaths,
     });
+    // Upload each sprite's GPU texture as soon as its image finishes loading, instead of
+    // waiting for its first actual draw call. _drawBillboardsGL previously called
+    // _ensureTex (a synchronous gl.texImage2D upload) lazily, mid-frame, the first time
+    // each image was drawn — on a slow mobile GPU/driver a texture upload can stall for
+    // a frame or more, with nothing thrown to JS (invisible to any try/catch), which
+    // would show as exactly the kind of blank/frozen frame reported in battle. Doesn't
+    // fully explain the report on its own, but removes one real category of GPU stall.
+    const preWarm = (url) => {
+      const entry = loadSprite(url, () => {
+        try { this.renderer._ensureTex(entry.img); } catch (_) {}
+      });
+      if (entry && entry.ready) {
+        try { this.renderer._ensureTex(entry.img); } catch (_) {}
+      }
+    };
     for (const u of this._view.units) {
-      if (u.spriteUrl) loadSprite(u.spriteUrl);
+      if (u.spriteUrl) preWarm(u.spriteUrl);
     }
     for (const d of this._view.decorSprites || []) {
-      if (d.spriteUrl) loadSprite(d.spriteUrl);
+      if (d.spriteUrl) preWarm(d.spriteUrl);
     }
 
     // Auto-path when a unit's grid cell jumps (unless already animating)
@@ -1118,6 +1133,26 @@ export class Iso3DHost {
       });
     }
 
+    // Diagnostic: report on-screen if every living unit's billboard vanished for a frame
+    // (the exact suspected mechanism for the reported "sprites disappear" bug) — gated
+    // to fire at most once per 2s so it can't spam. My own test harness can't reliably
+    // catch this (Playwright throttles requestAnimationFrame under automation — only
+    // ~2.5fps observed in one run vs the real 30fps target — so a real device is the
+    // only reliable way to confirm or rule this out).
+    {
+      const aliveUnits = (this._view.units || []).filter((u) => u.alive !== false);
+      if (aliveUnits.length > 0 && glBillboards.length === 0) {
+        const now = performance.now();
+        if (!this._lastEmptyBillboardWarn || now - this._lastEmptyBillboardWarn > 2000) {
+          this._lastEmptyBillboardWarn = now;
+          try {
+            if (typeof window !== 'undefined' && typeof window.flashBanner === 'function') {
+              window.flashBanner('⚠ Iso3D: ' + aliveUnits.length + ' unit(s) alive but 0 billboards this frame');
+            }
+          } catch (_) {}
+        }
+      }
+    }
     // Feed WebGL billboards (drawn inside renderer.draw with depth test)
     // Must set BEFORE draw — so reorder: set billboards then re-draw is wrong.
     // We already called renderer.draw() above. Call billboard pass now.
@@ -1622,4 +1657,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.2';
+export { Renderer } from './renderer.js?v=0.6.3';
