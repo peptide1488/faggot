@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.6.10';
+} from './math.js?v=0.6.11';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.6.10';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.10';
+} from './map.js?v=0.6.11';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.11';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.6.10';
+} from './lighting.js?v=0.6.11';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1180,20 +1180,19 @@ export class Renderer {
     this.canvas = canvas;
     this._assetBase = opts.assetBase || '';
     // antialias:false — MSAA softens pixel-art billboards into mush when not 1:1.
-    // preserveDrawingBuffer:true — WITHOUT this (the default is false), the browser is
-    // spec-allowed to clear the drawing buffer to black immediately after compositing it.
-    // The render loop below deliberately throttles real draws to 30fps to save CPU, but
-    // the browser composites the canvas at the display's own refresh rate (often 90/120Hz
-    // on phones, frequently boosted during touch input) independent of that throttle — so
-    // on any vsync where our throttled loop didn't redraw in time, the browser presents an
-    // already-cleared black buffer. Frame-by-frame analysis of a live recording confirmed
-    // this exactly: an instant, single-frame cut to solid black (not the sky clear color),
-    // only the separate 2D overlay canvas surviving, no exception anywhere, self-healing
-    // the very next real draw — every symptom reported all session ("sprites/terrain
-    // blink to black, then recover", worse during attacks/camera moves when touch input
-    // often bumps the display's refresh rate up, impossible to catch with any in-code
-    // diagnostic since draw() genuinely never runs on the affected composited frame).
-    this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: true });
+    // REVERTED preserveDrawingBuffer:true (v120.163): shipped to fix a confirmed black-
+    // frame-flash bug (frame analysis showed an instant cut to solid black, self-healing
+    // next frame — a classic symptom of the browser clearing the buffer after compositing
+    // when the render loop's 30fps throttle misses a vsync on a high-refresh display).
+    // Live report right after shipping: flickering got WORSE, and terrain textures turned
+    // visibly low-res for the whole enemy-turn stretch, recovering once it was the
+    // player's turn again — preserveDrawingBuffer:true has a known real cost (it disables
+    // buffer-swap optimizations most mobile GPU drivers rely on), which fits a device
+    // already under load during heavy compute (enemy turns) being pushed into visible
+    // throttling by the extra GPU memory/bandwidth pressure. Reverting; the actual black-
+    // frame mechanism is still correctly diagnosed, just needs a cheaper fix (not adding
+    // GPU cost) — see the render-loop throttle in host.js next.
+    this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
     if (!this.gl) throw new Error('WebGL2 not supported');
     this._dpr = 1;
     this._contextLost = false;

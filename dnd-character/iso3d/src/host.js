@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.10';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.10';
+import { Renderer } from './renderer.js?v=0.6.11';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.11';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.10';
+} from './adapter.js?v=0.6.11';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.10';
+} from './sprites.js?v=0.6.11';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.10';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.10';
-import { APP_VERSION } from './version.js?v=0.6.10';
-import { resolveLighting } from './lighting.js?v=0.6.10';
+} from './fx.js?v=0.6.11';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.11';
+import { APP_VERSION } from './version.js?v=0.6.11';
+import { resolveLighting } from './lighting.js?v=0.6.11';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -166,11 +166,28 @@ export class Iso3DHost {
     this.container = container;
     container.style.position = container.style.position || 'relative';
     container.style.overflow = 'hidden';
-    if (this.glCanvas.parentElement !== container) {
+    const reparented = this.glCanvas.parentElement !== container;
+    if (reparented) {
       container.appendChild(this.glCanvas);
     }
     if (this.overlay.parentElement !== container) {
       container.appendChild(this.overlay);
+    }
+    // render() regenerates the whole map area's HTML on turn-end/attack-start/attack-end
+    // (never during plain movement, which drives the host directly instead) — every one
+    // of those re-renders creates a BRAND NEW #iso3dMount div, forcing this exact
+    // reparent. Live reports of a black flash correlate 1:1 with those specific events
+    // (not movement) on both desktop and mobile, which is a DOM-reparenting signature,
+    // not a display-refresh-rate one. The throttled render loop (30fps) might not redraw
+    // for up to ~33ms after this reattach, leaving the freshly-attached-but-still-blank
+    // canvas eligible to be composited as-is for at least one paint. Force an immediate
+    // synchronous redraw right here instead of waiting for the next scheduled tick.
+    if (reparented && this._view) {
+      try {
+        this._frame();
+      } catch (e) {
+        console.error('[Iso3DHost] immediate post-reattach redraw failed', e);
+      }
     }
   }
 
@@ -1670,4 +1687,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.10';
+export { Renderer } from './renderer.js?v=0.6.11';
