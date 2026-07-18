@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.6.9';
+} from './math.js?v=0.6.10';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.6.9';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.9';
+} from './map.js?v=0.6.10';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.10';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.6.9';
+} from './lighting.js?v=0.6.10';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1180,7 +1180,20 @@ export class Renderer {
     this.canvas = canvas;
     this._assetBase = opts.assetBase || '';
     // antialias:false — MSAA softens pixel-art billboards into mush when not 1:1.
-    this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+    // preserveDrawingBuffer:true — WITHOUT this (the default is false), the browser is
+    // spec-allowed to clear the drawing buffer to black immediately after compositing it.
+    // The render loop below deliberately throttles real draws to 30fps to save CPU, but
+    // the browser composites the canvas at the display's own refresh rate (often 90/120Hz
+    // on phones, frequently boosted during touch input) independent of that throttle — so
+    // on any vsync where our throttled loop didn't redraw in time, the browser presents an
+    // already-cleared black buffer. Frame-by-frame analysis of a live recording confirmed
+    // this exactly: an instant, single-frame cut to solid black (not the sky clear color),
+    // only the separate 2D overlay canvas surviving, no exception anywhere, self-healing
+    // the very next real draw — every symptom reported all session ("sprites/terrain
+    // blink to black, then recover", worse during attacks/camera moves when touch input
+    // often bumps the display's refresh rate up, impossible to catch with any in-code
+    // diagnostic since draw() genuinely never runs on the affected composited frame).
+    this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: true });
     if (!this.gl) throw new Error('WebGL2 not supported');
     this._dpr = 1;
     this._contextLost = false;
