@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.5.96';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.96';
+import { Renderer } from './renderer.js?v=0.5.97';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.97';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.5.96';
+} from './adapter.js?v=0.5.97';
 import {
   loadSprite,
   clearSpriteCache,
@@ -22,7 +22,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.5.96';
+} from './sprites.js?v=0.5.97';
 import {
   createFxState,
   spawnFloater,
@@ -32,10 +32,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.5.96';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.5.96';
-import { APP_VERSION } from './version.js?v=0.5.96';
-import { resolveLighting } from './lighting.js?v=0.5.96';
+} from './fx.js?v=0.5.97';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.5.97';
+import { APP_VERSION } from './version.js?v=0.5.97';
+import { resolveLighting } from './lighting.js?v=0.5.97';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -1584,4 +1584,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.5.96';
+export { Renderer } from './renderer.js?v=0.5.97';

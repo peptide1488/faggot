@@ -47,15 +47,23 @@ export const LIGHT_PRESETS = {
     ambientLevel: 0,
     shadowStrength: 0.15,
   },
-  /** Indoor crypt — almost no sky, torches do the work */
+  /**
+   * Indoor crypt — almost no sky, torches do the work. Was tuned near-literal-(0,0,0):
+   * fine for a static camera, but the camera now instantly snaps to whoever's turn is
+   * active every round (see frameCameraOnActiveUnit) — any unit standing away from a
+   * torch landed the view on true black, reading as a flash/glitch rather than "dark
+   * dungeon" (live report: "flashes black between characters and actions"). Floor
+   * raised just enough that geometry always stays dimly visible; still by far the
+   * darkest preset, torches still do almost all the real lighting work.
+   */
   dungeon: {
     id: 'dungeon',
     sunDir: [0.2, 1.0, 0.15],
     sunColor: [0.08, 0.08, 0.1],
     fillColor: [0.06, 0.07, 0.1],
-    skyColor: [0.02, 0.02, 0.04],
-    groundAmbient: [0.05, 0.05, 0.06],
-    ambientFloor: 0.045,
+    skyColor: [0.05, 0.05, 0.08],
+    groundAmbient: [0.1, 0.1, 0.12],
+    ambientFloor: 0.13,
     keyStrength: 0.08,
     ambientLevel: 0,
     shadowStrength: 0.1,
