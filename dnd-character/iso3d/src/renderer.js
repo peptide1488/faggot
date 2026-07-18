@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.5.99';
+} from './math.js?v=0.6.0';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.5.99';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.99';
+} from './map.js?v=0.6.0';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.0';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.5.99';
+} from './lighting.js?v=0.6.0';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1509,6 +1509,20 @@ export class Renderer {
     } else if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
+      // Actually resizing a <canvas> (setting .width/.height, not just its CSS size)
+      // reinitializes its drawing buffer per spec — and the new buffer starts cleared
+      // to WebGL's true default (0,0,0,0), NOT whatever gl.clearColor was last set to.
+      // clearColor was only ever (re)applied once at init and again whenever the
+      // lighting profile changed — never on a resize itself — so any genuine resize
+      // (container reflow from battle-log growth, HP changes, anything) silently
+      // reverted the clear color to black until the next lighting sync happened to
+      // fire. This is the actual root cause of the black blip: 100% spec-defined
+      // browser behavior, not device/driver flakiness — which is exactly why it was
+      // identical across every phone, GPU, and browser engine tested. Re-apply the
+      // renderer's own current sky color immediately so a resize is never visible.
+      if (this.gl && this.skyColor) {
+        this.gl.clearColor(this.skyColor[0], this.skyColor[1], this.skyColor[2], 1);
+      }
     }
     // Always report/viewport the CURRENT committed buffer size (not the pending one)
     // so drawing this frame matches whatever's actually in the buffer right now.
@@ -1637,6 +1651,18 @@ export class Renderer {
     if (this._contextLost || this.gl.isContextLost()) return;
     const gl = this.gl;
     const { w, h, aspect } = this.syncSize();
+    // Re-set clearColor every single frame, unconditionally, right before clearing.
+    // Previously this was only ever applied once at init and again whenever the
+    // lighting profile changed — never every frame — on the assumption that GL state
+    // like clearColor just sticks around once set. Live reports (video-confirmed,
+    // identical across every phone/GPU/browser tested — camera provably NOT moving
+    // when it happens) showed the whole canvas going solid black for a frame or two
+    // with the 2D overlay on top completely unaffected, recovering on its own. That
+    // pattern means the drawing buffer got cleared to (0,0,0,0) by *something* other
+    // than this code's own gl.clear() call with the real sky color. Rather than chase
+    // the exact trigger further, just stop depending on clearColor being sticky at
+    // all — this costs one cheap GL call and makes the actual mechanism irrelevant.
+    if (this.skyColor) gl.clearColor(this.skyColor[0], this.skyColor[1], this.skyColor[2], 1);
     // Always clear sky first — mesh build must never leave a black framebuffer.
     gl.viewport(0, 0, w, h);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
