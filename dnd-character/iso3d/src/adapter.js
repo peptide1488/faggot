@@ -3,9 +3,9 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.5.93';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.93';
-import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.5.93';
+import { TERRAIN, createMap } from './map.js?v=0.5.94';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.5.94';
+import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.5.94';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {
@@ -448,6 +448,22 @@ export function grimoireSessionToView(session, opts = {}) {
 
   // Highlights from opts.reachCost / targets (optional, Grimoire mapGridHTML style)
   const highlights = buildHighlights(opts.highlights, map);
+  // Lingering gas hazards (Cloudkill etc., see index.html's SPELL_GAS/tickGasHazards) —
+  // unlike Grease/Web these don't repaint session.map.tiles at all (real bug hit live: a
+  // gas cloud looked like plain floor in the WebGL view despite still dealing damage every
+  // round — the classic 2D view already got a CSS overlay for this, this is the same fix
+  // for Iso3D). Folded into `highlights.gas` (not a separate top-level view field) so it
+  // rides the exact same "project each cell, draw a colored quad every frame" overlay
+  // path host.js already has for move/dash/attack-range highlighting — no new mesh, no
+  // new fx primitive, just one more entry in that layer list.
+  if (session.hazards && session.hazards.length) {
+    const gasCells = new Set();
+    for (const hz of session.hazards) {
+      if (!hz.gas) continue;
+      for (const c of hz.cells) gasCells.add(`${c.x},${c.y}`);
+    }
+    if (gasCells.size) highlights.gas = gasCells;
+  }
 
   return {
     map,

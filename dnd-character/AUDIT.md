@@ -761,7 +761,17 @@ expires, and that a no-damage cloud (Stinking Cloud) applies Poisoned instead.
 **Visual**: a gas hazard cell now gets a `.gashazard` CSS class (sickly green pulsing haze,
 `mapGridHTML`) in the classic 2D/DM grid view — real bug, since `SPELL_GAS` deliberately
 doesn't repaint the floor (unlike Grease/Web's `SPELL_TERRAIN`), so without this a gas cloud
-looked like plain floor despite still dealing damage every round. **Not yet done**: the
-WebGL Iso3D view (`iso3d/src/adapter.js`) has no equivalent — a gas cell there still reads
-as whatever the underlying terrain already was, since the iso3d adapter isn't handed
-`session.hazards` at all today. Flagged as a follow-up, not attempted this pass.
+looked like plain floor despite still dealing damage every round.
+
+**WebGL Iso3D — done too.** `adapter.js`'s `grimoireSessionToView` now reads
+`session.hazards` directly and folds every gas cell into `highlights.gas` (a `Set`, same
+shape as the existing move/dash/attack-range highlight sets) rather than adding a whole new
+top-level view field or a new mesh/fx primitive. `host.js`'s `_drawTileHighlights` — the
+existing per-frame 2D-canvas-over-WebGL overlay that already draws move/dash/attack-range
+rings by projecting each highlighted tile's corners every frame — gets one more layer for
+`hl.gas` (sickly green, alpha wobbles with `performance.now()` for a pulse since the canvas
+redraws every frame anyway, no CSS/GPU animation needed). Verified by injecting a fake
+hazard-bearing session directly into a live `Iso3DHost` and reading real pixel data back
+off the overlay canvas — not just eyeballing a screenshot, since the app's own render loop
+re-syncing back to the real (hazard-free) session moments later made a plain screenshot an
+unreliable check.

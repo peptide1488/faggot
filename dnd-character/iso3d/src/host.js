@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.5.93';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.93';
+import { Renderer } from './renderer.js?v=0.5.94';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.94';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.5.93';
+} from './adapter.js?v=0.5.94';
 import {
   loadSprite,
   clearSpriteCache,
@@ -22,7 +22,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.5.93';
+} from './sprites.js?v=0.5.94';
 import {
   createFxState,
   spawnFloater,
@@ -32,10 +32,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.5.93';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.5.93';
-import { APP_VERSION } from './version.js?v=0.5.93';
-import { resolveLighting } from './lighting.js?v=0.5.93';
+} from './fx.js?v=0.5.94';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.5.94';
+import { APP_VERSION } from './version.js?v=0.5.94';
+import { resolveLighting } from './lighting.js?v=0.5.94';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -1331,6 +1331,16 @@ export class Iso3DHost {
         width: 2.5,
       },
       { set: hl.attack, stroke: 'rgba(240,60,50,.95)', fill: 'rgba(240,60,50,.15)', width: 2 },
+      // Lingering gas hazard (Cloudkill etc.) — sickly green, pulsing like the classic 2D
+      // view's .gashazard CSS class (see adapter.js's highlights.gas for where this set
+      // comes from). Redrawn every frame anyway, so the pulse is just a time-based alpha
+      // wobble rather than needing a real CSS/GPU animation.
+      {
+        set: hl.gas,
+        stroke: `rgba(140,200,60,${(0.5 + 0.25 * Math.sin(performance.now() / 500)).toFixed(2)})`,
+        fill: `rgba(120,190,40,${(0.14 + 0.08 * Math.sin(performance.now() / 500)).toFixed(2)})`,
+        width: 2.5,
+      },
     ];
 
     const { cols, rows, cells } = map;
@@ -1574,4 +1584,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.5.93';
+export { Renderer } from './renderer.js?v=0.5.94';
