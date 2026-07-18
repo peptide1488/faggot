@@ -8657,7 +8657,12 @@ function qbApplyIntent(u, it, done){
     if(it.dash){ u.moveLeft=(u.moveLeft||0)+(u.speed||30); u.attacksLeft=0; qbLog('🏃 '+u.name+' dashes'); }
     const fromX=u.x, fromY=u.y; u.moveLeft=Math.max(0,(u.moveLeft||0)-cost);
     const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,1);
-    animateToken(null,(nx,ny)=>{ u.x=nx; u.y=ny; }, path, 90, ()=>{ save();
+    // Camera follows the spotlight at turn START (qbBeginTurn) but nothing kept it on the
+    // unit as it actually walked — a live report confirmed this exactly ("moves to where
+    // the creature was then doesn't follow them once creature moves"). Re-frame on every
+    // step of the move animation, not just once, so the camera tracks the monster the
+    // whole way instead of just its starting tile.
+    animateToken(null,(nx,ny)=>{ u.x=nx; u.y=ny; frameCameraOnCell(QB, nx, ny, 1.55); }, path, 90, ()=>{ save();
       if(!ufly) qbCheckTerrainProne(QB,u,it.to.x,it.to.y,false);
       Events.emit({type:'move', id:u.id, by:u.name, to:it.to, fly:ufly});
       if(provokePc) qbPcOAonMonster(pc, u);
@@ -9368,7 +9373,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.167';
+const APP_VERSION='v120.168';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
