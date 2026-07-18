@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.5.98';
+} from './math.js?v=0.5.99';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.5.98';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.98';
+} from './map.js?v=0.5.99';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.99';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.5.98';
+} from './lighting.js?v=0.5.99';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1178,11 +1178,68 @@ function buildUnitMesh(units, map, activeId) {
 export class Renderer {
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
+    this._assetBase = opts.assetBase || '';
     // antialias:false — MSAA softens pixel-art billboards into mush when not 1:1.
     this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
     if (!this.gl) throw new Error('WebGL2 not supported');
     this._dpr = 1;
+    this._contextLost = false;
 
+    // Pure JS state — untouched by a context loss, so it's set up once here rather
+    // than in _initGL (which re-runs on every restore).
+    this.cam = { rot: Math.PI / 4, zoom: 1.05, panX: 0, panY: 0 };
+    this._mvp = createMat4();
+    this._eye = [0, 0, 0];
+    this._camRight = [1, 0, 0];
+    this._dirtyMap = true;
+    this._dirtyUnits = true;
+    this._map = null;
+    this._units = [];
+    this._highlights = {};
+    this._activeUnitId = null;
+    this._start = performance.now();
+    this.sunDir = [...DEFAULT_SUN_DIR];
+    this.sunColor = [...DEFAULT_SUN_COLOR];
+    this.fillColor = [...DEFAULT_FILL_COLOR];
+    this.groundAmbient = [...DEFAULT_GROUND_AMBIENT];
+    this.skyColor = [0.58, 0.74, 0.92];
+    this.ambientFloor = 0.42;
+    this.keyStrength = 0.7;
+    this.pointLights = [];
+    this._lightProfile = resolveLighting(null);
+    this.sampler = new TerrainSampler(this._assetBase);
+    this.sampler.loadAll().then(() => {
+      this._dirtyMap = true;
+    });
+
+    this._initGL();
+
+    // WebGL contexts can be lost at any time — GPU memory pressure, a backgrounded
+    // mobile tab, driver resets — and it's especially common on phones. Losing the
+    // context resets EVERY GL resource (shaders, buffers, textures, even clearColor)
+    // to nothing, with no error thrown; draws silently become no-ops, which shows as
+    // the canvas going solid default-black regardless of the actual map/lighting (live
+    // report + video: a bright daylight map flashing to pure black for a frame or two,
+    // recovering shortly after, with the 2D highlight overlay on top completely
+    // unaffected since it's a separate canvas — exactly what an unhandled context
+    // loss/restore cycle looks like). Previously nothing here ever listened for this.
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault(); // required — without this the context is never restored
+      this._contextLost = true;
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this._contextLost = false;
+      this._glTex.clear(); // old WebGLTexture objects are dead; re-upload on demand
+      this._initGL();
+      this._dirtyMap = true;
+      this._dirtyUnits = true;
+    });
+  }
+
+  /** (Re)create every GL-side resource — shaders, VAOs, buffers, texture cache. Called
+   * once from the constructor and again after webglcontextrestored. */
+  _initGL() {
+    const canvas = this.canvas;
     const gl = this.gl;
     const vs = compile(gl, gl.VERTEX_SHADER, VS);
     const fs = compile(gl, gl.FRAGMENT_SHADER, FS);
@@ -1272,38 +1329,8 @@ export class Renderer {
     gl.vertexAttribPointer(this.bbsAttribs.corner, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
     /** @type {Map<string, WebGLTexture>} */
-    this._glTex = new Map();
+    this._glTex = this._glTex || new Map();
     this._billboards = [];
-
-    this.cam = { rot: Math.PI / 4, zoom: 1.05, panX: 0, panY: 0 };
-    this._mvp = createMat4();
-    this._eye = [0, 0, 0];
-    this._camRight = [1, 0, 0];
-    this._dirtyMap = true;
-    this._dirtyUnits = true;
-    this._map = null;
-    this._units = [];
-    this._highlights = {};
-    this._activeUnitId = null;
-    this._start = performance.now();
-
-    // Stable world-space lighting (does not spin with pan; still readable when orbiting)
-    this.sunDir = [...DEFAULT_SUN_DIR];
-    this.sunColor = [...DEFAULT_SUN_COLOR];
-    this.fillColor = [...DEFAULT_FILL_COLOR];
-    this.groundAmbient = [...DEFAULT_GROUND_AMBIENT];
-    this.skyColor = [0.58, 0.74, 0.92];
-    this.ambientFloor = 0.42;
-    this.keyStrength = 0.7;
-    /** @type {Array<{pos:[number,number,number], color:number[], radius:number}>} */
-    this.pointLights = [];
-    this._lightProfile = resolveLighting(null);
-
-    // Terrain textures → vertex colors (async; rebuild mesh when ready)
-    this.sampler = new TerrainSampler(opts.assetBase || '');
-    this.sampler.loadAll().then(() => {
-      this._dirtyMap = true;
-    });
 
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
@@ -1605,6 +1632,9 @@ export class Renderer {
   }
 
   draw() {
+    // Mid context-loss: every GL call below is a spec-defined no-op anyway, but skip
+    // the work entirely rather than churn through it every frame until restored.
+    if (this._contextLost || this.gl.isContextLost()) return;
     const gl = this.gl;
     const { w, h, aspect } = this.syncSize();
     // Always clear sky first — mesh build must never leave a black framebuffer.
