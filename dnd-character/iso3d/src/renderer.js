@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.6.4';
+} from './math.js?v=0.6.5';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.6.4';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.4';
+} from './map.js?v=0.6.5';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.5';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.6.4';
+} from './lighting.js?v=0.6.5';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1877,10 +1877,12 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindVertexArray(this.bbsVAO);
 
+    let drawnCount = 0;
     for (const b of list) {
       if (!b.img || !b.img.complete || !b.img.naturalWidth) continue;
       const tex = this._ensureTex(b.img);
       if (!tex) continue;
+      drawnCount++;
       // Soft foliage: test against walls so trunks don't poke through, but do not
       // write depth — otherwise trees/bushes fully hide ground range/blast tints.
       gl.depthMask(!b.softCover);
@@ -1923,6 +1925,22 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, null);
     gl.disable(gl.BLEND);
     gl.useProgram(this.program);
+
+    // Diagnostic: the outer host.js gate only checks list.length, not whether items
+    // actually survive the per-item img.complete/naturalWidth/_ensureTex checks above —
+    // a non-empty list could still draw zero billboards if every item fails one of
+    // those individually, which the existing "0 billboards" banner can't see at all.
+    if (list.length > 0 && drawnCount === 0) {
+      const now = performance.now();
+      if (!this._lastZeroDrawnWarn || now - this._lastZeroDrawnWarn > 2000) {
+        this._lastZeroDrawnWarn = now;
+        try {
+          if (typeof window !== 'undefined' && typeof window.flashBanner === 'function') {
+            window.flashBanner('⚠ Iso3D: ' + list.length + ' billboard(s) queued but 0 actually drawn (img not ready?)');
+          }
+        } catch (_) {}
+      }
+    }
   }
 
   pickTile(clientX, clientY) {
