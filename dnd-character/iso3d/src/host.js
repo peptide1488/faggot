@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.12';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.12';
+import { Renderer } from './renderer.js?v=0.6.13';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.13';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.12';
+} from './adapter.js?v=0.6.13';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.12';
+} from './sprites.js?v=0.6.13';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.12';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.12';
-import { APP_VERSION } from './version.js?v=0.6.12';
-import { resolveLighting } from './lighting.js?v=0.6.12';
+} from './fx.js?v=0.6.13';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.13';
+import { APP_VERSION } from './version.js?v=0.6.13';
+import { resolveLighting } from './lighting.js?v=0.6.13';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -66,13 +66,27 @@ export class Iso3DHost {
 
     this.glCanvas = document.createElement('canvas');
     this.glCanvas.className = opts.className || 'iso3d-gl';
+    // position:fixed (viewport-relative, like getBoundingClientRect) — this canvas is
+    // permanently parented to document.body (see attach() below), never to whatever
+    // container currently wants to display it. Its on-screen position/size is instead
+    // recomputed every frame from that container's live bounding rect. See attach()'s
+    // comment for why: render() regenerates map-area HTML on turn-end/attack, and
+    // closing the attack/spell targeting modal runs $('#modalRoot').innerHTML='' at
+    // dozens of call sites — when the canvas was a REAL child of that modal's mount
+    // (because targeting reparents it there), clearing the modal destroyed the canvas
+    // along with it, orphaning it until some unrelated later render() happened to
+    // reattach it. Confirmed live via MutationObserver: real multi-second (up to 25s)
+    // DOM removals, not a rendering glitch. A canvas that's never a child of anything
+    // destructible can't be destroyed this way.
     this.glCanvas.style.cssText =
-      'position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair;image-rendering:pixelated;image-rendering:crisp-edges;';
+      'position:fixed;display:block;touch-action:none;cursor:crosshair;image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:auto;';
 
     this.overlay = document.createElement('canvas');
     this.overlay.className = 'iso3d-overlay';
     this.overlay.style.cssText =
-      'position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;image-rendering:pixelated;image-rendering:crisp-edges;';
+      'position:fixed;display:block;pointer-events:none;image-rendering:pixelated;image-rendering:crisp-edges;';
+    document.body.appendChild(this.glCanvas);
+    document.body.appendChild(this.overlay);
 
     this.renderer = new Renderer(this.glCanvas, { assetBase: this.assetBase });
     // desynchronized can reduce lag; alpha for transparent sprite overlay
@@ -161,33 +175,60 @@ export class Iso3DHost {
     return APP_VERSION;
   }
 
+  /**
+   * Point this host at a new "logical" container to overlay — does NOT move the canvas
+   * into it (see constructor comment for why). Position/size is synced continuously in
+   * _frame() via _syncPosition(), so this only needs to record which element to track
+   * and force an immediate redraw when the logical target actually changed.
+   */
   attach(container) {
     if (!container) return;
+    const changed = this.container !== container;
     this.container = container;
-    container.style.position = container.style.position || 'relative';
-    container.style.overflow = 'hidden';
-    const reparented = this.glCanvas.parentElement !== container;
-    if (reparented) {
-      container.appendChild(this.glCanvas);
-    }
-    if (this.overlay.parentElement !== container) {
-      container.appendChild(this.overlay);
-    }
+    this._syncPosition();
     // render() regenerates the whole map area's HTML on turn-end/attack-start/attack-end
     // (never during plain movement, which drives the host directly instead) — every one
-    // of those re-renders creates a BRAND NEW #iso3dMount div, forcing this exact
-    // reparent. Live reports of a black flash correlate 1:1 with those specific events
-    // (not movement) on both desktop and mobile, which is a DOM-reparenting signature,
-    // not a display-refresh-rate one. The throttled render loop (30fps) might not redraw
-    // for up to ~33ms after this reattach, leaving the freshly-attached-but-still-blank
-    // canvas eligible to be composited as-is for at least one paint. Force an immediate
-    // synchronous redraw right here instead of waiting for the next scheduled tick.
-    if (reparented && this._view) {
+    // of those re-renders creates a BRAND NEW #iso3dMount div. The throttled render loop
+    // might not redraw for a tick after this switch, leaving stale content visible on
+    // the new position for one paint. Force an immediate synchronous redraw right here
+    // instead of waiting for the next scheduled tick.
+    if (changed && this._view) {
       try {
         this._frame();
       } catch (e) {
         console.error('[Iso3DHost] immediate post-reattach redraw failed', e);
       }
+    }
+  }
+
+  /**
+   * Position the permanently-body-parented canvases to visually overlay this.container's
+   * current bounding rect (position:fixed, so getBoundingClientRect's viewport-relative
+   * coordinates apply directly — no scroll-offset math needed since this runs every frame
+   * and getBoundingClientRect already reflects the current scroll position). Hides the
+   * canvases if the container has gone away (e.g. a modal closed) rather than leaving
+   * stale content floating over whatever's now underneath.
+   */
+  _syncPosition() {
+    const c = this.container;
+    if (!c || !c.isConnected) {
+      this.glCanvas.style.display = 'none';
+      this.overlay.style.display = 'none';
+      return;
+    }
+    const rect = c.getBoundingClientRect();
+    // Above .modal's z-index:50 when the logical target is inside a modal (attack/spell
+    // targeting), otherwise a low value — enough to sit above card backgrounds but below
+    // the sticky header (z-index 20/21) so scrolling still shows the header on top.
+    const inModal = !!c.closest('.modal');
+    const z = inModal ? 51 : 1;
+    for (const el of [this.glCanvas, this.overlay]) {
+      el.style.display = 'block';
+      el.style.left = rect.left + 'px';
+      el.style.top = rect.top + 'px';
+      el.style.width = rect.width + 'px';
+      el.style.height = rect.height + 'px';
+      el.style.zIndex = String(z);
     }
   }
 
@@ -856,6 +897,10 @@ export class Iso3DHost {
   }
 
   _syncSize() {
+    // Re-assert position/size/z-index every frame — cheap (one getBoundingClientRect)
+    // and handles scrolling, container resizes, and modal open/close without needing
+    // separate scroll/resize listeners.
+    this._syncPosition();
     // Keep overlay + GL buffer at the same HiDPI resolution (see Renderer.syncSize).
     const dpr = Math.min(
       typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
@@ -1694,4 +1739,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.12';
+export { Renderer } from './renderer.js?v=0.6.13';
