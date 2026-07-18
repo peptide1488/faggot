@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.6.13';
+} from './math.js?v=0.6.14';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.6.13';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.13';
+} from './map.js?v=0.6.14';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.14';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.6.13';
+} from './lighting.js?v=0.6.14';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1200,6 +1200,8 @@ export class Renderer {
     // Pure JS state — untouched by a context loss, so it's set up once here rather
     // than in _initGL (which re-runs on every restore).
     this.cam = { rot: Math.PI / 4, zoom: 1.05, panX: 0, panY: 0 };
+    /** @type {{panX:number,panY:number}|null} eased toward each frame in draw() when set — see setCameraFollowTarget */
+    this._camFollowTarget = null;
     this._mvp = createMat4();
     this._eye = [0, 0, 0];
     this._camRight = [1, 0, 0];
@@ -1489,6 +1491,10 @@ export class Renderer {
    * bad values here instead of silently storing them.
    */
   setCamera({ rot, zoom, panX, panY }) {
+    // A direct pan set (manual drag, or an instant re-frame like battle-start/remount)
+    // means "take control now" — cancel any in-progress smooth-follow so it doesn't
+    // fight the next few frames pulling back toward a now-stale target.
+    if (panX !== undefined || panY !== undefined) this._camFollowTarget = null;
     if (rot !== undefined && Number.isFinite(rot)) this.cam.rot = rot;
     if (zoom !== undefined && Number.isFinite(zoom)) this.cam.zoom = Math.max(0.35, Math.min(3.5, zoom));
     if (panX !== undefined && Number.isFinite(panX)) this.cam.panX = panX;
@@ -1509,6 +1515,18 @@ export class Renderer {
 
   getCamera() {
     return { ...this.cam };
+  }
+
+  /**
+   * Set a pan target to ease toward smoothly, frame over frame, instead of snapping
+   * instantly — used for camera-follow-during-movement (a live report described the
+   * per-step instant snaps from setCamera as "jumpy"). draw() eases this.cam.panX/panY
+   * toward this target every frame; a direct setCamera({panX or panY}) call (manual
+   * drag, or an intentional instant re-frame) cancels it immediately.
+   */
+  setCameraFollowTarget(panX, panY) {
+    if (!Number.isFinite(panX) || !Number.isFinite(panY)) return;
+    this._camFollowTarget = { panX, panY };
   }
 
   /**
@@ -1702,6 +1720,20 @@ export class Renderer {
     // the work entirely rather than churn through it every frame until restored.
     if (this._contextLost || this.gl.isContextLost()) return;
     const gl = this.gl;
+    // Ease toward a smooth-follow target (see setCameraFollowTarget) instead of an
+    // instant snap. 0.15 settles in ~15-20 frames (~half a second at 30fps) — fast
+    // enough to keep up with a moving unit, slow enough to read as a pan, not a snap.
+    if (this._camFollowTarget) {
+      const t = this._camFollowTarget;
+      const ease = 0.15;
+      this.cam.panX += (t.panX - this.cam.panX) * ease;
+      this.cam.panY += (t.panY - this.cam.panY) * ease;
+      if (Math.abs(t.panX - this.cam.panX) < 0.002 && Math.abs(t.panY - this.cam.panY) < 0.002) {
+        this.cam.panX = t.panX;
+        this.cam.panY = t.panY;
+        this._camFollowTarget = null;
+      }
+    }
     const { w, h, aspect } = this.syncSize();
     // Re-set clearColor every single frame, unconditionally, right before clearing.
     // Previously this was only ever applied once at init and again whenever the

@@ -464,7 +464,7 @@
 <div id="modalRoot"></div>
 
 <script src="iso-renderer.js"></script>
-<script type="module" src="iso3d/boot.js?v=0.6.13&t=113"></script>
+<script type="module" src="iso3d/boot.js?v=0.6.14&t=114"></script>
 <script>
 "use strict";
 /* ----------------------------------------------------------------------------
@@ -4914,6 +4914,19 @@ function frameCameraOnCell(session, x, y, zoom){
   requestAnimationFrame(()=>{ if(!tryFrame()) requestAnimationFrame(tryFrame); });
   [50,120,250,450,800,1200].forEach(ms=>setTimeout(()=>{ if(gen===window.__iso3dFrameGen&&(window.__iso3dForceFrame||attempts<8)) tryFrame(); }, ms));
 }
+/**
+ * Lightweight camera-follow for continuous tracking during a unit's move animation
+ * (called once per grid step) — no retry machinery needed since the battle view is
+ * already mounted by the time a unit is walking. Eases the pan smoothly via the
+ * renderer's own follow-target instead of frameCameraOnCell's instant snap, which a
+ * live report described as "jumpy" when re-triggered every step of a multi-tile walk.
+ */
+function frameCameraOnCellSmooth(session, x, y, zoom){
+  if(!isoView||!iso3dView||x==null||y==null) return;
+  const host=window.__iso3dHost;
+  if(!host||typeof host.frameOnCellSmooth!=='function') return;
+  try{ host.frameOnCellSmooth(x|0, y|0, zoom!=null?zoom:1.55); }catch(e){}
+}
 function frameBattleCameraOnPlayer(session, zoom){
   session=session||QB||(net&&net.session);
   if(!session) return;
@@ -6039,7 +6052,7 @@ function renderPlayerBattle(c){
       b.move=(b.move||0)+effSpeed(c); spendAction(c); logChange(c,'🏃 Dash (action) — extra movement'); }
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; net.moveMode=false;
     const provokers=(s.battle&&s.battle.active)?s.monsters.filter(mo=>mo.hp>0 && leavesReach(me.x,me.y,x,y,mo.x,mo.y,1)):[];
-    animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 110, ()=>{ save();
+    animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 200, ()=>{ save();
       if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
       if(provokers.length && net.conn){ try{ net.conn.send({t:'provoke', cid:clientId(), who:c.name, mons:provokers.map(m=>m.id)}); }catch(e){} logChange(c,'⚔ Provoked opportunity attack'+(provokers.length>1?'s':'')+' from '+provokers.map(m=>m.name).join(', ')); }
       if(fly){
@@ -7550,8 +7563,12 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       // is a single global, identical regardless of which container this ends up in, so
       // both mounts always agree — no more resize-on-reparent, still viewport-safe.
       const viewportW=(typeof window!=='undefined'&&window.innerWidth)?window.innerWidth:1200;
+      const viewportH=(typeof window!=='undefined'&&window.innerHeight)?window.innerHeight:800;
       const w3=Math.max(300,Math.min(Math.max(stageW,720), viewportW-32));
-      const h3=Math.max(stageH,520);
+      // Cap height too — stageH grows with map size/rotation and on a big map could
+      // otherwise take up most of the page (live report: "render window is too big").
+      // Still at least 420px so small maps don't look cramped.
+      const h3=Math.max(420,Math.min(Math.max(stageH,520), Math.round(viewportH*0.65)));
       return `<div class="mapwrap" style="max-width:100%;overflow:auto"><div class="mapgrid iso iso3dmode" style="width:${w3}px;height:${h3}px;min-height:420px;position:relative"><div id="iso3dMount" class="iso3d-mount"></div>${canvasTag}${cells}</div></div>`;
     }
     return `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px;position:relative">${canvasTag}${cells}</div></div>`;
@@ -8544,11 +8561,11 @@ function playCombatShotFx(from, to, opts, done){
     : 'slash';
   if(pk==='arrow') sfx('arrow'); else if(pk==='firebolt') sfx('firebolt'); else sfx('swing');
   if(from&&to) mapProjectile(from.x, from.y, to.x, to.y, pk, dtype);
-  const flight=ranged?400:200;
+  const flight=ranged?600:350;
   setTimeout(()=>{
     if(opts.hit){ sfx(opts.crit?'crit':'hit'); attackFx(opts.crit?'crit':'hit', to.x, to.y); }
     else { sfx('miss'); attackFx('miss', to.x, to.y); }
-    setTimeout(()=>{ done&&done(); }, 120);
+    setTimeout(()=>{ done&&done(); }, 220);
   }, flight);
 }
 /** Fireball / AoE: projectile to center, burst, then resolve. */
@@ -8644,7 +8661,7 @@ function qbRunBrain(u){ if(!QB||QB.over){ return; }
   let i=0; (function step(){ if(QB&&QB.paused){ setTimeout(step,200); return; }
     if(!QB||QB.over||qbHP(u)<=0||!qbEnemiesAlive()){ if(QB&&!QB.over) setTimeout(qbNextTurn,400); else render(); return; }
     if(i>=intents.length){ setTimeout(qbNextTurn,400); return; }
-    qbApplyIntent(u, intents[i++], ()=>setTimeout(step, 260));
+    qbApplyIntent(u, intents[i++], ()=>setTimeout(step, 450));
   })();
 }
 function qbApplyIntent(u, it, done){
@@ -8662,7 +8679,7 @@ function qbApplyIntent(u, it, done){
     // the creature was then doesn't follow them once creature moves"). Re-frame on every
     // step of the move animation, not just once, so the camera tracks the monster the
     // whole way instead of just its starting tile.
-    animateToken(null,(nx,ny)=>{ u.x=nx; u.y=ny; frameCameraOnCell(QB, nx, ny, 1.55); }, path, 90, ()=>{ save();
+    animateToken(null,(nx,ny)=>{ u.x=nx; u.y=ny; frameCameraOnCellSmooth(QB, nx, ny, 1.55); }, path, 220, ()=>{ save();
       if(!ufly) qbCheckTerrainProne(QB,u,it.to.x,it.to.y,false);
       Events.emit({type:'move', id:u.id, by:u.name, to:it.to, fly:ufly});
       if(provokePc) qbPcOAonMonster(pc, u);
@@ -8792,7 +8809,7 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
     const riseFt=Math.max(0,(heightAt(s,x,y)-heightAt(s,fromX,fromY))*5);
     const dropFt=Math.max(0,(heightAt(s,fromX,fromY)-heightAt(s,x,y))*5);
     const jumpMax=runningHighJumpFt(pc);
-    animateToken(null,(nx,ny)=>{ pc.x=nx; pc.y=ny; }, path, 100, ()=>{ save();
+    animateToken(null,(nx,ny)=>{ pc.x=nx; pc.y=ny; }, path, 200, ()=>{ save();
       // Flight: cross pits/chasms and ignore ground hazards (lava, acid, grease prone…)
       if(fly){
         if(isPitTerrain(ter)) qbLog('🕊️ '+c.name+' flies over the pit/chasm');
@@ -9373,7 +9390,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.168';
+const APP_VERSION='v120.169';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

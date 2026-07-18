@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.13';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.13';
+import { Renderer } from './renderer.js?v=0.6.14';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.14';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.13';
+} from './adapter.js?v=0.6.14';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.13';
+} from './sprites.js?v=0.6.14';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.13';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.13';
-import { APP_VERSION } from './version.js?v=0.6.13';
-import { resolveLighting } from './lighting.js?v=0.6.13';
+} from './fx.js?v=0.6.14';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.14';
+import { APP_VERSION } from './version.js?v=0.6.14';
+import { resolveLighting } from './lighting.js?v=0.6.14';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -896,6 +896,26 @@ export class Iso3DHost {
     return true;
   }
 
+  /**
+   * Like frameOnCell, but eases the pan smoothly over several frames instead of an
+   * instant snap — for following a unit continuously as it walks (called once per
+   * grid step of the move animation). Zoom still applies instantly; only the jumpy
+   * part (a hard pan snap every ~100-200ms during a multi-tile walk) needed smoothing.
+   * @returns {boolean} false if map not ready yet
+   */
+  frameOnCellSmooth(col, row, zoom) {
+    const map = this._view?.map || this.renderer?._map;
+    if (!map || !Number.isFinite(map.cols) || !Number.isFinite(map.rows)) {
+      return false;
+    }
+    const { x, z } = gridToWorld(col | 0, row | 0, map.cols, map.rows);
+    if (zoom != null) {
+      this.renderer.setCamera({ zoom: Math.max(0.55, Math.min(2.9, zoom)) });
+    }
+    this.renderer.setCameraFollowTarget(x, z);
+    return true;
+  }
+
   _syncSize() {
     // Re-assert position/size/z-index every frame — cheap (one getBoundingClientRect)
     // and handles scrolling, container resizes, and modal open/close without needing
@@ -1739,4 +1759,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.13';
+export { Renderer } from './renderer.js?v=0.6.14';
