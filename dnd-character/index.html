@@ -16,6 +16,13 @@
     --r:14px; --sp:14px;
   }
   *{box-sizing:border-box}
+  /* Reserve the scrollbar gutter permanently — battle log/HP updates constantly change
+     page height, which toggles the scrollbar on/off; each toggle shifts available width
+     by its ~15px, which resizes the Iso3D canvas (clientWidth check in _syncSize), and
+     resizing a <canvas> clears it to transparent/black for that frame. That's the "black
+     flicker during battle, worse once the camera started following every turn" report —
+     the canvas was being reset by a scrollbar-driven layout shift, not by the camera. */
+  html{scrollbar-gutter:stable; overflow-y:scroll}
   html,body{margin:0;padding:0}
   body{
     background:
@@ -9322,7 +9329,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.146';
+const APP_VERSION='v120.147';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
