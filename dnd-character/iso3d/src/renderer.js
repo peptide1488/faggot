@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.5.94';
+} from './math.js?v=0.5.95';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.5.94';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.94';
+} from './map.js?v=0.5.95';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.95';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.5.94';
+} from './lighting.js?v=0.5.95';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1724,10 +1724,16 @@ export class Renderer {
     const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    // Ground tiles recede at a shallow isometric angle with a per-tile UV offset — plain
+    // NEAREST minification (no mip levels) undersamples the far/oblique texels and aliases
+    // into a moire of stray fine lines (live report: "tiny green lines" on grass, "white
+    // lines going crossways" on stone). Mipmap only the minify side so distant/angled tiles
+    // blend instead of aliasing; MAG stays NEAREST so close-up pixel art stays crisp.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, repeat ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     try {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      if (repeat) gl.generateMipmap(gl.TEXTURE_2D);
     } catch (e) {
       console.warn('[Iso3D] tex upload failed', e);
       gl.deleteTexture(tex);

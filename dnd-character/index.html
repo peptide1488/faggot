@@ -457,7 +457,7 @@
 <div id="modalRoot"></div>
 
 <script src="iso-renderer.js"></script>
-<script type="module" src="iso3d/boot.js?v=0.5.94&t=94"></script>
+<script type="module" src="iso3d/boot.js?v=0.5.95&t=95"></script>
 <script>
 "use strict";
 /* ----------------------------------------------------------------------------
@@ -9114,7 +9114,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.141';
+const APP_VERSION='v120.142';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

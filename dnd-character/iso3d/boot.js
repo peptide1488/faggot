@@ -3,7 +3,7 @@
  * index.html includes: <script type="module" src="iso3d/boot.js"></script>
  */
 // ?v= busts browser module cache when Iso3D ships a fix (black screen / mesh crashes)
-import { Iso3DHost, APP_VERSION, makeDemoGrimoireSession } from './src/host.js?v=0.5.94';
+import { Iso3DHost, APP_VERSION, makeDemoGrimoireSession } from './src/host.js?v=0.5.95';
 
 window.Iso3D = {
   Host: Iso3DHost,
