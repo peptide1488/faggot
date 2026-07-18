@@ -6253,6 +6253,16 @@ const TERRAIN={
   grease:{name:'Grease', c:'#5c6b2e', e:'', diff:true, prone:true},
   web:{name:'Web', c:'#c9c2a6', e:'', diff:true, restrain:true}
 };
+// Wall-family terrain a wall-mounted decor item (torch) can be placed against.
+const WALL_LIKE_TERRAIN=new Set(['wall','cave_wall','low_wall','window']);
+/** True if any orthogonal neighbor of (x,y) is a wall — torches mount on walls, not open floor. */
+function nextToWall(s,x,y){
+  const cols=s.map.cols|0, rows=s.map.rows|0;
+  const deltas=[[1,0],[-1,0],[0,1],[0,-1]];
+  return deltas.some(([dx,dy])=>{ const nx=x+dx, ny=y+dy;
+    if(nx<0||ny<0||nx>=cols||ny>=rows) return false;
+    return WALL_LIKE_TERRAIN.has(terrainAt(s,nx,ny)); });
+}
 // The subset of TERRAIN that iso-renderer.js needs (plain hex colors only, no gameplay flags) —
 // passed to it via a data-palette attribute so the renderer stays decoupled from game rules.
 const TERRAIN_PALETTE=Object.fromEntries(Object.entries(TERRAIN).filter(([,v])=>v.c).map(([k,v])=>[k,v.c]));
@@ -6291,6 +6301,7 @@ const DECOR={
   cauldron:{name:'Acid cauldron', solid:true, opaque:false},
   cauldron_tipped:{name:'Tipped cauldron', solid:false, opaque:false},
   bell:{name:'Bell', solid:false, opaque:false},
+  chest:{name:'Chest', solid:true, opaque:false},
   drawbridge:{name:'Drawbridge (up)', solid:true, opaque:true},
   drawbridge_down:{name:'Drawbridge (down)', solid:false, opaque:false},
   // Hazard barrels — multi-reaction (fire / kinetic / Mage Hand tip)
@@ -6368,6 +6379,13 @@ const INTERACT_TYPES={
     decor:{idle:'bell'},
     actions:[
       {id:'ring', label:'Ring the bell', needs:null, hand:true, adj:true, note:'Loud clang — enemies notice'}
+    ]
+  },
+  chest:{
+    name:'Chest', states:['closed','opened'], default:'closed',
+    decor:{closed:'chest', opened:'chest'},
+    actions:[
+      {id:'open', label:'Open chest', needs:'closed', to:'opened', hand:true, adj:true, note:'A little coin, if you’re lucky'}
     ]
   },
   drawbridge:{
@@ -6751,6 +6769,11 @@ function runInteractAction(s, c, key, actionId, via){
     });
     msg+=' · acid floods adjacent tiles';
   }
+  if(o.type==='chest'&&actionId==='open'){
+    const gp=(rollNotation('2d6')||{total:7}).total*5;
+    if(c&&c.currency){ c.currency.gp=(c.currency.gp||0)+gp; msg+=' · 💰 found '+gp+' gp'; }
+    else msg+=' · 💰 '+gp+' gp inside';
+  }
   if(o.type==='bell'&&actionId==='ring'){
     msg='🔔 The bell clangs through the halls!';
     // Simple alert: monsters get a free turn-skip log (future: aggro)
@@ -6778,6 +6801,15 @@ function applyDrawbridgeTiles(s, key, state){
     else s.map.tiles[k]='void';
   });
 }
+// Reverse lookup: decor sprite key → {type, state} — so a decor item hand-painted via the
+// DM's live map editor (which only ever writes s.map.decor, not s.map.interact — see the
+// 'd:'+key cell-click handler) still becomes a real, usable interact object, not just a
+// picture. Built from INTERACT_TYPES' own decor:{state:spriteKey} tables, so it stays in
+// sync automatically as new interactable types are added — no separate list to maintain.
+const DECOR_TO_INTERACT=(()=>{ const m={}; Object.keys(INTERACT_TYPES).forEach(type=>{
+  const def=INTERACT_TYPES[type];
+  Object.keys(def.decor||{}).forEach(state=>{ const dk=def.decor[state]; if(dk&&!(dk in m)) m[dk]={type,state}; }); });
+  return m; })();
 function listInteractInRange(s, from, tiles){
   if(!s.map||!s.map.interact) return [];
   const out=[];
@@ -6788,17 +6820,19 @@ function listInteractInRange(s, from, tiles){
     if(!o||!INTERACT_TYPES[o.type]) return;
     out.push({key:k, x, y, obj:o, def:INTERACT_TYPES[o.type]});
   });
-  // Also treat plain torch decor without interact entry as torch interactables
+  // Any decor placed without a matching interact entry (live-painted by the DM, or a
+  // hand-authored preset that only set dc[key]) gets promoted to a real, usable object —
+  // torch/campfire were the only case handled here before; now it's every interactable kind.
   Object.keys(s.map.decor||{}).forEach(k=>{
     if(s.map.interact&&s.map.interact[k]) return;
     const kind=s.map.decor[k];
-    if(kind!=='torch'&&kind!=='torch_unlit'&&kind!=='campfire') return;
+    const promo=DECOR_TO_INTERACT[kind]||(kind==='campfire'?{type:'torch',state:'lit'}:null);
+    if(!promo) return;
     const [x,y]=k.split(',').map(Number);
     if(gridDist(from.x,from.y,x,y)>tiles) return;
-    // Promote to interact entry
     if(!s.map.interact) s.map.interact={};
-    s.map.interact[k]={type:'torch', state:kind==='torch'||kind==='campfire'?'lit':'unlit'};
-    out.push({key:k, x, y, obj:s.map.interact[k], def:INTERACT_TYPES.torch});
+    s.map.interact[k]={type:promo.type, state:promo.state};
+    out.push({key:k, x, y, obj:s.map.interact[k], def:INTERACT_TYPES[promo.type]});
   });
   return out.sort((a,b)=>gridDist(from.x,from.y,a.x,a.y)-gridDist(from.x,from.y,b.x,b.y));
 }
@@ -7585,7 +7619,10 @@ function renderDM(){
       if(key==='elev+'||key==='elev-'){ if(!s.map.height) s.map.height={}; const cur=s.map.height[x+','+y]||0; const nh=Math.max(-4,Math.min(4, cur+(key==='elev+'?1:-1))); if(nh) s.map.height[x+','+y]=nh; else delete s.map.height[x+','+y]; dmBroadcast(); render(); return; }
       if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain/elevation, keep brush
     if(net.sel.slice(0,2)==='d:'){ const key=net.sel.slice(2); if(!s.map.decor) s.map.decor={};
-      if(key==='erase') delete s.map.decor[x+','+y]; else s.map.decor[x+','+y]=key; dmBroadcast(); render(); return; }
+      if(key==='erase') delete s.map.decor[x+','+y];
+      else { if((key==='torch'||key==='torch_unlit') && !nextToWall(s,x,y)){ flashBanner('🔥 Torches mount on a wall — pick a tile next to one'); return; }
+        s.map.decor[x+','+y]=key; }
+      dmBroadcast(); render(); return; }
     const ter=terrainAt(s,x,y);
     if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ const fromX=mo.x, fromY=mo.y, wasBattle=s.battle.active, mfly=monsterFlies(mo);
       if(s.battle.active){ const tdef0=TERRAIN[ter]; if(tdef0&&tdef0.solid && !(mfly&&isPitTerrain(ter))){ flashBanner((isPitTerrain(ter)?'Pit blocks ':'Wall blocks ')+mo.name); return; }
@@ -9285,7 +9322,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.144';
+const APP_VERSION='v120.145';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

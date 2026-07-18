@@ -39,7 +39,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
   'globalThis.SPELL_HANDLERS=SPELL_HANDLERS;globalThis.SUMMON_CATALOG=SUMMON_CATALOG;globalThis.summonCatalogEntry=summonCatalogEntry;'+
   'globalThis.spawnSummon=spawnSummon;globalThis.dismissSummonsForSpell=dismissSummonsForSpell;globalThis.nearbySpawnTiles=nearbySpawnTiles;globalThis.isConcentration=isConcentration;'+
-  'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};');
+  'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
+  'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -846,6 +847,26 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('a suppressed cast (hostile resisted the Dex save) still spends the action/resources', ok===true);
   T("...but adds no session light and no tracked 'Light' effect on the sheet", getQB().lights.length===1 && getQB().lights[0].follow==='m1' /* untouched by the suppressed cast */ && (wiz.effects||[]).length===before);
   setQB(null);
+})();
+
+/* ---- Map interactables: chest (open→gold) + live-painted decor becomes a real usable
+   object, not just a picture. See listInteractInRange/DECOR_TO_INTERACT/nextToWall. ---- */
+(function(){
+  T('chest is a registered interact type with an open action', INTERACT_TYPES['chest'] && INTERACT_TYPES['chest'].actions.some(a=>a.id==='open'));
+  T('DECOR_TO_INTERACT is derived from every INTERACT_TYPES decor mapping (door, chest, etc.)', DECOR_TO_INTERACT['door'].type==='door' && DECOR_TO_INTERACT['door'].state==='closed' && DECOR_TO_INTERACT['chest'].type==='chest');
+
+  const s={map:{cols:5,rows:5,tiles:{'2,2':'wall'}, decor:{'0,0':'door','1,1':'chest'}, interact:{}}, players:[], monsters:[]};
+  const items=listInteractInRange(s, {x:0,y:0}, 5);
+  T('a DM-painted door with no interact entry is promoted to a real, usable door object', s.map.interact['0,0'] && s.map.interact['0,0'].type==='door' && items.some(it=>it.key==='0,0'&&it.def.name==='Door'));
+  T('a DM-painted chest is likewise promoted (not just torches, as before)', s.map.interact['1,1'] && s.map.interact['1,1'].type==='chest');
+
+  const hero=newCharacter('Looter'); hero.currency.gp=0;
+  const before=hero.currency.gp;
+  const res=runInteractAction(s, hero, '1,1', 'open', 'hand');
+  T('opening a chest succeeds and grants gold to the opener', res.ok && hero.currency.gp>before);
+  T('an opened chest is marked opened (no longer re-openable)', s.map.interact['1,1'].state==='opened');
+
+  T('nextToWall is true only for tiles orthogonally adjacent to a wall-family terrain', nextToWall(s,1,2) && !nextToWall(s,4,4));
 })();
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
