@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.11';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.11';
+import { Renderer } from './renderer.js?v=0.6.12';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.12';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.11';
+} from './adapter.js?v=0.6.12';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.11';
+} from './sprites.js?v=0.6.12';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.11';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.11';
-import { APP_VERSION } from './version.js?v=0.6.11';
-import { resolveLighting } from './lighting.js?v=0.6.11';
+} from './fx.js?v=0.6.12';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.12';
+import { APP_VERSION } from './version.js?v=0.6.12';
+import { resolveLighting } from './lighting.js?v=0.6.12';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -763,14 +763,21 @@ export class Iso3DHost {
     spawnImpact(this._fx, col, row, kind);
   }
 
-  // requestAnimationFrame fires at the display's real refresh rate (100Hz+ monitors,
-  // or uncapped in some headless/software-GL setups) — with no throttle here every
-  // one of those callbacks did a full 3D mesh draw + 2D overlay redraw (shadows,
-  // highlights, FX) even on a completely static, un-animated scene. Live report:
-  // "insanely slow, maxing out cpu" just from having the view open and idle.
-  // 30fps is still smooth for a turn-based tactics camera; camera drag / walk
-  // animation is timestamp-driven (performance.now()-based), not frame-count-driven,
-  // so skipping callbacks doesn't affect animation speed, only redraw frequency.
+  // REMOVED the 30fps throttle (was: skip this rAF tick unless FRAME_INTERVAL_MS has
+  // elapsed). The WebGL context here has no preserveDrawingBuffer, so the browser is
+  // spec-allowed to clear the drawing buffer to black immediately after compositing it
+  // — and it composites the canvas at the display's own refresh rate (often 90/120Hz on
+  // phones) independent of whatever rate WE choose to redraw at. Every tick this loop
+  // decided to skip was a tick where, if the browser happened to composite right then,
+  // it would show an already-cleared black frame. That's a real, spec-compliant
+  // mechanism that fits every symptom reported all session (solid black not sky color,
+  // zero exceptions, only the GL canvas affected, self-healing next frame, worse on
+  // high-refresh displays and during interaction) far better than anything else tried.
+  // preserveDrawingBuffer:true would also close this gap but forces a real per-frame
+  // GPU buffer copy — measurably more expensive and the wrong tradeoff on a phone
+  // already under load. Simply never choosing to skip a redraw costs nothing extra
+  // per frame (still one clear + draw, just possibly more often) and closes the same
+  // gap without that cost.
   static FRAME_INTERVAL_MS = 1000 / 30;
 
   start() {
@@ -778,7 +785,7 @@ export class Iso3DHost {
     this._running = true;
     const loop = (t) => {
       if (!this._running) return;
-      if (t - this._lastFrameT >= Iso3DHost.FRAME_INTERVAL_MS) {
+      {
         this._lastFrameT = t;
         try {
           this._frame();
@@ -1687,4 +1694,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.11';
+export { Renderer } from './renderer.js?v=0.6.12';
