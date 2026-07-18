@@ -3,9 +3,9 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.6.3';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.3';
-import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.3';
+import { TERRAIN, createMap } from './map.js?v=0.6.4';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.4';
+import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.4';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {

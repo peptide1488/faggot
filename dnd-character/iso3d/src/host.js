@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.3';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.3';
+import { Renderer } from './renderer.js?v=0.6.4';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.4';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.3';
+} from './adapter.js?v=0.6.4';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.3';
+} from './sprites.js?v=0.6.4';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.3';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.3';
-import { APP_VERSION } from './version.js?v=0.6.3';
-import { resolveLighting } from './lighting.js?v=0.6.3';
+} from './fx.js?v=0.6.4';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.4';
+import { APP_VERSION } from './version.js?v=0.6.4';
+import { resolveLighting } from './lighting.js?v=0.6.4';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -186,26 +186,19 @@ export class Iso3DHost {
       highlights: this._highlightOpts || undefined,
       spritePaths: opts.spritePaths,
     });
-    // Upload each sprite's GPU texture as soon as its image finishes loading, instead of
-    // waiting for its first actual draw call. _drawBillboardsGL previously called
-    // _ensureTex (a synchronous gl.texImage2D upload) lazily, mid-frame, the first time
-    // each image was drawn — on a slow mobile GPU/driver a texture upload can stall for
-    // a frame or more, with nothing thrown to JS (invisible to any try/catch), which
-    // would show as exactly the kind of blank/frozen frame reported in battle. Doesn't
-    // fully explain the report on its own, but removes one real category of GPU stall.
-    const preWarm = (url) => {
-      const entry = loadSprite(url, () => {
-        try { this.renderer._ensureTex(entry.img); } catch (_) {}
-      });
-      if (entry && entry.ready) {
-        try { this.renderer._ensureTex(entry.img); } catch (_) {}
-      }
-    };
+    // REVERTED: pre-warming GPU textures here (calling the renderer's _ensureTex — raw
+    // gl.bindTexture/gl.texImage2D calls — from outside the render loop, e.g. from an
+    // async img.onload firing at a random time) left WebGL's texture-binding state
+    // stepped on whenever the next real draw() ran, since _ensureTex binds a texture
+    // and never explicitly restores whatever was bound before. Live report right after
+    // this shipped: the ENTIRE battlefield rendering as flat sky-blue with no terrain,
+    // no units, nothing — a full mesh-draw failure, strictly worse than the original
+    // sprite-flicker report. Back to lazy upload (still correct, just not "pre-warmed").
     for (const u of this._view.units) {
-      if (u.spriteUrl) preWarm(u.spriteUrl);
+      if (u.spriteUrl) loadSprite(u.spriteUrl);
     }
     for (const d of this._view.decorSprites || []) {
-      if (d.spriteUrl) preWarm(d.spriteUrl);
+      if (d.spriteUrl) loadSprite(d.spriteUrl);
     }
 
     // Auto-path when a unit's grid cell jumps (unless already animating)
@@ -1657,4 +1650,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.3';
+export { Renderer } from './renderer.js?v=0.6.4';
