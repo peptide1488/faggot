@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.5.97';
+} from './math.js?v=0.5.98';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.5.97';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.97';
+} from './map.js?v=0.5.98';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.5.98';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.5.97';
+} from './lighting.js?v=0.5.98';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1454,6 +1454,18 @@ export class Renderer {
   /**
    * Match canvas buffer to CSS size × devicePixelRatio so 4K / HiDPI stays sharp.
    * (clientWidth alone = CSS px; without DPR the browser upscales a soft buffer.)
+   *
+   * Resizing a <canvas> element (setting .width/.height) always clears its contents —
+   * that's the spec, not a bug we can work around directly. The problem: this.canvas
+   * gets reparented into a fresh #iso3dMount every time a targeting modal opens/closes
+   * (attack, spell cast, ...), and that mount's measured clientWidth/Height can briefly
+   * read differently than the main battlefield mount's for one frame around the swap —
+   * live report: "the entire thing clips out for a split second... between every attack"
+   * (not a lighting issue, not the geometry going black — the whole canvas blips). A
+   * one-frame size disagreement is never a real intentional resize (a real window/
+   * container resize persists across many frames), so only commit a new buffer size
+   * once the same reading has held for two consecutive calls — absorbs the reparent
+   * blip without adding any lag to genuine resizes.
    */
   syncSize() {
     const dpr = Math.min(
@@ -1464,14 +1476,21 @@ export class Renderer {
     const cssH = this.canvas.clientHeight || 600;
     const w = Math.max(1, Math.floor(cssW * dpr));
     const h = Math.max(1, Math.floor(cssH * dpr));
-    if (this.canvas.width !== w || this.canvas.height !== h) {
+    const pending = this._pendingWH;
+    if (!pending || pending.w !== w || pending.h !== h) {
+      this._pendingWH = { w, h };
+    } else if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
     }
+    // Always report/viewport the CURRENT committed buffer size (not the pending one)
+    // so drawing this frame matches whatever's actually in the buffer right now.
+    const curW = this.canvas.width || w;
+    const curH = this.canvas.height || h;
     this._dpr = dpr;
     const gl = this.gl;
-    if (gl) gl.viewport(0, 0, w, h);
-    return { w, h, aspect: w / Math.max(1, h), dpr };
+    if (gl) gl.viewport(0, 0, curW, curH);
+    return { w: curW, h: curH, aspect: curW / Math.max(1, curH), dpr };
   }
 
   /**

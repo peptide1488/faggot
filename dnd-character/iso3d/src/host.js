@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.5.97';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.97';
+import { Renderer } from './renderer.js?v=0.5.98';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.5.98';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.5.97';
+} from './adapter.js?v=0.5.98';
 import {
   loadSprite,
   clearSpriteCache,
@@ -22,7 +22,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.5.97';
+} from './sprites.js?v=0.5.98';
 import {
   createFxState,
   spawnFloater,
@@ -32,10 +32,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.5.97';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.5.97';
-import { APP_VERSION } from './version.js?v=0.5.97';
-import { resolveLighting } from './lighting.js?v=0.5.97';
+} from './fx.js?v=0.5.98';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.5.98';
+import { APP_VERSION } from './version.js?v=0.5.98';
+import { resolveLighting } from './lighting.js?v=0.5.98';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -108,6 +108,30 @@ export class Iso3DHost {
     this.glCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('mouseup', this._onUp);
     window.addEventListener('mousemove', this._onMove);
+    // Touch: drag-to-pan / tap-to-target, mirroring the mouse handlers above (which only
+    // ever listened for mouse events — canvas CSS already had touch-action:none reserved
+    // for this, but the actual listeners were never wired up, so panning the camera did
+    // nothing at all on a phone/tablet).
+    this._onTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      this._handleDown({ button: 0, clientX: t.clientX, clientY: t.clientY, preventDefault: () => e.preventDefault() });
+    };
+    this._onTouchMove = (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (this._drag) e.preventDefault();
+      this._handleMove({ clientX: t.clientX, clientY: t.clientY });
+    };
+    this._onTouchEnd = (e) => {
+      const t = e.changedTouches && e.changedTouches[0];
+      if (!t) return;
+      this._handleUp({ clientX: t.clientX, clientY: t.clientY });
+    };
+    this.glCanvas.addEventListener('touchstart', this._onTouchStart, { passive: false });
+    this.glCanvas.addEventListener('touchmove', this._onTouchMove, { passive: false });
+    this.glCanvas.addEventListener('touchend', this._onTouchEnd, { passive: false });
+    this.glCanvas.addEventListener('touchcancel', this._onTouchEnd, { passive: false });
     this.glCanvas.addEventListener(
       'wheel',
       (e) => {
@@ -755,6 +779,10 @@ export class Iso3DHost {
     this.glCanvas.removeEventListener('mousedown', this._onDown);
     window.removeEventListener('mouseup', this._onUp);
     window.removeEventListener('mousemove', this._onMove);
+    this.glCanvas.removeEventListener('touchstart', this._onTouchStart);
+    this.glCanvas.removeEventListener('touchmove', this._onTouchMove);
+    this.glCanvas.removeEventListener('touchend', this._onTouchEnd);
+    this.glCanvas.removeEventListener('touchcancel', this._onTouchEnd);
     this.glCanvas.remove();
     this.overlay.remove();
   }
@@ -1584,4 +1612,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.5.97';
+export { Renderer } from './renderer.js?v=0.5.98';
