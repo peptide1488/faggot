@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.6.7';
+} from './math.js?v=0.6.8';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.6.7';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.7';
+} from './map.js?v=0.6.8';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.8';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.6.7';
+} from './lighting.js?v=0.6.8';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1226,6 +1226,19 @@ export class Renderer {
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault(); // required — without this the context is never restored
       this._contextLost = true;
+      // Diagnostic: neither of the other two banners (empty-mesh, empty-billboards) can
+      // ever fire during a real context-loss window — draw() early-returns entirely while
+      // _contextLost is true, before either of those checks run. This has been silent the
+      // whole session despite the recovery logic above being written and tested; a live
+      // report of blinking correlating 1:1 with "every attack, every camera transition"
+      // (both of which re-run mapGridHTML's innerHTML, detaching/reattaching this exact
+      // canvas from the document) is the strongest lead yet for genuine context loss —
+      // this is the one diagnostic that can actually confirm or rule it out.
+      try {
+        if (typeof window !== 'undefined' && typeof window.flashBanner === 'function') {
+          window.flashBanner('⚠ Iso3D: WebGL context LOST');
+        }
+      } catch (_) {}
     });
     canvas.addEventListener('webglcontextrestored', () => {
       this._contextLost = false;
@@ -1233,6 +1246,11 @@ export class Renderer {
       this._initGL();
       this._dirtyMap = true;
       this._dirtyUnits = true;
+      try {
+        if (typeof window !== 'undefined' && typeof window.flashBanner === 'function') {
+          window.flashBanner('⚠ Iso3D: WebGL context restored');
+        }
+      } catch (_) {}
     });
   }
 
