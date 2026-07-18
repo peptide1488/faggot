@@ -4821,11 +4821,22 @@ function syncIso3DHost(session, highlightOpts){
       host.onUnitClick=null;
       mount.style.pointerEvents='auto';
       document.querySelectorAll('.mapgrid.iso3dmode .mcell').forEach(el=>{ el.style.pointerEvents='none'; });
-      // Force layout size after modal opens (0×0 mount = blue sky only)
-      requestAnimationFrame(()=>{ try{
-        if(host.glCanvas){ host.glCanvas.width=mount.clientWidth||host.glCanvas.width; host.glCanvas.height=mount.clientHeight||host.glCanvas.height; }
-        if(host.renderer&&host.renderer.invalidateMap) host.renderer.invalidateMap();
-      }catch(e){} });
+      // REMOVED: this used to directly set host.glCanvas.width/height from mount.clientWidth/
+      // clientHeight ("Force layout size after modal opens (0×0 mount = blue sky only)").
+      // That assignment has NO devicePixelRatio scaling, while Renderer.syncSize() (which
+      // runs every single frame, unthrottled) computes the buffer size as clientWidth*dpr —
+      // a completely different number on any HiDPI display. Every render() call re-triggered
+      // this rAF callback, so the two kept fighting: this patch forced the buffer down to the
+      // raw un-scaled size, syncSize() corrected it back up to the dpr-scaled size the very
+      // next frame, repeat — measured live via CDP as the canvas backing buffer oscillating
+      // between two fixed sizes dozens of times per second during real play. Resizing a
+      // canvas's width/height attribute unconditionally clears its drawing buffer per spec,
+      // so this ping-pong was a direct, mechanical cause of real flickering — independent of
+      // every WebGL/DOM/timing theory chased earlier tonight. syncSize() already runs every
+      // frame and re-derives the correct size from the live CSS box, so it alone handles the
+      // original "0×0 right after modal opens" case this patch was written for — no separate
+      // one-shot correction needed, and this one was actively fighting the good one.
+      if(host.renderer&&host.renderer.invalidateMap) host.renderer.invalidateMap();
     }catch(err){ console.error('[Iso3D] mount failed', err); flashBanner('Iso3D failed — see console'); }
     return true;
   };
@@ -9357,7 +9368,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.166';
+const APP_VERSION='v120.167';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
