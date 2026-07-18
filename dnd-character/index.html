@@ -4860,15 +4860,29 @@ function scrollMapToCell(x, y){
  * Retries until host/map DOM are ready — battle start used to land on map center
  * when frameOnCell ran before setMap finished.
  */
-/** Pan/frame the battle camera (Iso3D + classic scroll) onto a specific grid cell. */
+/**
+ * Pan/frame the battle camera (Iso3D + classic scroll) onto a specific grid cell.
+ * Retries (rAF + staggered timeouts) handle "map not ready yet" on first mount. Each
+ * call gets its own generation number and every retry checks it's still current —
+ * without this, a turn change faster than ~1.2s (monsters chaining attacks, very
+ * normal) left an OLDER call's still-pending retries alive alongside a newer call's;
+ * once the newer call correctly framed the camera on the new active unit, a stale
+ * timer from the older call fired moments later and snapped the camera BACK to its
+ * own (now wrong) target — repeating for however many overlapping calls had retries
+ * in flight. That's a real, camera-follow-specific mechanism for "camera fighting
+ * itself while monsters attack" (live report, only appeared after camera-follow
+ * shipped) — not a WebGL/rendering issue.
+ */
 function frameCameraOnCell(session, x, y, zoom){
   session=session||QB||(net&&net.session);
   if(!session||x==null||y==null) return;
   const z=zoom!=null?zoom:1.55;
+  const gen=(window.__iso3dFrameGen=(window.__iso3dFrameGen||0)+1);
   window.__iso3dForceFrame=true;
   window.__iso3dCamKeep=false;
   let attempts=0;
   const tryFrame=()=>{
+    if(gen!==window.__iso3dFrameGen) return true; // superseded by a newer frame request — stop retrying
     attempts++;
     scrollMapToCell(x|0, y|0);
     if(isoView&&iso3dView){
@@ -4887,7 +4901,7 @@ function frameCameraOnCell(session, x, y, zoom){
   };
   if(tryFrame()) return;
   requestAnimationFrame(()=>{ if(!tryFrame()) requestAnimationFrame(tryFrame); });
-  [50,120,250,450,800,1200].forEach(ms=>setTimeout(()=>{ if(window.__iso3dForceFrame||attempts<8) tryFrame(); }, ms));
+  [50,120,250,450,800,1200].forEach(ms=>setTimeout(()=>{ if(gen===window.__iso3dFrameGen&&(window.__iso3dForceFrame||attempts<8)) tryFrame(); }, ms));
 }
 function frameBattleCameraOnPlayer(session, zoom){
   session=session||QB||(net&&net.session);
@@ -9343,7 +9357,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.158';
+const APP_VERSION='v120.159';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
