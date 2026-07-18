@@ -10,21 +10,21 @@ import {
   invert,
   transformMat4,
   worldToGrid,
-} from './math.js?v=0.6.6';
+} from './math.js?v=0.6.7';
 import {
   TERRAIN,
   TERRAIN_COLORS,
   CLIFF_STRATA,
   heightAt,
   cellAt,
-} from './map.js?v=0.6.6';
-import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.6';
+} from './map.js?v=0.6.7';
+import { TerrainSampler, TERRAIN_TEX_URLS, TERRAIN_SIDE_TEX_URLS, WANG_TILESETS } from './terrainTextures.js?v=0.6.7';
 import {
   resolveLighting,
   sunShadowFactor,
   tileIllumination01,
   MAX_GPU_LIGHTS,
-} from './lighting.js?v=0.6.6';
+} from './lighting.js?v=0.6.7';
 
 const VS = `#version 300 es
 in vec3 aPos;
@@ -1448,11 +1448,33 @@ export class Renderer {
     this._dirtyUnits = true;
   }
 
+  /**
+   * Non-finite rot/panX/panY/zoom (NaN/Infinity, e.g. from a stale camera-follow target
+   * whose grid cell or map size briefly went undefined) feeds straight into lookAt()'s
+   * eye/target with no guard anywhere downstream — one bad value poisons the ENTIRE view
+   * matrix for that frame, so every world point projects to NaN and _project() returns
+   * null for every unit at once. Live report matched this exactly: "0 billboards this
+   * frame" for ALL alive units simultaneously (not some), with terrain likely garbled the
+   * same frame, self-recovering once a later, valid setCamera call overwrites it. Reject
+   * bad values here instead of silently storing them.
+   */
   setCamera({ rot, zoom, panX, panY }) {
-    if (rot !== undefined) this.cam.rot = rot;
-    if (zoom !== undefined) this.cam.zoom = Math.max(0.35, Math.min(3.5, zoom));
-    if (panX !== undefined) this.cam.panX = panX;
-    if (panY !== undefined) this.cam.panY = panY;
+    if (rot !== undefined && Number.isFinite(rot)) this.cam.rot = rot;
+    if (zoom !== undefined && Number.isFinite(zoom)) this.cam.zoom = Math.max(0.35, Math.min(3.5, zoom));
+    if (panX !== undefined && Number.isFinite(panX)) this.cam.panX = panX;
+    if (panY !== undefined && Number.isFinite(panY)) this.cam.panY = panY;
+    if (
+      (rot !== undefined && !Number.isFinite(rot)) ||
+      (zoom !== undefined && !Number.isFinite(zoom)) ||
+      (panX !== undefined && !Number.isFinite(panX)) ||
+      (panY !== undefined && !Number.isFinite(panY))
+    ) {
+      try {
+        if (typeof window !== 'undefined' && typeof window.flashBanner === 'function') {
+          window.flashBanner(`⚠ Iso3D: rejected non-finite camera value (rot=${rot} zoom=${zoom} panX=${panX} panY=${panY})`);
+        }
+      } catch (_) {}
+    }
   }
 
   getCamera() {
