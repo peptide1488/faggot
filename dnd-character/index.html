@@ -7511,15 +7511,23 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     // TERRAIN_PALETTE: plain {key:hex} for classic iso-renderer.js; WebGL Iso3D uses its own adapter.
     const canvasTag=`<canvas class="isocanvas" width="${stageW}" height="${stageH}" data-cols="${cols}" data-rows="${rows}" data-rot="${rot}" data-tiles="${encodeURIComponent(JSON.stringify(tiles))}" data-height="${encodeURIComponent(JSON.stringify(s.map.height||{}))}" data-palette="${encodeURIComponent(JSON.stringify(TERRAIN_PALETTE))}"></canvas>`;
     if(iso3dView){
-      // Width is 100% of the available container, NOT stageW — the WebGL camera pans/
-      // zooms freely regardless of the map's projected pixel size, so tying this element
-      // to stageW (easily 1000px+ on a real map) meant a phone-width viewport only ever
-      // showed a thin slice of a much-wider canvas, and had to DOM-scroll sideways to see
-      // the rest — while the camera's own framing assumed a normal-width viewport, so most
-      // of what fit on screen without scrolling was empty space past the map edge (live
-      // report + video: mostly dark/empty view, tiny sliver of actual terrain visible).
+      // Capped to the viewport width (window.innerWidth), NOT stageW and NOT a CSS "100%"
+      // — the WebGL camera pans/zooms freely regardless of the map's projected pixel size,
+      // so tying this element to stageW (easily 1000px+ on a real map) meant a phone-width
+      // viewport only showed a thin slice of a much-wider canvas (live report + video:
+      // mostly dark/empty view). A first attempt used CSS width:100%, but that reads
+      // whatever the CURRENT ancestor chain resolves to — and this same function also
+      // renders the attack/spell targeting modal's OWN copy of the map, in a DIFFERENT
+      // container (modal sheet padding vs. the main battlefield card), so the resolved
+      // pixel width genuinely differed between the two — and since attacking reparents the
+      // WebGL canvas from one into the other, that mismatch forced a real canvas resize on
+      // every attack (worse than before: "only happens during attacks"). window.innerWidth
+      // is a single global, identical regardless of which container this ends up in, so
+      // both mounts always agree — no more resize-on-reparent, still viewport-safe.
+      const viewportW=(typeof window!=='undefined'&&window.innerWidth)?window.innerWidth:1200;
+      const w3=Math.max(300,Math.min(Math.max(stageW,720), viewportW-32));
       const h3=Math.max(stageH,520);
-      return `<div class="mapwrap" style="max-width:100%;overflow:visible"><div class="mapgrid iso iso3dmode" style="width:100%;height:${h3}px;min-height:420px;position:relative"><div id="iso3dMount" class="iso3d-mount"></div>${canvasTag}${cells}</div></div>`;
+      return `<div class="mapwrap" style="max-width:100%;overflow:auto"><div class="mapgrid iso iso3dmode" style="width:${w3}px;height:${h3}px;min-height:420px;position:relative"><div id="iso3dMount" class="iso3d-mount"></div>${canvasTag}${cells}</div></div>`;
     }
     return `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px;position:relative">${canvasTag}${cells}</div></div>`;
   }
@@ -9335,7 +9343,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.149';
+const APP_VERSION='v120.150';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
