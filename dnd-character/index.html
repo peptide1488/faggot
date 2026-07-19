@@ -7562,17 +7562,15 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       // every attack (worse than before: "only happens during attacks"). window.innerWidth
       // is a single global, identical regardless of which container this ends up in, so
       // both mounts always agree — no more resize-on-reparent, still viewport-safe.
-      const viewportW=(typeof window!=='undefined'&&window.innerWidth)?window.innerWidth:1200;
       const viewportH=(typeof window!=='undefined'&&window.innerHeight)?window.innerHeight:800;
-      // The app's own content column (main#app) is CSS-capped at 760px and centered.
-      // A wide map used to only cap against viewportW-32, so on any desktop-width
-      // screen it stayed far wider than that column — .mapwrap scrolled it, but the
-      // WebGL canvas is position:fixed on <body> (see host.js), so it isn't clipped by
-      // that scroll and visually bled out across the rest of the page ("still too
-      // big" even after the height cap). Cap width to the real visible column too.
-      const appEl=(typeof document!=='undefined')?document.getElementById('app'):null;
-      const colW=appEl&&appEl.clientWidth?appEl.clientWidth:760;
-      const w3=Math.max(300,Math.min(Math.max(stageW,720), Math.min(colW-24, viewportW-32)));
+      // Width used to be a hand-computed px value trying to account for every ancestor's
+      // padding (main#app, .card, .mapwrap itself) — kept under-subtracting one of them
+      // and bleeding past the column, and whenever it DID overflow enough to need a
+      // scrollbar, scrolling desynced the WebGL canvas (position:fixed on <body>, synced
+      // to this container's getBoundingClientRect() every frame — see host.js) from the
+      // visible box, making it appear to jump/blow up on scroll (live report). Just use
+      // width:100% so CSS sizes it to the real content box directly — no px math to get
+      // wrong, and nothing can ever overflow the column, so there's nothing to scroll.
       // Cap height hard — prior 65%-of-viewport cap didn't visibly shrink the board
       // because stageH often sits well under that ceiling already (live report:
       // "the screen still is too big" even after the first cap attempt). Use a low
@@ -7580,7 +7578,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       // actually bites regardless of stageH, with a floor so small maps aren't cramped.
       const hCap=Math.min(480, Math.round(viewportH*0.42));
       const h3=Math.max(360, Math.min(stageH, hCap));
-      return `<div class="mapwrap" style="max-width:100%;overflow:auto"><div class="mapgrid iso iso3dmode" style="width:${w3}px;height:${h3}px;min-height:420px;position:relative"><div id="iso3dMount" class="iso3d-mount"></div>${canvasTag}${cells}</div></div>`;
+      return `<div class="mapwrap" style="max-width:100%;overflow:hidden"><div class="mapgrid iso iso3dmode" style="width:100%;height:${h3}px;min-height:420px;position:relative"><div id="iso3dMount" class="iso3d-mount"></div>${canvasTag}${cells}</div></div>`;
     }
     return `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px;position:relative">${canvasTag}${cells}</div></div>`;
   }
@@ -9401,7 +9399,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.172';
+const APP_VERSION='v120.174';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
