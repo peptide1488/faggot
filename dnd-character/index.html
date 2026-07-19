@@ -4984,7 +4984,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc); dmBroadcast(); render(); }
@@ -4997,6 +4997,20 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   else if(d.t==='provoke'){ const p=net.session.players.find(x=>x.cid===d.cid)||net.session.players.find(x=>x.id===conn.peer);
     if(p){ (d.mons||[]).forEach(mid=>{ const mo=net.session.monsters.find(m=>m.id===mid); if(mo&&mo.hp>0&&!mo.reactionUsed) dmOpportunityAttack(mo,p); }); }
     render(); }
+  // A connected player's own successful Shove-push against a monster (Prone/Grappled already
+  // flow through the existing 'moncond' handler above unchanged — this is push-only, since
+  // moving a monster's token needs the DM's authoritative map/tileClearFor check).
+  else if(d.t==='shove'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && tileClearFor(net.session,d.x,d.y)){ mo.x=d.x; mo.y=d.y; dmBroadcast(); render(); } }
+  // Stabilize targets ANOTHER connected player — the actor already rolled locally (see
+  // maneuverStabilize) and only needs the DM to relay the result to the target's own device,
+  // since that's the only device whose c.stable/death fields are real.
+  else if(d.t==='stabilize'){ dmSend(d.targetId,{t:'stabilized'}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' stabilizes an ally'); }
+  // A DM-controlled monster's Shove/Grapple against a connected player (see dmMonsterAttack) —
+  // the targeted player's own device rolled its real Athletics/Acrobatics and applied the
+  // effect to itself already (conditions sync back via the normal hello/moncond-style resync,
+  // a push sends its own 'move'); this is purely so the DM's UI can show what happened.
+  else if(d.t==='maneuverResult'){ const mo=net.session.monsters.find(m=>m.id===d.mon); const who=net.session.players.find(p=>p.id===conn.peer);
+    flashBanner((who?who.name:'The player')+(d.hit?' is hit by ':' resists ')+(mo?mo.name:'the monster')+"'s "+(d.kind==='grapple'?'grapple':'shove')); render(); }
 }
 // A monster spends its reaction to make one melee attack against a player who left its reach (auto-rolled).
 function dmOpportunityAttack(mo,p){
@@ -5075,7 +5089,7 @@ function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null}}); }catch(e){} }
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ const wasActive=net.session&&net.session.battle&&net.session.battle.active; net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -5118,6 +5132,36 @@ function playerOnData(d){ if(!d) return;
       if(net.conn) try{ net.conn.send({t:'cond',name:cond,on:true}); }catch(e){}
       flashBanner((d.name?d.name+' — ':'')+'you are '+cond);
     } else flashBanner((d.name?d.name+' — ':'')+'you resist it');
+    render();
+  } else if(d.t==='stabilized'){ const c=playerChar(); if(c){ c.stable=true; c.death={succ:0,fail:0}; save(); render(); playerHello(); flashBanner('🩹 You are stabilized'); } }
+  else if(d.t==='maneuverCheck'){
+    // A DM-controlled monster attempts Shove/Grapple on this player — the DM can't roll our
+    // side (same reason as 'hazard' above: it only ever syncs hp/ac/conds, never ability
+    // scores), so it sends its own roll and we resolve the contest locally with our real
+    // Athletics/Acrobatics, apply the outcome to ourselves the same way any other condition/
+    // move does, then tell the DM what happened purely so its UI can show a result.
+    const c=playerChar(); if(!c) return;
+    const advA=skillCheckAdvantage(c,'athletics','str'), rA=rollSkillCheck(c,'athletics','str',{adv:advA.adv});
+    const advB=skillCheckAdvantage(c,'acrobatics','dex'), rB=rollSkillCheck(c,'acrobatics','dex',{adv:advB.adv});
+    const best=rA.total>=rB.total?rA:rB;
+    const hit = d.monTotal>=best.total;   // ties favor the monster, matching opposedCheck's a.total>=def.total
+    if(hit){
+      if(d.kind==='shove-push'){
+        const mo=(net.session&&net.session.monsters||[]).find(m=>m.id===d.mon);
+        const me2=net.session&&net.session.players.find(p=>p.id===net.peer.id);
+        if(mo && me2){ const dx=Math.sign(me2.x-mo.x)||0, dy=Math.sign(me2.y-mo.y)||0, nx=me2.x+dx, ny=me2.y+dy;
+          if(tileClearFor(net.session,nx,ny) && net.conn){ try{ net.conn.send({t:'move',x:nx,y:ny}); }catch(e){} } }
+        logChange(c,'🤼 '+(d.monName||'A monster')+' shoves you back!'); flashBanner('🤼 Pushed back!');
+      } else {
+        const cond=d.kind==='grapple'?'Grappled':'Prone';
+        if(!c.conditions) c.conditions={};
+        c.conditions[cond]=true;
+        logChange(c,'🤼 '+(d.monName||'A monster')+' '+(d.kind==='grapple'?'grapples':'shoves')+' you!');
+        flashBanner('🤼 '+(cond==='Grappled'?'Grappled!':'Knocked Prone!'));
+        save(); playerHello();
+      }
+    } else flashBanner('You resist '+(d.monName||'the monster')+"'s "+(d.kind==='grapple'?'grapple':'shove')+'!');
+    if(net.conn){ try{ net.conn.send({t:'maneuverResult', kind:d.kind, mon:d.mon, hit}); }catch(e){} }
     render();
   }
 }
@@ -5706,17 +5750,37 @@ function skillCheckBonus(c, skillKey){
   if(skillKey==='stealth' && (c.effects||[]).some(e=>e.name==='Pass without Trace')) n+=10;
   return n;
 }
-// Monsters have no tracked ability scores/skill bonuses — reuse the existing CR-scaled
-// save bonus (monsterSaveBonus, used for saves today) as the monster side of any opposed
-// check. Same simplification this project already uses for monster saves.
+// Monsters have no hand-authored ability scores — reuse the existing CR-scaled save bonus
+// (monsterSaveBonus) as a single flat modifier, then fan it out into a real abilities/
+// skillProf/saveProf shape (deriveMonsterAbilities below) so a monster instance is just
+// another "creature" that flows through the exact same abil()/skillBonus()/opposedCheck()
+// math a PC does — one code path, not a PC path plus a monster fallback. skillProf/saveProf
+// are deliberately left EMPTY (no synthetic proficiencies): the whole flat bonus already
+// lives in the ability score itself, so leaving profs empty keeps the total identical to the
+// old monsterCheckBonus()-only numbers (this is a shape refactor, not a balance change).
 function monsterCheckBonus(mo){ return monsterSaveBonus(mo); }
 // Monsters have no tracked passive Perception either — same CR-scaled simplification.
 function monsterPassivePerception(mo){ return 10+monsterCheckBonus(mo); }
-// Roll a skill check for either a PC (c-shaped: real ability scores/proficiencies) or a
-// monster (CR-scaled flat bonus, no advantage tracking) — lets callers treat either side
-// of a contest uniformly.
+// Fan a monster instance's flat CR-scaled bonus out into a real abilities/skillProf/saveProf
+// shape, in place, once. Idempotent — safe to call on every access. Deliberately mutates the
+// live instance (not the static MONSTERS_5E table): no bestiary rewrite needed, and every
+// monster instance (QB spawn, DM deploy, summons, custom DM-added monsters) self-heals the
+// first time anything tries to roll a check/save for it, including monsters that already
+// existed in a save from before this shape existed.
+function deriveMonsterAbilities(mo){
+  if(!mo || mo.abilities) return mo;
+  const score=10+2*monsterSaveBonus(mo);
+  mo.abilities={str:score,dex:score,con:score,int:score,wis:score,cha:score};
+  mo.skillProf=mo.skillProf||{};
+  mo.skillExp=mo.skillExp||{};
+  mo.saveProf=mo.saveProf||{};
+  return mo;
+}
+// Roll a skill check for any creature — PC (c-shaped) or monster (auto-derives a real
+// abilities/skillProf shape on first touch, see deriveMonsterAbilities) — same math either way.
 function unitSkillRoll(u, skillKey, abilKey, opts){
   opts=opts||{};
+  if(u && typeof u.hp==='number' && !u.abilities) deriveMonsterAbilities(u);
   if(u && u.skillProf){
     const ca=skillCheckAdvantage(u, skillKey, abilKey);
     return rollSkillCheck(u, skillKey, abilKey, Object.assign({}, opts, {adv:(opts.adv||0)||ca.adv, flatBonus:(opts.flatBonus||0)+skillCheckBonus(u,skillKey)}));
@@ -6078,6 +6142,7 @@ function renderPlayerBattle(c){
       <button class="btn" id="pbAttack">⚔ Attack</button>
       ${(isCaster(c)||c.spells.length)?`<button class="btn" id="pbSpells">✨ Spells</button>`:''}
     </div>
+    <button class="btn ghost block" id="pbUse" style="margin-top:8px">🖐 Use<small style="display:block;opacity:.75">Objects, Shove/Grapple/Hide/Recall Knowledge, Stabilize a downed ally</small></button>
     ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging — tap to stop':'Enter Rage'}</button>`:''}
     <div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>
     ${c.hp.cur<=0&&!c.stable?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
@@ -6129,6 +6194,7 @@ function renderPlayerBattle(c){
   if(isoView&&iso3dView&&net&&net.session) syncIso3DHost(net.session);
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
+  { const us=$('#pbUse'); if(us) us.onclick=()=>openAdjacentUseUI(c, net.session, Object.assign({}, me, {me:true, c, id:'me'})); }
   { const rg=$('#pbRage'); if(rg) rg.onclick=()=>toggleRage(c); }
   { const et=$('#pbEndTurn'); if(et) et.onclick=()=>{ if(timeStopExtraTurn(c)) return; if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} } net.moveMode=false; flashBanner('Turn ended'); }; }
   { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
@@ -6940,15 +7006,25 @@ function listInteractInRange(s, from, tiles){
  */
 function openAdjacentUseUI(c, s, me){
   const items=listInteractInRange(s, me, 1);
-  // Combat maneuvers (Shove/Grapple) are QB-only for now — DM-hosted/player-net have no
-  // "Use" button at all yet (a bigger, separate gap noted when this feature was built).
-  const inQB=(typeof QB!=='undefined' && s===QB);
-  const foes=inQB ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=1) : [];
-  const grappled=inQB && !!(c.conditions&&c.conditions.Grappled);
-  const canHide=inQB && !(c.conditions&&c.conditions.Hidden); // qbHide itself checks cover/darkness and bails with a banner if ineligible
-  if(!items.length && !foes.length && !grappled && !canHide){
+  // Combat maneuvers run through the unified maneuver system (maneuverShove/Grapple/Escape/
+  // Hide/Study/Stabilize) — same functions in Quick Battle and player-net, just a different
+  // adapter/log. DM-hosted has no PC of its own to "Use" with (see dmMonsterAttack instead,
+  // where the DM's monsters get their own Shove/Grapple options).
+  const mode = (typeof QB!=='undefined' && s===QB) ? 'qb'
+    : (net && net.role==='player' && s===net.session) ? 'player' : null;
+  const ad = mode==='qb' ? qbAdapter : mode==='player' ? playerNetAdapter : null;
+  const log = mode==='qb' ? qbLog : mode==='player' ? (m=>logChange(c,m)) : ()=>{};
+  const foes=mode ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=1) : [];
+  const grappled=!!mode && !!(c.conditions&&c.conditions.Grappled);
+  const canHide=!!mode && !(c.conditions&&c.conditions.Hidden); // maneuverHide itself checks cover/darkness and bails with a banner if ineligible
+  // Stabilize only ever makes sense against ANOTHER party member at 0 HP — Quick Battle has
+  // no second ally, so this is player-net only. stable/deathFail ride along on playerHello()'s
+  // mirror payload specifically so this filter can tell "needs stabilizing" apart from
+  // "already stable" or "already dead" without a round-trip.
+  const allies = mode==='player' ? (s.players||[]).filter(p=>p.id!==net.peer.id && needsStabilizing(p) && gridDist(me.x,me.y,p.x,p.y)<=1) : [];
+  if(!items.length && !foes.length && !grappled && !canHide && !allies.length){
     flashBanner('Nothing interactive within 5 ft');
-    if(typeof qbLog==='function'&&s===QB) qbLog('🖐 No usable objects adjacent');
+    if(mode==='qb') qbLog('🖐 No usable objects adjacent');
     return;
   }
   function draw(pick){
@@ -6964,7 +7040,15 @@ function openAdjacentUseUI(c, s, me){
       }).join('');
       body+=foes.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>Combat maneuver · (${mo.x},${mo.y})</small></div>
         <button class="btn sm" data-use="foe:${i}">Use</button></div>`).join('');
+      body+=allies.map((al,i)=>`<div class="spell"><div class="nm"><b>${esc(al.name)}</b><small>Down — Stabilize · (${al.x},${al.y})</small></div>
+        <button class="btn sm" data-use="ally:${i}">Use</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useClose" style="margin-top:10px">Cancel</button>`;
+    } else if(pick.kind==='ally'){
+      const al=pick.al;
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(al.name)}</b> is down at (${al.x},${al.y}) — Medicine DC 10. Uses your action.</p>
+        <button class="btn block" id="useStabilize" style="margin-bottom:8px;text-align:left">🩹 Stabilize</button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='foe'){
       const mo=pick.mo;
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(mo.name)}</b> at (${mo.x},${mo.y}) — Athletics vs Athletics/Acrobatics. Uses one of your attacks.</p>
@@ -6994,22 +7078,32 @@ function openAdjacentUseUI(c, s, me){
     $('#modalRoot').innerHTML=`<div class="modal" id="useModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
     $('#useClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     $('#useModal').onclick=e=>{ if(e.target.id==='useModal') $('#modalRoot').innerHTML=''; };
+    // Every maneuver mutates state via `ad`/`log` (network sends already happen inside
+    // ad.addCond/ad.moveUnit for player-net) — this wrapper just does the UI-layer bookkeeping
+    // every path needs (close modal, save, re-render, and mode-specific extras).
+    const afterManeuver=()=>{ $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello(); };
     { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='study'?{kind:'foe',mo:pick.mo}:null); }
-    { const es=$('#useEscape'); if(es) es.onclick=()=>{ $('#modalRoot').innerHTML=''; qbEscapeGrapple(me, true); }; }
-    { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ $('#modalRoot').innerHTML=''; qbHide(me); }; }
+    { const es=$('#useEscape'); if(es) es.onclick=()=>{ maneuverEscape(ad, me, true, log); afterManeuver(); }; }
+    { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ maneuverHide(ad, me, log); afterManeuver(); }; }
+    { const stb=$('#useStabilize'); if(stb) stb.onclick=()=>{
+      const al=pick.al;
+      const res=maneuverStabilize(ad, me, al.name, log);
+      if(res.ok && res.success && net.conn){ try{ net.conn.send({t:'stabilize', targetId:al.id}); }catch(e){} }
+      afterManeuver();
+    }; }
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
-      draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : Object.assign({kind:'obj'}, items[Number(idx)]));
+      draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]} : Object.assign({kind:'obj'}, items[Number(idx)]));
     });
     document.querySelectorAll('[data-study]').forEach(b=>b.onclick=()=>draw({kind:'study', mo:pick.mo}));
-    document.querySelectorAll('[data-studysk]').forEach(b=>b.onclick=()=>{ $('#modalRoot').innerHTML=''; qbStudyMonster(me, pick.mo, b.dataset.studysk); });
+    document.querySelectorAll('[data-studysk]').forEach(b=>b.onclick=()=>{ maneuverStudy(ad, me, pick.mo, b.dataset.studysk, log); afterManeuver(); });
     document.querySelectorAll('[data-usea]').forEach(b=>b.onclick=()=>{
       const actId=b.dataset.usea;
       if(pick&&pick.kind==='foe'){
-        $('#modalRoot').innerHTML='';
-        if(actId==='shove-prone') qbShove(me, pick.mo, 'prone');
-        else if(actId==='shove-push') qbShove(me, pick.mo, 'push');
-        else if(actId==='grapple') qbGrapple(me, pick.mo);
+        if(actId==='shove-prone') maneuverShove(ad, me, pick.mo, 'prone', log);
+        else if(actId==='shove-push') maneuverShove(ad, me, pick.mo, 'push', log);
+        else if(actId==='grapple') maneuverGrapple(ad, me, pick.mo, log);
+        afterManeuver();
         return;
       }
       if(c.battle&&!hasAction(c)){ flashBanner('No Action left this turn'); return; }
@@ -7018,10 +7112,10 @@ function openAdjacentUseUI(c, s, me){
       if(!res.ok){ flashBanner(res.msg); return; }
       if(c.battle) spendAction(c);
       logChange(c, '🖐 '+res.msg);
-      if(typeof qbLog==='function'&&s===QB) qbLog('🖐 '+c.name+' — '+res.msg);
+      if(mode==='qb') qbLog('🖐 '+c.name+' — '+res.msg);
       flashBanner('🖐 '+res.msg);
       sfx('cast');
-      save(); render();
+      save(); render(); if(mode==='player') playerHello();
     });
   }
   draw(null);
@@ -7894,6 +7988,12 @@ function dmMonsterAttack(mo){
     ? net.session.monsters.filter(m=>m.hp>0&&m.id!==mo.id).map(m=>({id:m.id,name:m.name,ac:m.ac,hpCur:m.hp,hpMax:m.max,x:m.x,y:m.y}))
     : net.session.players;
   if(!players.length){ flashBanner(dominated?'No other monsters for '+mo.name+' to attack':'No players connected to target'); return; }
+  // Shove/Grapple against a connected player — same DM-can't-roll-the-player's-side pattern
+  // as a save-based attack: the DM rolls the monster's Athletics locally and sends the total
+  // to that player's own device, which resolves the contest with its real Athletics/
+  // Acrobatics and applies the result to itself (see the 'maneuverCheck' player handler).
+  // Not offered against a dominated monster's own allies — those aren't real net players.
+  if(!dominated) atks.push({name:'Shove (Prone)', maneuver:'shove-prone'}, {name:'Grapple', maneuver:'grapple'});
   const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0, consumed:false};
   const tgt=()=>players.find(p=>p.id===st.targetId)||players[0];
   // Making an attack (hit OR miss) spends one of the monster's attacks — identical to
@@ -7911,7 +8011,15 @@ function dmMonsterAttack(mo){
     if(!inR.length){ body+=`<div class="empty" style="padding:10px 0">No players within ${range*5} ft of ${esc(mo.name)} for ${esc(st.atk.name)} — 📍 move it closer or pick another attack.</div>`; }
     else { body+=`<div class="field"><label>Target (in range)</label><select id="maTgt">${inR.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax} · ${gridDist(mo.x,mo.y,p.x,p.y)*5}ft</option>`).join('')}</select></div>`;
     const outOfAttacks = left!=null && left<=0 && !st.consumed;
-    if(st.atk.dc){
+    if(st.atk.maneuver){
+      if(st.maneuverSent){
+        body+=`<div class="card" style="text-align:center;margin:0 0 8px">🎲 ${esc(mo.name)} rolled Athletics: <b>${st.total}</b><br><span class="muted" style="font-size:12px">Waiting for ${esc(t.name)}'s response…</span></div>`;
+      } else if(!inR.length){
+        // handled by the "no players in range" empty-state above
+      } else {
+        body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maManeuver">🎲 Roll Athletics vs ${esc(t.name)}'s Athletics/Acrobatics</button>`;
+      }
+    } else if(st.atk.dc){
       body+=`<div class="card" style="margin:0 0 10px"><b>${esc(st.atk.name)}</b><br>${esc(t.name)} must make a <b>DC ${st.atk.dc.n} ${st.atk.dc.ab}</b> save.${st.atk.dmg?'<br>Damage: '+esc(st.atk.dmg):''}</div>`;
       if(st.atk.dmg){ if(!st.dmg) body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maDmg">🎲 Roll damage</button>`;
         else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><div class="row2"><button class="btn bad" id="maFull">Apply ${st.dmg} (fail)</button><button class="btn ghost" id="maHalf">Apply ${Math.floor(st.dmg/2)} (save)</button></div>`; }
@@ -7929,8 +8037,14 @@ function dmMonsterAttack(mo){
     $('#maModal').onclick=e=>{ if(e.target.id==='maModal') $('#modalRoot').innerHTML=''; };
     $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; st.crit=false; draw(); }; }
-    document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; st.crit=false; draw(); });
+    document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; st.crit=false; st.maneuverSent=false; draw(); });
     { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0, tiles:st.atk.tiles}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const mm=$('#maManeuver'); if(mm) mm.onclick=()=>{ if(!commitAttack()) return; sfx('swing');
+      const bonus=monsterCheckBonus(mo), d20=rnd(20); st.total=d20+bonus; st.maneuverSent=true;
+      dmSend(t.id, {t:'maneuverCheck', kind:st.atk.maneuver, monTotal:st.total, mon:mo.id, monName:mo.name});
+      pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+d20+') +'+bonus+' Athletics', kind:'check'});
+      flashBanner('Waiting for '+t.name+"'s response…");
+      draw(); }; }
     { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; const crit=st.crit||st.d20===20; sfx('damage'); attackFx(crit?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, crit); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(crit?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
     const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
     // apply through the Engine — the modal rolled interactively, so the pre-rolled d20 and
@@ -8177,6 +8291,12 @@ const CONTROLLERS = {
   agent:    { decide:(enc,u)=> (BRAINS.agent||BRAINS.tactical||(()=>[]))(enc,u) }   // stub: falls back to tactical until an agent is wired
 };
 function unitController(u){ return u.controller || (u.side==='mon' ? (u.brain||'tactical') : 'human'); }
+// Shared by every adapter's saveBonus/checkSubject: once we have the raw ability-score-shaped
+// object (a PC's `c`, or a monster instance post-deriveMonsterAbilities), the save/check math
+// is identical regardless of which mode or which kind of creature it is. `cs`==null means this
+// adapter genuinely doesn't have that side's real sheet locally (a DM looking at a connected
+// player) — the only case that still needs a network round-trip; see checkSubject on each adapter.
+function abilCheckBonus(cs, ab){ return cs ? mod(abil(cs,ab))+((cs.saveProf&&cs.saveProf[ab])?profBonus(cs):0) : 0; }
 // Adapter binding the unified Engine to a multiplayer net.session.
 // Monsters carry .hp/.max; players carry .hpCur/.hpMax — that's how we tell them apart.
 const sessionAdapter = {
@@ -8186,13 +8306,24 @@ const sessionAdapter = {
   hurt:(u,dmg)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } else { dmSend(u.id,{t:'apply',delta:-dmg}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },   // damage wakes sleepers
   cover:(a,t)=> (a&&t&&net&&net.session) ? coverBetween(net.session, a.x,a.y, t.x,t.y) : 0,
   damageMult:(t,dtype)=> (t&&t.hp!=null) ? monsterDmgMult(t,dtype) : 1,   // monsters carry .hp
-  saveBonus:(u,ab)=> u.hp!=null ? monsterSaveBonus(u) : 0,                // players roll their own saves
+  // A monster's real stats live entirely in the DM's own session — always known. A connected
+  // player's real sheet lives only on their device — the DM's mirror never carries it, by
+  // design (see Context in the maneuver-unification plan). That's the ONLY reason this can
+  // return null; it's not a monster-vs-player distinction, it's a "whose device has the sheet"
+  // one — deriveMonsterAbilities means a monster is just as much a real creature as a PC.
+  checkSubject:u=> u.hp!=null ? deriveMonsterAbilities(u) : null,
+  saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
   addCond:(u,cond,rounds)=>{ if(u.hp!=null){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); } else dmSend(u.id,{t:'cond',name:cond}); },
   name:u=>u.name,
   // Sanctuary/Holy Aura DCs live on the player's own device (c.effects) — synced onto the
   // DM's mirror via playerHello()/dmOnData so a monster attack the DM resolves can see them.
   sanctuaryDC:u=> u.hp==null ? (u.sanctuaryDC||null) : null,
-  holyAuraDC:u=> u.hp==null ? (u.holyAuraDC||null) : null
+  holyAuraDC:u=> u.hp==null ? (u.holyAuraDC||null) : null,
+  // Maneuver plumbing (Shove/Grapple/Escape/Hide) — DM is authoritative, mutates directly.
+  map:()=> net.session&&net.session.map,
+  allMonsters:()=> (net.session&&net.session.monsters)||[],
+  moveUnit:(u,x,y)=>{ u.x=x; u.y=y; },
+  solePc:()=> null   // DM sessions can host multiple players — no single "the PC" to fall back to
 };
 // Adapter for a PLAYER's device in a net session: reads the DM-broadcast mirror and
 // mutates BY MESSAGE — the DM's copy stays authoritative. Damage is sent raw with its
@@ -8207,10 +8338,20 @@ const playerNetAdapter = {
   hurt:(u,dmg,dtype)=>{ if(u.me){ applyHp(u.c,-dmg); playerHello(); }
     else if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg);   // local echo; DM broadcast corrects it
       if(net.conn){ try{ net.conn.send({t:'attack',mon:u.id,who:(playerChar()||{}).name,hit:true,dmg,dtype:dtype||''}); }catch(e){} } } },
-  saveBonus:(u,ab)=>{ if(u.me){ const c=u.c; return mod(abil(c,ab))+((c.saveProf&&c.saveProf[ab])?profBonus(c):0); }
-    return u.hp!=null?monsterSaveBonus(u):0; },
+  // 'me' is always fully known locally (real c); a monster is fully known via the mirror
+  // (deriveMonsterAbilities gives it real ability scores too); another real player is not —
+  // this device only ever sees that player's DM-broadcast summary, never their sheet.
+  checkSubject:u=> u.me ? u.c : (u.hp!=null ? deriveMonsterAbilities(u) : null),
+  saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
   addCond:(u,cond,rounds)=>{ if(u.hp!=null && net.conn){ try{ net.conn.send({t:'moncond',mon:u.id,cond,rounds}); }catch(e){} } },
-  name:u=> u.me?u.c.name:u.name
+  name:u=> u.me?u.c.name:u.name,
+  // Maneuver plumbing — a monster's position isn't this device's to mutate authoritatively;
+  // echo locally for instant feedback (matches hurt's "local echo; DM broadcast corrects it"
+  // pattern above), then tell the DM via message.
+  map:()=> net.session&&net.session.map,
+  allMonsters:()=> (net.session&&net.session.monsters)||[],
+  moveUnit:(u,x,y)=>{ u.x=x; u.y=y; if(net.conn){ try{ net.conn.send({t:'shove',mon:u.id,x,y}); }catch(e){} } },
+  solePc:()=> null   // this device only ever fully knows its own PC ('me'), not "the" party PC
 };
 function crToNum(cr){ const s=String(cr==null?0:cr); if(s.includes('/')){ const [a,b]=s.split('/').map(Number); return b?a/b:0; } return Number(s)||0; }
 function qbAC(u){ return u.side==='pc'?computeAC(u.c):u.ac; }
@@ -8228,11 +8369,17 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
     : QB.players.filter(p=>p.c.hp.cur>0).concat(QB.monsters.filter(m=>m.id!==u.id&&isPartyAlly(m))), map:()=>QB.map,
   cover:(a,t)=> (a&&t) ? coverBetween(QB, a.x,a.y, t.x,t.y) : 0,
   damageMult:(t,dtype)=> (t&&t.side==='mon') ? monsterDmgMult(t,dtype) : 1,
-  saveBonus:(u,ab)=> u.side==='mon' ? monsterSaveBonus(u) : mod(abil(u.c,ab))+((u.c.saveProf&&u.c.saveProf[ab])?profBonus(u.c):0),
+  // Both sides are always fully known locally in Quick Battle (solo, no network) — a monster
+  // is just as real a creature as the PC once it carries derived ability scores.
+  checkSubject:u=> u.side==='pc' ? u.c : deriveMonsterAbilities(u),
+  saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
   addCond:(u,cond,rounds)=>{ if(u.side==='mon'){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); }
     else { if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } },
   sanctuaryDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Sanctuary')||{}).dc||null : null,
-  holyAuraDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Holy Aura')||{}).dc||null : null };
+  holyAuraDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Holy Aura')||{}).dc||null : null,
+  allMonsters:()=> QB.monsters,
+  moveUnit:(u,x,y)=>{ u.x=x; u.y=y; },
+  solePc:()=> QB.players[0]&&QB.players[0].c };
 // the PC's usable attacks (weapons + custom), as generic atk objects
 function qbPcAttacks(c){ const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w,it);
@@ -8800,7 +8947,7 @@ BRAINS.tactical = function(qb, u){
   const foes0 = isPartyAlly(u)
     ? qb.monsters.filter(m=>m.id!==u.id&&isHostile(m))
     : qb.players.filter(p=>p.c.hp.cur>0).concat(qb.monsters.filter(m=>m.id!==u.id&&isPartyAlly(m)));
-  // A hidden PC (see qbHide) can't be targeted unless this unit's passive Perception beats
+  // A hidden PC (see maneuverHide) can't be targeted unless this unit's passive Perception beats
   // their Stealth total — otherwise every monster would just ignore Hide entirely.
   const foes = foes0.filter(f=>!(f.c && f.c.conditions && f.c.conditions.Hidden && monsterPassivePerception(u) < (f.c.hiddenDC||0)));
   if(!foes.length) return [];
@@ -9039,78 +9186,95 @@ function tileClearFor(s, x, y){
   const dd=DECOR[decorAt(s,x,y)]; if(dd&&dd.solid) return false;
   return true;
 }
+// ---- Unified maneuver system (all modes) ----
+// Every maneuver below takes an `ad` (qbAdapter/sessionAdapter/playerNetAdapter) + a `log`
+// callback instead of hardcoding QB/qbLog, so the exact same function runs Quick Battle, a
+// DM-controlled unit, and a connected player's own turn. Same principle as Engine.attack/
+// Engine.castApply above: one resolver, adapter supplies the mode-specific plumbing.
+// These only ever resolve a check the CALLER's device can compute locally — i.e. the actor
+// is always fully known (it's whoever's device is running this code) and the target is
+// always a monster (fully known everywhere via deriveMonsterAbilities — see checkSubject on
+// each adapter). A maneuver against another real PLAYER's own PC (not currently exposed in
+// any Use menu) would need the DM-prompt round-trip instead; these functions don't attempt it.
 // Athletics vs the target's choice of Athletics/Acrobatics (PHB). Push moves the target
 // 5 ft directly away; Prone knocks it down. Both cost one of the attacker's attacks (same
 // budget as a weapon Attack — see qbSpendAttackBudget), matching the RAW "special melee
 // attack" framing. Simplification: no size-category restriction (monsters in this project
 // carry no size data — see AUDIT.md-style note in the skills-in-combat plan) and a push
 // into an obstacle just stops at the last clear tile rather than dealing damage.
-function qbShove(pc, mo, mode){
-  const s=QB, c=pc.c;
-  if(gridDist(pc.x,pc.y,mo.x,mo.y)>1){ flashBanner('Too far to shove — must be adjacent'); return; }
-  if(!qbSpendAttackBudget(c)) return;
+function maneuverShove(ad, pcUnit, mo, mode, log){
+  const c=ad.checkSubject(pcUnit);
+  if(gridDist(pcUnit.x,pcUnit.y,mo.x,mo.y)>1){ flashBanner('Too far to shove — must be adjacent'); return {ok:false}; }
+  if(!qbSpendAttackBudget(c)) return {ok:false};
   if(c.conditions&&c.conditions.Hidden){ delete c.conditions.Hidden; c.hiddenDC=null; } // a maneuver reveals you like any attack
-  const res=opposedCheck(c,'athletics','str', mo, [['athletics','str'],['acrobatics','dex']]);
+  const name=ad.name(pcUnit), moName=ad.name(mo);
+  const res=opposedCheck(c,'athletics','str', ad.checkSubject(mo), [['athletics','str'],['acrobatics','dex']]);
   const detail='('+res.attacker.total+' vs '+res.defender.total+')';
-  if(!res.success){ qbLog('🤼 '+c.name+' tries to shove '+mo.name+' '+detail+' — fails'); flashBanner('Shove failed'); save(); render(); return; }
+  if(!res.success){ log('🤼 '+name+' tries to shove '+moName+' '+detail+' — fails'); flashBanner('Shove failed'); return {ok:true, success:false}; }
   if(mode==='prone'){
-    mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name==='Prone')) mo.conds.push({name:'Prone'});
-    qbLog('🤼 '+c.name+' shoves '+mo.name+' '+detail+' — knocked Prone');
-    flashBanner(mo.name+' is knocked Prone!');
+    ad.addCond(mo,'Prone');
+    log('🤼 '+name+' shoves '+moName+' '+detail+' — knocked Prone');
+    flashBanner(moName+' is knocked Prone!');
   } else {
-    const dx=Math.sign(mo.x-pc.x), dy=Math.sign(mo.y-pc.y);
+    const dx=Math.sign(mo.x-pcUnit.x), dy=Math.sign(mo.y-pcUnit.y);
     const nx=mo.x+dx, ny=mo.y+dy;
-    if(tileClearFor(s,nx,ny)){ mo.x=nx; mo.y=ny; qbLog('🤼 '+c.name+' shoves '+mo.name+' '+detail+' — pushed back 5 ft'); }
-    else qbLog('🤼 '+c.name+' shoves '+mo.name+' '+detail+' — pushed, but there\'s nowhere to go');
-    flashBanner(mo.name+' is pushed back!');
+    if(tileClearFor({map:ad.map()},nx,ny)){ ad.moveUnit(mo,nx,ny); log('🤼 '+name+' shoves '+moName+' '+detail+' — pushed back 5 ft'); }
+    else log('🤼 '+name+' shoves '+moName+' '+detail+' — pushed, but there\'s nowhere to go');
+    flashBanner(moName+' is pushed back!');
   }
-  sfx('hit'); save(); render(); qbCheckEnd();
+  sfx('hit');
+  return {ok:true, success:true};
 }
 // Grapple (PHB): Athletics vs Athletics/Acrobatics; success applies Grappled (speed 0 —
 // already handled generically by speedBlocked()). Tracks who grappled whom (mo.grappledBy)
 // so Escape Grapple knows which side to contest against — this project doesn't otherwise
 // track grapple ownership, so a monster-initiated grapple (from its own attack text, see
 // parseMonsterAttacks) falls back to contesting the nearest adjacent hostile, documented
-// as a simplification below.
-function qbGrapple(pc, mo){
-  const s=QB, c=pc.c;
-  if(gridDist(pc.x,pc.y,mo.x,mo.y)>1){ flashBanner('Too far to grapple — must be adjacent'); return; }
-  if(!qbSpendAttackBudget(c)) return;
+// as a simplification below. `mo.grappledBy` is a local-only marker (not synced over the
+// network) — it's only ever read by the currently-unused monster-side Escape branch below.
+function maneuverGrapple(ad, pcUnit, mo, log){
+  const c=ad.checkSubject(pcUnit);
+  if(gridDist(pcUnit.x,pcUnit.y,mo.x,mo.y)>1){ flashBanner('Too far to grapple — must be adjacent'); return {ok:false}; }
+  if(!qbSpendAttackBudget(c)) return {ok:false};
   if(c.conditions&&c.conditions.Hidden){ delete c.conditions.Hidden; c.hiddenDC=null; } // a maneuver reveals you like any attack
-  const res=opposedCheck(c,'athletics','str', mo, [['athletics','str'],['acrobatics','dex']]);
+  const name=ad.name(pcUnit), moName=ad.name(mo);
+  const res=opposedCheck(c,'athletics','str', ad.checkSubject(mo), [['athletics','str'],['acrobatics','dex']]);
   const detail='('+res.attacker.total+' vs '+res.defender.total+')';
-  if(!res.success){ qbLog('🤼 '+c.name+' tries to grapple '+mo.name+' '+detail+' — fails'); flashBanner('Grapple failed'); save(); render(); return; }
-  mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name==='Grappled')) mo.conds.push({name:'Grappled'});
+  if(!res.success){ log('🤼 '+name+' tries to grapple '+moName+' '+detail+' — fails'); flashBanner('Grapple failed'); return {ok:true, success:false}; }
+  ad.addCond(mo,'Grappled');
   mo.grappledBy='pc';
-  qbLog('🤼 '+c.name+' grapples '+mo.name+' '+detail);
-  flashBanner(mo.name+' is grappled!');
-  sfx('hit'); save(); render(); qbCheckEnd();
+  log('🤼 '+name+' grapples '+moName+' '+detail);
+  flashBanner(moName+' is grappled!');
+  sfx('hit');
+  return {ok:true, success:true};
 }
 // Escape a grapple as your action — the escaper rolls the better of Athletics/Acrobatics,
 // contested by the grappler's Athletics (PHB); a tie favors the grappler (still grappled),
 // which opposedCheck already gives us for free by rolling the grappler as the "attacker".
-// `unit` is the grappled side (pc-shaped {c:...} or a monster).
-function qbEscapeGrapple(unit, isPc){
-  const s=QB, c=isPc?unit.c:null;
-  if(isPc && !hasAction(c)){ flashBanner('No action left'); return; }
+// `unit` is the grappled side (pc-shaped {c:...} or a monster). The `!isPc` (monster escaping
+// a PC's grapple) branch is preserved but currently has no caller anywhere in the app — kept
+// adapter-generic rather than deleted, since it's harmless and may get a caller later (e.g. AI).
+function maneuverEscape(ad, unit, isPc, log){
+  const c=isPc?ad.checkSubject(unit):null;
+  if(isPc && !hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
   const grappler = isPc
-    ? s.monsters.find(m=>m.hp>0 && gridDist(unit.x,unit.y,m.x,m.y)<=1) // simplification: nearest adjacent hostile (grapple ownership isn't tracked on the monster-attacks-PC path)
-    : (unit.grappledBy==='pc' ? s.players[0].c : null);
-  if(!grappler){ flashBanner('Nothing to escape from'); return; }
-  const res=opposedCheck(grappler, 'athletics', 'str', isPc?c:unit, [['athletics','str'],['acrobatics','dex']]);
+    ? ad.allMonsters().find(m=>m.hp>0 && gridDist(unit.x,unit.y,m.x,m.y)<=1) // simplification: nearest adjacent hostile (grapple ownership isn't tracked on the monster-attacks-PC path)
+    : (unit.grappledBy==='pc' ? ad.solePc() : null);
+  if(!grappler){ flashBanner('Nothing to escape from'); return {ok:false}; }
+  const res=opposedCheck(ad.checkSubject(grappler)||grappler, 'athletics', 'str', isPc?c:ad.checkSubject(unit), [['athletics','str'],['acrobatics','dex']]);
   const success=!res.success;
   if(isPc) spendAction(c);
-  const name=isPc?c.name:unit.name;
+  const name=isPc?ad.name(unit):unit.name;
   if(success){
     if(isPc){ if(c.conditions) delete c.conditions['Grappled']; }
     else { unit.conds=(unit.conds||[]).filter(x=>x.name!=='Grappled'); unit.grappledBy=null; }
-    qbLog('🤸 '+name+' escapes the grapple!');
+    log('🤸 '+name+' escapes the grapple!');
     flashBanner('Escaped!');
   } else {
-    qbLog('🤸 '+name+' fails to escape the grapple');
+    log('🤸 '+name+' fails to escape the grapple');
     flashBanner('Escape failed');
   }
-  save(); render();
+  return {ok:true, success};
 }
 // Hide (PHB): needs heavy obscurement (darkness) at your own tile, full cover from the
 // nearest hostile, or — with the Skulker feat — just dim light. Success sets hiddenDC
@@ -9118,31 +9282,32 @@ function qbEscapeGrapple(unit, isPc){
 // Perception (monsterPassivePerception, CR-scaled like monsterSaveBonus) beats it (see
 // BRAINS.tactical's foes filter), and your next attack gets advantage (attackAdvantage's
 // 'Hidden' check) — cleared the moment you attack (qbResolveAttack) or use a maneuver.
-function qbHide(pc){
-  const s=QB, c=pc.c;
-  if(!hasAction(c)){ flashBanner('No action left'); return; }
-  const lvl=tileLightLevel(s, pc.x, pc.y);
-  const foes=s.monsters.filter(mo=>mo.hp>0&&isHostile(mo));
-  const closest=foes.slice().sort((a,b)=>gridDist(pc.x,pc.y,a.x,a.y)-gridDist(pc.x,pc.y,b.x,b.y))[0];
-  const fullCover=!!(closest && coverBetween(s, pc.x,pc.y, closest.x, closest.y)>=5);
+function maneuverHide(ad, pcUnit, log){
+  const c=ad.checkSubject(pcUnit);
+  if(!hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
+  const mapS={map:ad.map()};
+  const lvl=tileLightLevel(mapS, pcUnit.x, pcUnit.y);
+  const foes=ad.allMonsters().filter(mo=>mo.hp>0&&isHostile(mo));
+  const closest=foes.slice().sort((a,b)=>gridDist(pcUnit.x,pcUnit.y,a.x,a.y)-gridDist(pcUnit.x,pcUnit.y,b.x,b.y))[0];
+  const fullCover=!!(closest && coverBetween(mapS, pcUnit.x,pcUnit.y, closest.x, closest.y)>=5);
   const eligible = lvl===0 || (lvl===1 && hasFeat(c,'Skulker')) || fullCover;
-  if(!eligible){ flashBanner('Nothing to hide behind — need darkness, full cover, or (Skulker) dim light'); return; }
+  if(!eligible){ flashBanner('Nothing to hide behind — need darkness, full cover, or (Skulker) dim light'); return {ok:true, success:false}; }
   spendAction(c);
   const adv=skillCheckAdvantage(c,'stealth','dex');
   const r=rollSkillCheck(c,'stealth','dex',{adv:adv.adv, flatBonus:skillCheckBonus(c,'stealth')});
   if(!c.conditions) c.conditions={};
   c.conditions.Hidden=true; c.hiddenDC=r.total;
-  qbLog('🫥 '+c.name+' hides (Stealth '+r.total+')');
+  log('🫥 '+ad.name(pcUnit)+' hides (Stealth '+r.total+')');
   flashBanner('Hidden! (Stealth '+r.total+' — foes must beat this to notice you)');
-  save(); render();
+  return {ok:true, success:true};
 }
 // Recall Knowledge (DMG-style): an Intelligence check (Arcana/History/Nature/Religion —
 // player's choice; MONSTERS_5E doesn't track creature type here, so there's no "correct"
 // one to enforce) vs 10+CR reveals the target's resistances/vulnerabilities/immunities
 // from MONSTER_RVI. Costs your action.
-function qbStudyMonster(pc, mo, skillKey){
-  const c=pc.c;
-  if(!hasAction(c)){ flashBanner('No action left'); return; }
+function maneuverStudy(ad, pcUnit, mo, skillKey, log){
+  const c=ad.checkSubject(pcUnit);
+  if(!hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
   spendAction(c);
   const dc=Math.min(30, 10+Math.round(monsterCR(mo)));
   const adv=skillCheckAdvantage(c,skillKey,'int');
@@ -9154,30 +9319,32 @@ function qbStudyMonster(pc, mo, skillKey){
   if((rvi.res||[]).length) parts.push('resists '+rvi.res.join('/'));
   if((rvi.vuln||[]).length) parts.push('vulnerable to '+rvi.vuln.join('/'));
   const info=parts.length?parts.join('; '):'nothing unusual';
-  qbLog('📖 '+c.name+' studies '+mo.name+' ('+r.total+' vs DC '+dc+') — '+(ok?info:'learns nothing useful'));
-  flashBanner(ok? mo.name+': '+info : "You don't recall anything useful");
-  save(); render();
+  const name=ad.name(pcUnit), moName=ad.name(mo);
+  log('📖 '+name+' studies '+moName+' ('+r.total+' vs DC '+dc+') — '+(ok?info:'learns nothing useful'));
+  flashBanner(ok? moName+': '+info : "You don't recall anything useful");
+  return {ok:true, success:ok};
 }
-// Stabilize (PHB action): Medicine DC 10 on a creature at 0 HP that isn't dead yet.
-// Success ends death saves (c.stable — see applyHp/the sheet's death-save button) without
-// waking them or restoring HP; more damage while at 0 HP still ends it. NOTE: not wired
-// into any Use menu yet — solo Quick Battle has no downed ally to target (monsters/summons
-// die outright at 0 HP here, no death-save state of their own), so the only realistic
-// target is another party member, which needs DM-hosted/player-net's still-missing Use
-// button (see the Shove/Grapple commit). Adjacency isn't checked here for the same reason
-// — whichever caller eventually wires this up should verify it, like qbShove/qbGrapple do.
-function qbStabilizePc(pc, targetC){
-  const c=pc.c;
-  if(!hasAction(c)){ flashBanner('No action left'); return; }
-  if(targetC.hp.cur>0 || targetC.death.fail>=3){ flashBanner('Nothing to stabilize'); return; }
+// Stabilize (PHB action): Medicine DC 10 on a creature at 0 HP that isn't dead yet. Success
+// ends death saves without waking them or restoring HP. The target is a DOWNED ALLY —
+// meaningless in solo Quick Battle (no second ally exists there) and, in player-net, that
+// ally's real c.stable/death fields live only on THEIR OWN device, not the actor's — so this
+// only ever computes the actor's own roll locally; the caller is responsible for delivering
+// the result to the target (see the stabilize/stabilized net messages for player-net).
+// Shared "does this downed ally still need stabilizing" predicate — a mirror-data-shaped
+// {hpCur, stable, deathFail} check (see the Use menu's `allies` filter), kept as its own
+// function so it stays unit-testable even though maneuverStabilize itself no longer touches
+// a target object directly.
+function needsStabilizing(p){ return (p.hpCur||0)<=0 && !p.stable && (p.deathFail||0)<3; }
+function maneuverStabilize(ad, pcUnit, targetName, log){
+  const c=ad.checkSubject(pcUnit);
+  if(!hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
   spendAction(c);
   const adv=skillCheckAdvantage(c,'medicine','wis');
   const r=rollSkillCheck(c,'medicine','wis',{adv:adv.adv});
   const ok=r.total>=10;
-  if(ok){ targetC.stable=true; targetC.death={succ:0,fail:0}; }
-  qbLog('⚕️ '+c.name+' tries to stabilize '+targetC.name+' ('+r.total+' vs DC 10) — '+(ok?'stable':'fails'));
-  flashBanner(ok?targetC.name+' is stabilized':'Stabilize failed');
-  save(); render();
+  log('⚕️ '+ad.name(pcUnit)+' tries to stabilize '+targetName+' ('+r.total+' vs DC 10) — '+(ok?'stable':'fails'));
+  flashBanner(ok?targetName+' is stabilized':'Stabilize failed');
+  return {ok:true, success:ok};
 }
 /** Weapon / spell attack vs a hazard barrel (no AC dance — objects don't dodge). */
 function qbStrikeObject(pc, objEntry, atk){
@@ -9645,7 +9812,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.179';
+const APP_VERSION='v120.180';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

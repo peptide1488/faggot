@@ -777,3 +777,59 @@ hazard-bearing session directly into a live `Iso3DHost` and reading real pixel d
 off the overlay canvas — not just eyeballing a screenshot, since the app's own render loop
 re-syncing back to the real (hazard-free) session moments later made a plain screenshot an
 unreliable check.
+
+### Combat maneuvers (Shove, Grapple, Escape Grapple, Hide, Recall Knowledge, Stabilize) unified across all three modes (v120.180)
+
+**Was Quick-Battle-only.** `qbShove`/`qbGrapple`/`qbEscapeGrapple`/`qbHide`/`qbStudyMonster`/
+`qbStabilizePc` all hardcoded `const s=QB`, so the Use button's combat maneuvers (added
+v120.177–v120.179) had no equivalent in a DM-hosted session or player-net play at all.
+Replaced with adapter-taking `maneuverShove`/`maneuverGrapple`/`maneuverEscape`/
+`maneuverHide`/`maneuverStudy`/`maneuverStabilize`, following the same `Engine`+adapter
+pattern already used for attacks/spells (`qbAdapter`/`sessionAdapter`/`playerNetAdapter`) —
+one resolver, the adapter supplies mode-specific plumbing (network sends vs direct
+mutation). `openAdjacentUseUI` (the Use button's menu) now works identically in Quick
+Battle and player-net; DM-hosted has no PC of its own to "Use" with, so its monsters
+instead get Shove/Grapple options alongside their normal attacks in `dmMonsterAttack`.
+
+**Monsters got real ability scores.** `unitSkillRoll`'s PC-vs-monster branch (`u.skillProf`
+present → real math, else a flat CR-scaled `monsterCheckBonus`) is gone. Every monster
+instance now gets `deriveMonsterAbilities(mo)` called lazily on first check/save: fans the
+same CR-scaled flat bonus out into a real `{str,dex,con,int,wis,cha}` block (all six equal,
+so the *numbers* are unchanged — this was a shape refactor, not a balance change) plus empty
+`skillProf`/`saveProf` (no synthetic proficiencies, which would have double-counted the
+bonus). A monster is now just another creature that flows through `abil()`/`skillBonus()`/
+`opposedCheck()` the same way a PC does — no more separate monster-math branch to keep in
+sync. `qbAdapter`/`sessionAdapter`/`playerNetAdapter` each gained a `checkSubject(u)` method
+returning the raw ability-score-shaped object for any unit — a monster's is always known
+(whoever's device runs it has full data), a PC's own is always known locally; the only time
+it returns `null` is a DM looking at a *connected player's* real sheet, which never syncs
+beyond an hp/ac/conds/stable/deathFail summary by design.
+
+**The network round-trip that unification does NOT remove.** A DM-hosted session still
+can't compute a connected player's own Athletics/Acrobatics roll — same reason it can't
+roll a player's saving throw for `dmMonsterAttack`'s DC-based attacks. A DM-controlled
+monster's Shove/Grapple sends a `maneuverCheck` message (monster's roll + a target/kind)
+to the targeted player's device, which resolves the contest locally with its real sheet,
+applies the result to itself (condition via `c.conditions`, a forced push via the existing
+`move` message), and reports back purely so the DM's UI can show what happened
+(`maneuverResult`) — no new state-mutation authority moved to the player's device by this.
+
+**Stabilize** was built (v120.179) but never wired to a button — solo Quick Battle has no
+second ally to target. It's player-net only now: `playerHello()`'s sync payload gained
+`stable`/`deathFail` fields so a would-be rescuer's device can tell "needs stabilizing"
+apart from "already stable" or "already dead" from the mirror alone (`needsStabilizing`,
+unit-tested directly). The actor rolls Medicine locally and reports success/failure to the
+DM via a new `stabilize` message; the DM relays a terse `stabilized` to the target player's
+own device, which sets its own `c.stable`/`c.death` — the actor's device never mutates
+another player's character directly, matching how every other cross-player effect in this
+app works.
+
+Coverage: `rules-test.js` covers `deriveMonsterAbilities`/`checkSubject` on all three
+adapters, regression-tests the six `maneuver*` functions against `qbAdapter` (same outcomes
+as the old QB-only functions), and `needsStabilizing`'s eligibility rules directly. The
+network message handlers (`dmOnData`'s `shove`/`stabilize`/`maneuverResult`, `playerOnData`'s
+`stabilized`/`maneuverCheck`) aren't reachable from the headless harness (no live PeerJS) —
+verified instead via a live browser: Quick Battle's Use menu end-to-end (Grapple against a
+Red Dragon Wyrmling), the DM's monster-maneuver modal opening/rolling/sending, and the
+player-side `maneuverCheck` handler's hit and resist branches, injecting a minimal `net` rig
+rather than a full two-peer connection.

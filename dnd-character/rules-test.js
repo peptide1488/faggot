@@ -40,7 +40,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPELL_HANDLERS=SPELL_HANDLERS;globalThis.SUMMON_CATALOG=SUMMON_CATALOG;globalThis.summonCatalogEntry=summonCatalogEntry;'+
   'globalThis.spawnSummon=spawnSummon;globalThis.dismissSummonsForSpell=dismissSummonsForSpell;globalThis.nearbySpawnTiles=nearbySpawnTiles;globalThis.isConcentration=isConcentration;'+
   'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
-  'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;');
+  'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;'+
+  'globalThis.ABILITIES=ABILITIES;globalThis.playerNetAdapter=playerNetAdapter;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -203,29 +204,29 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
 
   const orig=Math.random;
   Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
-  qbGrapple(pc, mo);
+  maneuverGrapple(qbAdapter, pc, mo, qbLog);
   T('Grapple success applies the Grappled condition to the target', mo.conds.some(x=>x.name==='Grappled'));
   T('Grapple spends one of the attacker\'s attacks', sc.battle.attacksLeft===0);
   T('Grappled target has speed zeroed (existing speedBlocked, reused for free)', speedBlocked(mo)===true);
 
   resetTurn();
-  qbEscapeGrapple(mo, false);
+  maneuverEscape(qbAdapter, mo, false, qbLog);
   T('Escape Grapple success (attacker rolls high) clears Grappled', !mo.conds.some(x=>x.name==='Grappled'));
 
   mo.conds=[]; mo.grappledBy=null; resetTurn();
   Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
-  qbShove(pc, mo, 'prone');
+  maneuverShove(qbAdapter, pc, mo, 'prone', qbLog);
   T('Shove (prone) success knocks the target Prone', mo.conds.some(x=>x.name==='Prone'));
 
   mo.conds=[]; resetTurn(); mo.x=3; mo.y=2;
   Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
-  qbShove(pc, mo, 'push');
+  maneuverShove(qbAdapter, pc, mo, 'push', qbLog);
   T('Shove (push) success moves the target one tile further away', mo.x===4 && mo.y===2);
 
   resetTurn(); mo.x=3; mo.y=2; // back adjacent — the push test above moved it away
   Math.random=(()=>{ const seq=[0.01,0.99,0.99]; let i=0; return ()=>seq[i++ % seq.length]; })();
   const before=JSON.stringify(mo.conds);
-  qbGrapple(pc, mo);
+  maneuverGrapple(qbAdapter, pc, mo, qbLog);
   T('Grapple failure (defender rolls high) leaves the target unaffected', JSON.stringify(mo.conds)===before);
   T('A failed maneuver still spent the attack (matches a missed weapon Attack)', sc.battle.attacksLeft===0);
 
@@ -251,13 +252,13 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
     monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:4,y:4,hp:7,max:7,ac:15,attacksLeft:1}],
     players:[{id:'pc',side:'pc',name:sneak.name,c:sneak,x:0,y:0,hpCur:sneak.hp.cur,hpMax:sneak.hp.max}] });
   const spc=getQB().players[0];
-  qbHide(spc);
-  T('qbHide refuses in the open (bright light, no cover, not adjacent)', !(sneak.conditions&&sneak.conditions.Hidden));
+  maneuverHide(qbAdapter, spc, qbLog);
+  T('maneuverHide refuses in the open (bright light, no cover, not adjacent)', !(sneak.conditions&&sneak.conditions.Hidden));
 
   getQB().map.tiles={'2,0':'wall'}; getQB().monsters[0].x=4; getQB().monsters[0].y=0; // full-wall obstruction on the line from pc (0,0) to the monster
   sneak.battle.action=false; sneak.battle.actionsUsed=0;
-  { const orig=Math.random; Math.random=()=>0.99; qbHide(spc); Math.random=orig; } // force a high Stealth roll — deterministic vs. the Goblin's passive Perception below
-  T('qbHide succeeds with full cover (wall) from the nearest hostile', sneak.conditions&&sneak.conditions.Hidden===true && Number.isFinite(sneak.hiddenDC));
+  { const orig=Math.random; Math.random=()=>0.99; maneuverHide(qbAdapter, spc, qbLog); Math.random=orig; } // force a high Stealth roll — deterministic vs. the Goblin's passive Perception below
+  T('maneuverHide succeeds with full cover (wall) from the nearest hostile', sneak.conditions&&sneak.conditions.Hidden===true && Number.isFinite(sneak.hiddenDC));
 
   const foes1=BRAINS.tactical(getQB(), Object.assign({id:'m1',brain:'tactical',hp:7,x:4,y:0,attacksLeft:1,moveLeft:30,speed:30,atk:'Bite +4 (1d6+2)',base:'Goblin',name:'Goblin'}));
   T('a weak monster (low passive Perception) cannot target the hidden PC', !foes1.some(it=>it.type==='attack'&&it.targetId==='pc'));
@@ -278,12 +279,12 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
     monsters:[{id:'m1',side:'mon',base:'Skeleton',name:'Skeleton',x:1,y:0,hp:13,max:13,ac:13,attacksLeft:1}],
     players:[{id:'pc',side:'pc',name:sage.name,c:sage,x:0,y:0,hpCur:sage.hp.cur,hpMax:sage.hp.max}] });
   const spc2=getQB().players[0];
-  { const orig=Math.random; Math.random=()=>0.99; qbStudyMonster(spc2, getQB().monsters[0], 'arcana'); Math.random=orig; }
+  { const orig=Math.random; Math.random=()=>0.99; maneuverStudy(qbAdapter, spc2, getQB().monsters[0], 'arcana', qbLog); Math.random=orig; }
   T('Recall Knowledge success logs the Skeleton\'s real RVI data (vuln bludgeoning, immune poison)', /vuln.*bludgeoning|bludgeoning.*vuln/i.test(getQB().log[0].m) || /immune.*poison/i.test(getQB().log[0].m));
   T('Recall Knowledge spends the action', sage.battle.actionsUsed>0);
 
   sage.battle.action=false; sage.battle.actionsUsed=0;
-  { const orig=Math.random; Math.random=()=>0.01; qbStudyMonster(spc2, getQB().monsters[0], 'arcana'); Math.random=orig; }
+  { const orig=Math.random; Math.random=()=>0.01; maneuverStudy(qbAdapter, spc2, getQB().monsters[0], 'arcana', qbLog); Math.random=orig; }
   T('Recall Knowledge failure logs "learns nothing useful"', /learns nothing useful/.test(getQB().log[0].m));
   setQB(null);
 }
@@ -291,16 +292,22 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
   setQB({log:[]}); // qbLog defaults to the global QB when no session is passed
   const medic=newCharacter('Medic'); medic.cls='Cleric'; medic.level=3; medic.abilities={str:10,dex:10,con:10,int:10,wis:16,cha:10}; medic.skillProf.medicine=true;
   medic.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  // maneuverStabilize only rolls the actor's own check now (see its comment: the target's
+  // real c.stable/death fields may live on another device entirely in player-net) — the
+  // caller applies the mutation on success, exactly like the player-net Use-menu handler does.
   const down=newCharacter('Down'); down.hp={cur:0,max:20}; down.death={succ:0,fail:1};
-  { const orig=Math.random; Math.random=()=>0.99; qbStabilizePc({c:medic,x:0,y:0}, down); Math.random=orig; }
+  { const orig=Math.random; Math.random=()=>0.99; const res=maneuverStabilize(qbAdapter, {side:'pc',c:medic,x:0,y:0}, down.name, qbLog); if(res.success){ down.stable=true; down.death={succ:0,fail:0}; } Math.random=orig; }
   T('Stabilize success sets c.stable and resets death saves', down.stable===true && down.death.succ===0 && down.death.fail===0);
 
   const down2=newCharacter('Down2'); down2.hp={cur:0,max:20}; down2.death={succ:0,fail:1};
   medic.battle.action=false; medic.battle.actionsUsed=0;
-  { const orig=Math.random; Math.random=()=>0.01; qbStabilizePc({c:medic,x:0,y:0}, down2); Math.random=orig; }
+  { const orig=Math.random; Math.random=()=>0.01; const res=maneuverStabilize(qbAdapter, {side:'pc',c:medic,x:0,y:0}, down2.name, qbLog); if(res.success){ down2.stable=true; down2.death={succ:0,fail:0}; } Math.random=orig; }
   T('Stabilize failure leaves death saves untouched', !down2.stable && down2.death.fail===1);
 
-  T('Stabilize refuses a conscious target', (()=>{ const up=newCharacter('Up'); up.hp={cur:5,max:20}; up.death={succ:0,fail:0}; medic.battle.action=false; medic.battle.actionsUsed=0; qbStabilizePc({c:medic,x:0,y:0}, up); return !up.stable; })());
+  T('needsStabilizing: down and not yet stable/dead', needsStabilizing({hpCur:0,stable:false,deathFail:1})===true);
+  T('needsStabilizing refuses a conscious target', needsStabilizing({hpCur:5,stable:false,deathFail:0})===false);
+  T('needsStabilizing refuses an already-stable target', needsStabilizing({hpCur:0,stable:true,deathFail:1})===false);
+  T('needsStabilizing refuses a dead target (3 failed death saves)', needsStabilizing({hpCur:0,stable:false,deathFail:3})===false);
 
   // Taking more damage at 0 HP ends a Stabilize (PHB) — applyHp must clear c.stable.
   down.hp.temp=0; applyHp(down, -1);
@@ -353,7 +360,18 @@ T('castApply no-save spell: full damage', ev.saved===false && ev.dmg===9 && ad._
 T('castApply voids on dead target', Engine.castApply(stubAd({hp:()=>0}),'me','t1',{name:'X',dmgTotal:5}).void===true);
 T('spellCondOf maps SPELL_COND {c,r} shape', (()=>{ const sc=spellCondOf('Hold Person'); return sc && sc.c && sc.rounds>0; })());
 T('Grease imposes Prone on a failed save (was a no-op)', (()=>{ const sc=spellCondOf('Grease'); return sc && sc.c==='Prone'; })());
-T('qbAdapter saves: monster CR-scaled, PC ability-based', qbAdapter.saveBonus({side:'mon',base:'Goblin'})===1 && qbAdapter.saveBonus({side:'pc',c},'dex')===2);
+T('qbAdapter saves: monster CR-scaled, PC ability-based', qbAdapter.saveBonus({side:'mon',base:'Goblin'},'dex')===1 && qbAdapter.saveBonus({side:'pc',c},'dex')===2);
+
+/* ---- creature unification: monsters get a real abilities/skillProf/saveProf shape ---- */
+{ const mo={base:'Goblin', hp:7};
+  deriveMonsterAbilities(mo);
+  T('deriveMonsterAbilities gives every ability the same modifier as the old flat CR bonus', ABILITIES.every(([k])=>mod(abil(mo,k))===monsterSaveBonus(mo)));
+  T('deriveMonsterAbilities leaves skillProf/saveProf empty (no synthetic proficiency stacking)', Object.keys(mo.skillProf).length===0 && Object.keys(mo.saveProf).length===0);
+  T('deriveMonsterAbilities is idempotent (safe to call repeatedly / lazily)', (()=>{ const before=mo.abilities; deriveMonsterAbilities(mo); return mo.abilities===before; })());
+}
+T('qbAdapter.checkSubject: monster→derived instance, pc→raw c', qbAdapter.checkSubject({side:'mon',base:'Goblin',hp:7}).abilities!=null && qbAdapter.checkSubject({side:'pc',c})===c);
+T('sessionAdapter.checkSubject: monster known locally, connected player unknown (must round-trip)', sessionAdapter.checkSubject({hp:7,base:'Goblin'}).abilities!=null && sessionAdapter.checkSubject({hpCur:10})===null);
+T('playerNetAdapter.checkSubject: self and mirrored monster known, another real player unknown', playerNetAdapter.checkSubject({me:true,c})===c && playerNetAdapter.checkSubject({hp:7,base:'Goblin'}).abilities!=null && playerNetAdapter.checkSubject({hpCur:10})===null);
 
 /* ---- auto-prepare on deliberate add (prep casters) ---- */
 const ap=newCharacter('AP'); ap.cls='Wizard'; ap.level=20; ap.abilities={str:10,dex:10,con:10,int:20,wis:10,cha:10}; applyClassDefaults(ap);
