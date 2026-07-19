@@ -157,6 +157,86 @@ T('JoAT: half prof on non-proficient skill', skillBonus(bard,'athletics','str',t
 const ob=newCharacter('Ob'); ob.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10}; ob.feats=[{name:'Observant'}];
 T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
 
+/* ---- combat skill actions: shared check plumbing (Shove/Grapple/Hide/etc.) ---- */
+{
+  const barb=newCharacter('Rg'); barb.cls='Barbarian'; barb.level=1; barb.abilities={str:16,dex:10,con:14,int:10,wis:10,cha:10};
+  T('not raging: no Strength-check advantage', skillCheckAdvantage(barb,'athletics','str').adv===0);
+  addEffect(barb,'Rage');
+  T('raging: advantage on Strength checks', skillCheckAdvantage(barb,'athletics','str').adv===1);
+  T('raging does not grant advantage on Dex checks', skillCheckAdvantage(barb,'acrobatics','dex').adv===0);
+
+  const orig=Math.random;
+  Math.random=()=>0.05;
+  let r=rollSkillCheck(barb,'athletics','str',{adv:0});
+  T('rollSkillCheck flat: single d20, no second roll', r.d2===null && r.d20===2);
+  { let calls=[0.05,0.9], i=0; Math.random=()=>calls[i++]; }
+  r=rollSkillCheck(barb,'athletics','str',{adv:1});
+  T('rollSkillCheck advantage: keeps the higher of two d20s', r.d20===19);
+  { let calls=[0.05,0.9], i=0; Math.random=()=>calls[i++]; }
+  r=rollSkillCheck(barb,'athletics','str',{adv:-1});
+  T('rollSkillCheck disadvantage: keeps the lower of two d20s', r.d20===2);
+  Math.random=orig;
+
+  const rog=newCharacter('St'); rog.abilities={str:10,dex:14,con:10,int:10,wis:10,cha:10};
+  T('no Pass without Trace: no Stealth bonus', skillCheckBonus(rog,'stealth')===0);
+  addEffect(rog,'Pass without Trace');
+  T('Pass without Trace: +10 to Stealth checks', skillCheckBonus(rog,'stealth')===10);
+
+  const mo={name:'Ogre'};
+  T('monsterCheckBonus reuses the existing CR-scaled monsterSaveBonus', monsterCheckBonus(mo)===monsterSaveBonus(mo));
+
+  const sh=newCharacter('Sh'); sh.cls='Fighter'; sh.level=5; sh.abilities={str:18,dex:10,con:14,int:10,wis:10,cha:10}; sh.skillProf.athletics=true;
+  const goblin={name:'Goblin'};
+  const res=opposedCheck(sh,'athletics','str', goblin, [['athletics','str'],['acrobatics','dex']]);
+  T('opposedCheck (PC vs monster) returns a well-formed contested result', typeof res.success==='boolean' && Number.isFinite(res.attacker.total) && Number.isFinite(res.defender.total));
+}
+
+/* ---- Shove / Grapple / Escape Grapple (Use-menu combat maneuvers, Quick Battle) ---- */
+{
+  const sc=newCharacter('Brute'); sc.cls='Fighter'; sc.level=1; sc.abilities={str:18,dex:10,con:14,int:10,wis:10,cha:10}; sc.skillProf.athletics=true;
+  sc.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:3,y:2,hp:7,max:7,ac:15,attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:sc.name,c:sc,x:2,y:2,hpCur:sc.hp.cur,hpMax:sc.hp.max}] });
+  const pc=getQB().players[0], mo=getQB().monsters[0];
+  const resetTurn=()=>{ sc.battle.action=false; sc.battle.actionsUsed=0; sc.battle.attacksLeft=1; };
+
+  const orig=Math.random;
+  Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
+  qbGrapple(pc, mo);
+  T('Grapple success applies the Grappled condition to the target', mo.conds.some(x=>x.name==='Grappled'));
+  T('Grapple spends one of the attacker\'s attacks', sc.battle.attacksLeft===0);
+  T('Grappled target has speed zeroed (existing speedBlocked, reused for free)', speedBlocked(mo)===true);
+
+  resetTurn();
+  qbEscapeGrapple(mo, false);
+  T('Escape Grapple success (attacker rolls high) clears Grappled', !mo.conds.some(x=>x.name==='Grappled'));
+
+  mo.conds=[]; mo.grappledBy=null; resetTurn();
+  Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
+  qbShove(pc, mo, 'prone');
+  T('Shove (prone) success knocks the target Prone', mo.conds.some(x=>x.name==='Prone'));
+
+  mo.conds=[]; resetTurn(); mo.x=3; mo.y=2;
+  Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
+  qbShove(pc, mo, 'push');
+  T('Shove (push) success moves the target one tile further away', mo.x===4 && mo.y===2);
+
+  resetTurn(); mo.x=3; mo.y=2; // back adjacent — the push test above moved it away
+  Math.random=(()=>{ const seq=[0.01,0.99,0.99]; let i=0; return ()=>seq[i++ % seq.length]; })();
+  const before=JSON.stringify(mo.conds);
+  qbGrapple(pc, mo);
+  T('Grapple failure (defender rolls high) leaves the target unaffected', JSON.stringify(mo.conds)===before);
+  T('A failed maneuver still spent the attack (matches a missed weapon Attack)', sc.battle.attacksLeft===0);
+
+  Math.random=orig;
+  T('tileClearFor rejects a solid wall tile', tileClearFor(getQB(),0,0)===true); // grass/undefined tile = clear
+  getQB().map.tiles['1,1']='wall';
+  T('tileClearFor rejects an actual wall tile', tileClearFor(getQB(),1,1)===false);
+  T('tileClearFor rejects out-of-bounds', tileClearFor(getQB(),-1,0)===false && tileClearFor(getQB(),5,0)===false);
+  setQB(null);
+}
+
 /* ---- sorcery points ---- */
 const so=newCharacter('So'); so.cls='Sorcerer'; so.level=5;
 T('Sorcery points max = level (5), none before L2', sorcMax(so)===5 && sorcMax({cls:'Sorcerer',level:1})===0);

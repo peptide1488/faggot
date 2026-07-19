@@ -5676,10 +5676,60 @@ function jumpAcrobaticsDC(mover, riseFt){
   const over=Math.max(0, (riseFt||0)-cap);
   return 10+Math.floor(over/5)*2;
 }
-function rollSkillCheck(c, skillKey, abilKey){
-  const bonus=skillBonus(c, skillKey, abilKey, true);
+function rollSkillCheck(c, skillKey, abilKey, opts){
+  opts=opts||{};
+  const bonus=skillBonus(c, skillKey, abilKey, true) + (opts.flatBonus||0) + (opts.guidance?(1+Math.floor(Math.random()*4)):0);
+  const adv=opts.adv||0;
+  const d1=1+Math.floor(Math.random()*20);
+  let d=d1, d2=null;
+  if(adv){ d2=1+Math.floor(Math.random()*20); d=adv>0?Math.max(d1,d2):Math.min(d1,d2); }
+  return {d20:d, d1, d2, adv, bonus, total:d+bonus, skillKey, abilKey};
+}
+// Ability-check advantage from tracked conditions/effects — mirrors attackAdvantage's
+// shape (index.html ~497) but for skill/ability checks instead of attack rolls. Currently
+// covers what's actually mechanically tracked: Rage's advantage on Strength checks.
+// NOTE: Enlarge/Reduce's SPELL_EFFECTS note also promises this (Enlarge: advantage on STR,
+// Reduce: disadvantage), but the game doesn't yet track which of the two was chosen when
+// cast (single combined 'Enlarge/Reduce' effect name) — left unwired rather than guessing.
+function skillCheckAdvantage(c, skillKey, abilKey){
+  let adv=0; const why=[];
+  if(abilKey==='str' && isRaging(c)){ adv++; why.push('raging (advantage on Strength checks)'); }
+  return {adv, why};
+}
+// Flat additive bonuses to a skill check from active effects (distinct from advantage).
+function skillCheckBonus(c, skillKey){
+  let n=0;
+  if(skillKey==='stealth' && (c.effects||[]).some(e=>e.name==='Pass without Trace')) n+=10;
+  return n;
+}
+// Monsters have no tracked ability scores/skill bonuses — reuse the existing CR-scaled
+// save bonus (monsterSaveBonus, used for saves today) as the monster side of any opposed
+// check. Same simplification this project already uses for monster saves.
+function monsterCheckBonus(mo){ return monsterSaveBonus(mo); }
+// Roll a skill check for either a PC (c-shaped: real ability scores/proficiencies) or a
+// monster (CR-scaled flat bonus, no advantage tracking) — lets callers treat either side
+// of a contest uniformly.
+function unitSkillRoll(u, skillKey, abilKey, opts){
+  opts=opts||{};
+  if(u && u.skillProf){
+    const ca=skillCheckAdvantage(u, skillKey, abilKey);
+    return rollSkillCheck(u, skillKey, abilKey, Object.assign({}, opts, {adv:(opts.adv||0)||ca.adv, flatBonus:(opts.flatBonus||0)+skillCheckBonus(u,skillKey)}));
+  }
+  const bonus=monsterCheckBonus(u)+(opts.flatBonus||0);
   const d=1+Math.floor(Math.random()*20);
   return {d20:d, bonus, total:d+bonus, skillKey, abilKey};
+}
+// Contested check: attacker rolls one skill, defender rolls the best of their listed
+// options (their choice, simulated by rolling all and keeping the best — equivalent in
+// expectation to a real choice made after seeing the roll... actually a real defender
+// would choose BEFORE rolling, but since both options use the same underlying bonus
+// structure this only matters when advantage sources differ per-skill, an edge case we
+// accept for simplicity). Used by Shove/Grapple/Escape.
+function opposedCheck(attacker, atkSkill, atkAbil, defender, defSkillOptions){
+  const a=unitSkillRoll(attacker, atkSkill, atkAbil);
+  const defRolls=defSkillOptions.map(([sk,ab])=>unitSkillRoll(defender, sk, ab));
+  const def=defRolls.reduce((best,r)=>r.total>best.total?r:best, defRolls[0]);
+  return {attacker:a, defender:def, success:a.total>=def.total};
 }
 
 /* ---- Lighting / vision (5e-ish) ----
@@ -6883,21 +6933,37 @@ function listInteractInRange(s, from, tiles){
  */
 function openAdjacentUseUI(c, s, me){
   const items=listInteractInRange(s, me, 1);
-  if(!items.length){
+  // Combat maneuvers (Shove/Grapple) are QB-only for now — DM-hosted/player-net have no
+  // "Use" button at all yet (a bigger, separate gap noted when this feature was built).
+  const inQB=(typeof QB!=='undefined' && s===QB);
+  const foes=inQB ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=1) : [];
+  const grappled=inQB && !!(c.conditions&&c.conditions.Grappled);
+  if(!items.length && !foes.length && !grappled){
     flashBanner('Nothing interactive within 5 ft');
     if(typeof qbLog==='function'&&s===QB) qbLog('🖐 No usable objects adjacent');
     return;
   }
   function draw(pick){
-    let body=`<h2>🖐 Use object</h2>
-      <p class="muted" style="font-size:12px;margin:0 0 8px">Objects on or next to your tile. (Mage Hand reaches 30 ft.)</p>`;
+    let body=`<h2>🖐 Use</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Objects and foes on or next to your tile. (Mage Hand reaches 30 ft.)</p>`;
     if(!pick){
+      if(grappled) body+=`<button class="btn block" id="useEscape" style="margin-bottom:8px;text-align:left">🤸 Escape Grapple<small style="display:block;opacity:.75">Athletics/Acrobatics (your choice) vs the grappler's Athletics</small></button>`;
       body+=items.map((it,i)=>{
         const st=it.obj.state||it.def.default;
         return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
-          <button class="btn sm" data-use="${i}">Use</button></div>`;
+          <button class="btn sm" data-use="obj:${i}">Use</button></div>`;
       }).join('');
+      body+=foes.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>Combat maneuver · (${mo.x},${mo.y})</small></div>
+        <button class="btn sm" data-use="foe:${i}">Use</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useClose" style="margin-top:10px">Cancel</button>`;
+    } else if(pick.kind==='foe'){
+      const mo=pick.mo;
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(mo.name)}</b> at (${mo.x},${mo.y}) — Athletics vs Athletics/Acrobatics. Uses one of your attacks.</p>
+        <button class="btn block" data-usea="shove-prone" style="margin-bottom:8px;text-align:left">🤼 Shove — knock Prone</button>
+        <button class="btn block" data-usea="shove-push" style="margin-bottom:8px;text-align:left">🤼 Shove — push 5 ft</button>
+        <button class="btn block" data-usea="grapple" style="margin-bottom:8px;text-align:left">🤼 Grapple<small style="display:block;opacity:.75">Grappled: speed 0 until it escapes</small></button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else {
       const acts=availableInteractActions(pick.obj, 'adj');
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(pick.def.name)}</b> at (${pick.x},${pick.y}) — ${esc(pick.obj.state||pick.def.default)}</p>`;
@@ -6910,9 +6976,20 @@ function openAdjacentUseUI(c, s, me){
     $('#useClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     $('#useModal').onclick=e=>{ if(e.target.id==='useModal') $('#modalRoot').innerHTML=''; };
     { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(null); }
-    document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>draw(items[Number(b.dataset.use)]));
+    { const es=$('#useEscape'); if(es) es.onclick=()=>{ $('#modalRoot').innerHTML=''; qbEscapeGrapple({c}, true); }; }
+    document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
+      const [kind,idx]=b.dataset.use.split(':');
+      draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : Object.assign({kind:'obj'}, items[Number(idx)]));
+    });
     document.querySelectorAll('[data-usea]').forEach(b=>b.onclick=()=>{
       const actId=b.dataset.usea;
+      if(pick&&pick.kind==='foe'){
+        $('#modalRoot').innerHTML='';
+        if(actId==='shove-prone') qbShove(me, pick.mo, 'prone');
+        else if(actId==='shove-push') qbShove(me, pick.mo, 'push');
+        else if(actId==='grapple') qbGrapple(me, pick.mo);
+        return;
+      }
       if(c.battle&&!hasAction(c)){ flashBanner('No Action left this turn'); return; }
       const res=runInteractAction(s, c, pick.key, actId, 'adj');
       $('#modalRoot').innerHTML='';
@@ -8758,7 +8835,7 @@ function renderQuickBattle(){
       <button class="btn ${s.moveMode?'':'ghost'}" id="qbMove" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>🥾 ${s.moveMode?'Moving '+ (b.move||0) +'/'+effSpeed(c)+' ft':'Move'}</button>
       <button class="btn" id="qbAttack" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>⚔ Attack</button>
       ${(isCaster(c)||c.spells.length)?`<button class="btn" id="qbCast" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>✨ Spells</button>`:''}
-      <button class="btn ghost" id="qbUse" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'} title="Interact with adjacent objects (doors, levers, traps…)">🖐 Use</button>
+      <button class="btn ghost" id="qbUse" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'} title="Interact with adjacent objects, or Shove/Grapple an adjacent foe">🖐 Use</button>
     </div>
     <button class="btn ghost block" id="qbEnd" style="margin-top:8px" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'Green: remaining speed (can still Attack). Red: Dash uses your Action. Jump/climb marked on path. Tap a tile.':'⚔ Attack a monster in range, ✨ cast a spell, or 🥾 Move. You can also tap a 🟥 monster directly.'):'⏳ Waiting for '+esc(o?o.name:'…')+'…'}</p>
@@ -8922,6 +8999,86 @@ function qbSpendAttackBudget(c){
   else if((b.attacksLeft||0)>=full){ if(!hasAction(c)){ flashBanner('No actions left'); return false; } spendAction(c); }
   b.attacksLeft=Math.max(0,(b.attacksLeft||0)-1);
   return true;
+}
+/** Is (x,y) in-bounds and clear of solid terrain/decor? Shared by Shove's push destination. */
+function tileClearFor(s, x, y){
+  const cols=s.map.cols, rows=s.map.rows;
+  if(x<0||y<0||x>=cols||y>=rows) return false;
+  const tk=(s.map.tiles||{})[x+','+y], td=TERRAIN[tk];
+  if(td&&td.solid) return false;   // walls and pits both stop a shove (no fly-push modeled)
+  const dd=DECOR[decorAt(s,x,y)]; if(dd&&dd.solid) return false;
+  return true;
+}
+// Athletics vs the target's choice of Athletics/Acrobatics (PHB). Push moves the target
+// 5 ft directly away; Prone knocks it down. Both cost one of the attacker's attacks (same
+// budget as a weapon Attack — see qbSpendAttackBudget), matching the RAW "special melee
+// attack" framing. Simplification: no size-category restriction (monsters in this project
+// carry no size data — see AUDIT.md-style note in the skills-in-combat plan) and a push
+// into an obstacle just stops at the last clear tile rather than dealing damage.
+function qbShove(pc, mo, mode){
+  const s=QB, c=pc.c;
+  if(gridDist(pc.x,pc.y,mo.x,mo.y)>1){ flashBanner('Too far to shove — must be adjacent'); return; }
+  if(!qbSpendAttackBudget(c)) return;
+  const res=opposedCheck(c,'athletics','str', mo, [['athletics','str'],['acrobatics','dex']]);
+  const detail='('+res.attacker.total+' vs '+res.defender.total+')';
+  if(!res.success){ qbLog('🤼 '+c.name+' tries to shove '+mo.name+' '+detail+' — fails'); flashBanner('Shove failed'); save(); render(); return; }
+  if(mode==='prone'){
+    mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name==='Prone')) mo.conds.push({name:'Prone'});
+    qbLog('🤼 '+c.name+' shoves '+mo.name+' '+detail+' — knocked Prone');
+    flashBanner(mo.name+' is knocked Prone!');
+  } else {
+    const dx=Math.sign(mo.x-pc.x), dy=Math.sign(mo.y-pc.y);
+    const nx=mo.x+dx, ny=mo.y+dy;
+    if(tileClearFor(s,nx,ny)){ mo.x=nx; mo.y=ny; qbLog('🤼 '+c.name+' shoves '+mo.name+' '+detail+' — pushed back 5 ft'); }
+    else qbLog('🤼 '+c.name+' shoves '+mo.name+' '+detail+' — pushed, but there\'s nowhere to go');
+    flashBanner(mo.name+' is pushed back!');
+  }
+  sfx('hit'); save(); render(); qbCheckEnd();
+}
+// Grapple (PHB): Athletics vs Athletics/Acrobatics; success applies Grappled (speed 0 —
+// already handled generically by speedBlocked()). Tracks who grappled whom (mo.grappledBy)
+// so Escape Grapple knows which side to contest against — this project doesn't otherwise
+// track grapple ownership, so a monster-initiated grapple (from its own attack text, see
+// parseMonsterAttacks) falls back to contesting the nearest adjacent hostile, documented
+// as a simplification below.
+function qbGrapple(pc, mo){
+  const s=QB, c=pc.c;
+  if(gridDist(pc.x,pc.y,mo.x,mo.y)>1){ flashBanner('Too far to grapple — must be adjacent'); return; }
+  if(!qbSpendAttackBudget(c)) return;
+  const res=opposedCheck(c,'athletics','str', mo, [['athletics','str'],['acrobatics','dex']]);
+  const detail='('+res.attacker.total+' vs '+res.defender.total+')';
+  if(!res.success){ qbLog('🤼 '+c.name+' tries to grapple '+mo.name+' '+detail+' — fails'); flashBanner('Grapple failed'); save(); render(); return; }
+  mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name==='Grappled')) mo.conds.push({name:'Grappled'});
+  mo.grappledBy='pc';
+  qbLog('🤼 '+c.name+' grapples '+mo.name+' '+detail);
+  flashBanner(mo.name+' is grappled!');
+  sfx('hit'); save(); render(); qbCheckEnd();
+}
+// Escape a grapple as your action — the escaper rolls the better of Athletics/Acrobatics,
+// contested by the grappler's Athletics (PHB); a tie favors the grappler (still grappled),
+// which opposedCheck already gives us for free by rolling the grappler as the "attacker".
+// `unit` is the grappled side (pc-shaped {c:...} or a monster).
+function qbEscapeGrapple(unit, isPc){
+  const s=QB, c=isPc?unit.c:null;
+  if(isPc && !hasAction(c)){ flashBanner('No action left'); return; }
+  const grappler = isPc
+    ? s.monsters.find(m=>m.hp>0 && gridDist(unit.x,unit.y,m.x,m.y)<=1) // simplification: nearest adjacent hostile (grapple ownership isn't tracked on the monster-attacks-PC path)
+    : (unit.grappledBy==='pc' ? s.players[0].c : null);
+  if(!grappler){ flashBanner('Nothing to escape from'); return; }
+  const res=opposedCheck(grappler, 'athletics', 'str', isPc?c:unit, [['athletics','str'],['acrobatics','dex']]);
+  const success=!res.success;
+  if(isPc) spendAction(c);
+  const name=isPc?c.name:unit.name;
+  if(success){
+    if(isPc){ if(c.conditions) delete c.conditions['Grappled']; }
+    else { unit.conds=(unit.conds||[]).filter(x=>x.name!=='Grappled'); unit.grappledBy=null; }
+    qbLog('🤸 '+name+' escapes the grapple!');
+    flashBanner('Escaped!');
+  } else {
+    qbLog('🤸 '+name+' fails to escape the grapple');
+    flashBanner('Escape failed');
+  }
+  save(); render();
 }
 /** Weapon / spell attack vs a hazard barrel (no AC dance — objects don't dodge). */
 function qbStrikeObject(pc, objEntry, atk){
@@ -9389,7 +9546,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.176';
+const APP_VERSION='v120.177';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
