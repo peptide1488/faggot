@@ -44,3 +44,17 @@ Open the URL printed by Vite (default `http://localhost:5173`).
 - Download entire playlists or pick individual entries
 - Live download progress via WebSocket
 - Manage and download completed files from the UI
+
+## Adding support for a site yt-dlp can't handle
+
+Some sites (e.g. KVS / `kt_player`-based tube sites) aren't recognized by
+yt-dlp's built-in extractors and fail with `ERROR: Unsupported URL`. You can
+teach the downloader about them by dropping a yt-dlp **plugin extractor** into:
+
+```
+backend/yt_dlp_plugins/extractor/<yoursite>.py
+```
+
+The backend puts that folder on the import path and loads it automatically on
+startup, so a dedicated extractor there is tried before the generic one. See
+`backend/yt_dlp_plugins/extractor/cumgloryhole.py` for a worked KVS example.

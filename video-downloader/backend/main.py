@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import shutil
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -13,6 +14,19 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+# Load our bundled yt-dlp plugin extractors (yt_dlp_plugins/extractor/*.py,
+# e.g. the KVS-based cumgloryhole/gloryholeswallow sites). Put this dir on
+# sys.path so the namespace package is importable no matter where uvicorn is
+# launched from, then force-load plugins now so _has_dedicated_extractor() sees
+# them on the very first request rather than only after a YoutubeDL is built.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from yt_dlp.plugins import load_all_plugins
+
+    load_all_plugins()
+except Exception as exc:  # pragma: no cover - plugin loading is best-effort
+    print(f"Warning: could not preload yt-dlp plugins: {exc}", flush=True)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
