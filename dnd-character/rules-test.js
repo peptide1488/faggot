@@ -1325,5 +1325,70 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setNet(null);
 }
 
+/* ---- NPCs: deployNpc pre-seeds REAL asymmetric abilities, not the flat CR-derived value ---- */
+{
+  setNet({role:'dm', conns:[], session:{battle:{active:false,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[], players:[], order:[], turn:0}});
+  deployNpc({name:'Noble Rosalind', race:'Human', ac:11, hp:9, speed:30, str:8, dex:10, con:10, int:12, wis:11, cha:18});
+  const npc=getNet().session.monsters[0];
+  T('deployNpc creates a monster-shaped entry (same array every combat/AI path reads)', npc && npc.name==='Noble Rosalind');
+  T('deployNpc tags the entry isNpc + carries its race', npc.isNpc===true && npc.race==='Human');
+  T('deployNpc pre-seeds real per-ability scores, not a flat CR-derived value', npc.abilities.cha===18 && npc.abilities.str===8);
+  T('a lopsided NPC build shows a genuinely different modifier per ability (high CHA vs low STR)', mod(abil(npc,'cha'))===4 && mod(abil(npc,'str'))===-1);
+  const before=npc.abilities;
+  deriveMonsterAbilities(npc);
+  T('deriveMonsterAbilities is a permanent no-op for an NPC — never falls back to the flat CR value', npc.abilities===before && npc.abilities.cha===18);
+  T('unitSkillRoll reads the NPC\'s own high-CHA bonus, not a flat monster approximation', (()=>{ const orig=Math.random; Math.random=()=>0.5; const r=unitSkillRoll(npc,'persuasion','cha'); Math.random=orig; return r.total===11+4; })());
+  setNet(null);
+}
+
+/* ---- monster/NPC inventory: pure loot bookkeeping, no stat side effects ---- */
+{
+  const mo={id:'m1', name:'Bandit', ac:12, hp:11};
+  T('a fresh monster has no items array until first touched', mo.items===undefined);
+  mo.items=mo.items||[];
+  mo.items.push({name:'Scimitar', qty:1});
+  mo.items.push({name:'Gold pouch', qty:1});
+  T('adding loot does not touch AC or HP', mo.ac===12 && mo.hp===11);
+  T('two items tracked verbatim', mo.items.length===2 && mo.items[0].name==='Scimitar' && mo.items[1].qty===1);
+  mo.items.splice(0,1);
+  T('removing one item leaves only the other', mo.items.length===1 && mo.items[0].name==='Gold pouch');
+}
+
+/* ---- Antimagic Field: full enforcement — suppresses active effects, not just new casts ---- */
+{
+  const s={battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[]};
+  paintNoCastZone(s, {x:2,y:2}, 1, 'Antimagic Field');
+  T('inAntimagicField is true inside a painted Antimagic Field zone', inAntimagicField(s,2,2)===true);
+  T('inAntimagicField is false outside the zone', inAntimagicField(s,4,4)===false);
+
+  const s2={battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[]};
+  paintNoCastZone(s2, {x:2,y:2}, 10, 'Silence');
+  T('inNoCastZone is true for Silence too (blocks new casts)', inNoCastZone(s2,2,2)===true);
+  T('inAntimagicField is FALSE for Silence — it must never suppress active buffs, only block new casts', inAntimagicField(s2,2,2)===false);
+
+  const c={effects:[{name:'Shield of Faith', mods:{ac:2}}], armor:'none', abilities:{str:10,dex:10,con:10,int:10,wis:10,cha:10}, acOverride:''};
+  T('computeAC normally includes an active effect bonus', computeAC(c)===12);
+  T('computeAC with ignoreEffects drops the active effect bonus entirely', computeAC(c,{ignoreEffects:true})===10);
+
+  const barkskin={effects:[{name:'Barkskin', mods:{}}], armor:'none', abilities:{str:10,dex:8,con:10,int:10,wis:10,cha:10}, acOverride:''};
+  T('Barkskin AC floor normally applies', computeAC(barkskin)===16);
+  T('Barkskin AC floor is suppressed under Antimagic Field, mundane Dex-based AC shows through instead', computeAC(barkskin,{ignoreEffects:true})===10+mod(8));
+
+  const hasted={effects:[{name:'Haste', mods:{ac:2, speedMul:2}}], speed:30};
+  T('effSpeed normally includes Haste double-speed multiplier', effSpeed(hasted)===60);
+  T('effSpeed with ignoreEffects ignores Haste entirely — base speed only', effSpeed(hasted,{ignoreEffects:true})===30);
+
+  // End-to-end through the real QB adapter path a live attack roll actually uses.
+  setQB({battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[],
+    players:[{side:'pc', x:2, y:2, c:{effects:[{name:'Shield of Faith', mods:{ac:2}}], armor:'none', abilities:{str:10,dex:10,con:10,int:10,wis:10,cha:10}, acOverride:''}}]});
+  paintNoCastZone(getQB(), {x:2,y:2}, 1, 'Antimagic Field');
+  const buffed=qbAC(getQB().players[0]);
+  getQB().players[0].x=4; getQB().players[0].y=4;
+  const outsideField=qbAC(getQB().players[0]);
+  T('qbAC drops the Shield of Faith bonus for a PC standing inside a live Antimagic Field', buffed===10);
+  T('the same PC standing outside the field keeps their real buffed AC', outsideField===12);
+  setQB(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

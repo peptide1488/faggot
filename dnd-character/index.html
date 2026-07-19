@@ -848,8 +848,8 @@ function setEquipped(c, idx, on){
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 // THE per-turn resource reset, shared by every mode (solo battle, quick battle,
 // net play). Add new per-turn flags HERE and nowhere else.
-function freshTurnState(c){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c), moveUsed:0}; }
-function resetTurnState(c){ Object.assign(c.battle, freshTurnState(c)); }
+function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
+function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); }
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c)); logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
 function battleNextTurn(c){ if(!c.battle) return; if(timeStopExtraTurn(c)) return; const b=c.battle; b.round++; resetTurnState(c);
@@ -1681,14 +1681,20 @@ const ARMOR = [
   {key:'plate',      name:'Plate',           base:18, dexCap:0}
 ];
 function armorDef(key){ return ARMOR.find(a=>a.key===key)||ARMOR[0]; }
-function computeAC(c){
-  if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + effBonus(c,'ac') + gearBonus(c,'ac');
+// opts.ignoreEffects (Antimagic Field): skip every active-spell-effect contribution (Mage
+// Armor's base swap, Barkskin's floor, effBonus's flat +ac) — everything mundane (armor worn,
+// Dex, Defense style, equipment) still applies, matching real RAW (mundane gear/skill isn't
+// magic). Callers with no live battle position to check against (every pre-existing call site)
+// simply never pass opts, so behavior there is byte-identical to before this existed.
+function computeAC(c,opts){
+  const ignoreFx=!!(opts&&opts.ignoreEffects);
+  if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + (ignoreFx?0:effBonus(c,'ac')) + gearBonus(c,'ac');
   const a=armorDef(c.armor||'none');
-  const hasFx=n=>(c.effects||[]).some(e=>e.name===n);
+  const hasFx=n=>!ignoreFx && (c.effects||[]).some(e=>e.name===n);
   let base = a.base + Math.min(mod(abil(c,'dex')), a.dexCap);
   if(a.key==='none' && hasFx('Mage Armor')) base = 13 + mod(abil(c,'dex'));           // Mage Armor: 13 + DEX while unarmored
   if(c.fightingStyle==='Defense' && a.key!=='none') base += 1;                        // Defense style: +1 AC while wearing armor
-  let ac = base + (c.shield?2:0) + effBonus(c,'ac') + gearBonus(c,'ac');
+  let ac = base + (c.shield?2:0) + (ignoreFx?0:effBonus(c,'ac')) + gearBonus(c,'ac');
   if(hasFx('Barkskin')) ac = Math.max(ac, 16);                                        // Barkskin: AC can't be below 16
   return ac;
 }
@@ -1810,7 +1816,7 @@ const SPELL_EFFECTS = {
 };
 function effBonus(c, key){ let n=0; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods[key]) n+=e.mods[key]; }); return n; }
 function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods.speedMul) m*=e.mods.speedMul; }); return m; }
-function effSpeed(c){ return Math.round((Number(c.speed||0)+effBonus(c,'speed')+gearBonus(c,'speed'))*effSpeedMul(c)); }
+function effSpeed(c,opts){ const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
 function modSummary(mods){ if(!mods) return ''; const parts=[];
   if(mods.ac) parts.push(sgn(mods.ac)+' AC');
   if(mods.speed) parts.push(sgn(mods.speed)+' ft');
@@ -6374,8 +6380,9 @@ function playerAttackMenu(c){
 }
 function renderPlayerBattle(c){
   const s=net.session, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0};
-  if(!c.battle) c.battle={round:s.battle.round||1, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c), moveUsed:0};
-  if(c.battle.move==null) c.battle.move=effSpeed(c);
+  const spdOpts={ignoreEffects:inAntimagicField(s,me.x,me.y)};
+  if(!c.battle) c.battle={round:s.battle.round||1, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c,spdOpts), moveUsed:0};
+  if(c.battle.move==null) c.battle.move=effSpeed(c,spdOpts);
   const b=c.battle;
   $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
   app.className='fade'; void app.offsetWidth;
@@ -8161,8 +8168,8 @@ function renderDM(){
     ${s.players.length? s.players.map(p=>`<div class="spell" style="${p.online===false?'opacity:.5':''}"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}${p.online===false?' <span class="sub">offline</span>':''}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button><button class="del" data-pdel="${p.cid||p.id}" title="Remove player">✕</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
   </div>
   <div class="card">
-    <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button></h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn ghost sm" data-msheet="${mo.id}" title="View full stat block">📋</button><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
+    <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button><button class="btn ghost sm" id="npcBtn" style="float:right;margin-right:6px">🧑 New NPC</button></h2>
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn ghost sm" data-msheet="${mo.id}" title="View full stat block">📋</button><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn ghost sm" data-mloot="${mo.id}" title="Inventory / loot">🎒${(mo.items&&mo.items.length)?' '+mo.items.length:''}</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -8221,7 +8228,9 @@ function renderDM(){
   app.querySelectorAll('[data-mclr]').forEach(el=>el.onclick=()=>{ const [id,cn]=el.dataset.mclr.split('|'); const mo=s.monsters.find(m=>m.id===id); if(mo&&mo.conds){ mo.conds=mo.conds.filter(x=>x.name!==cn); dmBroadcast(); render(); } });
   $('#mAdd').onclick=()=>{ const n=$('#mName').value.trim(); if(!n) return; const hp=Number($('#mHp').value)||10, ac=Number($('#mAc').value)||12; s.monsters.push({id:'m'+Date.now().toString(36),name:n,hp,max:hp,ac,x:0,y:0,attacks:1,attacksLeft:1,speed:30,moveLeft:30}); dmBroadcast(); render(); };
   { const bb=$('#bestiaryBtn'); if(bb) bb.onclick=openBestiary; }
+  { const nb=$('#npcBtn'); if(nb) nb.onclick=openNpcBuilder; }
   app.querySelectorAll('[data-msheet]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.msheet); if(mo) openMonsterSheet(mo); });
+  app.querySelectorAll('[data-mloot]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mloot); if(mo) openMonsterLoot(mo); });
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
@@ -8292,6 +8301,17 @@ function deployMonster(m){ if(!net||net.role!=='dm') return;
   const fly=/fly/i.test(String(m.spd||''));
   net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:m.n, name: same.length? m.n+' '+(same.length+1) : m.n, num: same.length? same.length+1 : 0, hp:m.hp, max:m.hp, ac:m.ac, x:idx%cols, y:Math.floor(idx/cols), sprite:m.sprite, atk:m.atk, init:m.init||0, attacks:m.attacks||1, attacksLeft:m.attacks||1, speed:spd, moveLeft:spd, fly});
   dmBroadcast(); render(); flashBanner('Deployed '+m.n); }
+// A DM-authored NPC: same monster-shaped net.session.monsters entry every other creature uses
+// (same dmMonsterAttack/BRAINS AI/Engine.attack — no new combat code), but carrying REAL,
+// asymmetric ability scores set up front instead of the flat CR-derived value
+// deriveMonsterAbilities would otherwise fall back to (it only fires when mo.abilities is
+// missing — see its own guard) — this is what makes a noble's high CHA/low STR (or any other
+// lopsided build) actually show up in skill checks/saves with zero new engine math, reusing
+// the exact unitSkillRoll/abil/mod path a PC already goes through.
+function deployNpc(spec){ if(!net||net.role!=='dm') return;
+  const idx=net.session.monsters.length, cols=net.session.map.cols||10;
+  net.session.monsters.push({id:'m'+Date.now().toString(36)+Math.floor(Math.random()*99), base:spec.name, name:spec.name, isNpc:true, race:spec.race||'', hp:spec.hp, max:spec.hp, ac:spec.ac, x:idx%cols, y:Math.floor(idx/cols), atk:spec.atk||'', attacks:1, attacksLeft:1, speed:spec.speed||30, moveLeft:spec.speed||30, abilities:{str:spec.str,dex:spec.dex,con:spec.con,int:spec.int,wis:spec.wis,cha:spec.cha}, skillProf:{}, skillExp:{}, saveProf:{}});
+  dmBroadcast(); render(); flashBanner('Deployed NPC '+spec.name); }
 // Damage resistance (×0.5) / vulnerability (×2) / immunity (×0) by monster base name.
 const MONSTER_RVI={
   'Skeleton':{vuln:['bludgeoning'],imm:['poison']},
@@ -8535,13 +8555,15 @@ function openMonsterSheet(mo){
   const sheet=`<div class="modal" id="msheetModal"><div class="sheet"><div class="grip"></div>
     <div style="display:flex;gap:12px;align-items:center;margin:0 0 8px">
       <span class="emblem" style="padding:3px;flex:none">${mo.sprite?pixelArt(monsterSprite(mo.sprite),4):'🗿'}</span>
-      <div><h2 style="margin:0">${esc(mo.name)}</h2><div class="muted" style="font-size:12px">${base.cr?'CR '+esc(base.cr)+' · ':''}${esc(base.n||mo.base||'Custom')}</div></div>
+      <div><h2 style="margin:0">${esc(mo.name)}</h2><div class="muted" style="font-size:12px">${mo.isNpc?'NPC'+(mo.race?' · '+esc(mo.race):''):(base.cr?'CR '+esc(base.cr)+' · ':'')+esc(base.n||mo.base||'Custom')}</div></div>
     </div>
     <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:0 0 10px">
       <div class="tile"><div class="lab">AC</div><div class="big">${mo.ac}</div></div>
       <div class="tile"><div class="lab">HP</div><div class="big">${mo.hp}/${mo.max}</div></div>
       <div class="tile"><div class="lab">Speed</div><div class="big">${mo.speed||base.spd||30}<span style="font-size:11px"> ft</span></div></div>
     </div>
+    ${mo.isNpc&&mo.abilities?`<div class="field"><label>Abilities</label><div class="grid3" style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">${ABILITIES.map(([k,nm])=>`<div class="tile"><div class="lab">${nm.slice(0,3).toUpperCase()}</div><div class="big">${sgn(mod(mo.abilities[k]))}</div><div class="muted" style="font-size:11px">${mo.abilities[k]}</div></div>`).join('')}</div></div>`:''}
+    ${mo.isNpc&&mo.race&&RACE_TRAITS[mo.race]?`<div class="field"><label>Racial traits <span class="muted" style="font-size:11px;text-transform:none">— flavor, not mechanically applied</span></label><div class="muted" style="font-size:13px">${RACE_TRAITS[mo.race].map(t=>esc(t[0])).join(', ')}</div></div>`:''}
     ${battle?`<div class="muted" style="font-size:12px;margin:0 0 8px">Attacks this turn: <b>${mo.attacksLeft!=null?mo.attacksLeft:(mo.attacks||1)}/${mo.attacks||1}</b> · Move left: <b>${mo.moveLeft!=null?mo.moveLeft:(mo.speed||30)} ft</b></div>`:''}
     <div class="field"><label>Attacks</label>
       ${atks.length?atks.map(a=>`<div class="spell"><div class="nm"><b>${esc(a.name)}</b><small>${a.hit!=null?'+'+a.hit+' to hit':a.dc?'DC '+a.dc.n+' '+a.dc.ab+' save':''}${a.dmg?' · '+esc(a.dmg)+' damage':''}${a.tiles>1?' · reach/range '+(a.tiles*5)+' ft':''}</small></div></div>`).join(''):'<div class="empty" style="padding:6px 0">No attacks defined.</div>'}
@@ -8554,6 +8576,70 @@ function openMonsterSheet(mo){
   $('#modalRoot').innerHTML=sheet;
   $('#msheetClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#msheetModal').onclick=e=>{ if(e.target.id==='msheetModal') $('#modalRoot').innerHTML=''; };
+}
+// DM-visible loot on a monster/NPC — deliberately NOT the PC equipment system (kind/equipped/
+// mods driving computeAC/attacks via renderItems): monster/NPC AC and attacks are already
+// hand-authored fields (mo.ac, parsed mo.atk), not derived from worn gear, so this is pure
+// bookkeeping — "what does this creature carry / drop on death" — with no stat side effects.
+function openMonsterLoot(mo){
+  mo.items=mo.items||[];
+  const draw=()=>{
+    $('#modalRoot').innerHTML=`<div class="modal" id="lootModal"><div class="sheet"><div class="grip"></div>
+      <h2>🎒 ${esc(mo.name)}'s inventory</h2>
+      ${mo.items.length?mo.items.map((it,i)=>`<div class="spell"><div class="nm"><b>${esc(it.name)}</b>${it.qty>1?'<small>×'+it.qty+'</small>':''}</div><button class="del" data-lootdel="${i}">✕</button></div>`).join(''):'<div class="empty">Nothing carried yet.</div>'}
+      <div class="addrow">
+        <select id="lootPick" style="flex:2">
+          <option value="">— free text below, or pick —</option>
+          <optgroup label="Weapons">${WEAPONS.map(w=>`<option value="${esc(w.n)}">${esc(w.n)}</option>`).join('')}</optgroup>
+          <optgroup label="Armor">${ARMOR.filter(a=>a.key!=='none').map(a=>`<option value="${esc(a.name)}">${esc(a.name)}</option>`).join('')}</optgroup>
+        </select>
+        <input id="lootName" placeholder="or type a name" style="flex:2">
+        <input id="lootQty" type="number" value="1" min="1" style="max-width:56px">
+        <button class="btn sm" id="lootAdd">Add</button>
+      </div>
+      <button class="btn ghost block" id="lootClose" style="margin-top:10px">Close</button>
+    </div></div>`;
+    $('#lootModal').onclick=e=>{ if(e.target.id==='lootModal') $('#modalRoot').innerHTML=''; };
+    $('#lootClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    $('#lootAdd').onclick=()=>{
+      const name=($('#lootName').value.trim())||$('#lootPick').value;
+      if(!name) return;
+      const qty=Math.max(1,Number($('#lootQty').value)||1);
+      mo.items.push({name,qty});
+      dmBroadcast(); render(); draw();
+    };
+    $('#modalRoot').querySelectorAll('[data-lootdel]').forEach(b=>b.onclick=()=>{ mo.items.splice(Number(b.dataset.lootdel),1); dmBroadcast(); render(); draw(); });
+  };
+  draw();
+}
+// DM-only builder for race-based NPCs — real per-ability scores (not the flat CR-derived
+// value monsters fall back to) flow through unitSkillRoll/abil/mod with zero new engine math,
+// since deployNpc pre-seeds mo.abilities directly (see deriveMonsterAbilities's own guard).
+function openNpcBuilder(){
+  $('#modalRoot').innerHTML=`<div class="modal" id="npcModal"><div class="sheet"><div class="grip"></div>
+    <h2>🧑 New NPC</h2>
+    <div class="field"><label>Name</label><input id="npcName" placeholder="Innkeeper Rosalind"></div>
+    <div class="field"><label>Race</label><select id="npcRace"><option value="">— none —</option>${Object.keys(RACE_TRAITS).map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></div>
+    <div class="field"><label>Ability scores</label><div class="grid3" style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">${ABILITIES.map(([k,nm])=>`<div><div class="lab" style="font-size:11px;text-align:center">${nm.slice(0,3).toUpperCase()}</div><input type="number" id="npc_${k}" value="10" min="1" max="30" style="text-align:center"></div>`).join('')}</div></div>
+    <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div><div class="lab" style="font-size:11px">AC</div><input type="number" id="npcAc" value="10"></div>
+      <div><div class="lab" style="font-size:11px">HP</div><input type="number" id="npcHp" value="10"></div>
+      <div><div class="lab" style="font-size:11px">Speed</div><input type="number" id="npcSpeed" value="30"></div>
+    </div>
+    <div class="field"><label>Attack(s) <span class="muted" style="font-size:11px;text-transform:none">— optional, same format as the bestiary e.g. "Dagger +3 (1d4+1)"</span></label><input id="npcAtk" placeholder="Dagger +3 (1d4+1)"></div>
+    <button class="btn block" id="npcDeploy" style="margin-top:10px">Deploy</button>
+    <button class="btn ghost block" id="npcClose" style="margin-top:8px">Close</button>
+  </div></div>`;
+  $('#npcRace').onchange=()=>{ const r=$('#npcRace').value; $('#npcSpeed').value=defaultSpeed({race:r}); };
+  $('#npcClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#npcModal').onclick=e=>{ if(e.target.id==='npcModal') $('#modalRoot').innerHTML=''; };
+  $('#npcDeploy').onclick=()=>{
+    const name=$('#npcName').value.trim(); if(!name){ flashBanner('NPC needs a name'); return; }
+    const spec={name, race:$('#npcRace').value, ac:Number($('#npcAc').value)||10, hp:Number($('#npcHp').value)||10, speed:Number($('#npcSpeed').value)||30, atk:$('#npcAtk').value.trim()};
+    ABILITIES.forEach(([k])=>{ spec[k]=Number($('#npc_'+k).value)||10; });
+    deployNpc(spec);
+    $('#modalRoot').innerHTML='';
+  };
 }
 function openBestiary(){
   $('#modalRoot').innerHTML=`<div class="modal" id="bestModal"><div class="sheet"><div class="grip"></div>
@@ -8778,7 +8864,7 @@ const playerNetAdapter = {
   unit:id=>{ const s=net&&net.session; if(!s) return null;
     if(id==='me'){ const c=playerChar(); return c?{me:true, c, id:'me'}:null; }
     return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id); },
-  ac:u=> u.me?computeAC(u.c):(u.ac||10),
+  ac:u=>{ if(!u.me) return u.ac||10; const s=net&&net.session; const me=s&&s.players&&net.peer&&s.players.find(p=>p.id===net.peer.id); return computeAC(u.c,{ignoreEffects:!!(me&&s&&inAntimagicField(s,me.x,me.y))}); },
   hp:u=> u.me ? u.c.hp.cur : (u.hp!=null?u.hp:u.hpCur),
   hurt:(u,dmg,dtype)=>{ if(u.me){ applyHp(u.c,-dmg); playerHello(); }
     else if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg);   // local echo; DM broadcast corrects it
@@ -8799,7 +8885,7 @@ const playerNetAdapter = {
   solePc:()=> null   // this device only ever fully knows its own PC ('me'), not "the" party PC
 };
 function crToNum(cr){ const s=String(cr==null?0:cr); if(s.includes('/')){ const [a,b]=s.split('/').map(Number); return b?a/b:0; } return Number(s)||0; }
-function qbAC(u){ return u.side==='pc'?computeAC(u.c):u.ac; }
+function qbAC(u){ return u.side==='pc'?computeAC(u.c,{ignoreEffects:u.x!=null&&inAntimagicField(QB,u.x,u.y)}):u.ac; }
 function qbHP(u){ return u.side==='pc'?u.c.hp.cur:u.hp; }
 function qbName(u){ return u.name; }
 function qbReach(u){ if(u.side==='pc'){ return 1; } const a=parseMonsterAttacks(u.atk).filter(x=>x.hit!=null); const t=Math.max(1,...a.map(x=>x.tiles||1).filter(n=>n<=2)); return t||1; }
@@ -9027,8 +9113,8 @@ function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
   frameCameraOnActiveUnit(QB, 1.55);
   if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; render();
     setTimeout(()=>qbRunBrain(mo), 500); }
-  else { const c=QB.players[0].c;   // PC turn — refresh resources, then wait for input
-    resetTurnState(c);
+  else { const pcU=QB.players[0], c=pcU.c;   // PC turn — refresh resources, then wait for input
+    resetTurnState(c,{ignoreEffects:inAntimagicField(QB,pcU.x,pcU.y)});
     let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
     exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''};
       if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond]; });   // e.g. Invisibility naturally timing out — endEffect() already does this for manual dismissal, this path covers the round-countdown expiry
@@ -9999,6 +10085,11 @@ function paintNoCastZone(s,ctr,aoeR,name){
   s.hazards=s.hazards||[]; s.hazards.push({cells, until:s.battle.round+rounds, name, noCast:true, gas:true});
 }
 function inNoCastZone(s,x,y){ const hz=hazardAt(s,x,y); return !!(hz&&hz.noCast); }
+// Antimagic Field's OTHER real effect (beyond blocking new casts, which inNoCastZone already
+// covers): it suppresses already-active magical effects on anyone standing inside. Checked by
+// name specifically — Silence shares the same noCast hazard shape but must never suppress a
+// buff, only block new spellcasting.
+function inAntimagicField(s,x,y){ const hz=hazardAt(s,x,y); return !!(hz&&hz.name==='Antimagic Field'); }
 // Dex save or suffer a condition when a creature ends its move on hazardous terrain
 // (Grease → Prone, Web → Restrained). Mode-agnostic, same reasoning as paintHazardTerrain.
 function checkTerrainHazardCond(s,unit,x,y,isPc){ const tdef=TERRAIN[terrainAt(s,x,y)]; if(!tdef||!(tdef.prone||tdef.restrain)) return;
@@ -10338,7 +10429,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.183';
+const APP_VERSION='v120.184';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

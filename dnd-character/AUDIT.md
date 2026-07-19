@@ -1064,3 +1064,51 @@ math at multiple Strength deltas, `findGrappler`/DM-side Escape Grapple, `dispel
 handling, `monsterSearchRoll`'s hit/miss/unknown-DC cases, and the `hiddenDC` sync path). Search
 also spot-verified live end-to-end via Playwright: DM opens the attack modal, picks Search, rolls
 against a low DC, and the target's Hidden condition is correctly cleared.
+
+## NPCs, monster/NPC inventory, and full Antimagic Field enforcement (v120.184)
+
+**NPCs.** A DM-authored NPC is a `net.session.monsters`-shaped entry — same array, same
+`dmMonsterAttack`/`BRAINS` AI, same `Engine.attack`/`hitResult` — carrying `isNpc:true`, a
+`race` (from `RACE_TRAITS`, flavor/display only, not mechanically applied — no clean combat
+hook for most racial traits in this engine), and, critically, a REAL per-ability `abilities`
+object set at creation time rather than the flat CR-scaled value monsters fall back to
+(`deriveMonsterAbilities`'s own `if(!mo.abilities) return mo;` guard makes this a permanent
+no-op for NPCs). This is the direct payoff of the earlier creature-unification work: a noble
+with CHA 18 / STR 8 gets that asymmetry reflected in every skill check and save with zero new
+engine math, since `unitSkillRoll`/`abil`/`mod` already read whatever `abilities` shape they're
+given. New `openNpcBuilder()` modal (name, race, 6 ability inputs, AC/HP/speed, a free-text
+attack line in the exact same format `parseMonsterAttacks` already parses) reachable via a new
+"🧑 New NPC" button next to Bestiary in DM mode; `openMonsterSheet` shows race + individual
+ability scores for `isNpc` entries instead of the CR-derived block monsters show.
+
+**Monster/NPC inventory.** `mo.items` — a plain `{name,qty}` array, deliberately NOT the PC
+equipment system (`kind`/`equipped`/mods driving `computeAC`/attacks): monster and NPC AC and
+attacks are already hand-authored fields, not derived from worn gear, so this is pure loot
+bookkeeping ("what does this creature carry / drop on death"), not a stats-affecting equip
+system. New `openMonsterLoot(mo)` modal (add via free text or a `WEAPONS`/`ARMOR` quick-pick,
+remove per row) behind a new 🎒 button in the roster row.
+
+**Antimagic Field, full enforcement.** Previously only blocked new spellcasting inside its
+zone (the `SPELL_NOCAST_ZONE` no-cast mechanism, shared with Silence). Real RAW also suppresses
+already-active magical effects on anyone standing inside — added `inAntimagicField(s,x,y)`,
+checking the hazard's `name` specifically (`==='Antimagic Field'`) rather than the generic
+`noCast` flag Silence shares, since Silence must never suppress a buff, only block new casts.
+`computeAC`/`effSpeed` gained an optional `opts.ignoreEffects` — when true, every active-effect
+contribution (Shield/Shield of Faith's flat AC, Mage Armor's base swap, Barkskin's 16 floor,
+Haste's speed double) is skipped while mundane sources (worn armor, Dex, Defense fighting
+style, equipment) still apply, matching RAW ("magic" specifically is what's suppressed). This
+is additive-only — the 13 pre-existing `effBonus`/`effSpeedMul`/`computeAC` call sites (almost
+all PC-sheet display views with no battle-position concept at all) never pass `opts` and are
+byte-identical to before. Wired into the two places that actually have both a live map and the
+acting creature's position: `qbAC`/`playerNetAdapter.ac` (a live attack's AC lookup) and QB's
+`qbBeginTurn`/player-net's `renderPlayerBattle` (the turn's movement budget, via `effSpeed`).
+**Documented limitation**: doesn't disable magic items (this app doesn't track item
+"magicalness" as a distinct flag anywhere) and doesn't banish summoned creatures while inside —
+both a materially bigger scope for a spell cast rarely enough that this is a deliberate cut.
+
+Tests: `inAntimagicField` correctly distinguishes itself from Silence's shared `noCast` flag;
+`computeAC`/`effSpeed` with `ignoreEffects` drop Shield of Faith/Barkskin/Haste while leaving
+mundane AC untouched; an end-to-end `qbAC` test confirms a buffed PC's AC actually changes
+between standing inside vs. outside a live-painted Antimagic Field zone. Also spot-verified
+live in a real browser (not just the eval'd test-harness copy): the same buffed-PC-in/out-of-
+field scenario run directly against the served `index.html`'s `QB`/`qbAC` confirms AC 12→10→12.
