@@ -15,18 +15,41 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-# Load our bundled yt-dlp plugin extractors (yt_dlp_plugins/extractor/*.py,
-# e.g. the KVS-based cumgloryhole/gloryholeswallow sites). Put this dir on
-# sys.path so the namespace package is importable no matter where uvicorn is
-# launched from, then force-load plugins now so _has_dedicated_extractor() sees
-# them on the very first request rather than only after a YoutubeDL is built.
+# Our bundled extractors for sites yt-dlp doesn't support out of the box
+# (e.g. the KVS/kt_player-based cumgloryhole/gloryholeswallow sites). Rather
+# than rely on yt-dlp's plugin auto-discovery - which is fragile across
+# versions and platforms - we import the classes directly and register them
+# ahead of the Generic extractor on every YoutubeDL we build (see make_ydl).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+CUSTOM_EXTRACTORS = []
 try:
-    from yt_dlp.plugins import load_all_plugins
+    from yt_dlp_plugins.extractor.cumgloryhole import CumgloryholeIE
 
-    load_all_plugins()
-except Exception as exc:  # pragma: no cover - plugin loading is best-effort
-    print(f"Warning: could not preload yt-dlp plugins: {exc}", flush=True)
+    CUSTOM_EXTRACTORS.append(CumgloryholeIE)
+except Exception as exc:  # pragma: no cover - best-effort, don't kill startup
+    print(f"Warning: could not load custom extractors: {exc}", flush=True)
+
+
+def make_ydl(opts):
+    """Build a YoutubeDL with our custom extractors checked BEFORE Generic.
+
+    yt-dlp iterates its extractor dict in order and uses the first whose
+    suitable() matches; Generic matches everything and sits last, so a
+    dedicated extractor only wins if it comes earlier. add_info_extractor()
+    appends after Generic, so instead we splice our extractors onto the front
+    of the instance's extractor map.
+    """
+    ydl = yt_dlp.YoutubeDL(opts)
+    customs = {}
+    for cls in CUSTOM_EXTRACTORS:
+        ie = cls()
+        ie.set_downloader(ydl)
+        customs[cls.ie_key()] = ie
+    if customs:
+        ydl._ies = {**customs, **ydl._ies}
+        ydl._ies_instances.update(customs)
+    return ydl
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
@@ -95,6 +118,9 @@ MIN_VALID_FILESIZE = 10 * 1024  # 10 KB
 
 
 def _has_dedicated_extractor(url: str) -> bool:
+    for ie in CUSTOM_EXTRACTORS:
+        if ie.suitable(url):
+            return True
     for ie in yt_dlp.extractor.gen_extractor_classes():
         if ie.ie_key() != "Generic" and ie.suitable(url):
             return True
@@ -225,7 +251,7 @@ def get_info(url: str):
     primary_error = None
     for attempt_opts in extraction_attempts(ydl_opts):
         try:
-            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+            with make_ydl(attempt_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             break
         except Exception as exc:
@@ -376,7 +402,7 @@ def run_download(job_id: str, req: DownloadRequest):
         return moved, reasons
 
     def do_download(opts):
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with make_ydl(opts) as ydl:
             # Extract first without format processing so missing heights can
             # be recovered before "best" is chosen, then download
             info = ydl.extract_info(req.url, download=False, process=False)
