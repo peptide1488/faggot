@@ -872,7 +872,8 @@ function battleCard(c){
       <input type="number" id="bAmt" value="1" min="1" inputmode="numeric">
       <button class="btn sm" id="bHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button>
     </div>
-    ${c.hp.cur<=0?`<button class="btn block" id="bDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓ / ${c.death.fail||0}✗)</button>`:''}
+    ${c.hp.cur<=0&&!c.stable?`<button class="btn block" id="bDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓ / ${c.death.fail||0}✗)</button>`:''}
+    ${c.hp.cur<=0&&c.stable?`<p class="muted" style="font-size:12px;margin:8px 0 0">🩹 Stabilized — unconscious but not dying. No more death saves unless you take damage.</p>`:''}
     <div class="chips" style="margin-top:10px">
       <button class="chip ${!hasAction(c)?'on':''}" data-bt="action">${!hasAction(c)?'✓ ':''}Action${(b.actionsMax||1)>1?' '+actionsLeft(c)+'/'+(b.actionsMax||1):''}</button>
       <button class="chip ${b.bonus?'on':''}" data-bt="bonus">${b.bonus?'✓ ':''}Bonus action</button>
@@ -4017,7 +4018,9 @@ function applyHp(c,delta){
     logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+' damage → '+c.hp.cur+' HP');
     if(raged) flashBanner('🪓 Rage — damage halved (physical)');
     // damage while at 0 HP = a failed death save; if it equals/exceeds your max HP you die outright (PHB massive damage)
+    // Taking damage also ends a Stabilize (PHB) — back to rolling death saves.
     if(wasAt0 && dmg>0){
+      c.stable=false;
       if(dmg>=c.hp.max){ c.death.fail=3; logChange(c,'💀 Massive damage at 0 HP — instant death'); flashBanner('💀 Dead — damage ≥ max HP'); }
       else { c.death.fail=Math.min(3,(c.death.fail||0)+1); logChange(c,'Hit at 0 HP — 1 death-save failure'); }
     }
@@ -4028,7 +4031,7 @@ function applyHp(c,delta){
     }
   }else{
     c.hp.cur=Math.min(c.hp.max,c.hp.cur+delta);
-    if(c.hp.cur>0){ if(c.conditions['Unconscious']) delete c.conditions['Unconscious']; c.death={succ:0,fail:0}; }   // healed above 0 → stable & conscious
+    if(c.hp.cur>0){ if(c.conditions['Unconscious']) delete c.conditions['Unconscious']; c.death={succ:0,fail:0}; c.stable=false; }   // healed above 0 → stable & conscious
     logChange(c,'Healed '+delta+' → '+c.hp.cur+' HP');
   }
   save(); render();
@@ -6077,7 +6080,8 @@ function renderPlayerBattle(c){
     </div>
     ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging — tap to stop':'Enter Rage'}</button>`:''}
     <div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>
-    ${c.hp.cur<=0?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
+    ${c.hp.cur<=0&&!c.stable?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
+    ${c.hp.cur<=0&&c.stable?`<p class="muted" style="font-size:12px;margin:8px 0 0">🩹 Stabilized — unconscious but not dying.</p>`:''}
     <button class="btn block" id="pbEndTurn" style="margin-top:10px;${myTurn?'':'opacity:.5'}">⏭ End my turn</button>
   </div>
   <div class="card">
@@ -6966,7 +6970,17 @@ function openAdjacentUseUI(c, s, me){
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(mo.name)}</b> at (${mo.x},${mo.y}) — Athletics vs Athletics/Acrobatics. Uses one of your attacks.</p>
         <button class="btn block" data-usea="shove-prone" style="margin-bottom:8px;text-align:left">🤼 Shove — knock Prone</button>
         <button class="btn block" data-usea="shove-push" style="margin-bottom:8px;text-align:left">🤼 Shove — push 5 ft</button>
-        <button class="btn block" data-usea="grapple" style="margin-bottom:8px;text-align:left">🤼 Grapple<small style="display:block;opacity:.75">Grappled: speed 0 until it escapes</small></button>`;
+        <button class="btn block" data-usea="grapple" style="margin-bottom:8px;text-align:left">🤼 Grapple<small style="display:block;opacity:.75">Grappled: speed 0 until it escapes</small></button>
+        <button class="btn block" data-study="1" style="margin-bottom:8px;text-align:left">📖 Recall Knowledge<small style="display:block;opacity:.75">Arcana/History/Nature/Religion vs DC 10+CR — uses your action</small></button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='study'){
+      const mo=pick.mo;
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Recall what you know about <b>${esc(mo.name)}</b> — pick a skill.</p>
+        <button class="btn block" data-studysk="arcana" style="margin-bottom:8px;text-align:left">Arcana</button>
+        <button class="btn block" data-studysk="history" style="margin-bottom:8px;text-align:left">History</button>
+        <button class="btn block" data-studysk="nature" style="margin-bottom:8px;text-align:left">Nature</button>
+        <button class="btn block" data-studysk="religion" style="margin-bottom:8px;text-align:left">Religion</button>`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else {
@@ -6980,13 +6994,15 @@ function openAdjacentUseUI(c, s, me){
     $('#modalRoot').innerHTML=`<div class="modal" id="useModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
     $('#useClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     $('#useModal').onclick=e=>{ if(e.target.id==='useModal') $('#modalRoot').innerHTML=''; };
-    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(null); }
+    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='study'?{kind:'foe',mo:pick.mo}:null); }
     { const es=$('#useEscape'); if(es) es.onclick=()=>{ $('#modalRoot').innerHTML=''; qbEscapeGrapple(me, true); }; }
     { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ $('#modalRoot').innerHTML=''; qbHide(me); }; }
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
       draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : Object.assign({kind:'obj'}, items[Number(idx)]));
     });
+    document.querySelectorAll('[data-study]').forEach(b=>b.onclick=()=>draw({kind:'study', mo:pick.mo}));
+    document.querySelectorAll('[data-studysk]').forEach(b=>b.onclick=()=>{ $('#modalRoot').innerHTML=''; qbStudyMonster(me, pick.mo, b.dataset.studysk); });
     document.querySelectorAll('[data-usea]').forEach(b=>b.onclick=()=>{
       const actId=b.dataset.usea;
       if(pick&&pick.kind==='foe'){
@@ -7848,6 +7864,7 @@ function monsterDmgMult(mo, dtype){ if(!mo||!dtype) return 1; const r=MONSTER_RV
 // Monster saving-throw bonus, approximated from CR (tracks typical MM save spreads:
 // CR ¼ ≈ +1, CR 2 ≈ +2, CR 5 ≈ +3, CR 10 ≈ +6, CR 13 ≈ +7).
 function monsterSaveBonus(mo){ const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name)); const cr=crToNum(base?base.cr:1); return Math.min(9, 1+Math.floor(cr/2)); }
+function monsterCR(mo){ const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name)); return crToNum(base?base.cr:1); }
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
   const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
@@ -9119,6 +9136,49 @@ function qbHide(pc){
   flashBanner('Hidden! (Stealth '+r.total+' — foes must beat this to notice you)');
   save(); render();
 }
+// Recall Knowledge (DMG-style): an Intelligence check (Arcana/History/Nature/Religion —
+// player's choice; MONSTERS_5E doesn't track creature type here, so there's no "correct"
+// one to enforce) vs 10+CR reveals the target's resistances/vulnerabilities/immunities
+// from MONSTER_RVI. Costs your action.
+function qbStudyMonster(pc, mo, skillKey){
+  const c=pc.c;
+  if(!hasAction(c)){ flashBanner('No action left'); return; }
+  spendAction(c);
+  const dc=Math.min(30, 10+Math.round(monsterCR(mo)));
+  const adv=skillCheckAdvantage(c,skillKey,'int');
+  const r=rollSkillCheck(c,skillKey,'int',{adv:adv.adv});
+  const ok=r.total>=dc;
+  const rvi=MONSTER_RVI[mo.base||mo.name]||{};
+  const parts=[];
+  if((rvi.imm||[]).length) parts.push('immune to '+rvi.imm.join('/'));
+  if((rvi.res||[]).length) parts.push('resists '+rvi.res.join('/'));
+  if((rvi.vuln||[]).length) parts.push('vulnerable to '+rvi.vuln.join('/'));
+  const info=parts.length?parts.join('; '):'nothing unusual';
+  qbLog('📖 '+c.name+' studies '+mo.name+' ('+r.total+' vs DC '+dc+') — '+(ok?info:'learns nothing useful'));
+  flashBanner(ok? mo.name+': '+info : "You don't recall anything useful");
+  save(); render();
+}
+// Stabilize (PHB action): Medicine DC 10 on a creature at 0 HP that isn't dead yet.
+// Success ends death saves (c.stable — see applyHp/the sheet's death-save button) without
+// waking them or restoring HP; more damage while at 0 HP still ends it. NOTE: not wired
+// into any Use menu yet — solo Quick Battle has no downed ally to target (monsters/summons
+// die outright at 0 HP here, no death-save state of their own), so the only realistic
+// target is another party member, which needs DM-hosted/player-net's still-missing Use
+// button (see the Shove/Grapple commit). Adjacency isn't checked here for the same reason
+// — whichever caller eventually wires this up should verify it, like qbShove/qbGrapple do.
+function qbStabilizePc(pc, targetC){
+  const c=pc.c;
+  if(!hasAction(c)){ flashBanner('No action left'); return; }
+  if(targetC.hp.cur>0 || targetC.death.fail>=3){ flashBanner('Nothing to stabilize'); return; }
+  spendAction(c);
+  const adv=skillCheckAdvantage(c,'medicine','wis');
+  const r=rollSkillCheck(c,'medicine','wis',{adv:adv.adv});
+  const ok=r.total>=10;
+  if(ok){ targetC.stable=true; targetC.death={succ:0,fail:0}; }
+  qbLog('⚕️ '+c.name+' tries to stabilize '+targetC.name+' ('+r.total+' vs DC 10) — '+(ok?'stable':'fails'));
+  flashBanner(ok?targetC.name+' is stabilized':'Stabilize failed');
+  save(); render();
+}
 /** Weapon / spell attack vs a hazard barrel (no AC dance — objects don't dodge). */
 function qbStrikeObject(pc, objEntry, atk){
   const s=QB, c=pc.c;
@@ -9585,7 +9645,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.178';
+const APP_VERSION='v120.179';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

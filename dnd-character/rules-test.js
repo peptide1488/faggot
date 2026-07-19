@@ -268,6 +268,46 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
   setQB(null);
 }
 
+/* ---- Recall Knowledge & Stabilize (Use-menu utility actions) ---- */
+{
+  T('monsterCR reads CR straight from MONSTERS_5E', monsterCR({name:'Goblin'})===0.25 && monsterCR({name:'Young Red Dragon'})===10);
+
+  const sage=newCharacter('Sage'); sage.cls='Wizard'; sage.level=5; sage.abilities={str:10,dex:10,con:10,int:16,wis:10,cha:10}; sage.skillProf.arcana=true;
+  sage.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Skeleton',name:'Skeleton',x:1,y:0,hp:13,max:13,ac:13,attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:sage.name,c:sage,x:0,y:0,hpCur:sage.hp.cur,hpMax:sage.hp.max}] });
+  const spc2=getQB().players[0];
+  { const orig=Math.random; Math.random=()=>0.99; qbStudyMonster(spc2, getQB().monsters[0], 'arcana'); Math.random=orig; }
+  T('Recall Knowledge success logs the Skeleton\'s real RVI data (vuln bludgeoning, immune poison)', /vuln.*bludgeoning|bludgeoning.*vuln/i.test(getQB().log[0].m) || /immune.*poison/i.test(getQB().log[0].m));
+  T('Recall Knowledge spends the action', sage.battle.actionsUsed>0);
+
+  sage.battle.action=false; sage.battle.actionsUsed=0;
+  { const orig=Math.random; Math.random=()=>0.01; qbStudyMonster(spc2, getQB().monsters[0], 'arcana'); Math.random=orig; }
+  T('Recall Knowledge failure logs "learns nothing useful"', /learns nothing useful/.test(getQB().log[0].m));
+  setQB(null);
+}
+{
+  setQB({log:[]}); // qbLog defaults to the global QB when no session is passed
+  const medic=newCharacter('Medic'); medic.cls='Cleric'; medic.level=3; medic.abilities={str:10,dex:10,con:10,int:10,wis:16,cha:10}; medic.skillProf.medicine=true;
+  medic.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  const down=newCharacter('Down'); down.hp={cur:0,max:20}; down.death={succ:0,fail:1};
+  { const orig=Math.random; Math.random=()=>0.99; qbStabilizePc({c:medic,x:0,y:0}, down); Math.random=orig; }
+  T('Stabilize success sets c.stable and resets death saves', down.stable===true && down.death.succ===0 && down.death.fail===0);
+
+  const down2=newCharacter('Down2'); down2.hp={cur:0,max:20}; down2.death={succ:0,fail:1};
+  medic.battle.action=false; medic.battle.actionsUsed=0;
+  { const orig=Math.random; Math.random=()=>0.01; qbStabilizePc({c:medic,x:0,y:0}, down2); Math.random=orig; }
+  T('Stabilize failure leaves death saves untouched', !down2.stable && down2.death.fail===1);
+
+  T('Stabilize refuses a conscious target', (()=>{ const up=newCharacter('Up'); up.hp={cur:5,max:20}; up.death={succ:0,fail:0}; medic.battle.action=false; medic.battle.actionsUsed=0; qbStabilizePc({c:medic,x:0,y:0}, up); return !up.stable; })());
+
+  // Taking more damage at 0 HP ends a Stabilize (PHB) — applyHp must clear c.stable.
+  down.hp.temp=0; applyHp(down, -1);
+  T('applyHp clears c.stable when a stabilized creature takes more damage at 0 HP', down.stable===false);
+  setQB(null);
+}
+
 /* ---- sorcery points ---- */
 const so=newCharacter('So'); so.cls='Sorcerer'; so.level=5;
 T('Sorcery points max = level (5), none before L2', sorcMax(so)===5 && sorcMax({cls:'Sorcerer',level:1})===0);
