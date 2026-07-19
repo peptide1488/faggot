@@ -41,7 +41,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.spawnSummon=spawnSummon;globalThis.dismissSummonsForSpell=dismissSummonsForSpell;globalThis.nearbySpawnTiles=nearbySpawnTiles;globalThis.isConcentration=isConcentration;'+
   'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
   'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;'+
-  'globalThis.ABILITIES=ABILITIES;globalThis.playerNetAdapter=playerNetAdapter;');
+  'globalThis.ABILITIES=ABILITIES;globalThis.playerNetAdapter=playerNetAdapter;'+
+  'globalThis.DETECT_THOUGHTS_FALLBACK=DETECT_THOUGHTS_FALLBACK;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -1037,6 +1038,49 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
 
   T('nextToWall is true only for tiles orthogonally adjacent to a wall-family terrain', nextToWall(s,1,2) && !nextToWall(s,4,4));
 })();
+
+/* ---- Detect Thoughts: flavor lookup + Insight-advantage effect ---- */
+{
+  T('detectThoughtsFlavor matches a zombie', detectThoughtsFlavor({base:'Zombie'})==="Hungry. So hungry. Must... find... brains.");
+  T('detectThoughtsFlavor matches a goblin', detectThoughtsFlavor({base:'Goblin'})==='Bigger than me. Run? Or is there loot first?');
+  T('detectThoughtsFlavor falls back for an unlisted monster', detectThoughtsFlavor({base:'Nonexistent Beastie'})===DETECT_THOUGHTS_FALLBACK);
+  T('spellTargetsEnemy routes Detect Thoughts into single-target battle picking', spellTargetsEnemy('Detect Thoughts')===true);
+
+  const psi=newCharacter('Psi'); psi.cls='Wizard'; psi.level=3; psi.abilities={str:10,dex:10,con:10,int:16,wis:10,cha:10}; psi.skillProf.insight=true;
+  psi.spells=[{name:'Detect Thoughts', level:2, prepared:true}]; psi.spellSlots={1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0};
+  const mo={id:'m1', base:'Goblin', name:'Goblin', hp:7, max:7};
+  addEffect(psi, 'Detect Thoughts');   // normally castSpell() does this generically via SPELL_EFFECTS before castDetectThoughts runs
+  castDetectThoughts(psi, mo, ()=>{});
+  const eff=psi.effects.find(e=>e.name==='Detect Thoughts');
+  T('castDetectThoughts adds a concentration effect tagged with the target id', !!eff && eff.conc===true && eff.targetId==='m1');
+  T('castDetectThoughts logs the flavor line to the sheet', /Bigger than me/.test((psi.log[0]||{}).m||''));
+  T('skillCheckAdvantage grants Insight advantage against the read target', skillCheckAdvantage(psi,'insight','wis','m1').adv===1);
+  T('skillCheckAdvantage gives no Insight advantage against a different target', skillCheckAdvantage(psi,'insight','wis','someone-else').adv===0);
+  T('skillCheckAdvantage gives no advantage for a non-Insight skill even against the read target', skillCheckAdvantage(psi,'perception','wis','m1').adv===0);
+}
+
+/* ---- Unseen Servant: real summon, mindless (no auto-actions), player-commanded ---- */
+{
+  T('SPELL_HANDLERS routes Unseen Servant through the summon UI', SPELL_HANDLERS['Unseen Servant'] && SPELL_HANDLERS['Unseen Servant'].kind==='summon');
+  const cat=SUMMON_CATALOG['Unseen Servant'];
+  T('Unseen Servant has a real SUMMON_CATALOG entry', !!cat && Array.isArray(cat.pick) && cat.pick.length===1);
+  const pick=cat.pick[0];
+  T('the servant pick is a true non-combatant (0 attacks, no attack string)', pick.attacks===0 && pick.atk==='');
+  T('the servant pick uses the passive brain', pick.brain==='passive');
+
+  const s={active:true, over:null, log:[], map:{cols:8,rows:8,tiles:{}}, order:[], turn:0, battle:{active:true,round:1}, monsters:[], players:[]};
+  const caster={id:'pc'};
+  const unit=spawnSummon(s, caster, pick, 3, 3, 'Unseen Servant');
+  T('spawnSummon respects a deliberate 0 attacks / passive brain instead of falling back to combat defaults', unit.attacks===0 && unit.attacksLeft===0 && unit.brain==='passive');
+  T('a mindless summon\'s "AI turn" (BRAINS[brain]) is a genuine no-op, not a crash or a tactical fallback', JSON.stringify((BRAINS[unit.brain]||BRAINS.tactical)(s, unit))==='[]');
+
+  const tiles=servantMoveTiles({map:()=>s.map}, unit);   // minimal ad stub — servantMoveTiles only calls ad.map()
+  T('servantMoveTiles only offers tiles within 15 ft (Chebyshev 3) of the servant', tiles.every(t=>Math.max(Math.abs(t.x-unit.x),Math.abs(t.y-unit.y))<=3));
+  T('servantMoveTiles excludes the servant\'s own tile', !tiles.some(t=>t.x===unit.x&&t.y===unit.y));
+  s.map.tiles[(unit.x+1)+','+unit.y]='wall';
+  const tilesAfterWall=servantMoveTiles({map:()=>s.map}, unit);
+  T('servantMoveTiles excludes a walled tile (tileClearFor)', !tilesAfterWall.some(t=>t.x===unit.x+1&&t.y===unit.y));
+}
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

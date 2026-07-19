@@ -833,3 +833,83 @@ verified instead via a live browser: Quick Battle's Use menu end-to-end (Grapple
 Red Dragon Wyrmling), the DM's monster-maneuver modal opening/rolling/sending, and the
 player-side `maneuverCheck` handler's hit and resist branches, injecting a minimal `net` rig
 rather than a full two-peer connection.
+
+### Shove/Grapple/Escape now show the actual roll before resolving (v120.181)
+
+Shove/Grapple/Escape resolved instantly (both rolls happen internally the moment you tap the
+button, straight to a flashBanner) — unlike Attack's interactive "Roll to hit" → result flow.
+That was always true, not a regression, but it read as broken once the DM's new
+monster-maneuver UI (above) started showing an interactive roll and the Use-menu side didn't.
+`maneuverShove`/`maneuverGrapple`/`maneuverEscape` now return the actual roll numbers
+(`atkTotal`/`defTotal`/`atkSkill`/`defSkill`) alongside `success`; `openAdjacentUseUI` routes
+through a `maneuverResult` result-card view (d20 totals + SUCCESS/FAILED, "Continue" to close)
+instead of closing immediately — the roll+apply is still atomic under the hood (no separate
+damage phase to interleave, unlike Attack), this just makes the number visible before dismissal.
+Caught by testing: the result card has no `#useClose`/backdrop-dismiss button, and the modal's
+generic close handlers were unconditionally assigned (`$('#useClose').onclick=...`, no null
+guard) — a stray backdrop tap on the result card threw. Fixed by routing dismiss through
+`afterManeuver` specifically for that view (the mutation already happened by the time it's
+shown, so a bare close would leave it un-saved/un-rendered) and guarding the generic handlers
+like every other view in this function already does.
+
+### Detect Thoughts implemented for real (v120.181)
+
+Was a pure narrative no-op (data tables only, no `SPELL_HANDLERS`/effect/condition entry) —
+same bucket as Comprehend Languages, Purify Food and Drink, etc. Now: casting it targets a
+creature (routed into the existing single-target battle-picker via a `spellTargetsEnemy`
+OR-branch, same mechanism `POWER_WORD_HP`/Eyebite already use to opt into that UI without a
+save/attack/damage keyword), reveals a curated one-line "surface thought" per monster
+type/name (`DETECT_THOUGHTS_FLAVOR`, first-regex-match-wins with a generic fallback), and
+grants the caster advantage on Insight checks against that specific target for the spell's
+duration (`skillCheckAdvantage` gained an optional `targetId` param, checked only for the
+`insight` key against a live 'Detect Thoughts' effect's own `targetId`). The effect itself
+rides the existing generic `SPELL_EFFECTS`-driven `addEffect` concentration bookkeeping every
+other buff spell already gets from `castSpell` — the cast-time hook (`castDetectThoughts`)
+just patches `targetId` onto the effect `addEffect` already pushed, since the caster/target
+aren't both known until the player actually picks a target (a separate step from spending the
+slot). **Deliberate deviation from RAW**: the PHB says Detect Thoughts can't read
+constructs/undead (no mind to touch) — every creature gets a real flavor line here anyway,
+including zombies/skeletons, prioritizing the fun table moment over the rule technicality.
+**Not implemented**: RAW's "probe deeper" mechanic (an action each turn, target gets a Wis
+save, can feed false thoughts on a success) — the surface-thought reveal + Insight advantage
+is the whole feature this pass; probing deeper would need its own per-round save loop.
+
+### Unseen Servant implemented for real (v120.181)
+
+Was also narrative-only. Now a real summon (`SUMMON_CATALOG['Unseen Servant']`, single-choice
+pick list, reusing the exact same summon-spawn UI Conjure Elemental/Animals/Animate Dead
+already use) with true PHB stats: AC 10, 1 HP, Speed 15 ft, **0 attacks**. Getting `0` and `''`
+to actually stick exposed a real latent bug in `spawnSummon`: it built `attacks`/`atk` with
+`pick.attacks||1` / `pick.atk||'Slam +5 (1d8+3)'` — `||` treats a deliberate `0` or `''` as
+"not specified" and silently substitutes the combat-summon default, so a true non-combatant
+summon was never actually reachable through this function before. Fixed to `!=null` checks.
+
+**Mindless, not AI-controlled.** Every existing summon gets `brain:'tactical'` hardcoded
+(full AI autonomy) — wrong for a servant that should only ever do what it's explicitly told.
+New `BRAINS.passive` (always returns no intents) + `spawnSummon` now honors `pick.brain` when
+the catalog entry sets one, instead of hardcoding `'tactical'`. **Real gap this closed**: the
+turn-driver's fallback (`BRAINS[u.brain]||BRAINS.tactical`) would have silently defaulted an
+unrecognized brain name back to full tactical AI — `BRAINS.passive` had to actually exist,
+setting `brain:'passive'` alone would have been a silent no-op.
+
+**Player-directed via the Use menu** (`👻 Command Servant`, bonus action, gated independently
+of the Action-based `afterManeuver` flow every other Use-menu item spends): move it up to
+15 ft (`servantMoveTiles` — direct Chebyshev-3 reposition blocked by `tileClearFor`, not full
+pathfinding; a mental one-word command isn't really "movement" in the normal PC-turn sense) and/or
+interact with one adjacent object, reusing `listInteractInRange`/`runInteractAction` exactly
+as the Use menu already does for the caster's own tile. Scoped to Quick Battle and player-net
+(same reasoning as the maneuver system: DM-hosted has no PC of its own to command a servant
+for). **Real bug caught by live testing, not unit tests**: the servant lookup
+(`m.controllerId===me.id`) worked in QB (`me.id` is the stable string `'pc'`) but not
+player-net, where `openAdjacentUseUI`'s `me` wrapper overrides `.id` to the literal `'me'` for
+adapter purposes — `spawnSummon`'s real `controllerId` is the actual peer id in that mode, so
+the comparison needs to branch per mode (`mode==='qb'?'pc':net.peer.id`) rather than reading
+`me.id` uniformly.
+
+Coverage: `rules-test.js` covers the catalog entry shape, the `!=null` fix directly (spawn a
+unit with `attacks:0`/`brain:'passive'` and confirm it sticks), that the passive brain's "AI
+turn" is a real no-op call (not a crash, not a silent tactical fallback), and
+`servantMoveTiles`' range/self-exclusion/wall-blocking. Verified live in a real browser: full
+cast → pick → place flow through the actual summon UI, the spawned unit's real stats, the
+passive brain's no-op turn, and Command Servant's move-tile picker actually repositioning the
+unit and correctly refusing a second command once the bonus action is spent.

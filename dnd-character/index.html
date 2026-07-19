@@ -979,7 +979,7 @@ function openEyebiteChoice(ad, casterId, mo, dc, doneLog){
     doneLog(eyebiteResolve(ad, casterId, mo, opt, dc, roll));
   });
 }
-function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !!(mc.attack||mc.save||mc.dmg||SPELL_COND[name]||POWER_WORD_HP[name]!=null); }
+function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !!(mc.attack||mc.save||mc.dmg||SPELL_COND[name]||POWER_WORD_HP[name]!=null||name==='Detect Thoughts'); }
 /** Needs battlefield aim (AoE, lines like Gust of Wind, attacks). */
 function spellNeedsBattleTarget(name, mc){
   if(SPELL_TELEPORT[name]) return false; // has its own picker
@@ -1089,6 +1089,7 @@ function openSpellTarget(c, name, level){
     if(POWER_WORD_HP[name]!=null){ const ev=Engine.castApply(playerNetAdapter,'me',mo.id,{name,powerWord:name});
       flashBanner(ev.noEffect?name+' has no effect — '+mo.name+' has more than '+ev.threshold+' HP':ev.killed?'💀 '+name+' drops '+mo.name+' instantly':'😵 '+name+' stuns '+mo.name); return; }
     if(name==='Eyebite'){ openEyebiteChoice(playerNetAdapter,'me',mo, dc0, msg=>flashBanner(msg)); return; }
+    if(name==='Detect Thoughts'){ castDetectThoughts(c, mo); return; }
     if(mc.attack){ attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'0',dt:mc.dtype||''}); return; }
     const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0;
     if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
@@ -1685,6 +1686,7 @@ const SPELL_EFFECTS = {
   'Divine Favor':{rounds:10, conc:true, note:'Your weapon hits deal +1d4 radiant.'},
   "Hunter's Mark":{rounds:600, conc:true, note:'+1d6 damage to the marked target; track between targets.'},
   'Hex':{rounds:600, conc:true, note:'+1d6 necrotic to the hexed target; it has disadvantage on one ability.'},
+  'Detect Thoughts':{rounds:10, conc:true, note:'Read a target’s surface thoughts; advantage on Insight checks against them for the duration.'},
   'False Life':{rounds:600, mods:{tempHp:5}, note:'Gain 1d4+4 temporary HP (≈5).'},
   'Aid':{rounds:4800, mods:{tempHp:5}, note:'HP maximum and current HP +5 for up to three creatures (8 hours).'},
   'Heroes\' Feast':{rounds:14400, note:'+2d10 HP max, immune to poison & fright, advantage on WIS saves (24h).'},
@@ -1945,6 +1947,7 @@ const SPELL_HANDLERS={
   'Conjure Elemental':{kind:'summon', catalog:'Conjure Elemental'},
   'Conjure Animals':{kind:'summon', catalog:'Conjure Animals'},
   'Animate Dead':{kind:'summon', catalog:'Animate Dead'},
+  'Unseen Servant':{kind:'summon', catalog:'Unseen Servant'},
   'Wish':{kind:'choice'}
 };
 /** SRD-ish templates for conjure spells (simplified CR≈5 elementals). */
@@ -1995,6 +1998,15 @@ const SUMMON_CATALOG={
       {id:'zomb', label:'🧟 Zombie', name:'Zombie', cr:'1/4', ac:8, hp:22, spd:20,
         sprite:'zombie', atk:'Slam +3 (1d6+1)', init:-2, attacks:1,
         desc:'Shambling undead; Undead Fortitude can keep it up at 1 HP.'}
+    ]
+  },
+  'Unseen Servant':{
+    conc:false, placeRangeTiles:12, // 60 ft
+    note:'An invisible, mindless force (AC 10, 1 HP, Speed 15 ft) that never acts on its own — command it each turn (🖐 Use → Command Servant, bonus action) to move up to 15 ft and interact with one object. Can\'t attack and can\'t be meaningfully attacked back.',
+    pick:[
+      {id:'servant', label:'👻 Unseen Servant', name:'Unseen Servant', cr:0, ac:10, hp:1, spd:15,
+        sprite:'ghost', atk:'', attacks:0, init:0, brain:'passive',
+        desc:'Fetches, cleans, opens doors, carries a torch — simple one-word tasks only.'}
     ]
   }
 };
@@ -2057,9 +2069,11 @@ function spawnSummon(s, casterUnit, pick, x, y, spellName){
     conc:!!(SUMMON_CATALOG[spellName]&&SUMMON_CATALOG[spellName].conc!==false),
     base:pick.name, name:pick.name,
     x, y, hp:pick.hp, max:pick.hp, ac:pick.ac||12,
-    sprite:pick.sprite||'demon', atk:pick.atk||'Slam +5 (1d8+3)',
-    speed:spd, attacks:pick.attacks||1, attacksLeft:pick.attacks||1,
-    moveLeft:spd, reactionUsed:false, brain:'tactical',
+    sprite:pick.sprite||'demon', atk:pick.atk!=null?pick.atk:'Slam +5 (1d8+3)',
+    // pick.attacks/pick.brain use !=null (not ||) so a deliberate 0 attacks / 'passive' brain
+    // (Unseen Servant — a mindless non-combatant) isn't coerced back to the combat defaults.
+    speed:spd, attacks:pick.attacks!=null?pick.attacks:1, attacksLeft:pick.attacks!=null?pick.attacks:1,
+    moveLeft:spd, reactionUsed:false, brain:pick.brain||'tactical',
     fly:!!pick.fly, init:initRoll, conds:[], facing:'down'
   };
   s.monsters.push(unit);
@@ -5735,13 +5749,18 @@ function rollSkillCheck(c, skillKey, abilKey, opts){
 }
 // Ability-check advantage from tracked conditions/effects — mirrors attackAdvantage's
 // shape (index.html ~497) but for skill/ability checks instead of attack rolls. Currently
-// covers what's actually mechanically tracked: Rage's advantage on Strength checks.
+// covers what's actually mechanically tracked: Rage's advantage on Strength checks, and
+// Detect Thoughts' advantage on Insight checks against the specific creature it read
+// (optional `targetId` — only matters for the 'insight' key; every other caller can omit it).
 // NOTE: Enlarge/Reduce's SPELL_EFFECTS note also promises this (Enlarge: advantage on STR,
 // Reduce: disadvantage), but the game doesn't yet track which of the two was chosen when
 // cast (single combined 'Enlarge/Reduce' effect name) — left unwired rather than guessing.
-function skillCheckAdvantage(c, skillKey, abilKey){
+function skillCheckAdvantage(c, skillKey, abilKey, targetId){
   let adv=0; const why=[];
   if(abilKey==='str' && isRaging(c)){ adv++; why.push('raging (advantage on Strength checks)'); }
+  if(skillKey==='insight' && targetId!=null && (c.effects||[]).some(e=>e.name==='Detect Thoughts' && e.targetId===targetId)){
+    adv++; why.push('reading their surface thoughts (Detect Thoughts)');
+  }
   return {adv, why};
 }
 // Flat additive bonuses to a skill check from active effects (distinct from advantage).
@@ -7022,7 +7041,14 @@ function openAdjacentUseUI(c, s, me){
   // mirror payload specifically so this filter can tell "needs stabilizing" apart from
   // "already stable" or "already dead" without a round-trip.
   const allies = mode==='player' ? (s.players||[]).filter(p=>p.id!==net.peer.id && needsStabilizing(p) && gridDist(me.x,me.y,p.x,p.y)<=1) : [];
-  if(!items.length && !foes.length && !grappled && !canHide && !allies.length){
+  // A live Unseen Servant is never adjacency-gated (it can be anywhere on the map) and costs
+  // a BONUS action, not the Action every other Use-menu item spends — checked independently
+  // inside its own handler rather than folded into the shared afterManeuver bookkeeping.
+  // spawnSummon's controllerId is 'pc' in QB but the real peer id in player-net (this `me`
+  // wrapper's own .id is overridden to the literal 'me' for adapter purposes, which is NOT
+  // what the caster was actually identified by at summon time — don't compare against it).
+  const servant = mode ? s.monsters.find(m=>m.hp>0 && m.spell==='Unseen Servant' && m.controllerId===(mode==='qb'?'pc':(net.peer&&net.peer.id))) : null;
+  if(!items.length && !foes.length && !grappled && !canHide && !allies.length && !servant){
     flashBanner('Nothing interactive within 5 ft');
     if(mode==='qb') qbLog('🖐 No usable objects adjacent');
     return;
@@ -7033,6 +7059,7 @@ function openAdjacentUseUI(c, s, me){
     if(!pick){
       if(grappled) body+=`<button class="btn block" id="useEscape" style="margin-bottom:8px;text-align:left">🤸 Escape Grapple<small style="display:block;opacity:.75">Athletics/Acrobatics (your choice) vs the grappler's Athletics</small></button>`;
       if(canHide) body+=`<button class="btn block" id="useHide" style="margin-bottom:8px;text-align:left">🫥 Hide<small style="display:block;opacity:.75">Needs darkness, full cover, or (Skulker) dim light</small></button>`;
+      if(servant) body+=`<button class="btn block" data-use="servant" style="margin-bottom:8px;text-align:left">👻 Command Servant<small style="display:block;opacity:.75">Move it up to 15 ft / interact with an object — bonus action</small></button>`;
       body+=items.map((it,i)=>{
         const st=it.obj.state||it.def.default;
         return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
@@ -7049,6 +7076,30 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn block" id="useStabilize" style="margin-bottom:8px;text-align:left">🩹 Stabilize</button>`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='servant'){
+      // A direct reposition within 15 ft (3 tiles), blocked by tileClearFor — simplified from
+      // RAW pathfinding, matching how a one-word mental command isn't really "movement" in the
+      // normal PC-turn sense. Interact list is scoped to the SERVANT's tile, not the caster's.
+      const servTiles=servantMoveTiles(ad, servant);
+      const servItems=listInteractInRange(s, servant, 1);
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Unseen Servant at (${servant.x},${servant.y}). Bonus action.</p>`;
+      body+=`<div class="chips" style="margin-bottom:8px">${servTiles.map((t,i)=>`<button class="chip" data-servmove="${i}">→ ${t.x},${t.y}</button>`).join('')}</div>`;
+      if(servItems.length) body+=servItems.map((it,i)=>{
+        const st=it.obj.state||it.def.default;
+        return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
+          <button class="btn sm" data-servint="${i}">Use</button></div>`;
+      }).join('');
+      else body+=`<p class="muted" style="font-size:12px;margin:8px 0">Nothing for it to interact with nearby.</p>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='maneuverResult'){
+      const r=pick.res;
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">${esc(pick.label)}</p>
+        <div class="card" style="text-align:center;margin:0 0 8px">
+          <div style="font-family:Georgia,serif;font-size:28px;font-weight:700;color:${r.success?'var(--good)':'var(--bad)'}">${r.atkTotal} vs ${r.defTotal}</div>
+          <div class="muted" style="font-size:12px">${esc(r.atkSkill)} ${r.atkTotal} vs ${esc(r.defSkill)} ${r.defTotal} — ${r.success?'SUCCESS':'FAILED'}</div>
+        </div>
+        <button class="btn block" id="useManeuverOk">Continue</button>`;
     } else if(pick.kind==='foe'){
       const mo=pick.mo;
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(mo.name)}</b> at (${mo.x},${mo.y}) — Athletics vs Athletics/Acrobatics. Uses one of your attacks.</p>
@@ -7076,14 +7127,28 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     }
     $('#modalRoot').innerHTML=`<div class="modal" id="useModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
-    $('#useClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
-    $('#useModal').onclick=e=>{ if(e.target.id==='useModal') $('#modalRoot').innerHTML=''; };
     // Every maneuver mutates state via `ad`/`log` (network sends already happen inside
     // ad.addCond/ad.moveUnit for player-net) — this wrapper just does the UI-layer bookkeeping
     // every path needs (close modal, save, re-render, and mode-specific extras).
     const afterManeuver=()=>{ $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello(); };
+    // The maneuverResult view has already mutated state (the roll+apply happened before this
+    // card ever rendered) and only ever shows a "Continue" button, no #useClose — route the
+    // generic close/backdrop-dismiss through afterManeuver there so a stray backdrop tap
+    // doesn't leave the mutation un-saved/un-rendered behind a closed modal.
+    const dismiss = pick&&pick.kind==='maneuverResult' ? afterManeuver : ()=>{ $('#modalRoot').innerHTML=''; };
+    { const cl=$('#useClose'); if(cl) cl.onclick=dismiss; }
+    $('#useModal').onclick=e=>{ if(e.target.id==='useModal') dismiss(); };
+    // Shove/Grapple/Escape already roll+apply atomically (no separate damage phase to
+    // interleave, unlike Attack) — but the result is worth SEEING before the modal closes,
+    // same spirit as Attack's roll-then-result card. Route through a result screen instead of
+    // closing immediately; save/render is deferred to when the player taps Continue.
+    const showManeuverResult=(label, res)=>{
+      if(!res || !res.ok || res.atkTotal==null){ afterManeuver(); return; }   // no roll happened (e.g. blocked by range/no action) — nothing to show
+      draw({kind:'maneuverResult', label, res});
+    };
     { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='study'?{kind:'foe',mo:pick.mo}:null); }
-    { const es=$('#useEscape'); if(es) es.onclick=()=>{ maneuverEscape(ad, me, true, log); afterManeuver(); }; }
+    { const ok=$('#useManeuverOk'); if(ok) ok.onclick=afterManeuver; }
+    { const es=$('#useEscape'); if(es) es.onclick=()=>{ const res=maneuverEscape(ad, me, true, log); showManeuverResult('Escape Grapple', res); }; }
     { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ maneuverHide(ad, me, log); afterManeuver(); }; }
     { const stb=$('#useStabilize'); if(stb) stb.onclick=()=>{
       const al=pick.al;
@@ -7093,17 +7158,42 @@ function openAdjacentUseUI(c, s, me){
     }; }
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
-      draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]} : Object.assign({kind:'obj'}, items[Number(idx)]));
+      draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]}
+        : kind==='servant' ? {kind:'servant'} : Object.assign({kind:'obj'}, items[Number(idx)]));
+    });
+    // Commanding the servant spends the BONUS action resource, independent of the shared
+    // Action-based afterManeuver flow every other Use-menu item runs through.
+    const spendServantCommand=()=>{ if(c.battle) c.battle.bonus=true; $('#modalRoot').innerHTML=''; save(); render();
+      if(mode==='player') playerHello(); if(mode==='qb') qbLog('👻 '+c.name+' commands the Unseen Servant'); };
+    document.querySelectorAll('[data-servmove]').forEach(b=>b.onclick=()=>{
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      const t=servantMoveTiles(ad, servant)[Number(b.dataset.servmove)];
+      if(!t) return;
+      servant.x=t.x; servant.y=t.y;
+      spendServantCommand();
+    });
+    document.querySelectorAll('[data-servint]').forEach(b=>b.onclick=()=>{
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      const it=listInteractInRange(s, servant, 1)[Number(b.dataset.servint)];
+      if(!it) return;
+      const acts=availableInteractActions(it.obj, 'adj'); const a=acts[0];
+      if(!a){ flashBanner('Nothing it can do with that'); return; }
+      const res=runInteractAction(s, c, it.key, a.id, 'adj');
+      if(!res.ok){ flashBanner(res.msg); return; }
+      logChange(c, '👻 '+res.msg); flashBanner('👻 '+res.msg); sfx('cast');
+      spendServantCommand();
     });
     document.querySelectorAll('[data-study]').forEach(b=>b.onclick=()=>draw({kind:'study', mo:pick.mo}));
     document.querySelectorAll('[data-studysk]').forEach(b=>b.onclick=()=>{ maneuverStudy(ad, me, pick.mo, b.dataset.studysk, log); afterManeuver(); });
     document.querySelectorAll('[data-usea]').forEach(b=>b.onclick=()=>{
       const actId=b.dataset.usea;
       if(pick&&pick.kind==='foe'){
-        if(actId==='shove-prone') maneuverShove(ad, me, pick.mo, 'prone', log);
-        else if(actId==='shove-push') maneuverShove(ad, me, pick.mo, 'push', log);
-        else if(actId==='grapple') maneuverGrapple(ad, me, pick.mo, log);
-        afterManeuver();
+        const mo=pick.mo;
+        let res, label;
+        if(actId==='shove-prone'){ res=maneuverShove(ad, me, mo, 'prone', log); label='Shove ('+mo.name+') — knock Prone'; }
+        else if(actId==='shove-push'){ res=maneuverShove(ad, me, mo, 'push', log); label='Shove ('+mo.name+') — push 5 ft'; }
+        else if(actId==='grapple'){ res=maneuverGrapple(ad, me, mo, log); label='Grapple ('+mo.name+')'; }
+        showManeuverResult(label, res);
         return;
       }
       if(c.battle&&!hasAction(c)){ flashBanner('No Action left this turn'); return; }
@@ -7959,6 +8049,54 @@ function monsterDmgMult(mo, dtype){ if(!mo||!dtype) return 1; const r=MONSTER_RV
 // CR ¼ ≈ +1, CR 2 ≈ +2, CR 5 ≈ +3, CR 10 ≈ +6, CR 13 ≈ +7).
 function monsterSaveBonus(mo){ const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name)); const cr=crToNum(base?base.cr:1); return Math.min(9, 1+Math.floor(cr/2)); }
 function monsterCR(mo){ const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name)); return crToNum(base?base.cr:1); }
+// Detect Thoughts surface-thought flavor, keyed by monster name/type keyword (first match
+// wins). PHB says the spell can't read constructs/undead at all (no mind to touch) — this
+// project deliberately ignores that restriction and gives every creature a line instead,
+// prioritizing a fun table moment over strict RAW (a zombie's "surface thought" is exactly
+// the kind of thing worth showing the player, rule technicality aside).
+const DETECT_THOUGHTS_FLAVOR=[
+  [/zombie/i, 'Hungry. So hungry. Must... find... brains.'],
+  [/skeleton/i, 'Cold. Silent. An echo of orders given centuries ago.'],
+  [/ghoul/i, 'Rotting meat. Fresh meat. Which is closer?'],
+  [/ghost|wraith|specter/i, "Why won't they let me rest? I only wanted to go home."],
+  [/ooze|gelatinous cube/i, '...nothing but a wordless hum of hunger.'],
+  [/beholder|gazer/i, 'Everyone is beneath me. Everyone is a threat. Both are true.'],
+  [/goblin|kobold/i, 'Bigger than me. Run? Or is there loot first?'],
+  [/orc|bugbear|hobgoblin/i, 'Strike first. Strike hard. Ask questions never.'],
+  [/troll|ogre|hill giant/i, 'HUNGRY. SMASH. EAT.'],
+  [/dire wolf|\bwolf/i, 'Pack. Prey. Which one are you?'],
+  [/spider/i, 'Something struggles in the web. Good — it has been a while.'],
+  [/snake/i, 'Warm blood, close by. Strike before it strikes.'],
+  [/bear/i, "This is MY territory. Leave, or don't — either is fine."],
+  [/imp|quasit|dretch/i, 'Hee hee. Wonder what happens if I bite that one.'],
+  [/dragon/i, 'Mine. All of this — the gold, the land, you — is mine.'],
+  [/wyvern/i, 'Circle. Wait. Strike from above.'],
+  [/mage/i, 'If this goes wrong, which spell do I have left...'],
+  [/cultist/i, 'The Master will reward this. It has to.'],
+  [/bandit/i, "Just take the coin purse and go. Not worth dying over."],
+  [/guard/i, 'Please, just let my shift end without anything happening.'],
+  [/lizardfolk/i, 'Warm-blood thinks too much. Cold-blood survives.']
+];
+const DETECT_THOUGHTS_FALLBACK='A jumble of surface impressions — hard to make out anything clear.';
+function detectThoughtsFlavor(mo){
+  const name=(mo&&(mo.base||mo.name))||'';
+  const hit=DETECT_THOUGHTS_FLAVOR.find(([re])=>re.test(name));
+  return hit ? hit[1] : DETECT_THOUGHTS_FALLBACK;
+}
+// Cast-time hook shared by QB/player-net's resolveSingle: castSpell() already pushed the
+// caster-side 'Detect Thoughts' effect (via SPELL_EFFECTS, generic to every concentration
+// spell) before this runs — patch in WHICH creature it's reading (targetId, consumed by
+// skillCheckAdvantage's Insight-advantage check) and surface the flavor line.
+function castDetectThoughts(c, mo, log){
+  const eff=(c.effects||[]).find(e=>e.name==='Detect Thoughts');
+  if(eff) eff.targetId=mo.id;
+  const flavor=detectThoughtsFlavor(mo);
+  const msg='🧠 Surface thoughts of '+mo.name+': "'+flavor+'"';
+  logChange(c, msg);
+  if(log) log(msg);
+  flashBanner(msg);
+  return flavor;
+}
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
   const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
@@ -8170,6 +8308,9 @@ function renderNetBar(){
    unit later — even monster-vs-monster with different AIs.
    ========================================================================= */
 const BRAINS = {};   // name -> function(enc, unit) -> [intent]; intents: {type:'move',to} | {type:'attack',targetId,atk}
+// A mindless summon (Unseen Servant) never acts on its own — it only ever does what its
+// caster explicitly commands via openCommandServantUI, so its "AI turn" is always a no-op.
+BRAINS.passive = function(){ return []; };
 
 /* =========================================================================
    UNIFIED COMBAT ENGINE (all modes: quick battle, DM side, player netplay).
@@ -9186,6 +9327,17 @@ function tileClearFor(s, x, y){
   const dd=DECOR[decorAt(s,x,y)]; if(dd&&dd.solid) return false;
   return true;
 }
+// Legal tiles within 15 ft (3 tiles, Chebyshev) of a mindless summon's current position —
+// shared by the Command Servant render and its click handler (Use menu, openAdjacentUseUI).
+function servantMoveTiles(ad, servant){
+  const out=[];
+  for(let dx=-3;dx<=3;dx++) for(let dy=-3;dy<=3;dy++){
+    if(Math.max(Math.abs(dx),Math.abs(dy))>3 || (dx===0&&dy===0)) continue;
+    const nx=servant.x+dx, ny=servant.y+dy;
+    if(tileClearFor({map:ad.map()},nx,ny)) out.push({x:nx,y:ny});
+  }
+  return out;
+}
 // ---- Unified maneuver system (all modes) ----
 // Every maneuver below takes an `ad` (qbAdapter/sessionAdapter/playerNetAdapter) + a `log`
 // callback instead of hardcoding QB/qbLog, so the exact same function runs Quick Battle, a
@@ -9210,7 +9362,8 @@ function maneuverShove(ad, pcUnit, mo, mode, log){
   const name=ad.name(pcUnit), moName=ad.name(mo);
   const res=opposedCheck(c,'athletics','str', ad.checkSubject(mo), [['athletics','str'],['acrobatics','dex']]);
   const detail='('+res.attacker.total+' vs '+res.defender.total+')';
-  if(!res.success){ log('🤼 '+name+' tries to shove '+moName+' '+detail+' — fails'); flashBanner('Shove failed'); return {ok:true, success:false}; }
+  const rollInfo={atkTotal:res.attacker.total, defTotal:res.defender.total, atkSkill:'Athletics', defSkill:res.defender.skillKey==='athletics'?'Athletics':'Acrobatics'};
+  if(!res.success){ log('🤼 '+name+' tries to shove '+moName+' '+detail+' — fails'); flashBanner('Shove failed'); return Object.assign({ok:true, success:false}, rollInfo); }
   if(mode==='prone'){
     ad.addCond(mo,'Prone');
     log('🤼 '+name+' shoves '+moName+' '+detail+' — knocked Prone');
@@ -9223,7 +9376,7 @@ function maneuverShove(ad, pcUnit, mo, mode, log){
     flashBanner(moName+' is pushed back!');
   }
   sfx('hit');
-  return {ok:true, success:true};
+  return Object.assign({ok:true, success:true}, rollInfo);
 }
 // Grapple (PHB): Athletics vs Athletics/Acrobatics; success applies Grappled (speed 0 —
 // already handled generically by speedBlocked()). Tracks who grappled whom (mo.grappledBy)
@@ -9240,13 +9393,14 @@ function maneuverGrapple(ad, pcUnit, mo, log){
   const name=ad.name(pcUnit), moName=ad.name(mo);
   const res=opposedCheck(c,'athletics','str', ad.checkSubject(mo), [['athletics','str'],['acrobatics','dex']]);
   const detail='('+res.attacker.total+' vs '+res.defender.total+')';
-  if(!res.success){ log('🤼 '+name+' tries to grapple '+moName+' '+detail+' — fails'); flashBanner('Grapple failed'); return {ok:true, success:false}; }
+  const rollInfo={atkTotal:res.attacker.total, defTotal:res.defender.total, atkSkill:'Athletics', defSkill:res.defender.skillKey==='athletics'?'Athletics':'Acrobatics'};
+  if(!res.success){ log('🤼 '+name+' tries to grapple '+moName+' '+detail+' — fails'); flashBanner('Grapple failed'); return Object.assign({ok:true, success:false}, rollInfo); }
   ad.addCond(mo,'Grappled');
   mo.grappledBy='pc';
   log('🤼 '+name+' grapples '+moName+' '+detail);
   flashBanner(moName+' is grappled!');
   sfx('hit');
-  return {ok:true, success:true};
+  return Object.assign({ok:true, success:true}, rollInfo);
 }
 // Escape a grapple as your action — the escaper rolls the better of Athletics/Acrobatics,
 // contested by the grappler's Athletics (PHB); a tie favors the grappler (still grappled),
@@ -9263,6 +9417,7 @@ function maneuverEscape(ad, unit, isPc, log){
   if(!grappler){ flashBanner('Nothing to escape from'); return {ok:false}; }
   const res=opposedCheck(ad.checkSubject(grappler)||grappler, 'athletics', 'str', isPc?c:ad.checkSubject(unit), [['athletics','str'],['acrobatics','dex']]);
   const success=!res.success;
+  const rollInfo={atkTotal:res.defender.total, defTotal:res.attacker.total, atkSkill:res.defender.skillKey==='athletics'?'Athletics':'Acrobatics', defSkill:'Athletics'};   // "attacker" here is the grappler, not the escaper — flip labels so the UI reads as "you vs grappler"
   if(isPc) spendAction(c);
   const name=isPc?ad.name(unit):unit.name;
   if(success){
@@ -9274,7 +9429,7 @@ function maneuverEscape(ad, unit, isPc, log){
     log('🤸 '+name+' fails to escape the grapple');
     flashBanner('Escape failed');
   }
-  return {ok:true, success};
+  return Object.assign({ok:true, success}, rollInfo);
 }
 // Hide (PHB): needs heavy obscurement (darkness) at your own tile, full cover from the
 // nearest hostile, or — with the Skulker feat — just dim light. Success sets hiddenDC
@@ -9632,6 +9787,7 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
       qbLog(ev.noEffect?name+' has no effect — '+mo.name+' has more than '+ev.threshold+' HP':ev.killed?'💀 '+name+' — '+mo.name+' ('+ev.curHp+'/'+ev.threshold+' HP) drops dead instantly':'😵 '+name+' — '+mo.name+' ('+ev.curHp+'/'+ev.threshold+' HP) is stunned');
       qbCheckEnd(); finish(); return; }
     if(name==='Eyebite'){ openEyebiteChoice(qbAdapter,'pc',mo, dc0, msg=>{ qbLog(msg); qbCheckEnd(); finish(); }); return; }
+    if(name==='Detect Thoughts'){ castDetectThoughts(c, mo, qbLog); qbCheckEnd(); finish(); return; }
     if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'0', tiles:tilesR, dtype:mc.dtype, spell:true}, (ev)=>{ if(ev&&ev.hit) qbApplyCond(mo,name); finish(); }); }
     else {
       // Save/utility: roll damage if any, then bolt FX, then apply
@@ -9812,7 +9968,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.180';
+const APP_VERSION='v120.181';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
