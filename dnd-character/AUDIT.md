@@ -1011,3 +1011,56 @@ through the actual targeting UI paints real solid terrain and blocks movement (c
 same "sprite image 404s, CSS color renders" pattern the pre-existing, shipped `grease` terrain
 already has — not a new bug), and casting Silence creates a real no-cast hazard zone through the
 same UI path.
+
+## Finish-what's-half-built batch (v120.183)
+
+**Gust of Wind now has a real creature-facing effect.** Previously the spell only snuffed
+torches — RAW is a Strength save or be pushed 15 ft (not knocked prone; that was a misremembering
+checked with the user before implementing). `applyGustOfWind` walks the same line-of-tiles used
+for the torch check, rolls each monster's Strength save against the caster's spell DC, and pushes
+failures 3 tiles back along the wind's direction (stopping early at the first blocked tile via
+`tileClearFor`). Both QB and player-net call sites now pass the DC through and report
+pushed/resisted counts in the flavor banner.
+
+**DM-side Escape Grapple actually works now.** `maneuverEscape`'s branch for a monster escaping
+a *player's* grapple existed since the original maneuver-unification pass but had no real caller
+— `mo.grappledBy` was hardcoded to the literal string `'pc'`, which only ever matched Quick
+Battle's single-PC assumption. `maneuverGrapple` now stores the grappler's actual display name,
+and a new `ad.findGrappler(name)` adapter method (added to `qbAdapter`/`sessionAdapter`) resolves
+it back to a real unit for the contest. Wired into `dmMonsterAttack`'s attack-chip list as
+"Escape Grapple", shown only when the monster is currently Grappled — resolves instantly, no
+player round-trip needed since it's the monster's own turn.
+
+**Player-net Dispel Magic / Counterspell.** `dispelMonsterConds(mo)` strips a monster's
+condition list (same "collapse to strip-conditions" simplification documented above for QB) and
+is now reachable from a connected player's device via a new `dispelMon` net message, handled
+DM-side in `dmOnData` alongside the existing `paintHazard`/`moncond` handlers.
+
+**Search — the counterpart to Hide.** Hide previously only worked in Quick Battle. A player's
+Stealth total (`hiddenDC`) now syncs to the DM the same way `sanctuaryDC`/`holyAuraDC` already
+do (via `playerHello()`'s payload and the `hello` handler's `Object.assign`). `dmMonsterAttack`
+offers a "Search" attack option whenever a connected player is Hidden; rolling it calls the new
+`monsterSearchRoll(mo, hiddenDC)` (Perception check vs. the synced Stealth total) and, on a
+success, clears the target's Hidden condition and notifies their device via the existing `cond`
+message.
+
+Getting Search's roll button to actually render live surfaced a real bug worth recording: a
+stray extra `}` left over from an earlier edit to `dmMonsterAttack`'s attack-type chain (the one
+that added Escape Grapple/Search branches) was closing the `draw()` render function one brace too
+early. Everything textually after that point — including the final `$('#modalRoot').innerHTML=`
+assignment and all the `#maRoll`/`#maSearch`/etc. button-click bindings — was still reachable
+because it happened to sit inside `dmMonsterAttack`'s own scope too, so the modal still *rendered
+something* and *looked* functional, but `st.atk`-dependent branches added after that brace (only
+Escape Grapple and Search, since they were the newest ones) were being evaluated against whatever
+`body`/`st` state existed at the point the function's real scope actually closed — silently
+skipping the button. `node --check` on the extracted `<script>` body pinpointed it exactly once
+asked to; a plain browser reload never surfaces this class of bug because the rest of the script
+still parses and runs fine. Worth remembering: when a single UI branch in a large function
+silently produces no output with zero console errors, checking the served script's raw syntax
+validity is a five-second test that should happen *before* hours of runtime instrumentation.
+
+Tests: 15+ new `rules-test.js` assertions across all four fixes (Gust of Wind's push/resist
+math at multiple Strength deltas, `findGrappler`/DM-side Escape Grapple, `dispelMon`'s message
+handling, `monsterSearchRoll`'s hit/miss/unknown-DC cases, and the `hiddenDC` sync path). Search
+also spot-verified live end-to-end via Playwright: DM opens the attack modal, picks Search, rolls
+against a low DC, and the target's Hidden condition is correctly cleared.

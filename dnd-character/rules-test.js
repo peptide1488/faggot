@@ -1261,5 +1261,69 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('qbPcAttacks now offers a real 1d6 slashing Claws attack, not just the flat unarmed-strike fallback', !!claws && claws.dmg==='1d6' && claws.dt==='slashing');
 }
 
+/* ---- Gust of Wind: was torch-snuffing only — now a real Str-save-or-pushed-15ft effect ---- */
+{
+  const s={map:{cols:12,rows:12,tiles:{}}, battle:{round:1}, monsters:[
+    {id:'m1', side:'mon', base:'Goblin', name:'Weak', hp:7, x:5,y:0},   // low STR, in the line, should fail vs a high DC
+    {id:'m2', side:'mon', base:'Young Red Dragon', name:'Strong', hp:100, x:6,y:0},   // high STR, should resist
+    {id:'m3', side:'mon', base:'Goblin', name:'Offline', hp:7, x:5,y:5}   // not in the line at all
+  ]};
+  const before={m1:{x:5,y:0}, m2:{x:6,y:0}, m3:{x:5,y:5}};
+  const orig=Math.random; Math.random=()=>0.5;   // same mid-range d20 (11) for everyone — only STR modifier separates weak from strong
+  const res=applyGustOfWind(s, {x:0,y:0}, {x:11,y:0}, 'Caster', 15);
+  Math.random=orig;
+  const m1=s.monsters.find(m=>m.id==='m1'), m2=s.monsters.find(m=>m.id==='m2'), m3=s.monsters.find(m=>m.id==='m3');
+  T('a weak creature in the line fails its Str save and gets pushed', m1.x!==before.m1.x || m1.y!==before.m1.y);
+  T('the push moves the creature away from the caster along the line direction', m1.x>before.m1.x);
+  T('a strong creature in the line can still resist (high STR modifier clears the same DC)', m2.x===before.m2.x && m2.y===before.m2.y);
+  T('a creature outside the line is never touched at all', m3.x===before.m3.x && m3.y===before.m3.y);
+  T('applyGustOfWind reports real pushed/resisted counts, not just a flat "cast" flag', res.pushed===1 && res.resisted===1);
+}
+
+/* ---- DM-side Escape Grapple: a grappled monster previously had no way to ever escape ---- */
+{
+  // maneuverGrapple now stores the grappler's NAME (not the old hardcoded 'pc' string) so
+  // sessionAdapter.findGrappler can look them back up — the DM never had a "solePc" to fall
+  // back to (a session can host multiple players).
+  const mo={id:'m1', side:'mon', base:'Goblin', name:'Trapped', hp:7, x:0,y:0, conds:[{name:'Grappled',rounds:10}], grappledBy:'Grappler'};
+  setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[mo],
+    players:[{id:'p1', name:'Grappler', x:0,y:1, hpCur:10, hpMax:10}], order:[], turn:0}});
+  T('sessionAdapter.findGrappler resolves the stored name back to the real connected player', sessionAdapter.findGrappler('Grappler').id==='p1');
+  T('sessionAdapter.findGrappler returns nothing for an unknown name', sessionAdapter.findGrappler('Nobody')===undefined);
+  const res=maneuverEscape(sessionAdapter, mo, false, ()=>{});
+  T('a DM-controlled grappled monster can now actually attempt to escape (real caller, not dead code)', res.ok===true);
+  setNet(null);
+}
+
+/* ---- Player-net Dispel Magic / Counterspell: dmOnData's new 'dispelMon' relay ---- */
+{
+  const cursedMon={id:'m1', side:'mon', name:'Goblin', hp:7, conds:[{name:'Restrained',rounds:10}]};
+  setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[cursedMon], players:[], order:[], turn:0}});
+  dmOnData({peer:'p1'}, {t:'dispelMon', mon:'m1'});
+  T('a player-net Dispel Magic/Counterspell relay actually clears the condition on the DM\'s authoritative monster', cursedMon.conds.length===0);
+  setNet(null);
+}
+
+/* ---- Search: the counterpart to Hide, which previously had nothing to counter it ---- */
+{
+  const seeker={id:'m1', side:'mon', base:'Young Red Dragon', name:'Seeker', hp:100};
+  const weakSeeker={id:'m2', side:'mon', base:'Goblin', name:'WeakSeeker', hp:7};
+  const orig=Math.random; Math.random=()=>0.5;   // same mid-range d20 (11) for both — only the WIS modifier differs
+  const strongRes=monsterSearchRoll(seeker, 15);
+  const weakRes=monsterSearchRoll(weakSeeker, 15);
+  Math.random=orig;
+  T('monsterSearchRoll: a high-CR monster with a real WIS-derived bonus can find a well-hidden PC', strongRes.found===true);
+  T('monsterSearchRoll: a low-CR monster with the same DC roll fails to find the same target', weakRes.found===false);
+  T('monsterSearchRoll reports no find when hiddenDC is unknown (not yet synced from the player)', monsterSearchRoll(seeker, null).found===false);
+
+  // hiddenDC now rides along on playerHello()'s payload / dmOnData's hello handler, same as
+  // sanctuaryDC/holyAuraDC — previously not synced at all, so the DM had no way to ever
+  // resolve a Search roll against a real Stealth total.
+  setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[], players:[], order:[], turn:0}});
+  dmOnData({peer:'p1'}, {t:'hello', char:{cid:'c1', name:'Hider', hpCur:10, hpMax:10, ac:14, hiddenDC:17}});
+  T('a Hidden player\'s real Stealth total (hiddenDC) now reaches the DM\'s mirror', getNet().session.players[0].hiddenDC===17);
+  setNet(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

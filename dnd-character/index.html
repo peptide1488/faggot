@@ -1000,8 +1000,9 @@ function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !
 // reactive-interrupt system; spells resolve immediately when cast, so there's no "spell being
 // cast right now" to hook into). Both collapse to the same real, useful outcome — strip a
 // foe's magical conditions — rather than doing nothing, with the mismatch documented here
-// instead of silently pretended away. QB-only: player-net can't directly mutate the DM's
-// authoritative monster state and there's no message type for "clear all conditions" yet.
+// instead of silently pretended away. QB and DM mutate the monster directly (both are
+// authoritative for it); player-net echoes locally for instant feedback then sends a
+// 'dispelMon' message so the DM's mirror (the real source of truth) picks it up too.
 function dispelMonsterConds(mo){ const n=(mo.conds||[]).length; mo.conds=[]; return n; }
 // Telekinesis (PHB): your spell-ability check vs the target's Strength (opposed, not a save)
 // — win and it's Restrained until the spell ends. Returns `savedKnown` (Engine.castApply's
@@ -1132,6 +1133,15 @@ function openSpellTarget(c, name, level){
       flashBanner(saved ? mo.name+' resists Telekinesis' : mo.name+' is Restrained by Telekinesis');
       return;
     }
+    if(name==='Dispel Magic'||name==='Counterspell'){
+      // Local echo (instant feedback, same pattern as playerNetAdapter.hurt's monster-damage
+      // echo) — the DM's mirror is authoritative for the monster, so also tell it what
+      // happened; its next broadcast overwrites this with the real state.
+      const n=dispelMonsterConds(mo);
+      if(net.conn){ try{ net.conn.send({t:'dispelMon', mon:mo.id}); }catch(e){} }
+      flashBanner(n ? name+' strips '+n+' condition'+(n>1?'s':'')+' from '+mo.name : name+' — '+mo.name+' has nothing to dispel');
+      return;
+    }
     if(mc.attack){ attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'0',dt:mc.dtype||''}); return; }
     const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0;
     if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
@@ -1148,10 +1158,10 @@ function openSpellTarget(c, name, level){
     if(name==='Gust of Wind'){
       if(!castSpell(c,name,level,{x:ctr.x,y:ctr.y})) return;
       $('#modalRoot').innerHTML='';
-      applyGustOfWind(s, {x:me.x,y:me.y}, {x:ctr.x,y:ctr.y}, c.name);
+      { const gw=applyGustOfWind(s, {x:me.x,y:me.y}, {x:ctr.x,y:ctr.y}, c.name, dc0);
+        flashBanner('💨 Gust of Wind!'+(gw.pushed?' Pushed '+gw.pushed+' back.':'')+(gw.resisted?' '+gw.resisted+' resisted.':'')); }
       sfx('cast');
       if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
-      flashBanner('💨 Gust of Wind!');
       return;
     }
     if(WALL_SPELLS.has(name)){
@@ -5201,7 +5211,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -5211,6 +5221,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     dmBroadcast(); render(); } }
   else if(d.t==='endturn'){ const cur=net.session.order&&net.session.order[net.session.turn]; if(cur&&cur.id===conn.peer) dmNextTurn(); }
   else if(d.t==='moncond'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===d.cond)) mo.conds.push({name:d.cond,rounds:d.rounds||10}); dmBroadcast(); render(); flashBanner(mo.name+' → '+d.cond); } }
+  else if(d.t==='dispelMon'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo){ const n=dispelMonsterConds(mo); dmBroadcast(); render(); if(n) flashBanner(mo.name+' — '+n+' condition'+(n>1?'s':'')+' dispelled'); } }
   else if(d.t==='provoke'){ const p=net.session.players.find(x=>x.cid===d.cid)||net.session.players.find(x=>x.id===conn.peer);
     if(p){ (d.mons||[]).forEach(mid=>{ const mo=net.session.monsters.find(m=>m.id===mid); if(mo&&mo.hp>0&&!mo.reactionUsed) dmOpportunityAttack(mo,p); }); }
     render(); }
@@ -5306,7 +5317,7 @@ function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0}}); }catch(e){} }
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ const wasActive=net.session&&net.session.battle&&net.session.battle.active; net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -5500,15 +5511,35 @@ function explodeTorchesInCells(s, cells){
   removeTorchLightsInCells(s, set);
   return n;
 }
-function applyGustOfWind(s, from, to, casterName){
+// PHB: each creature that starts its turn in the line (here: caught when it's cast) makes a
+// Strength save or is pushed 15 ft away from the caster along the line. This was previously
+// entirely unimplemented — only the torch-snuffing side effect existed, so nobody standing in
+// the line was actually affected by the spell. Monsters only (matches how this app's other
+// AoE spells resolve — allies/self caught in a blast are a separate, secondary path); uses
+// the same unified mod(abil(mo,'str')) Strength check every other monster save now goes
+// through (see the maneuver-system creature-unification work), not a bespoke bonus.
+function applyGustOfWind(s, from, to, casterName, dc){
   const line=SPELL_LINE['Gust of Wind']||{tiles:12,width:1};
   const cells=lineCells(from.x,from.y,to.x,to.y,line.tiles,line.width);
   const n=extinguishTorchesInCells(s, cells);
-  const msg=n
-    ?('💨 Gust of Wind snuffs '+n+' torch'+(n===1?'':'es')+' — they go dark')
-    :('💨 Gust of Wind howls through — no unprotected flames in the line');
+  const dx=Math.sign(to.x-from.x)||0, dy=Math.sign(to.y-from.y)||0;
+  let pushed=0, resisted=0;
+  (s.monsters||[]).forEach(mo=>{
+    if(!mo||mo.hp<=0) return;
+    if(!cells.has(mo.x+','+mo.y)) return;
+    const bonus=mod(abil(deriveMonsterAbilities(mo),'str'));
+    if(rnd(20)+bonus>=(dc||10)){ resisted++; return; }
+    let nx=mo.x, ny=mo.y;
+    for(let i=0;i<3;i++){ const tx=nx+dx, ty=ny+dy; if(!tileClearFor(s,tx,ty)) break; nx=tx; ny=ty; }
+    if(nx!==mo.x||ny!==mo.y){ mo.x=nx; mo.y=ny; pushed++; }
+  });
+  const parts=[];
+  if(n) parts.push('snuffs '+n+' torch'+(n===1?'':'es'));
+  if(pushed) parts.push('pushes '+pushed+' creature'+(pushed===1?'':'s')+' back 15 ft');
+  if(resisted) parts.push(resisted+' resist'+(resisted===1?'s':''));
+  const msg='💨 Gust of Wind '+(parts.length?parts.join(', '):'howls through — no effect');
   if(typeof qbLog==='function'&&s===QB) qbLog(msg);
-  return n;
+  return {torches:n, pushed, resisted};
 }
 /**
  * Spell/area hazards on props: torches, oil/acid/powder barrels, grease ignition.
@@ -5988,6 +6019,14 @@ function skillCheckBonus(c, skillKey){
 function monsterCheckBonus(mo){ return monsterSaveBonus(mo); }
 // Monsters have no tracked passive Perception either — same CR-scaled simplification.
 function monsterPassivePerception(mo){ return 10+monsterCheckBonus(mo); }
+// Search (the DM-side counterpart to Hide, which previously had nothing to counter it at
+// all — see dmMonsterAttack): an ACTIVE Perception check, unlike the passive threshold above.
+// Uses the same unified mod(abil(deriveMonsterAbilities(mo),'wis')) every other monster
+// check now goes through, not a bespoke bonus.
+function monsterSearchRoll(mo, hiddenDC){
+  const total=rnd(20)+mod(abil(deriveMonsterAbilities(mo),'wis'));
+  return {total, found: hiddenDC!=null && total>=hiddenDC};
+}
 // Fan a monster instance's flat CR-scaled bonus out into a real abilities/skillProf/saveProf
 // shape, in place, once. Idempotent — safe to call on every access. Deliberately mutates the
 // live instance (not the static MONSTERS_5E table): no bestiary rewrite needed, and every
@@ -8355,6 +8394,17 @@ function dmMonsterAttack(mo){
   // Acrobatics and applies the result to itself (see the 'maneuverCheck' player handler).
   // Not offered against a dominated monster's own allies — those aren't real net players.
   if(!dominated) atks.push({name:'Shove (Prone)', maneuver:'shove-prone'}, {name:'Grapple', maneuver:'grapple'});
+  // A grappled monster previously had no way to ever escape via this UI (maneuverEscape's
+  // !isPc branch existed but had no real caller until the mo.grappledBy name-fix above).
+  // Fully local — no player round-trip, resolves the instant the DM rolls it.
+  if((mo.conds||[]).some(x=>x.name==='Grappled')) atks.push({name:'Escape Grapple', escapeGrapple:true});
+  // Search (counterpart to Hide, which only ever worked in Quick Battle before): an active
+  // Perception check vs a Hidden player's real Stealth total (hiddenDC), now synced to the
+  // DM via playerHello() the same way sanctuaryDC/holyAuraDC already are. Only offered when
+  // a connected player is actually Hidden — nothing else in this app can be, so a standing
+  // "always visible" Search option would just be noise the rest of the time.
+  const hiddenPlayers=dominated?[]:net.session.players.filter(p=>(p.conds||[]).includes('Hidden'));
+  if(hiddenPlayers.length) atks.push({name:'Search', search:true});
   const st={atk:atks[0], targetId:players[0].id, phase:'aim', d20:0, total:0, dmg:0, consumed:false};
   const tgt=()=>players.find(p=>p.id===st.targetId)||players[0];
   // Making an attack (hit OR miss) spends one of the monster's attacks — identical to
@@ -8369,10 +8419,23 @@ function dmMonsterAttack(mo){
     let body=`<h2>⚔ ${esc(mo.name)} attacks${left!=null?` <span class="muted" style="font-size:12px;text-transform:none">— ${left}/${mo.attacks||1} attack${(mo.attacks||1)>1?'s':''} left</span>`:''}</h2>`;
     if(dominated) body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">🌀 <b>Dominated</b> — it attacks its own allies while controlled.</p>`;
     body+=`<div class="field"><label>Attack</label><div class="chips">${atks.map((a,i)=>`<button class="chip ${st.atk===a?'on':''}" data-ma="${i}">${esc(a.name)}${a.hit!=null?' +'+a.hit:a.dc?' (DC'+a.dc.n+')':''}${a.tiles>1?' · '+(a.tiles*5)+'ft':''}</button>`).join('')}</div></div>`;
-    if(!inR.length){ body+=`<div class="empty" style="padding:10px 0">No players within ${range*5} ft of ${esc(mo.name)} for ${esc(st.atk.name)} — 📍 move it closer or pick another attack.</div>`; }
-    else { body+=`<div class="field"><label>Target (in range)</label><select id="maTgt">${inR.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax} · ${gridDist(mo.x,mo.y,p.x,p.y)*5}ft</option>`).join('')}</select></div>`;
+    if(st.atk.escapeGrapple){ /* no target to pick — resolves against the grappler directly */ }
+    else if(st.atk.search){
+      if(!hiddenPlayers.some(p=>p.id===st.targetId)) st.targetId=hiddenPlayers[0].id;
+      body+=`<div class="field"><label>Hidden player</label><select id="maTgt">${hiddenPlayers.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
+    }
+    else if(!inR.length){ body+=`<div class="empty" style="padding:10px 0">No players within ${range*5} ft of ${esc(mo.name)} for ${esc(st.atk.name)} — 📍 move it closer or pick another attack.</div>`; }
+    else { body+=`<div class="field"><label>Target (in range)</label><select id="maTgt">${inR.map(p=>`<option value="${p.id}" ${p.id===st.targetId?'selected':''}>${esc(p.name)} — AC ${p.ac}, HP ${p.hpCur}/${p.hpMax} · ${gridDist(mo.x,mo.y,p.x,p.y)*5}ft</option>`).join('')}</select></div>`; }
     const outOfAttacks = left!=null && left<=0 && !st.consumed;
-    if(st.atk.maneuver){
+    if(st.atk.escapeGrapple){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">${esc(mo.name)} is Grappled by ${esc(mo.grappledBy||'someone')}. No target to pick — this resolves against them directly.</p>
+        <button class="btn block" id="maEscape">🤸 Roll Athletics/Acrobatics vs their Athletics</button>`;
+    } else if(st.atk.search){
+      const target=hiddenPlayers.find(p=>p.id===st.targetId);
+      body+= (target&&target.hiddenDC!=null)
+        ? `<button class="btn block" id="maSearch">🔍 Roll Perception vs ${esc(target.name)}'s Stealth</button>`
+        : `<div class="empty" style="padding:10px 0">${esc((target&&target.name)||'That player')} hid before this session synced their Stealth total — ask them to Hide again.</div>`;
+    } else if(st.atk.maneuver){
       if(st.maneuverSent){
         body+=`<div class="card" style="text-align:center;margin:0 0 8px">🎲 ${esc(mo.name)} rolled Athletics: <b>${st.total}</b><br><span class="muted" style="font-size:12px">Waiting for ${esc(t.name)}'s response…</span></div>`;
       } else if(!inR.length){
@@ -8392,7 +8455,7 @@ function dmMonsterAttack(mo){
       if(isHit){ if(!st.dmg) body+=`<button class="btn block" id="maDmg">🎲 Roll damage${crit?' (crit ×2 dice)':''}</button>`;
         else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><button class="btn bad block" id="maApply">Apply ${st.dmg} to ${esc(t.name)}</button>`; }
       body+=`<button class="btn ghost block" id="maReset" style="margin-top:8px">↺ New attack</button>`;
-    } }
+    }
     body+=`<button class="btn ghost block" id="maClose" style="margin-top:10px">Close</button>`;
     $('#modalRoot').innerHTML=`<div class="modal" id="maModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
     $('#maModal').onclick=e=>{ if(e.target.id==='maModal') $('#modalRoot').innerHTML=''; };
@@ -8407,6 +8470,18 @@ function dmMonsterAttack(mo){
       flashBanner('Waiting for '+t.name+"'s response…");
       draw(); }; }
     { const dm=$('#maDmg'); if(dm) dm.onclick=()=>{ if(st.atk.dc && !commitAttack()) return; const crit=st.crit||st.d20===20; sfx('damage'); attackFx(crit?'crit':'hit'); st.dmg=Engine.rollDamage({dmg:st.atk.dmg||'1d6'}, crit); pushRoll({label:mo.name+' '+st.atk.name+' dmg', total:st.dmg, detail:(crit?'CRIT ':'')+(st.atk.dmg||'1d6'), kind:'dmg'}); draw(); }; }
+    { const es=$('#maEscape'); if(es) es.onclick=()=>{ if(!commitAttack()) return;
+      const res=maneuverEscape(sessionAdapter, mo, false, m=>flashBanner(m));
+      if(res.ok) pushRoll({label:mo.name+' Escape Grapple', total:res.atkTotal, detail:'vs '+res.defTotal, kind:'check'});
+      $('#modalRoot').innerHTML=''; dmBroadcast(); render(); }; }
+    { const se=$('#maSearch'); if(se) se.onclick=()=>{ if(!commitAttack()) return;
+      const target=hiddenPlayers.find(p=>p.id===st.targetId); if(!target) return;
+      const {total,found}=monsterSearchRoll(mo, target.hiddenDC);
+      pushRoll({label:mo.name+' Search (Perception)', total, detail:'vs Stealth '+target.hiddenDC, kind:'check'});
+      if(found){ dmSend(target.id,{t:'cond',name:'Hidden',on:false}); target.conds=(target.conds||[]).filter(x=>x!=='Hidden');
+        flashBanner('🔍 '+mo.name+' spots '+target.name+'!'); }
+      else flashBanner('🔍 '+mo.name+" doesn't find "+target.name);
+      $('#modalRoot').innerHTML=''; dmBroadcast(); render(); }; }
     const useAtk=()=>{ dmBroadcast(); render(); };   // the attack was already spent at commit time (on the roll)
     // apply through the Engine — the modal rolled interactively, so the pre-rolled d20 and
     // damage are passed in; the Engine mutates via the adapter and emits the event stream.
@@ -8687,7 +8762,13 @@ const sessionAdapter = {
   map:()=> net.session&&net.session.map,
   allMonsters:()=> (net.session&&net.session.monsters)||[],
   moveUnit:(u,x,y)=>{ u.x=x; u.y=y; },
-  solePc:()=> null   // DM sessions can host multiple players — no single "the PC" to fall back to
+  solePc:()=> null,   // DM sessions can host multiple players — no single "the PC" to fall back to
+  // Look up which connected player grappled a monster, by name (see maneuverGrapple's
+  // mo.grappledBy). The DM never has that player's real ability scores (checkSubject returns
+  // null for a raw player mirror), so an Escape Grapple contest against them falls back to
+  // opposedCheck's monster-shaped CR approximation — same "DM can't fully simulate a player"
+  // limitation documented everywhere else in this system, not a new one.
+  findGrappler:name=> (net.session&&net.session.players||[]).find(p=>p.name===name)
 };
 // Adapter for a PLAYER's device in a net session: reads the DM-broadcast mirror and
 // mutates BY MESSAGE — the DM's copy stays authoritative. Damage is sent raw with its
@@ -8743,7 +8824,8 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
   holyAuraDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Holy Aura')||{}).dc||null : null,
   allMonsters:()=> QB.monsters,
   moveUnit:(u,x,y)=>{ u.x=x; u.y=y; },
-  solePc:()=> QB.players[0]&&QB.players[0].c };
+  solePc:()=> QB.players[0]&&QB.players[0].c,
+  findGrappler:name=> QB.players.find(p=>p.name===name) };
 // the PC's usable attacks (weapons + custom), as generic atk objects
 function qbPcAttacks(c){ const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w,it);
@@ -9624,7 +9706,11 @@ function maneuverGrapple(ad, pcUnit, mo, log){
   const rollInfo={atkTotal:res.attacker.total, defTotal:res.defender.total, atkSkill:'Athletics', defSkill:res.defender.skillKey==='athletics'?'Athletics':'Acrobatics'};
   if(!res.success){ log('🤼 '+name+' tries to grapple '+moName+' '+detail+' — fails'); flashBanner('Grapple failed'); return Object.assign({ok:true, success:false}, rollInfo); }
   ad.addCond(mo,'Grappled');
-  mo.grappledBy='pc';
+  // Stores the grappler's NAME, not an id — the only identifier consistently meaningful
+  // across every adapter (a player-net device's own "me" id isn't addressable from the DM's
+  // sessionAdapter, which is what actually needs to look this back up for a monster's Escape
+  // Grapple — see maneuverEscape's !isPc branch / ad.findGrappler below).
+  mo.grappledBy=name;
   log('🤼 '+name+' grapples '+moName+' '+detail);
   flashBanner(moName+' is grappled!');
   sfx('hit');
@@ -9641,7 +9727,7 @@ function maneuverEscape(ad, unit, isPc, log){
   if(isPc && !hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
   const grappler = isPc
     ? ad.allMonsters().find(m=>m.hp>0 && gridDist(unit.x,unit.y,m.x,m.y)<=1) // simplification: nearest adjacent hostile (grapple ownership isn't tracked on the monster-attacks-PC path)
-    : (unit.grappledBy==='pc' ? ad.solePc() : null);
+    : (unit.grappledBy && ad.findGrappler ? ad.findGrappler(unit.grappledBy) : null);
   if(!grappler){ flashBanner('Nothing to escape from'); return {ok:false}; }
   const res=opposedCheck(ad.checkSubject(grappler)||grappler, 'athletics', 'str', isPc?c:ad.checkSubject(unit), [['athletics','str'],['acrobatics','dex']]);
   const success=!res.success;
@@ -10074,7 +10160,8 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
       if(!castSpell(c,name,level,{x:ctr.x,y:ctr.y})) return;
       $('#modalRoot').innerHTML='';
       if(isoView&&iso3dView&&QB) try{ syncIso3DHost(QB); }catch(e){}
-      applyGustOfWind(s, {x:me.x,y:me.y}, {x:ctr.x,y:ctr.y}, c.name);
+      { const gw=applyGustOfWind(s, {x:me.x,y:me.y}, {x:ctr.x,y:ctr.y}, c.name, dc0);
+        flashBanner('💨 Gust of Wind!'+(gw.pushed?' Pushed '+gw.pushed+' back.':'')+(gw.resisted?' '+gw.resisted+' resisted.':'')); }
       sfx('cast');
       finish();
       return;
@@ -10251,7 +10338,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.182';
+const APP_VERSION='v120.183';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
