@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.14';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.14';
+import { Renderer } from './renderer.js?v=0.6.15';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.15';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.14';
+} from './adapter.js?v=0.6.15';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.14';
+} from './sprites.js?v=0.6.15';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.14';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.14';
-import { APP_VERSION } from './version.js?v=0.6.14';
-import { resolveLighting } from './lighting.js?v=0.6.14';
+} from './fx.js?v=0.6.15';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.15';
+import { APP_VERSION } from './version.js?v=0.6.15';
+import { resolveLighting } from './lighting.js?v=0.6.15';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -1019,7 +1019,6 @@ export class Iso3DHost {
     // Terrain is already drawn with depth; billboards sample that depth so walls occlude them.
     const glBillboards = [];
     const uiItems = [];
-    this._lastMissReasons = [];
 
     for (const d of this._view.decorSprites || []) {
       const cell =
@@ -1120,25 +1119,11 @@ export class Iso3DHost {
         this._view.map.rows,
       );
       const scr = this._project(mvp, x, y, z, w, h);
-      if (!scr) {
-        this._lastMissReasons = this._lastMissReasons || [];
-        this._lastMissReasons.push(`${u.id}:noProject`);
-        continue;
-      }
+      if (!scr) continue;
       const layer = dead ? 1 : 2;
       const depth = this._depthKey(pose.col, pose.row, elev, layer, scr.y);
       const entry = u.spriteUrl ? loadSprite(u.spriteUrl) : null;
       let pushed = false;
-      if (!entry) {
-        this._lastMissReasons = this._lastMissReasons || [];
-        this._lastMissReasons.push(`${u.id}:noSpriteUrl`);
-      } else if (entry.failed) {
-        this._lastMissReasons = this._lastMissReasons || [];
-        this._lastMissReasons.push(`${u.id}:spriteFailed(${u.spriteUrl})`);
-      } else if (!entry.ready) {
-        this._lastMissReasons = this._lastMissReasons || [];
-        this._lastMissReasons.push(`${u.id}:spriteNotReady(${u.spriteUrl})`);
-      }
       if (entry && entry.ready && !entry.failed) {
         const sd = u.spriteDraw || {};
         const cols = sd.cols || 4;
@@ -1158,10 +1143,6 @@ export class Iso3DHost {
           rows,
           dirOrder,
         });
-        if (!uv) {
-          this._lastMissReasons = this._lastMissReasons || [];
-          this._lastMissReasons.push(`${u.id}:noUV(face=${face},frame=${frame})`);
-        }
         if (uv) {
           const aspect = uv.fw / Math.max(1, uv.fh);
           if (dead) {
@@ -1234,27 +1215,6 @@ export class Iso3DHost {
       });
     }
 
-    // Diagnostic: report on-screen if every living unit's billboard vanished for a frame
-    // (the exact suspected mechanism for the reported "sprites disappear" bug) — gated
-    // to fire at most once per 2s so it can't spam. My own test harness can't reliably
-    // catch this (Playwright throttles requestAnimationFrame under automation — only
-    // ~2.5fps observed in one run vs the real 30fps target — so a real device is the
-    // only reliable way to confirm or rule this out).
-    {
-      const aliveUnits = (this._view.units || []).filter((u) => u.alive !== false);
-      if (aliveUnits.length > 0 && glBillboards.length === 0) {
-        const now = performance.now();
-        if (!this._lastEmptyBillboardWarn || now - this._lastEmptyBillboardWarn > 2000) {
-          this._lastEmptyBillboardWarn = now;
-          const reasons = (this._lastMissReasons || []).slice(0, 4).join('; ');
-          try {
-            if (typeof window !== 'undefined' && typeof window.flashBanner === 'function') {
-              window.flashBanner('⚠ Iso3D: ' + aliveUnits.length + ' unit(s) alive, 0 billboards — ' + (reasons || 'no reasons captured?'));
-            }
-          } catch (_) {}
-        }
-      }
-    }
     // Feed WebGL billboards (drawn inside renderer.draw with depth test)
     // Must set BEFORE draw — so reorder: set billboards then re-draw is wrong.
     // We already called renderer.draw() above. Call billboard pass now.
@@ -1759,4 +1719,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.14';
+export { Renderer } from './renderer.js?v=0.6.15';
