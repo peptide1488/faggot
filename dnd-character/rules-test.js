@@ -1404,5 +1404,147 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- Echo Knight — Manifest Echo (Phase 1) ---- */
+{
+  const ek=newCharacter('Ekko'); ek.cls='Fighter'; ek.level=5; ek.subclass='Echo Knight'; ek.abilities.con=14; ek.skillProf={};
+  T('isEchoKnight gates on class+subclass+level', isEchoKnight(ek,3)===true && isEchoKnight(ek,7)===false);
+  const notEk=newCharacter('Not'); notEk.cls='Fighter'; notEk.level=20; notEk.subclass='Champion';
+  T('a Champion (even level 20) is never an Echo Knight', isEchoKnight(notEk,3)===false);
+  const frail=newCharacter('Frail'); frail.abilities.con=1;
+  T('echoResourceMax reads Constitution modifier, min 1', echoResourceMax(ek)===2 && echoResourceMax(frail)===1);
+
+  const s={monsters:[], map:{cols:10,rows:10,tiles:{}}};
+  const e1=manifestEcho(s, ek, 3, 3, 'pc', ()=>{});
+  T('manifestEcho creates a monster-shaped entry in s.monsters', s.monsters.length===1 && s.monsters[0]===e1);
+  T('the echo carries side:mon/ally:true/echo:true and the right controller', e1.side==='mon' && e1.ally===true && e1.echo===true && e1.controllerId==='pc');
+  T('the echo has RAW stats: AC 14+prof, 1 HP, brain passive', e1.hp===1 && e1.max===1 && e1.ac===14+profBonus(ek) && e1.brain==='passive');
+  T('the echo is NOT combat-capable on its own (0 attacks — it only ever acts through the Knight)', e1.attacks===0);
+
+  T('condition immunity: qbAdapter.addCond is a no-op against an echo', (()=>{ qbAdapter.addCond(e1,'Frightened',3); return e1.conds.length===0; })());
+  T('condition immunity: playerNetAdapter.addCond is a no-op against an echo (no crash even without net.conn)', (()=>{ playerNetAdapter.addCond(e1,'Frightened',3); return e1.conds.length===0; })());
+
+  const tiles=echoMoveTiles({map:()=>s.map}, e1);
+  T('echoMoveTiles offers a real 30 ft (6-tile Chebyshev) reach, not the Servant\'s 15 ft', tiles.some(t=>Math.max(Math.abs(t.x-e1.x),Math.abs(t.y-e1.y))===6) && tiles.every(t=>Math.max(Math.abs(t.x-e1.x),Math.abs(t.y-e1.y))<=6));
+
+  // Recasting Manifest Echo replaces the old one (not stacked) below Legion of One (18th).
+  const e2=manifestEcho(s, ek, 5, 5, 'pc', ()=>{});
+  T('recasting Manifest Echo below 18th replaces the old echo, not stacks it', s.monsters.length===1 && s.monsters[0]===e2 && s.monsters[0]!==e1);
+
+  const n=dismissEcho(s, 'pc', ()=>{});
+  T('dismissEcho removes the controller\'s echo and reports how many were cleared', n===1 && s.monsters.length===0);
+  T('dismissEcho is a safe no-op when there is nothing to dismiss', dismissEcho(s,'pc',()=>{})===0);
+
+  // Legion of One (18th): two echoes coexist; a third wipes both existing ones.
+  ek.level=18;
+  const l1=manifestEcho(s, ek, 1, 1, 'pc', ()=>{});
+  const l2=manifestEcho(s, ek, 2, 2, 'pc', ()=>{});
+  T('Legion of One: two echoes can coexist at 18th level', s.monsters.length===2);
+  const l3=manifestEcho(s, ek, 3, 1, 'pc', ()=>{});
+  T('Legion of One: manifesting a third destroys the two existing echoes, leaving just the new one', s.monsters.length===1 && s.monsters[0]===l3);
+}
+
+/* ---- Echo Knight — Unleash Incarnation (Phase 2): attacks from the echo's OWN position ---- */
+{
+  const ek=newCharacter('Ekko2'); ek.cls='Fighter'; ek.level=5; ek.subclass='Echo Knight'; ek.abilities={str:16,dex:10,con:14,int:10,wis:10,cha:10}; ek.skillProf={};
+  ek.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:8,y:8,hp:7,max:7,ac:5,attacksLeft:1,conds:[]}],
+    players:[{id:'pc',side:'pc',name:ek.name,c:ek,x:0,y:0,hpCur:ek.hp.cur,hpMax:ek.hp.max}] });
+  // The echo sits adjacent to the goblin — the KNIGHT is nowhere near it (x:0,y:0 vs x:8,y:8).
+  const echo=manifestEcho(getQB(), ek, 7, 8, 'pc', ()=>{});
+  T('setup check: the echo, not the Knight, is adjacent to the target', gridDist(echo.x,echo.y,8,8)===1 && gridDist(0,0,8,8)>1);
+
+  ek.echoIncarnationLeft=echoResourceMax(ek);
+  const startingUses=ek.echoIncarnationLeft;
+  const orig=Math.random; Math.random=()=>0.99;   // force a hit
+  const ev=Engine.attack(qbAdapter, echo.id, 'm1', {name:'Unleash Incarnation (Longsword)', toHit:99, dmg:'1d8', tiles:1});
+  Math.random=orig;
+  T('Engine.attack resolves using the ECHO\'s position for range (a target only the echo is adjacent to is still reachable)', ev.void!==true && ev.hit===true);
+  T('the attack event reports the echo\'s own square as the origin, not the Knight\'s', ev.from.x===echo.x && ev.from.y===echo.y);
+
+  ek.echoIncarnationLeft--;
+  T('Unleash Incarnation spends one use from its own CON-mod resource pool', ek.echoIncarnationLeft===startingUses-1);
+  ek.echoIncarnationLeft=0;
+  T('at 0 uses left, no more Incarnation attacks are available until a long rest', ek.echoIncarnationLeft<=0);
+
+  setQB(null);
+}
+
+/* ---- Echo Knight — Echo Avatar (Phase 3): self-blind/deaf for 10 min, once per rest ---- */
+{
+  const ek=newCharacter('Ekko3'); ek.cls='Fighter'; ek.level=7; ek.subclass='Echo Knight';
+  const lowLvl=newCharacter('Low'); lowLvl.cls='Fighter'; lowLvl.subclass='Echo Knight'; lowLvl.level=5;
+  T('Echo Avatar is only available from 7th level', isEchoKnight(ek,7)===true && isEchoKnight(lowLvl,7)===false);
+  addEffect(ek, 'Echo Avatar (Blinded)', {rounds:60, cond:'Blinded'});
+  addEffect(ek, 'Echo Avatar (Deafened)', {rounds:60, cond:'Deafened'});
+  T('Echo Avatar applies both Blinded and Deafened', ek.conditions.Blinded===true && ek.conditions.Deafened===true);
+  for(let i=0;i<59;i++) advanceRound(ek);
+  T('both conditions persist through the 10-minute duration', ek.conditions.Blinded===true && ek.conditions.Deafened===true);
+  advanceRound(ek);
+  T('both conditions clear together once the 60th round expires', !ek.conditions.Blinded && !ek.conditions.Deafened);
+}
+
+/* ---- Echo Knight — Shadow Martyr (Phase 4): armed reaction redirects an attack to the echo ---- */
+{
+  const ek=newCharacter('Ekko4'); ek.cls='Fighter'; ek.level=10; ek.subclass='Echo Knight';
+  ek.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  const s={monsters:[], battle:{round:1}};
+  const echo=manifestEcho(s, ek, 1, 1, 'pc', ()=>{});
+  const tgtPc={side:'pc', c:ek, x:0, y:0};
+
+  T('not armed: no redirect happens even with a live echo nearby', shadowMartyrRedirect(s, tgtPc)===null);
+
+  echo.x=1; echo.y=0;   // adjacent to the PC (dist 1)
+  ek.shadowMartyrArmed=true;
+  const redirected=shadowMartyrRedirect(s, tgtPc);
+  T('armed + echo within 5 ft: the attack redirects to the echo', redirected===echo);
+  T('triggering Shadow Martyr spends the reaction', ek.battle.reaction===true);
+  T('triggering Shadow Martyr spends its once-per-rest use and disarms itself', ek.shadowMartyrUsed===true && ek.shadowMartyrArmed===false);
+  T('a second attempt this rest finds no uses left, even if re-armed', (()=>{ ek.shadowMartyrArmed=true; ek.battle.reaction=false; return shadowMartyrRedirect(s,tgtPc)===null; })());
+
+  const ek2=newCharacter('Ekko5'); ek2.cls='Fighter'; ek2.level=10; ek2.subclass='Echo Knight';
+  ek2.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  ek2.shadowMartyrArmed=true;
+  const s2={monsters:[], battle:{round:1}};
+  const echoFar=manifestEcho(s2, ek2, 9, 9, 'pc', ()=>{});
+  T('armed but the echo is too far from the target: no redirect (RAW requires the echo within 5 ft)', shadowMartyrRedirect(s2, {side:'pc', c:ek2, x:0, y:0})===null);
+}
+
+/* ---- Echo Knight — Reclaim Potential (Phase 5): temp HP when the echo is destroyed ---- */
+{
+  const ek=newCharacter('Ekko6'); ek.cls='Fighter'; ek.level=15; ek.subclass='Echo Knight'; ek.abilities.con=14; ek.hp.temp=0;
+  const orig=Math.random; Math.random=()=>0.5;   // deterministic 2d6 roll
+  reclaimPotential(ek, ()=>{});
+  Math.random=orig;
+  T('Reclaim Potential grants real temp HP scaled off 2d6 + CON mod', ek.hp.temp>0 && ek.hp.temp===(Math.floor(0.5*6)+1)*2+mod(abil(ek,'con')));
+  T('Reclaim Potential spends one use from its own CON-mod resource pool', ek.echoReclaimLeft===echoResourceMax(ek)-1);
+
+  const alreadyBuffed=newCharacter('Buffed'); alreadyBuffed.cls='Fighter'; alreadyBuffed.level=15; alreadyBuffed.subclass='Echo Knight'; alreadyBuffed.hp.temp=5;
+  reclaimPotential(alreadyBuffed, ()=>{});
+  T('Reclaim Potential does nothing if you already have temp HP (PHB: only "if you have none")', alreadyBuffed.hp.temp===5 && alreadyBuffed.echoReclaimLeft==null);
+
+  const tooLow=newCharacter('TooLow'); tooLow.cls='Fighter'; tooLow.level=10; tooLow.subclass='Echo Knight'; tooLow.hp.temp=0;
+  reclaimPotential(tooLow, ()=>{});
+  T('Reclaim Potential is gated to 15th level — a 10th-level Echo Knight gets nothing', tooLow.hp.temp===0);
+}
+
+/* ---- Echo Knight — Legion of One (Phase 6): initiative-roll Incarnation refill ---- */
+{
+  const ek=newCharacter('Ekko7'); ek.cls='Fighter'; ek.level=18; ek.subclass='Echo Knight';
+  ek.echoIncarnationLeft=0;
+  startBattle(ek);
+  T('Legion of One (18th): rolling initiative with 0 Incarnation uses left grants exactly one back', ek.echoIncarnationLeft===1);
+
+  const ek2=newCharacter('Ekko8'); ek2.cls='Fighter'; ek2.level=18; ek2.subclass='Echo Knight';
+  ek2.echoIncarnationLeft=3;
+  startBattle(ek2);
+  T('Legion of One does not top up uses that are already above 0', ek2.echoIncarnationLeft===3);
+
+  const notYet=newCharacter('Ekko9'); notYet.cls='Fighter'; notYet.level=17; notYet.subclass='Echo Knight';
+  notYet.echoIncarnationLeft=0;
+  startBattle(notYet);
+  T('below 18th level, rolling initiative grants nothing back', notYet.echoIncarnationLeft===0);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

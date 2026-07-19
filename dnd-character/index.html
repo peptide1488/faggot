@@ -598,6 +598,22 @@ Warlock:[[1,'Otherworldly Patron','Your warlock subclass.'],[1,'Pact Magic','Few
 Wizard:[[1,'Spellcasting','Cast from your spellbook (Intelligence).'],[1,'Arcane Recovery','Recover some slots on a short rest.'],[2,'Arcane Tradition','Your wizard school subclass.']],
 Artificer:[[1,'Magical Tinkering','Imbue tiny objects with minor magic.'],[1,'Spellcasting','Cast artificer spells via tools (Intelligence).'],[2,'Infuse Item','Grant items magical infusions.'],[3,'Artificer Specialist','Your artificer subclass.']]
 };
+// Subclass-level features with REAL mechanics behind them (as opposed to CLASS_FEATURES, which
+// is flavor/display text only — no subclass in this app affected combat math until Echo Knight,
+// see AUDIT.md). Keyed by subclass NAME (unique across every class's subclass list in this
+// app's data, so no class qualifier is needed), same [level,name,desc] shape as CLASS_FEATURES
+// so it merges into the same sheet display list. Deliberately the first entry, not a one-off —
+// the natural home for whichever subclass gets real mechanics implemented next.
+const SUBCLASS_FEATURES = {
+  'Echo Knight':[
+    [3,'Manifest Echo','Bonus action: conjure a translucent echo of yourself in an unoccupied space within 15 ft (AC 14+prof, 1 HP, immune to all conditions). Move it up to 30 ft/turn, or bonus-action teleport-swap places with it (costs 15 ft of your movement). Attacks can originate from your space or the echo’s.'],
+    [3,'Unleash Incarnation','When you take the Attack action, make one additional attack from the echo’s space. Uses equal your Constitution modifier (min 1) per long rest.'],
+    [7,'Echo Avatar','Action: see/hear through your echo up to 1,000 ft away for up to 10 minutes (you’re blinded/deafened meanwhile). Once per short or long rest.'],
+    [10,'Shadow Martyr','Reaction: teleport the echo into the path of an attack targeting another creature within 30 ft of it — the attack roll targets the echo instead. Once per short or long rest.'],
+    [15,'Reclaim Potential','When your echo is destroyed, gain 2d6 + Constitution modifier temporary HP if you have none.'],
+    [18,'Legion of One','Manifest Echo can maintain two echoes at once (a third destroys the two oldest). Regain one Unleash Incarnation use when you roll initiative with none left.'],
+  ],
+};
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
 Elf:[['Darkvision','See 60 ft in dim light.'],['Keen Senses','Perception proficiency.'],['Fey Ancestry','Advantage vs charm; no magic sleep.'],['Trance','Rest fully in 4 hours.']],
@@ -820,6 +836,10 @@ function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
 /* ---- action economy: most creatures get 1 action/turn, but some get more
    (Action Surge, special monster stat blocks, the c.extraActions override) ---- */
 function hasActionSurge(c){ return c && c.cls==='Fighter' && (Number(c.level)||1)>=2; }
+function isEchoKnight(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Echo Knight' && (Number(c.level)||1)>=(lvl||3)); }
+// Shared "Uses = CON mod (min 1)" formula — both Unleash Incarnation and Reclaim Potential use
+// the exact same real-RAW resource-pool size, tracked as two independent counters.
+function echoResourceMax(c){ return Math.max(1, mod(abil(c,'con'))); }
 function actionsPerTurn(c){ let n=1 + (Number(c&&c.extraActions)||0);
   // Haste grants one extra action each turn (PHB: limited to Attack (one attack), Dash,
   // Disengage, Hide, or Use an Object — honor that limit at the table).
@@ -850,7 +870,9 @@ function setEquipped(c, idx, on){
 // net play). Add new per-turn flags HERE and nowhere else.
 function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
 function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); }
-function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c)); logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
+function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c));
+  if(isEchoKnight(c,18) && (c.echoIncarnationLeft||0)<=0) c.echoIncarnationLeft=1;   // Legion of One (18th)
+  logChange(c,'⚔ Battle started — initiative '+ini); save(); render(); flashBanner('Battle! Initiative '+ini); }
 function endBattle(c){ c.battle=null; logChange(c,'Battle ended'); save(); render(); }
 function battleNextTurn(c){ if(!c.battle) return; if(timeStopExtraTurn(c)) return; const b=c.battle; b.round++; resetTurnState(c);
   let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
@@ -2270,6 +2292,49 @@ function spawnSummon(s, casterUnit, pick, x, y, spellName){
   if(iso3dView&&window.__iso3dHost) try{ window.__iso3dHost.impact(x,y,'cast'); }catch(e){}
   return unit;
 }
+// Echo Knight — Manifest Echo (3rd level): a controlled, monster-shaped ally token that never
+// acts on its own turn (brain:'passive', NOT inserted into s.order — unlike spawnSummon's
+// spell-summons, which do get their own initiative slot). AC 14+prof, 1 HP, immune to all
+// conditions (see qbAdapter/playerNetAdapter/sessionAdapter's addCond echo guard). Manifesting
+// while already at the controller's echo cap (1 normally, 2 from Legion of One at 18th) wipes
+// every existing echo from this controller first, then adds the new one — matches the RAW
+// wording for a "third" echo destroying the current two, generalized to the 1-echo case too
+// (recasting always replaces, never stacks).
+function manifestEcho(s, c, x, y, controllerId, log){
+  if(!s.monsters) s.monsters=[];
+  const cap = isEchoKnight(c,18) ? 2 : 1;
+  const mine = s.monsters.filter(m=>m.echo && m.controllerId===controllerId);
+  if(mine.length>=cap) s.monsters=s.monsters.filter(m=>!(m.echo && m.controllerId===controllerId));
+  const id='echo_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,5);
+  const unit={ id, side:'mon', ally:true, echo:true, controllerId,
+    base:'Echo', name:(c.name||'Echo')+"'s Echo", x, y,
+    hp:1, max:1, ac:14+profBonus(c), atk:'', attacks:0, attacksLeft:0,
+    speed:30, moveLeft:30, reactionUsed:false, brain:'passive', conds:[], facing:'down' };
+  s.monsters.push(unit);
+  log('👤 '+(c.name||'The Echo Knight')+' manifests an echo');
+  return unit;
+}
+/** Dismiss (or auto-clear on death/incapacitation) every echo belonging to a controller. */
+function dismissEcho(s, controllerId, log){
+  if(!s||!s.monsters) return 0;
+  const mine=s.monsters.filter(m=>m.echo && m.controllerId===controllerId);
+  if(!mine.length) return 0;
+  s.monsters=s.monsters.filter(m=>!(m.echo && m.controllerId===controllerId));
+  if(log) log('👤 The echo fades away');
+  return mine.length;
+}
+// Legal tiles within 30 ft (6 tiles, Chebyshev) of the echo's current position — mirrors
+// servantMoveTiles' shape at Manifest Echo's real RAW move distance (double the Unseen
+// Servant's 15 ft) — mentally commanded, no action cost, so this is offered every turn.
+function echoMoveTiles(ad, echo){
+  const out=[];
+  for(let dx=-6;dx<=6;dx++) for(let dy=-6;dy<=6;dy++){
+    if(Math.max(Math.abs(dx),Math.abs(dy))>6 || (dx===0&&dy===0)) continue;
+    const nx=echo.x+dx, ny=echo.y+dy;
+    if(tileClearFor({map:ad.map()},nx,ny)) out.push({x:nx,y:ny});
+  }
+  return out;
+}
 /** Remove summons for a spell (concentration drop / dismiss). */
 function dismissSummonsForSpell(s, c, spellName){
   if(!s||!s.monsters||!spellName) return 0;
@@ -3335,6 +3400,8 @@ function spendHitDie(c){
   c.hp.cur=Math.min(c.hp.max, c.hp.cur+Math.max(0,res.total));
   c.hitDice.used=(c.hitDice.used||0)+1;
   c.actionSurgeUsed=false;   // Action Surge recharges on a short rest
+  if(isEchoKnight(c,7)) c.echoAvatarUsed=false;      // Echo Avatar: short or long rest
+  if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;   // Shadow Martyr: short or long rest
   logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
@@ -3833,12 +3900,15 @@ function renderSheet(c){
     ${c.feats.length?`<div class="listrow"><div class="nm">Feats</div><div class="val" style="font-weight:500">${c.feats.map(f=>esc(f.name||f)).join(', ')}</div></div>`:''}
   </div>
 
-  ${(()=>{ const ct=RACE_TRAITS[c.race]||[]; const cf=(CLASS_FEATURES[c.cls]||[]).filter(f=>f[0]<=(Number(c.level)||1));
+  ${(()=>{ const ct=RACE_TRAITS[c.race]||[]; const lvl=Number(c.level)||1;
+    const cf=(CLASS_FEATURES[c.cls]||[]).filter(f=>f[0]<=lvl)
+      .concat(c.subclass && SUBCLASS_FEATURES[c.subclass] ? SUBCLASS_FEATURES[c.subclass].filter(f=>f[0]<=lvl) : [])
+      .sort((a,b)=>a[0]-b[0]);
     if(!ct.length && !cf.length) return '';
     return `<div class="card"><h2>Features &amp; Traits</h2>
       ${ct.length?`<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">${esc(c.race)} traits</div>`+ct.map(t=>`<div class="spell"><div class="nm"><b>${esc(t[0])}</b><small>${esc(t[1])}</small></div></div>`).join(''):''}
       ${cf.length?`<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">${esc(c.cls)} features${c.subclass?' · '+esc(c.subclass):''}</div>`+cf.map(f=>`<div class="spell"><div class="nm"><b>${esc(f[1])} <span class="sub">Lv ${f[0]}</span></b><small>${esc(f[2])}</small></div></div>`).join(''):''}
-      <p class="muted" style="font-size:11px;margin:10px 0 0">Auto-generated summaries through level ${Number(c.level)||1}. Subclass features and full text are in your PHB.</p></div>`;
+      <p class="muted" style="font-size:11px;margin:10px 0 0">Auto-generated summaries through level ${lvl}. Subclass features with real mechanics behind them (Echo Knight so far) are usable from the Use menu in battle.</p></div>`;
   })()}
 
   <div class="card">
@@ -4442,6 +4512,10 @@ function renderSpells(c){
     c.arcaneRecovered=false;   // Arcane Recovery is once per day
     c.luckUsed=0;              // Lucky feat: 3 luck points refresh on a long rest
     if(sorcMax(c)) c.sorcPts=sorcMax(c);   // sorcery points refresh
+    if(isEchoKnight(c,3)){ c.echoIncarnationLeft=echoResourceMax(c); }   // Unleash Incarnation: long rest only
+    if(isEchoKnight(c,7)) c.echoAvatarUsed=false;
+    if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;
+    if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
     logChange(c, 'Long rest — HP, slots & hit dice restored');
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
@@ -7310,7 +7384,19 @@ function openAdjacentUseUI(c, s, me){
   // wrapper's own .id is overridden to the literal 'me' for adapter purposes, which is NOT
   // what the caster was actually identified by at summon time — don't compare against it).
   const servant = mode ? s.monsters.find(m=>m.hp>0 && m.spell==='Unseen Servant' && m.controllerId===(mode==='qb'?'pc':(net.peer&&net.peer.id))) : null;
-  if(!items.length && !foes.length && !grappled && !canHide && !allies.length && !servant){
+  // Echo Knight — Manifest Echo: same controllerId convention as the Unseen Servant above.
+  // Offered whenever eligible regardless of whether one's already up (recasting replaces it,
+  // see manifestEcho); "Command Echo" only shows once a live one actually exists.
+  const echoControllerId = mode==='qb'?'pc':(net.peer&&net.peer.id);
+  // Auto-dismiss on incapacitation (RAW: the echo vanishes the instant you're incapacitated) —
+  // checked here rather than threaded through every condition-application call site across QB
+  // and player-net; the Use menu is the natural point where this matters (you can't act on an
+  // echo you're too incapacitated to command anyway), a deliberate, documented simplification
+  // over a fully real-time check.
+  if(mode && isIncapacitated(c)) dismissEcho(s, echoControllerId, log);
+  const echo = mode ? s.monsters.find(m=>m.hp>0 && m.echo && m.controllerId===echoControllerId) : null;
+  const canManifestEcho = mode && isEchoKnight(c,3);
+  if(!items.length && !foes.length && !grappled && !canHide && !allies.length && !servant && !canManifestEcho && !echo){
     flashBanner('Nothing interactive within 5 ft');
     if(mode==='qb') qbLog('🖐 No usable objects adjacent');
     return;
@@ -7322,6 +7408,8 @@ function openAdjacentUseUI(c, s, me){
       if(grappled) body+=`<button class="btn block" id="useEscape" style="margin-bottom:8px;text-align:left">🤸 Escape Grapple<small style="display:block;opacity:.75">Athletics/Acrobatics (your choice) vs the grappler's Athletics</small></button>`;
       if(canHide) body+=`<button class="btn block" id="useHide" style="margin-bottom:8px;text-align:left">🫥 Hide<small style="display:block;opacity:.75">Needs darkness, full cover, or (Skulker) dim light</small></button>`;
       if(servant) body+=`<button class="btn block" data-use="servant" style="margin-bottom:8px;text-align:left">👻 Command Servant<small style="display:block;opacity:.75">Move it up to 15 ft / interact with an object — bonus action</small></button>`;
+      if(canManifestEcho) body+=`<button class="btn block" id="useManifestEcho" style="margin-bottom:8px;text-align:left">👤 Manifest Echo<small style="display:block;opacity:.75">${echo?'Replaces your current echo — ':''}Bonus action, within 15 ft</small></button>`;
+      if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
       body+=items.map((it,i)=>{
         const st=it.obj.state||it.def.default;
         return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
@@ -7336,6 +7424,49 @@ function openAdjacentUseUI(c, s, me){
       const al=pick.al;
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(al.name)}</b> is down at (${al.x},${al.y}) — Medicine DC 10. Uses your action.</p>
         <button class="btn block" id="useStabilize" style="margin-bottom:8px;text-align:left">🩹 Stabilize</button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='manifestEchoPick'){
+      // Manifest Echo needs an unoccupied cell within 15 ft (3 tiles) — same tileClearFor +
+      // Chebyshev-radius shape servantMoveTiles uses, centered on the CASTER (me) since
+      // there's nothing to move yet.
+      const spots=servantMoveTiles(ad, {x:me.x, y:me.y});
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Manifest your echo where? (within 15 ft, bonus action)</p>`;
+      body+=`<div class="chips" style="margin-bottom:8px">${spots.map((t,i)=>`<button class="chip" data-echospot="${i}">→ ${t.x},${t.y}</button>`).join('')}</div>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='echo'){
+      // Move up to 30 ft, FREE (RAW states no action cost for the mental-command move, unlike
+      // the Servant's move-also-costs-the-bonus-action simplification above — a deliberate,
+      // documented difference: an Echo Knight needs their bonus action free most turns for
+      // other things, and RAW genuinely doesn't gate the move itself). Teleport-swap and
+      // Dismiss DO cost the bonus action (RAW is explicit for the swap; dismiss mirrors it).
+      const echoTiles=echoMoveTiles(ad, echo);
+      const echoItems=listInteractInRange(s, echo, 1);
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Echo at (${echo.x},${echo.y}). Move freely, or interact with something adjacent to it.</p>`;
+      body+=`<div class="chips" style="margin-bottom:8px">${echoTiles.map((t,i)=>`<button class="chip" data-echomove="${i}">→ ${t.x},${t.y}</button>`).join('')}</div>`;
+      if(echoItems.length) body+=echoItems.map((it,i)=>{
+        const st=it.obj.state||it.def.default;
+        return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
+          <button class="btn sm" data-echoint="${i}">Use</button></div>`;
+      }).join('');
+      else body+=`<p class="muted" style="font-size:12px;margin:8px 0">Nothing for it to interact with nearby.</p>`;
+      if(isEchoKnight(c,3)){
+        const left=c.echoIncarnationLeft!=null?c.echoIncarnationLeft:echoResourceMax(c);
+        const incTargets=mode ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(echo.x,echo.y,mo.x,mo.y)<=1) : [];
+        body+=`<button class="btn block" id="useIncarnation" style="margin:8px 0;text-align:left"${(left<=0||!incTargets.length)?' disabled style="opacity:.5"':''}>⚔ Unleash Incarnation<small style="display:block;opacity:.75">One extra attack from the echo's space — ${left} use${left===1?'':'s'} left${incTargets.length?'':' · no target adjacent to the echo'}</small></button>`;
+      }
+      if(isEchoKnight(c,7)) body+=`<button class="btn block" id="useEchoAvatar" style="margin:8px 0;text-align:left"${c.echoAvatarUsed?' disabled style="opacity:.5"':''}>👁 Echo Avatar<small style="display:block;opacity:.75">${c.echoAvatarUsed?'Already used — rest to recharge':'Action — see/hear through it for 10 min; you\'re blinded &amp; deafened meanwhile'}</small></button>`;
+      if(isEchoKnight(c,10)) body+=`<button class="btn ${c.shadowMartyrArmed?'':'ghost'} block" id="useShadowMartyr" style="margin:8px 0;text-align:left"${c.shadowMartyrUsed?' disabled style="opacity:.5"':''}>🛡 ${c.shadowMartyrArmed?'Shadow Martyr — ARMED (tap to cancel)':'Ready Shadow Martyr'}<small style="display:block;opacity:.75">${c.shadowMartyrUsed?'Already used — rest to recharge':'Reaction — the next attack on you within 5 ft of the echo hits it instead'}</small></button>`;
+      body+=`<button class="btn block" id="useEchoSwap" style="margin:8px 0;text-align:left">🔀 Teleport-swap places<small style="display:block;opacity:.75">Bonus action, costs 15 ft of your movement</small></button>`;
+      body+=`<button class="btn ghost block" id="useEchoDismiss" style="margin-bottom:8px;text-align:left">Dismiss Echo<small style="display:block;opacity:.75">Bonus action</small></button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='incarnationPick'){
+      const targets=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(echo.x,echo.y,mo.x,mo.y)<=1);
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Attack through the echo — pick a target within 5 ft of it.</p>`;
+      body+=targets.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · (${mo.x},${mo.y})</small></div>
+        <button class="btn sm" data-inctgt="${i}">Attack</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='servant'){
@@ -7434,12 +7565,104 @@ function openAdjacentUseUI(c, s, me){
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
       draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]}
-        : kind==='servant' ? {kind:'servant'} : Object.assign({kind:'obj'}, items[Number(idx)]));
+        : kind==='servant' ? {kind:'servant'} : kind==='echo' ? {kind:'echo'} : Object.assign({kind:'obj'}, items[Number(idx)]));
     });
     // Commanding the servant spends the BONUS action resource, independent of the shared
     // Action-based afterManeuver flow every other Use-menu item runs through.
     const spendServantCommand=()=>{ if(c.battle) c.battle.bonus=true; $('#modalRoot').innerHTML=''; save(); render();
       if(mode==='player') playerHello(); if(mode==='qb') qbLog('👻 '+c.name+' commands the Unseen Servant'); };
+    { const me2=$('#useManifestEcho'); if(me2) me2.onclick=()=>{
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      draw({kind:'manifestEchoPick'});
+    }; }
+    document.querySelectorAll('[data-echospot]').forEach(b=>b.onclick=()=>{
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      const t=servantMoveTiles(ad, {x:me.x,y:me.y})[Number(b.dataset.echospot)];
+      if(!t) return;
+      manifestEcho(s, c, t.x, t.y, echoControllerId, log);
+      if(c.battle) c.battle.bonus=true;
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    });
+    document.querySelectorAll('[data-echomove]').forEach(b=>b.onclick=()=>{
+      const t=echoMoveTiles(ad, echo)[Number(b.dataset.echomove)];
+      if(!t) return;
+      echo.x=t.x; echo.y=t.y;
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    });
+    document.querySelectorAll('[data-echoint]').forEach(b=>b.onclick=()=>{
+      const it=listInteractInRange(s, echo, 1)[Number(b.dataset.echoint)];
+      if(!it) return;
+      const acts=availableInteractActions(it.obj, 'adj'); const a=acts[0];
+      if(!a){ flashBanner('Nothing it can do with that'); return; }
+      const res=runInteractAction(s, c, it.key, a.id, 'adj');
+      if(!res.ok){ flashBanner(res.msg); return; }
+      logChange(c, '👤 '+res.msg); flashBanner('👤 '+res.msg); sfx('cast');
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    });
+    { const esw=$('#useEchoSwap'); if(esw) esw.onclick=()=>{
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      if((c.battle&&c.battle.move||0)<15){ flashBanner('Not enough movement left (needs 15 ft)'); return; }
+      // `me` is a throwaway copy in player-net (see openAdjacentUseUI's player-net call site,
+      // which wraps it in Object.assign for adapter purposes) — the REAL position the map/DM
+      // mirror actually reads lives on net.session.players' own entry, same lookup every other
+      // player-net position mutation already uses (see the move-token animateToken calls).
+      const realMe = mode==='player' ? s.players.find(p=>p.id===net.peer.id) : me;
+      if(!realMe){ flashBanner('Could not find your own token'); return; }
+      const ex=echo.x, ey=echo.y;
+      echo.x=realMe.x; echo.y=realMe.y; realMe.x=ex; realMe.y=ey;
+      if(c.battle) c.battle.move=Math.max(0,(c.battle.move||0)-15);
+      c.battle.bonus=true;
+      log('🔀 '+c.name+' teleport-swaps with the echo');
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    }; }
+    { const edm=$('#useEchoDismiss'); if(edm) edm.onclick=()=>{
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      dismissEcho(s, echoControllerId, log);
+      if(c.battle) c.battle.bonus=true;
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    }; }
+    { const ui=$('#useIncarnation'); if(ui) ui.onclick=()=>draw({kind:'incarnationPick'}); }
+    { const eav=$('#useEchoAvatar'); if(eav) eav.onclick=()=>{
+      if(c.echoAvatarUsed){ flashBanner('Echo Avatar already used — rest to recharge'); return; }
+      if(c.battle&&!hasAction(c)){ flashBanner('No Action left this turn'); return; }
+      if(c.battle) spendAction(c);
+      c.echoAvatarUsed=true;
+      // Two effect entries (one per condition) so the existing round-countdown/expiry
+      // machinery (advanceRound, keyed on a single e.cond per effect) clears both together
+      // after 10 minutes (60 rounds) without needing a new multi-condition effect shape.
+      addEffect(c, 'Echo Avatar (Blinded)', {rounds:60, cond:'Blinded', note:'Seeing through your echo instead of your own eyes.'});
+      addEffect(c, 'Echo Avatar (Deafened)', {rounds:60, cond:'Deafened', note:'Hearing through your echo instead of your own ears.'});
+      log('👁 '+c.name+' sees and hears through the echo');
+      flashBanner('👁 Echo Avatar — blinded/deafened for 10 min while you watch through the echo');
+      if(mode==='qb' && typeof frameCameraOnCellSmooth==='function') try{ frameCameraOnCellSmooth(QB, echo.x, echo.y, 1.55); }catch(e){}
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    }; }
+    { const sm=$('#useShadowMartyr'); if(sm) sm.onclick=()=>{
+      if(c.shadowMartyrUsed){ flashBanner('Shadow Martyr already used — rest to recharge'); return; }
+      c.shadowMartyrArmed=!c.shadowMartyrArmed;
+      flashBanner(c.shadowMartyrArmed?'🛡 Shadow Martyr armed — the next attack on you near the echo hits it instead':'Shadow Martyr disarmed');
+      draw({kind:'echo'});
+    }; }
+    document.querySelectorAll('[data-inctgt]').forEach(b=>b.onclick=()=>{
+      const targets=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(echo.x,echo.y,mo.x,mo.y)<=1);
+      const mo=targets[Number(b.dataset.inctgt)];
+      if(!mo) return;
+      // The attack ROLL uses the echo's own id as actorId (a real s.monsters entry with real
+      // x/y) so Engine.hitResult's range/cover/melee checks measure from the echo's square —
+      // but the weapon stats (toHit/dmg) are still the KNIGHT's own, matching RAW ("an
+      // additional attack" through the echo, not the echo's own attack — it has none).
+      const atk=qbPcAttacks(c).find(a=>a.melee)||{name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true};
+      draw({kind:'confirmRoll', desc:'Unleash Incarnation — attack '+esc(mo.name)+' from the echo\'s space with '+esc(atk.name)+'.', skillLabel:atk.name, backTo:{kind:'echo'}, run:()=>{
+        if(c.echoIncarnationLeft==null) c.echoIncarnationLeft=echoResourceMax(c);
+        if(c.echoIncarnationLeft<=0){ flashBanner('No Unleash Incarnation uses left — rest to recharge'); return null; }
+        c.echoIncarnationLeft--;
+        const ev=Engine.attack(ad, echo.id, mo.id, {name:'Unleash Incarnation ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:1});
+        if(ev.hit) flashBanner('⚔ Unleash Incarnation hits '+mo.name+' for '+ev.dmg);
+        else flashBanner('⚔ Unleash Incarnation misses '+mo.name);
+        log('⚔ '+c.name+' unleashes an attack through the echo at '+mo.name+' — '+(ev.hit?'hit for '+ev.dmg:'miss'));
+        return null;
+      }});
+    });
     document.querySelectorAll('[data-servmove]').forEach(b=>b.onclick=()=>{
       if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
       const t=servantMoveTiles(ad, servant)[Number(b.dataset.servmove)];
@@ -8853,7 +9076,8 @@ const sessionAdapter = {
   // one — deriveMonsterAbilities means a monster is just as much a real creature as a PC.
   checkSubject:u=> u.hp!=null ? deriveMonsterAbilities(u) : null,
   saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
-  addCond:(u,cond,rounds)=>{ if(u.hp!=null){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); } else dmSend(u.id,{t:'cond',name:cond}); },
+  addCond:(u,cond,rounds)=>{ if(u.echo) return;   // an Echo Knight's echo is immune to all conditions (RAW)
+    if(u.hp!=null){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); } else dmSend(u.id,{t:'cond',name:cond}); },
   name:u=>u.name,
   // Sanctuary/Holy Aura DCs live on the player's own device (c.effects) — synced onto the
   // DM's mirror via playerHello()/dmOnData so a monster attack the DM resolves can see them.
@@ -8889,7 +9113,8 @@ const playerNetAdapter = {
   // this device only ever sees that player's DM-broadcast summary, never their sheet.
   checkSubject:u=> u.me ? u.c : (u.hp!=null ? deriveMonsterAbilities(u) : null),
   saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
-  addCond:(u,cond,rounds)=>{ if(u.hp!=null && net.conn){ try{ net.conn.send({t:'moncond',mon:u.id,cond,rounds}); }catch(e){} } },
+  addCond:(u,cond,rounds)=>{ if(u.echo) return;   // an Echo Knight's echo is immune to all conditions (RAW)
+    if(u.hp!=null && net.conn){ try{ net.conn.send({t:'moncond',mon:u.id,cond,rounds}); }catch(e){} } },
   name:u=> u.me?u.c.name:u.name,
   // Maneuver plumbing — a monster's position isn't this device's to mutate authoritatively;
   // echo locally for instant feedback (matches hurt's "local echo; DM broadcast corrects it"
@@ -8919,7 +9144,8 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
   // is just as real a creature as the PC once it carries derived ability scores.
   checkSubject:u=> u.side==='pc' ? u.c : deriveMonsterAbilities(u),
   saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
-  addCond:(u,cond,rounds)=>{ if(u.side==='mon'){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); }
+  addCond:(u,cond,rounds)=>{ if(u.echo) return;   // an Echo Knight's echo is immune to all conditions (RAW)
+    if(u.side==='mon'){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); }
     else { if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } },
   sanctuaryDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Sanctuary')||{}).dc||null : null,
   holyAuraDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Holy Aura')||{}).dc||null : null,
@@ -9066,6 +9292,8 @@ function startQuickBattle(c, crMax, count, mapKey){
   qbPlaceUnits();
   // battle resources for the PC (mirror startBattle without its render)
   c.battle=Object.assign({round:1, init:rnd(20)+initiative(c)}, freshTurnState(c));
+  // Legion of One (18th): regain one Unleash Incarnation use on rolling initiative if none left.
+  if(isEchoKnight(c,18) && (c.echoIncarnationLeft||0)<=0) c.echoIncarnationLeft=1;
   const order=[{k:'p',id:'pc',name:c.name,roll:c.battle.init}].concat(monsters.map(m=>({k:'m',id:m.id,name:m.name,roll:m.init})));
   order.sort((a,b)=>b.roll-a.roll); QB.order=order; QB.turn=0;
   qbLog('⚔ Battle begins on '+key+' — '+monsters.length+' enemies. Initiative: '+order.map(o=>o.name+' '+o.roll).join(', '));
@@ -9379,11 +9607,45 @@ function playBlastFx(from, to, aoeR, dtype, done){
 }
 
 // ---- attack resolution (shared by PC, AI, opportunity attacks) ----
+// Echo Knight — Shadow Martyr (10th level): a real "reactive interrupt before an attack
+// resolves" doesn't exist anywhere else in this app (Uncanny Dodge etc. are flavor-text only,
+// see SUBCLASS_FEATURES/CLASS_FEATURES) — full mid-resolution prompting would mean rewriting
+// qbResolveAttack's monster-attack branch from synchronous to async. Simplified instead into a
+// player-controlled "arm/disarm" toggle (c.shadowMartyrArmed, set from the echo Use-menu
+// BEFORE the monster's turn): while armed, any attack about to hit the Knight is silently
+// redirected to the echo's square/AC instead, consuming the reaction + once-per-rest use and
+// disarming automatically — preserves real player agency over WHEN to spend it (save it for a
+// scary hit) without needing a live mid-roll interrupt UI.
+function shadowMartyrRedirect(s, tgt){
+  if(!tgt || tgt.side!=='pc' || !tgt.c) return null;
+  const c=tgt.c;
+  if(!c.shadowMartyrArmed || !isEchoKnight(c,10) || c.battle.reaction || c.shadowMartyrUsed) return null;
+  const echo=(s.monsters||[]).find(m=>m.hp>0 && m.echo && m.controllerId==='pc');
+  if(!echo || gridDist(echo.x,echo.y,tgt.x,tgt.y)>1) return null;   // RAW: echo must be within 5 ft of the target to intercept
+  c.battle.reaction=true; c.shadowMartyrUsed=true; c.shadowMartyrArmed=false;
+  return echo;
+}
+// Echo Knight — Reclaim Potential (15th level): when the echo is DESTROYED (reduced to 0 HP —
+// not a voluntary dismiss, RAW is specific about this), gain 2d6+CON temp HP if you have none
+// yet. Same CON-mod-scaled resource pool shape as Unleash Incarnation (echoResourceMax),
+// refilled on a long rest only.
+function reclaimPotential(c, log){
+  if(!isEchoKnight(c,15)) return;
+  if((c.hp.temp||0)>0) return;   // PHB: only if you have no temporary hit points already
+  if(c.echoReclaimLeft==null) c.echoReclaimLeft=echoResourceMax(c);
+  if(c.echoReclaimLeft<=0) return;
+  c.echoReclaimLeft--;
+  const gain=rollNotation('2d6').total+mod(abil(c,'con'));
+  c.hp.temp=Math.max(0,gain);
+  log('🩸 '+c.name+' reclaims the echo\'s potential — +'+c.hp.temp+' temporary HP');
+}
 function qbResolveAttack(att, tgt, atk, done){
   if(!att||!tgt||qbHP(tgt)<=0){ done&&done(); return; }
   const isPc=att.side==='pc'||att.id==='pc';
   // Monsters / AI: keep fast auto-resolve
   if(!isPc){
+    const redirected=shadowMartyrRedirect(QB, tgt);
+    if(redirected){ qbLog('👤 Shadow Martyr — the echo steps into the attack meant for '+qbName(tgt)); tgt=redirected; }
     const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});
     const blocked=ev.sanctuary&&ev.sanctuary.blocked;
     if(!blocked){
@@ -9396,7 +9658,8 @@ function qbResolveAttack(att, tgt, atk, done){
       if(ev.sanctuary) qbLog(blocked?'🛡️ '+qbName(att)+' can’t bring itself to attack '+qbName(tgt)+' — Sanctuary holds':'🛡️ '+qbName(att)+' fights through Sanctuary');
       if(blocked){ /* noop */ }
       else if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit', tgt.x, tgt.y); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
-        if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); } }
+        if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); }
+        if(tgt.echo && tgt.hp<=0) reclaimPotential(QB.players[0].c, qbLog); }
       else { sfx('miss'); attackFx('miss', tgt.x, tgt.y); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
       qbCheckEnd(); save(); render(); done&&done(ev);
     }, 280);
@@ -10465,7 +10728,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.185';
+const APP_VERSION='v120.186';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

@@ -1144,3 +1144,70 @@ failure case (target unaffected). Also spot-verified live end-to-end via Playwri
 real running app: opening the Use menu, picking a foe, tapping Taunt shows the confirm screen
 with *zero* roll having happened yet (target's conditions still empty), and only tapping
 "🎲 Roll Intimidation" actually rolls, applies Frightened, and spends the attack.
+
+## Echo Knight — the first subclass with real mechanics (v120.186)
+
+**Audit finding that started this**: no subclass in this app affected combat math before this —
+`c.subclass` was read in exactly one place (sheet display text). Champion's Improved Critical,
+Battle Master's maneuver dice, all of it: cosmetic labels only. Echo Knight is the first
+subclass to get real mechanics; a new `SUBCLASS_FEATURES` table (keyed by subclass name,
+merged into the sheet's existing features list alongside `CLASS_FEATURES`) is the natural home
+for whichever subclass gets implemented next.
+
+All six real Echo Knight (Explorer's Guide to Wildemount) features are implemented, confirmed
+against the source via web search before building:
+
+- **Manifest Echo (3rd)**: `manifestEcho` creates a real monster-shaped `s.monsters` entry
+  (`echo:true`, `ally:true`, `brain:'passive'`, AC 14+prof, 1 HP) — reuses the same battlefield/
+  targeting infrastructure every other creature in this app already has, but does NOT get an
+  initiative-order slot (unlike `spawnSummon`'s spell-summons) since it never acts on its own
+  turn. Condition immunity is a one-line `if(u.echo) return;` guard added to all three adapters'
+  `addCond`. Move up to 30 ft (`echoMoveTiles`, free — a deliberate difference from the Unseen
+  Servant's move-also-costs-the-bonus-action simplification, since RAW genuinely doesn't gate
+  the echo's move and an Echo Knight needs their bonus action free most turns). Teleport-swap
+  (bonus action, costs 15 ft movement) correctly resolves the REAL live position in player-net
+  (`s.players.find(p=>p.id===net.peer.id)`, not the throwaway `Object.assign` copy
+  `openAdjacentUseUI` receives as `me` for adapter purposes — a real bug caught before it shipped).
+  Auto-dismiss on incapacitation is checked at the Use-menu's own open, not threaded through
+  every condition-application call site — a documented simplification.
+- **Unleash Incarnation (3rd)**: one extra attack when you take the Attack action, from the
+  echo's own square. Resolved via `Engine.attack(ad, echo.id, targetId, atk)` — passing the
+  echo's real id as `actorId` makes the engine's existing range/melee/cover math measure from
+  the echo's position for free (no new targeting-origin code needed), while `atk` still carries
+  the Knight's real weapon stats. Uses = CON mod (min 1), long-rest only.
+- **Echo Avatar (7th)**: action, once per rest, applies Blinded+Deafened for 60 rounds (10 min).
+  Two effect entries (one per condition) rather than a new multi-condition effect shape, so the
+  existing round-countdown/expiry machinery (keyed on one `cond` per effect) clears both
+  together with zero new expiry code.
+- **Shadow Martyr (10th)**: the one feature that needed a real design compromise. A true
+  "reactive interrupt before an attack resolves" doesn't exist anywhere in this app — building
+  one would mean converting `qbResolveAttack`'s monster-attack branch from synchronous to async.
+  Implemented instead as a player-controlled arm/disarm toggle (`c.shadowMartyrArmed`, set
+  ahead of time from the echo's Use-menu): while armed, the next attack landing on the Knight
+  within 5 ft of the echo is silently redirected to the echo's square/AC, consuming the reaction
+  and the once-per-rest use. Preserves real player agency (arm it when you expect a big hit)
+  without a live mid-roll prompt UI.
+- **Reclaim Potential (15th)**: 2d6+CON temp HP when the echo is actually destroyed (0 HP from
+  damage — not a voluntary dismiss, PHB is specific about this), only if the Knight has none
+  already. Hooked into `qbResolveAttack`'s hit-resolution, checked generically on `tgt.echo &&
+  tgt.hp<=0` so it fires whether the echo died via Shadow Martyr's redirect or a monster
+  choosing to attack it directly. Uses = CON mod (min 1), long-rest only.
+- **Legion of One (18th)**: `manifestEcho` already caps at 1 echo per controller; at 18th the
+  cap becomes 2, and manifesting a third wipes both existing ones (matches the RAW wording
+  literally rather than "displace only the oldest"). Rolling initiative (`startBattle`/
+  `startQuickBattle`) restores one Unleash Incarnation use if the pool is at 0.
+
+**Explicitly out of scope for this pass**: DM-hosted mode (a monster attacking a *connected
+player* Echo Knight, as opposed to QB's solo PC) isn't wired up — Shadow Martyr and Reclaim
+Potential's hooks live in `qbResolveAttack`, QB-only. Extending to DM-hosted would need the same
+DM-can't-resolve-player-state round-trip pattern established for `maneuverCheck` earlier this
+session; flagged as a real follow-up, not silently skipped.
+
+Tests: 24 new assertions across all six phases — the echo's real RAW stat block and initiative-
+order exclusion, condition immunity on all three adapters, 30 ft movement range, Legion of One's
+1→2→wipe-both-at-3 cap math, an end-to-end `Engine.attack` proving a target only the echo (not
+the Knight) is adjacent to is still reachable, Echo Avatar's twin-condition expiry, Shadow
+Martyr's arm/redirect/range-gate/one-use-per-rest logic, Reclaim Potential's temp-HP math and
+"only if you have none" gate, and Legion of One's initiative-roll refill. Playwright wasn't
+available to spot-check live in a real browser this pass (the MCP server disconnected mid-
+session) — noting this honestly rather than claiming a check that didn't happen.
