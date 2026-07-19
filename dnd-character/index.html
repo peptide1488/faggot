@@ -504,6 +504,11 @@ function attackAdvantage(aC, tC, melee, opts){
   if(A('Frightened')){ adv--; why.push('you are frightened'); }
   if(A('Invisible')){ adv++; why.push('you are invisible'); }
   if(A('Hidden')){ adv++; why.push('attacking from hiding'); }
+  // Attacking an invisible target is disadvantage (PHB) — unless the attacker can actually
+  // see it (See Invisibility/True Seeing, threaded in via opts.seesInvisible). This was
+  // previously missing entirely: only the invisible creature's OWN advantage (line above)
+  // was modeled, not the reciprocal disadvantage on whoever's attacking it.
+  if(T('Invisible') && !(opts&&opts.seesInvisible)){ adv--; why.push('target is invisible'); }
   ['Restrained','Blinded','Paralyzed','Stunned','Unconscious','Petrified'].forEach(cn=>{ if(T(cn)){ adv++; why.push('target '+cn.toLowerCase()); } });
   if(T('Prone')){ adv+=melee?1:-1; why.push('target prone'+(melee?'':' (ranged)')); }
   if(T('Faerie Fire')){ adv++; why.push('target outlined by faerie fire'); }
@@ -528,6 +533,14 @@ function unitConds(u){
   if(Array.isArray(u.conds)) return new Set(u.conds.map(x=>x&&x.name?x.name:x));
   if(u.conditions) return new Set(Object.keys(u.conditions));
   return new Set();
+}
+// Can this attacking unit actually see invisible creatures (See Invisibility/True Seeing)?
+// Only ever true for a real PC-backed unit (qbAdapter's {c}, playerNetAdapter's {me}) — this
+// app doesn't track buffs on monsters, so a monster attacker never sees through invisibility,
+// matching how other PC-only buff effects already work here (e.g. skillCheckAdvantage).
+function hasSeesInvisible(u){
+  const c=u&&(u.c||(u.me&&typeof playerChar==='function'&&playerChar()));
+  return !!(c&&(c.effects||[]).some(e=>e.mods&&e.mods.seesInvisible));
 }
 // Restrained/Grappled zero a creature's speed (PHB) — checked when a turn's movement
 // budget is granted, not baked into effSpeed() itself (that's used for reach/UI display too).
@@ -979,7 +992,30 @@ function openEyebiteChoice(ad, casterId, mo, dc, doneLog){
     doneLog(eyebiteResolve(ad, casterId, mo, opt, dc, roll));
   });
 }
-function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !!(mc.attack||mc.save||mc.dmg||SPELL_COND[name]||POWER_WORD_HP[name]!=null||name==='Detect Thoughts'); }
+function spellTargetsEnemy(name, mc){ mc=mc||parseSpellMechanics(name); return !!(mc.attack||mc.save||mc.dmg||SPELL_COND[name]||POWER_WORD_HP[name]!=null||name==='Detect Thoughts'||name==='Telekinesis'||name==='Dispel Magic'||name==='Counterspell'); }
+// Dispel Magic / Counterspell: strip every spell-imposed condition off a monster target.
+// Real RAW timing doesn't fit this app's model — Dispel Magic targets ONE known spell's
+// effect (this app doesn't track "which spell caused which condition" per-condition, so it
+// clears everything), and Counterspell interrupts a cast in progress (this app has no
+// reactive-interrupt system; spells resolve immediately when cast, so there's no "spell being
+// cast right now" to hook into). Both collapse to the same real, useful outcome — strip a
+// foe's magical conditions — rather than doing nothing, with the mismatch documented here
+// instead of silently pretended away. QB-only: player-net can't directly mutate the DM's
+// authoritative monster state and there's no message type for "clear all conditions" yet.
+function dispelMonsterConds(mo){ const n=(mo.conds||[]).length; mo.conds=[]; return n; }
+// Telekinesis (PHB): your spell-ability check vs the target's Strength (opposed, not a save)
+// — win and it's Restrained until the spell ends. Returns `savedKnown` (Engine.castApply's
+// shape: true = resisted/no effect, false = failed/apply the cond) so both QB's and
+// player-net's resolveSingle can feed it straight into the existing castApply pipeline
+// instead of hand-rolling condition application. Simplified from RAW: the 30-ft-per-round
+// forced move itself isn't animated/repositioned on the grid, only the Restrained condition
+// (the lasting, mechanically meaningful part); object-only Telekinesis (no creature, no
+// contest) isn't modeled — this app has no free-floating "held object" state to move.
+function telekinesisSavedKnown(c, mo){
+  const casterRoll=rnd(20)+profBonus(c)+mod(abil(c,c.spellAbility));
+  const defRoll=unitSkillRoll(mo,'athletics','str');
+  return defRoll.total>casterRoll;   // target "saved" (resisted) if its roll beats yours
+}
 /** Needs battlefield aim (AoE, lines like Gust of Wind, attacks). */
 function spellNeedsBattleTarget(name, mc){
   if(SPELL_TELEPORT[name]) return false; // has its own picker
@@ -1090,6 +1126,12 @@ function openSpellTarget(c, name, level){
       flashBanner(ev.noEffect?name+' has no effect — '+mo.name+' has more than '+ev.threshold+' HP':ev.killed?'💀 '+name+' drops '+mo.name+' instantly':'😵 '+name+' stuns '+mo.name); return; }
     if(name==='Eyebite'){ openEyebiteChoice(playerNetAdapter,'me',mo, dc0, msg=>flashBanner(msg)); return; }
     if(name==='Detect Thoughts'){ castDetectThoughts(c, mo); return; }
+    if(name==='Telekinesis'){
+      const saved=telekinesisSavedKnown(c, mo);
+      Engine.castApply(playerNetAdapter,'me',mo.id,{name,savedKnown:saved,cond:{c:'Restrained',rounds:10},dmgTotal:0});
+      flashBanner(saved ? mo.name+' resists Telekinesis' : mo.name+' is Restrained by Telekinesis');
+      return;
+    }
     if(mc.attack){ attackFlow(c,{name,spell:true,toHit:profBonus(c)+mod(abil(c,c.spellAbility)),dmg:mc.dmg||'0',dt:mc.dtype||''}); return; }
     const dmgTotal=mc.dmg?(rollNotation(mc.dmg)||{total:0}).total:0;
     if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
@@ -1110,6 +1152,26 @@ function openSpellTarget(c, name, level){
       sfx('cast');
       if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
       flashBanner('💨 Gust of Wind!');
+      return;
+    }
+    if(WALL_SPELLS.has(name)){
+      if(!castSpell(c,name,level,{x:ctr.x,y:ctr.y})) return;
+      $('#modalRoot').innerHTML='';
+      paintHazardTerrain(s, ctr, aoeR, name, dc0);
+      if(net.conn){ try{ net.conn.send({t:'paintHazard', ctr, aoeR, name, dc:dc0}); }catch(e){} }
+      logChange(c,'🧱 Conjured '+name); flashBanner(name+' conjured!'); sfx('cast');
+      if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
+      return;
+    }
+    if(SPELL_NOCAST_ZONE[name]){
+      if(!castSpell(c,name,level,{x:ctr.x,y:ctr.y})) return;
+      $('#modalRoot').innerHTML='';
+      paintNoCastZone(s, ctr, aoeR, name);
+      // Reuses the existing 'paintHazard' message the wall spells already send — dmOnData's
+      // handler dispatches to paintNoCastZone vs paintHazardTerrain based on SPELL_NOCAST_ZONE.
+      if(net.conn){ try{ net.conn.send({t:'paintHazard', ctr, aoeR, name, dc:dc0}); }catch(e){} }
+      logChange(c,'🔇 Cast '+name+' — no spellcasting inside'); flashBanner(name+' — magic suppressed in the area'); sfx('cast');
+      if(isoView&&iso3dView) try{ syncIso3DHost(s); }catch(e){}
       return;
     }
     if(!castSpell(c,name,level,{x:ctr.x,y:ctr.y})) return;
@@ -1651,12 +1713,12 @@ function spellDesc(name, level){ const m=spellMeta(name); return (m?SCHOOL_NAME[
 const SPELL_DESC={
 'Acid Splash':'Hurl acid; Dex save, 1d6 acid to one or two creatures.','Chill Touch':'Ranged spell attack, 1d8 necrotic; the target can\'t recover HP this turn.','Dancing Lights':'Create up to four movable floating lights.','Druidcraft':'Minor nature effects — weather hint, bloom, tiny sensory.','Eldritch Blast':'Ranged beam, 1d10 force (more beams as you level).','Fire Bolt':'Ranged fire mote, 1d10 fire; ignites objects.','Guidance':'Touch; add 1d4 to one ability check.','Light':'An object sheds bright light in 20 ft.','Mage Hand':'Spectral hand within 30 ft (6 tiles); moves 30 ft/round, carries ≤10 lb; can\'t attack. Sleight of Hand vs Perception to go unnoticed.','Mending':'Repair a single break or tear in an object.','Message':'Whisper a message to a creature within 120 ft.','Minor Illusion':'Create a small sound or image illusion.','Poison Spray':'Puff of poison; Con save, 1d12 poison.','Prestidigitation':'Minor tricks — clean, flavor, spark, trinket.','Produce Flame':'Flame for light, or a ranged spell attack: 1d8 fire.','Ray of Frost':'Cold beam, 1d8 cold; −10 ft speed.','Resistance':'Touch; add 1d4 to one saving throw.','Sacred Flame':'Radiant flame, Dex save (ignores cover), 1d8.','Shillelagh':'Club/quarterstaff uses your spell stat, 1d8.','Shocking Grasp':'Melee spell attack, 1d8 lightning; the target can\'t take reactions.','Spare the Dying':'Touch a dying creature to stabilize it.','Thaumaturgy':'Minor divine effects — voice, flames, tremors.','Thorn Whip':'Melee spell attack (30 ft), 1d6 piercing; pull the target 10 ft closer.','True Strike':'Advantage on your next attack vs a target.','Vicious Mockery':'Insult; Wis save, 1d4 psychic + disadvantage.',
 'Alarm':'Ward an area to alert you when something enters.','Animal Friendship':'Charm a beast (Wis save) for 24 hours.','Bane':'Up to 3 foes subtract 1d4 from attacks and saves.','Bless':'Up to 3 allies add 1d4 to attacks and saves.','Burning Hands':'15-ft cone, Dex save, 3d6 fire.','Charm Person':'Charm a humanoid (Wis save) for an hour.','Color Spray':'Blind creatures (by HP) in a 15-ft cone.','Command':'One-word command a creature must obey (Wis save).','Comprehend Languages':'Understand any spoken or written language.','Create or Destroy Water':'Create or destroy up to 10 gallons of water.','Cure Wounds':'Touch heals 1d8 + spell mod HP.','Detect Magic':'Sense magic within 30 ft and its school.','Disguise Self':'Change your appearance (illusion) for an hour.','Divine Favor':'Your weapon attacks deal +1d4 radiant.','Entangle':'Plants restrain creatures in 20 ft (Str save).','Expeditious Retreat':'Bonus-action Dash each turn for 10 min.','Faerie Fire':'Dex save; outlined foes grant advantage to attacks against them.','False Life':'Gain 1d4+4 temporary HP.','Feather Fall':'Up to 5 falling creatures take no fall damage.','Find Familiar':'Summon a spirit familiar in animal form.','Fog Cloud':'A 20-ft sphere of heavily obscuring fog.','Goodberry':'Create 10 berries; each restores 1 HP.','Grease':'10-ft square is slippery (Dex save or prone).','Guiding Bolt':'Ranged 4d6 radiant; next attack has advantage.','Healing Word':'Bonus action, ranged heal 1d4 + mod.','Hellish Rebuke':'Reaction; attacker takes 2d10 fire (Dex save).','Heroism':'Immune to fear and gains temp HP each turn.','Hex':'Curse a foe: +1d6 necrotic, disadvantage on one ability.','Hunter\'s Mark':'Mark a target for +1d6 weapon damage.','Identify':'Learn an item\'s magic or a spell on a creature.','Inflict Wounds':'Melee spell attack, 3d10 necrotic.','Jump':'Target\'s jump distance triples.','Longstrider':'Target\'s speed +10 ft for an hour.','Mage Armor':'Unarmored target\'s AC becomes 13 + Dex.','Magic Missile':'Three darts, 3d4+3 force total; auto-hits a creature you can see.','Protection from Evil and Good':'Ward a creature vs certain creature types.','Purify Food and Drink':'Remove poison/disease from food and drink.','Ray of Sickness':'Ranged 2d8 poison; Con save or poisoned.','Sanctuary':'Attackers need a Wis save to target the warded creature.','Shield':'Reaction; +5 AC and block Magic Missile.','Shield of Faith':'A target gains +2 AC for 10 min.','Silent Image':'Create a movable illusory image.','Sleep':'Put the weakest creatures in the area to sleep, by their total HP — no save (undead & elves immune).','Speak with Animals':'Communicate with beasts for 10 min.','Tasha\'s Hideous Laughter':'A creature falls prone laughing (Wis save).','Thunderwave':'15-ft cube, Con save, 2d8 thunder + push.','Unseen Servant':'Invisible force does simple tasks for an hour.','Witch Bolt':'Ranged spell attack, 1d12 lightning; repeat the damage each turn while concentrating.',
-'Aid':'Raise HP max and current HP of 3 creatures by 5.','Alter Self':'Change form — aquatic, looks, or natural weapons.','Animal Messenger':'Send a tiny beast to deliver a message.','Barkskin':'Target\'s AC can\'t be lower than 16.','Blindness/Deafness':'Blind or deafen a creature (Con save).','Blur':'Attackers have disadvantage against you.','Calm Emotions':'Suppress fear/charm or hostility in a group.','Cloud of Daggers':'Blades fill a 5-ft cube, 4d4 slashing.','Continual Flame':'A permanent heatless flame.','Crown of Madness':'Force a charmed creature to attack your choice.','Darkness':'A 15-ft sphere of magical darkness.','Darkvision':'Grant a creature 60-ft darkvision.','Detect Thoughts':'Read surface thoughts of creatures.','Enhance Ability':'Advantage on one ability\'s checks.','Enlarge/Reduce':'Double or halve a creature/object\'s size.','Flaming Sphere':'A rolling 2d6 fire sphere you move.','Gentle Repose':'Stave off decay and undeath on a corpse.','Gust of Wind':'60-ft line of wind pushes creatures.','Heat Metal':'Make metal red-hot, 2d8 fire and drop it.','Hold Person':'Paralyze a humanoid (Wis save each turn).','Invisibility':'A creature is invisible until it attacks/casts.','Knock':'Magically unlock something (loudly).','Lesser Restoration':'End a disease or one condition (blind/poison/etc).','Levitate':'Raise a creature/object up to 20 ft.','Locate Object':'Sense direction to a known object within 1000 ft.','Magic Weapon':'A nonmagical weapon becomes +1.','Mirror Image':'Three duplicates misdirect attacks.','Misty Step':'Bonus-action teleport 30 ft.','Moonbeam':'5-ft radius column; Con save, 2d10 radiant each turn; you can move it.','Pass without Trace':'Your group gets +10 Stealth, no tracks.','Prayer of Healing':'Heal up to 6 creatures 2d8 + mod (10 min).','Protection from Poison':'Neutralize poison and grant resistance.','Ray of Enfeeblement':'Target deals half damage with Str attacks.','Rope Trick':'A rope leads to an extradimensional space.','Scorching Ray':'Three rays, 2d6 fire each.','See Invisibility':'See invisible creatures and the Ethereal.','Shatter':'10-ft sphere, Con save, 3d8 thunder.','Silence':'No sound in a 20-ft sphere.','Spider Climb':'Walk on walls and ceilings.','Spike Growth':'20 ft of spikes; 2d4 and difficult terrain.','Spiritual Weapon':'Bonus action: a floating weapon; melee spell attack, 1d8 + mod.','Suggestion':'Wis save. Suggest a reasonable-sounding act; ends if you or your allies harm the target.','Web':'Fill a 20-ft cube with webs; Dex save or restrained.','Zone of Truth':'Creatures can\'t lie in 15 ft (Cha save).',
+'Aid':'Raise HP max and current HP of 3 creatures by 5.','Alter Self':'Change form — aquatic, looks, or natural weapons.','Animal Messenger':'Send a tiny beast to deliver a message.','Barkskin':'Target\'s AC can\'t be lower than 16.','Blindness/Deafness':'Blind or deafen a creature (Con save).','Blur':'Attackers have disadvantage against you.','Calm Emotions':'20-ft sphere; Cha save or a creature is Charmed (calmed) for 1 minute.','Cloud of Daggers':'Blades fill a 5-ft cube, 4d4 slashing.','Continual Flame':'A permanent heatless flame.','Crown of Madness':'Force a charmed creature to attack your choice.','Darkness':'A 15-ft sphere of magical darkness.','Darkvision':'Grant a creature 60-ft darkvision.','Detect Thoughts':'Read surface thoughts of creatures.','Enhance Ability':'Advantage on one ability\'s checks.','Enlarge/Reduce':'Double or halve a creature/object\'s size.','Flaming Sphere':'A rolling 2d6 fire sphere you move.','Gentle Repose':'Stave off decay and undeath on a corpse.','Gust of Wind':'60-ft line of wind pushes creatures.','Heat Metal':'Make metal red-hot, 2d8 fire and drop it.','Hold Person':'Paralyze a humanoid (Wis save each turn).','Invisibility':'A creature is invisible until it attacks/casts.','Knock':'Magically unlock something (loudly).','Lesser Restoration':'End a disease or one condition (blind/poison/etc).','Levitate':'Raise a creature/object up to 20 ft.','Locate Object':'Sense direction to a known object within 1000 ft.','Magic Weapon':'A nonmagical weapon becomes +1.','Mirror Image':'Three duplicates misdirect attacks.','Misty Step':'Bonus-action teleport 30 ft.','Moonbeam':'5-ft radius column; Con save, 2d10 radiant each turn; you can move it.','Pass without Trace':'Your group gets +10 Stealth, no tracks.','Prayer of Healing':'Heal up to 6 creatures 2d8 + mod (10 min).','Protection from Poison':'Neutralize poison and grant resistance.','Ray of Enfeeblement':'Target deals half damage with Str attacks.','Rope Trick':'A rope leads to an extradimensional space.','Scorching Ray':'Three rays, 2d6 fire each.','See Invisibility':'See invisible creatures and the Ethereal.','Shatter':'10-ft sphere, Con save, 3d8 thunder.','Silence':'No sound in a 20-ft sphere.','Spider Climb':'Walk on walls and ceilings.','Spike Growth':'20 ft of spikes; 2d4 and difficult terrain.','Spiritual Weapon':'Bonus action: a floating weapon; melee spell attack, 1d8 + mod.','Suggestion':'Wis save. Suggest a reasonable-sounding act; ends if you or your allies harm the target.','Web':'Fill a 20-ft cube with webs; Dex save or restrained.','Zone of Truth':'Creatures can\'t lie in 15 ft (Cha save).',
 'Animate Dead':'Raise a skeleton or zombie under your control.','Beacon of Hope':'Allies get save advantage and max healing.','Bestow Curse':'Curse a creature with a chosen drawback.','Blink':'Each turn you may vanish to the Ethereal.','Call Lightning':'Storm cloud; Dex save, 3d10 lightning each turn you call it down.','Clairvoyance':'An invisible sensor sees/hears a distant place.','Conjure Animals':'Summon fey beasts to fight for you.','Counterspell':'Reaction; spells of 3rd level or lower are stopped automatically — for higher, make a spellcasting ability check, DC 10 + the spell\'s level.','Create Food and Water':'Make food and water for many.','Daylight':'A 60-ft sphere of bright daylight.','Dispel Magic':'End spells on a creature, object, or area.','Fear':'Creatures in a 30-ft cone flee (Wis save).','Fireball':'20-ft sphere, Dex save, 8d6 fire.','Fly':'Grant a 60-ft flying speed.','Gaseous Form':'A creature becomes a misty cloud.','Haste':'+2 AC, double speed, and an extra action.','Hypnotic Pattern':'Charm/incapacitate with a pattern (Wis save).','Lightning Bolt':'100-ft line, Dex save, 8d6 lightning.','Magic Circle':'Cylinder that wards against creature types.','Major Image':'A detailed lasting illusion with sound/smell.','Mass Healing Word':'Bonus action; heal up to 6 creatures 1d4 + mod.','Meld into Stone':'Step into and hide within stone.','Nondetection':'Hide a target from divination and scrying.','Plant Growth':'Overgrow an area into difficult terrain.','Protection from Energy':'Resistance to one damage type (1 hr).','Remove Curse':'End all curses on a creature or item.','Revivify':'Revive a creature dead under a minute (1 HP).','Sending':'Send a 25-word message to anyone, anywhere.','Sleet Storm':'Freezing rain — difficult terrain, heavily obscured, Dex save or prone.','Slow':'Up to 6 creatures get halved speed/actions.','Speak with Dead':'Ask a corpse five questions.','Spirit Guardians':'Spirits in 15 ft of you; Wis save, 3d8 radiant, halves foes\' speed.','Stinking Cloud':'Nauseating gas makes foes lose actions.','Tongues':'Understand and be understood in any language.','Vampiric Touch':'Melee spell attack, 3d6 necrotic; you recover half the damage dealt.','Water Breathing':'Up to 10 creatures breathe underwater.','Water Walk':'Up to 10 creatures walk on liquids.','Wind Wall':'A wall of wind deflects and damages.',
-'Arcane Eye':'An invisible flying eye you see through.','Banishment':'Banish a creature to another plane (Cha save).','Blight':'8d8 necrotic to a creature (Con save).','Compulsion':'Force creatures to move a way you choose.','Confusion':'Creatures behave randomly each turn (Wis save).','Conjure Woodland Beings':'Summon fey to aid you.','Control Water':'Raise, part, or redirect water.','Death Ward':'First drop to 0 HP, the target stays at 1.','Dimension Door':'Teleport yourself (and one) up to 500 ft.','Divination':'A short answer about an event this week.','Dominate Beast':'Control a beast (Wis save); it repeats the save each time it takes damage.','Fabricate':'Convert raw materials into finished objects.','Freedom of Movement':'Ignore difficult terrain and restraints.','Greater Invisibility':'Invisible even while attacking.','Guardian of Faith':'A spectral guardian deals 20 radiant.','Ice Storm':'Dex save; 2d8 bludgeoning + 4d6 cold; difficult terrain.','Locate Creature':'Sense direction to a known creature.','Phantasmal Killer':'A nightmare deals 4d10 psychic (Wis save).','Polymorph':'Wis save (unwilling). Turn a creature into a beast of CR ≤ its level; reverts at 0 HP, excess damage carries over.','Stone Shape':'Reshape a stone object.','Stoneskin':'Resistance to nonmagical physical damage.','Wall of Fire':'A wall of flame; Dex save, 5d8 fire.',
+'Arcane Eye':'An invisible flying eye you see through.','Banishment':'Banish a creature to another plane (Cha save).','Blight':'8d8 necrotic to a creature (Con save).','Compulsion':'10-ft cube; Wis save or a creature is Charmed and compelled to move as you direct.','Confusion':'Creatures behave randomly each turn (Wis save).','Conjure Woodland Beings':'Summon fey to aid you.','Control Water':'Raise, part, or redirect water.','Death Ward':'First drop to 0 HP, the target stays at 1.','Dimension Door':'Teleport yourself (and one) up to 500 ft.','Divination':'A short answer about an event this week.','Dominate Beast':'Control a beast (Wis save); it repeats the save each time it takes damage.','Fabricate':'Convert raw materials into finished objects.','Freedom of Movement':'Ignore difficult terrain and restraints.','Greater Invisibility':'Invisible even while attacking.','Guardian of Faith':'A spectral guardian deals 20 radiant.','Ice Storm':'Dex save; 2d8 bludgeoning + 4d6 cold; difficult terrain.','Locate Creature':'Sense direction to a known creature.','Phantasmal Killer':'A nightmare deals 4d10 psychic (Wis save).','Polymorph':'Wis save (unwilling). Turn a creature into a beast of CR ≤ its level; reverts at 0 HP, excess damage carries over.','Stone Shape':'Reshape a stone object.','Stoneskin':'Resistance to nonmagical physical damage.','Wall of Fire':'A wall of flame; Dex save, 5d8 fire.',
 'Animate Objects':'Animate up to 10 objects to fight.','Awaken':'Give a beast or plant sentience and speech.','Cloudkill':'A 20-ft poison fog; Con save, 5d8 poison; it drifts each round.','Commune':'Ask your deity three yes/no questions.','Commune with Nature':'Learn facts about the surrounding land.','Cone of Cold':'60-ft cone, Con save, 8d8 cold.','Conjure Elemental':'Summon an elemental to serve you.','Contact Other Plane':'Ask an entity five questions (risky).','Dispel Evil and Good':'Protect against and dismiss outsiders.','Dominate Person':'Control a humanoid (Wis save); it repeats the save each time it takes damage.','Dream':'Shape a sleeping creature\'s dreams.','Flame Strike':'A column of holy fire; Dex save, 4d6 fire + 4d6 radiant.','Geas':'Compel a creature to obey for 30 days.','Greater Restoration':'End exhaustion, charm, petrify, curse, or reductions.','Hallow':'Imbue an area with protective effects.','Hold Monster':'Paralyze any creature (Wis save each turn).','Insect Plague':'A 20-ft swarm; Con save, 4d10 piercing; obscures the area.','Legend Lore':'Recall lore about a famous person/place/thing.','Mass Cure Wounds':'Heal up to 6 creatures 3d8 + mod.','Mislead':'Become invisible and control a double.','Modify Memory':'Reshape a creature\'s memory of an event.','Planar Binding':'Bind a summoned outsider into service.','Raise Dead':'Revive a creature dead up to 10 days.','Reincarnate':'Bring back the dead in a new body/race.','Scrying':'See and hear a specific creature anywhere.','Seeming':'Disguise the appearance of many creatures.','Telekinesis':'Range 60 ft (12 tiles). Creature: your spell-ability check vs its Strength — win to move it 30 ft (restrained). Object ≤1000 lb: move 30 ft/round.','Teleportation Circle':'Open a portal to a known circle.','Tree Stride':'Step between trees of the same kind.','Wall of Force':'An invisible, nearly indestructible wall.','Wall of Stone':'Conjure a wall of stone.',
-'Chain Lightning':'Arcs to up to 4 targets; Dex save, 10d8 lightning.','Circle of Death':'A 60-ft sphere; Con save, 8d6 necrotic.','Disintegrate':'10d6+40 force; dust if it drops the target.','Eyebite':'Wis save or (your choice) a foe sleeps, is frightened, or takes 3d6 psychic and is poisoned.','Find the Path':'Know the shortest route to a known place.','Globe of Invulnerability':'Block spells of 5th level and lower.','Harm':'Con save; 14d6 necrotic and lowers the target\'s HP max.','Heal':'Restore 70 HP and end blind/deaf/disease.','Heroes\' Feast':'A feast grants HP, immunities, advantage (1 day).','Mass Suggestion':'Suggest an action to up to 12 creatures.','Sunbeam':'A 60-ft line; Con save, 6d8 radiant, blinds.','True Seeing':'See in dark, through illusions, into Ethereal.','Wall of Ice':'A wall of ice that damages those breaking through.','Word of Recall':'Teleport instantly to a chosen sanctuary.',
-'Conjure Celestial':'Summon a celestial to aid you.','Delayed Blast Fireball':'Dex save, 12d6 fire; grows each round the blast is delayed.','Etherealness':'Step into the Border Ethereal Plane.','Finger of Death':'Con save; 7d8+30 necrotic; the slain rise as zombies.','Fire Storm':'Sheets of flame; Dex save, 7d10 fire.','Forcecage':'Trap creatures in an inescapable force cage.','Plane Shift':'Travel to another plane of existence.','Prismatic Spray':'Eight rays of varied damage/effects.','Regenerate':'Restore HP each turn; regrow limbs.','Resurrection':'Revive a creature dead up to a century.','Reverse Gravity':'Things fall upward in a cylinder.','Teleport':'Instantly travel a great distance (some risk).',
+'Chain Lightning':'Arcs to up to 4 targets; Dex save, 10d8 lightning.','Circle of Death':'A 60-ft sphere; Con save, 8d6 necrotic.','Disintegrate':'10d6+40 force; dust if it drops the target.','Eyebite':'Wis save or (your choice) a foe sleeps, is frightened, or takes 3d6 psychic and is poisoned.','Find the Path':'Know the shortest route to a known place.','Globe of Invulnerability':'Block spells of 5th level and lower.','Harm':'Con save; 14d6 necrotic and lowers the target\'s HP max.','Heal':'Restore 70 HP and end blind/deaf/disease.','Heroes\' Feast':'A feast grants HP, immunities, advantage (1 day).','Mass Suggestion':'Up to 12 creatures; Wis save or Charmed and act on your suggestion for 24 hours.','Sunbeam':'A 60-ft line; Con save, 6d8 radiant, blinds.','True Seeing':'See in dark, through illusions, into Ethereal.','Wall of Ice':'A wall of ice that damages those breaking through.','Word of Recall':'Teleport instantly to a chosen sanctuary.',
+'Conjure Celestial':'Summon a celestial to aid you.','Delayed Blast Fireball':'Dex save, 12d6 fire; grows each round the blast is delayed.','Etherealness':'Step into the Border Ethereal Plane.','Finger of Death':'Con save; 7d8+30 necrotic; the slain rise as zombies.','Fire Storm':'Sheets of flame; Dex save, 7d10 fire.','Forcecage':'Cha save or a creature is trapped, Restrained, in an inescapable force cage.','Plane Shift':'Travel to another plane of existence.','Prismatic Spray':'Eight rays of varied damage/effects.','Regenerate':'Restore 4d8+15 HP instantly; regrow lost limbs over 2 minutes.','Resurrection':'Revive a creature dead up to a century.','Reverse Gravity':'50-ft cylinder; Dex save or fall upward, 4d6 bludgeoning when gravity resumes.','Teleport':'Instantly travel a great distance (some risk).',
 'Animal Shapes':'Turn willing creatures into beasts.','Antimagic Field':'A 10-ft sphere suppresses magic.','Dominate Monster':'Control any creature (Wis save); it repeats the save each time it takes damage.','Earthquake':'Shake the ground — fissures, knockdowns.','Feeblemind':'Int save; 4d6 psychic and crushes Int & Cha to 1.','Holy Aura':'Allies get save advantage; foes may be blinded.','Maze':'Banish a creature into a labyrinth demiplane.','Mind Blank':'Immunity to psychic and mind-reading/charm.','Power Word Stun':'Stun a creature with 150 HP or fewer.','Sunburst':'A burst of sunlight; Con save, 12d6 radiant, blinds.',
 'Astral Projection':'Project yourself and others to the Astral Plane.','Foresight':'Advantage on everything; can\'t be surprised.','Gate':'Open a portal to another plane.','Mass Heal':'Distribute 700 HP of healing.','Meteor Swarm':'Meteors fall; Dex save, 20d6 fire + 20d6 bludgeoning.','Power Word Kill':'Slay a creature with 100 HP or fewer.','Time Stop':'Take several turns while time is frozen.','True Resurrection':'Revive the long-dead, fully restored.','Wish':'Duplicate any spell of 8th level or lower safely. Any greater wish: DM adjudicates, and there\'s a 33% chance you can never cast Wish again.','Storm of Vengeance':'A vast storm rains damage and effects.'
 };
@@ -1687,6 +1749,35 @@ const SPELL_EFFECTS = {
   "Hunter's Mark":{rounds:600, conc:true, note:'+1d6 damage to the marked target; track between targets.'},
   'Hex':{rounds:600, conc:true, note:'+1d6 necrotic to the hexed target; it has disadvantage on one ability.'},
   'Detect Thoughts':{rounds:10, conc:true, note:'Read a target’s surface thoughts; advantage on Insight checks against them for the duration.'},
+  // Real mechanical hook: attackAdvantage's new target-Invisible disadvantage is skipped for
+  // an attacker carrying this effect (hasSeesInvisible), same "reciprocal Invisible rule" gap
+  // that got fixed alongside these two spells.
+  'See Invisibility':{rounds:600, mods:{seesInvisible:true}, note:'You see invisible creatures/objects as if they were visible — no disadvantage attacking them.'},
+  'True Seeing':{rounds:600, mods:{seesInvisible:true}, note:'Truesight 120 ft — see invisible creatures, through illusions, into the Ethereal.'},
+  // Real 5e casts this reactively the instant someone starts falling; this app's turn
+  // structure doesn't support mid-fall interrupts, so it's cast proactively like any other
+  // buff and checked (hasFeatherFall) whenever fall damage would apply during its 1-minute
+  // window — same simplification already used for other reaction-shaped spells (e.g. Shield).
+  'Feather Fall':{rounds:10, note:'Up to 5 falling creatures take no fall damage and descend slowly.'},
+  // isFlying() already checked for an effect named 'Levitate' defensively before this entry
+  // existed — casting it just never actually created that effect. One-line fix.
+  'Levitate':{rounds:600, conc:true, note:'Float up/down at will, up to 20 ft off the ground.'},
+  // runningHighJumpFt() (the shared jump-distance function every jump/climb check in the app
+  // already calls) triples for the duration once this effect is active — see hasJumpBuff.
+  'Jump':{rounds:10, note:'Your jump distance is tripled for 1 minute.'},
+  // Real mechanic (block incoming spells ≤5th level targeting anyone in a 10-ft sphere) isn't
+  // enforced anywhere — that would mean checking every single Engine.castApply/attack call
+  // against zone membership + spell level, a much larger change for a spell whose main value
+  // is a rare "the BBEG has this up" set-piece moment. Tracked as a real concentration effect
+  // (shows in Active Effects, dismissable) rather than nothing; the blocking itself is
+  // narrative — the DM/player adjudicates it by eye, same as several other simplified spells.
+  'Globe of Invulnerability':{rounds:10, conc:true, note:'Blocks spells of 5th level or lower cast from outside the sphere (narrative — not auto-enforced).'},
+  'Beacon of Hope':{rounds:10, conc:true, note:'Advantage on death saves (auto-applied) and Wisdom saves; healing spells restore the max possible (both narrative).'},
+  // Alter Self's "natural weapons" choice is a real damage bump (see hasNaturalWeapons/
+  // qbPcAttacks — adds a real 1d6 Claws option to the attack list). The aquatic-adaptation
+  // and change-appearance options are narrative (no swim-speed/appearance system to hook).
+  'Alter Self':{rounds:10, conc:true, note:'Choose: aquatic adaptation, change appearance, or natural weapons (+1d6 Claws attack option, auto-applied).'},
+  'Disguise Self':{rounds:10, note:'Change your appearance (narrative — no appearance/perception-check system to hook).'},
   'False Life':{rounds:600, mods:{tempHp:5}, note:'Gain 1d4+4 temporary HP (≈5).'},
   'Aid':{rounds:4800, mods:{tempHp:5}, note:'HP maximum and current HP +5 for up to three creatures (8 hours).'},
   'Heroes\' Feast':{rounds:14400, note:'+2d10 HP max, immune to poison & fright, advantage on WIS saves (24h).'},
@@ -1795,6 +1886,14 @@ function canCast(c, name, level){
   level=Number(level)||0;
   if(name && wishFreeName===name) return true;   // Wish-duplicated spell: no slot, no prep, no action cost
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
+  // Silence/Antimagic Field: can't cast while standing in an active no-cast zone.
+  { const s=battleSession();
+    if(s && s.hazards && s.hazards.length){
+      const me=(typeof QB!=='undefined'&&QB&&QB.active) ? (QB.players&&QB.players[0])
+        : (net&&net.role==='player'&&net.peer ? (s.players||[]).find(p=>p.id===net.peer.id) : null);
+      if(me && me.x!=null && inNoCastZone(s, me.x, me.y)){ flashBanner('Magic is suppressed here — can\'t cast'); return false; }
+    }
+  }
   if(level>0 && name && isPrepCaster(c) && !spellPrepared(c,name)){ flashBanner(name+' isn’t prepared today — 📋 Prepare it first'); return false; }
   const ct=spellCastTime(name);
   if(c.battle){
@@ -1867,6 +1966,55 @@ function castSpell(c, name, level, lightAt, spellOpts){
   // SPELL_CHOICES open a multiple-choice outcome menu; other pure-narrative spells
   // offer the AI narrator (premium, user-supplied key). Skip light utility — already applied.
   if(name==='Time Stop' && c.battle){ const n=rnd(4)+1; c.battle.timeStopTurns=(n-1); save(); flashBanner('⏳ Time Stop — '+n+' turns in a row!'); logChange(c,'⏳ Time Stop — '+n+' turns in a row'); }
+  else if(name==='Goodberry'){
+    // PHB: 10 berries, 1 HP each, eaten as an action later (not a one-shot heal-and-done
+    // like Cure Wounds) — tracked as a real consumable counter, not a roll-and-forget.
+    c.goodberries=(c.goodberries||0)+10; save(); render();
+    flashBanner('🫐 10 Goodberries created — eat one (Items tab) for 1 HP, action each'); logChange(c,'🫐 Created 10 Goodberries');
+  }
+  else if(name==='Spare the Dying'){
+    // Cantrip, touch, auto-succeeds (no Medicine roll, unlike the Use-menu Stabilize action).
+    // Solo Quick Battle has no second ally to touch (same limitation Stabilize has); in
+    // player-net, auto-target the nearest adjacent downed ally — "touch a dying creature" is
+    // rarely ambiguous in practice, so skip a picker for a single obvious target.
+    const s=battleSession();
+    if(net && net.role==='player' && s && s.players){
+      const me=s.players.find(p=>p.id===net.peer.id);
+      const target=me && s.players.filter(p=>p.id!==net.peer.id && needsStabilizing(p) && gridDist(me.x,me.y,p.x,p.y)<=1)
+        .sort((a,b)=>gridDist(me.x,me.y,a.x,a.y)-gridDist(me.x,me.y,b.x,b.y))[0];
+      if(target){ if(net.conn) try{ net.conn.send({t:'stabilize', targetId:target.id}); }catch(e){}
+        flashBanner('🩹 '+target.name+' is stabilized'); logChange(c,'🩹 Spare the Dying — stabilized '+target.name); }
+      else flashBanner('No dying creature within touch range');
+    } else flashBanner('No dying creature to touch (Quick Battle has no second ally)');
+  }
+  else if(name==='Remove Curse'){
+    if(c.conditions&&c.conditions.Cursed) curePcCond(c,'Remove Curse','Cursed');
+    else flashBanner('No curse detected');
+  }
+  else if(name==='Protection from Poison'){
+    // PHB also grants resistance to poison damage + advantage vs becoming poisoned for 1
+    // hour — this app doesn't model PC damage resistance in applyHp (only monsters carry
+    // MONSTER_RVI), so only the immediate cure + a tracked flavor effect are real; the
+    // resistance itself is narrative, same simplification as several other PC buffs here.
+    if(c.conditions&&c.conditions.Poisoned) curePcCond(c,'Protection from Poison','Poisoned');
+    addEffect(c,'Protection from Poison',{rounds:600, note:'Advantage on saves vs poison; resistance to poison damage (narrative — not auto-applied to incoming damage).'});
+    save(); render(); flashBanner('🧪 Protected from poison for 1 hour');
+  }
+  else if(name==='Knock'){
+    // This app doesn't model a distinct "locked" state on doors/chests (just open/closed) —
+    // so Knock auto-opens the nearest closed one in range instead of defeating a lock
+    // specifically. Real, if simplified: it saves the walk-up-and-interact step at range,
+    // which is the spell's actual table value (RAW's "loud noise alerts everyone" side
+    // effect isn't modeled — no stealth/alert-radius system for monsters to hook into).
+    const s=battleSession();
+    const me=(typeof QB!=='undefined'&&QB&&QB.active) ? (QB.players&&QB.players[0])
+      : (net&&net.role==='player'&&net.peer ? ((s&&s.players)||[]).find(p=>p.id===net.peer.id) : null);
+    const target=(s&&me) ? listInteractInRange(s, me, 12).find(it=>(it.obj.state||it.def.default)==='closed') : null;
+    if(target){ const res=runInteractAction(s, c, target.key, 'open', 'adj');
+      if(res&&res.ok){ logChange(c,'🔓 Knock — '+res.msg); flashBanner('🔓 '+res.msg); if(typeof qbLog==='function'&&s===QB) qbLog('🔓 '+c.name+' — '+res.msg); save(); render(); }
+      else flashBanner('Knock fizzles — nothing to open there'); }
+    else flashBanner('No closed door/chest within 60 ft');
+  }
   else if(SPELL_CHOICES[name]){ setTimeout(()=>openSpellChoices(c,name),80); }
   else if(typeof SPELL_HANDLERS!=='undefined'&&SPELL_HANDLERS[name]&&SPELL_HANDLERS[name].kind==='summon'){
     // Summon UI opened by routeCast / qbOpenSpells before or after cast — skip AI narrator
@@ -1899,8 +2047,28 @@ const SPELL_CHOICES={
   'Divination':[{t:'🔮 Ask your question of the gods', f:c=>spellOracle(c,'Divination',['A clear, truthful omen','A cryptic but true sign','The gods answer in riddles'])}],
   'Commune':[{t:'🔮 Ask three yes/no questions', f:c=>{ const a=[1,2,3].map(i=>'Q'+i+': '+rndPick(['Yes','No','Unclear'])).join(' · '); logChange(c,'Commune — '+a); flashBanner('🔮 '+a); }}],
   // dynamic: one option per weapon you're carrying (can't know which until we see the character)
-  'Magic Weapon': c=>{ const ws=weaponItems(c); return ws.length? ws.map(({it,i})=>({t:'⚔️ '+esc(it.name), f:cc=>applyMagicWeapon(cc,i)})) : [{t:'— No weapons in your inventory —', f:()=>flashBanner('Add a weapon on the Items tab first')}]; }
+  'Magic Weapon': c=>{ const ws=weaponItems(c); return ws.length? ws.map(({it,i})=>({t:'⚔️ '+esc(it.name), f:cc=>applyMagicWeapon(cc,i)})) : [{t:'— No weapons in your inventory —', f:()=>flashBanner('Add a weapon on the Items tab first')}]; },
+  // dynamic: only offer conditions actually active right now — a static 4-button menu that
+  // mostly does nothing (you're rarely Blinded AND Deafened AND Paralyzed AND Poisoned at
+  // once) would just be noise. curePcCond is shared with Greater Restoration below.
+  'Lesser Restoration': c=>{
+    const opts=['Blinded','Deafened','Paralyzed','Poisoned'].filter(cond=>c.conditions&&c.conditions[cond]);
+    return opts.length ? opts.map(cond=>({t:'End '+cond, f:cc=>curePcCond(cc,'Lesser Restoration',cond)}))
+      : [{t:'— Nothing to cure right now —', f:()=>flashBanner('No qualifying condition active')}];
+  },
+  'Greater Restoration': c=>{
+    const opts=[];
+    ['Charmed','Petrified','Cursed'].forEach(cond=>{ if(c.conditions&&c.conditions[cond]) opts.push({t:'End '+(cond==='Cursed'?'the curse':cond), f:cc=>curePcCond(cc,'Greater Restoration',cond)}); });
+    if((c.exhaustion||0)>0) opts.push({t:'Reduce Exhaustion by 1 (currently '+c.exhaustion+')', f:cc=>{ cc.exhaustion=Math.max(0,(cc.exhaustion||0)-1); logChange(cc,'Greater Restoration — exhaustion reduced to '+cc.exhaustion); save(); render(); flashBanner('Exhaustion reduced to '+cc.exhaustion); if(net&&net.role==='player') playerHello(); }});
+    return opts.length ? opts : [{t:'— Nothing to cure right now —', f:()=>flashBanner('No qualifying condition/exhaustion active')}];
+  }
 };
+// Shared by Lesser/Greater Restoration: clear one named PC condition and sync it out.
+function curePcCond(c, spellName, cond){
+  if(c.conditions) delete c.conditions[cond];
+  logChange(c, spellName+' — cured '+cond); save(); render(); flashBanner('Cured '+cond);
+  if(net&&net.role==='player') playerHello();
+}
 // Magic Weapon: +1 to hit/damage on one carried weapon, tracked like any other concentration
 // effect. The bonus itself lives on the item (it.magicBonus), not a generic character mod,
 // since weaponToHit/weaponDmgBonus work off the weapon catalog entry, not the inventory item.
@@ -2382,7 +2550,13 @@ const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necroti
 // collapsed to one centered r8 burst (matches its largest sphere, like Sleet Storm).
 const SPELL_AOE={'Fireball':4,'Cloudkill':4,'Shatter':2,'Thunderwave':1,'Burning Hands':1,'Cone of Cold':4,'Lightning Bolt':2,'Sleep':4,'Stinking Cloud':4,'Hypnotic Pattern':3,'Ice Storm':4,'Spirit Guardians':3,'Sunburst':12,'Circle of Death':12,'Insect Plague':4,'Flame Strike':2,'Sleet Storm':8,'Web':2,'Faerie Fire':2,'Spike Growth':4,'Moonbeam':1,'Entangle':2,'Grease':1,'Meteor Swarm':8,'Color Spray':1,'Fear':2,'Sunbeam':1,
   // Gust of Wind: 60-ft line (aim a tile; path from caster snuffs torches) — aoeR is preview width only
-  'Gust of Wind':1};
+  'Gust of Wind':1,
+  // Walls — approximated as a small filled zone, not a drawn line/panel (see WALL_SPELLS)
+  'Wall of Force':2,'Wall of Ice':2,'Wall of Stone':2,'Wind Wall':2,
+  'Reverse Gravity':10,
+  // No-cast zones (see SPELL_NOCAST_ZONE/paintNoCastZone)
+  'Silence':4,'Antimagic Field':2,
+  'Calm Emotions':4,'Compulsion':2,'Mass Suggestion':4};
 // Line length for gust / similar (tiles). width = half-width in tiles (~10 ft ≈ 1–2 tiles).
 const SPELL_LINE={'Gust of Wind':{tiles:12, width:1}};
 // PHB cast range in feet ('Touch' where RAW says Touch); Self-centered cone/line/radius spells
@@ -2400,6 +2574,7 @@ const SPELL_RANGE={
   'Blindness/Deafness':30,'Cloud of Daggers':60,'Crown of Madness':120,'Flaming Sphere':60,'Heat Metal':60,'Hold Person':60,'Moonbeam':120,'Ray of Enfeeblement':60,'Scorching Ray':120,'Shatter':60,'Spike Growth':150,'Spiritual Weapon':60,'Suggestion':30,'Web':60,'Zone of Truth':60,
   'Bestow Curse':'Touch','Call Lightning':120,'Fear':30,'Fireball':150,'Gust of Wind':60,'Hypnotic Pattern':120,'Lightning Bolt':100,'Sleet Storm':150,'Slow':120,'Spirit Guardians':15,'Stinking Cloud':90,'Vampiric Touch':'Touch',
   'Banishment':60,'Blight':30,'Confusion':90,'Dominate Beast':60,'Ice Storm':300,'Phantasmal Killer':120,'Polymorph':60,'Wall of Fire':120,
+  'Wall of Force':120,'Wall of Ice':120,'Wall of Stone':120,'Wind Wall':120,'Telekinesis':60,'Reverse Gravity':100,'Forcecage':100,'Silence':60,'Antimagic Field':10,'Counterspell':60,'Dispel Magic':120,'Calm Emotions':60,'Compulsion':30,'Mass Suggestion':60,
   'Cloudkill':120,'Cone of Cold':60,'Dominate Person':60,'Flame Strike':60,'Hold Monster':90,'Insect Plague':300,
   'Chain Lightning':150,'Circle of Death':60,'Disintegrate':60,'Eyebite':60,'Harm':60,'Sunbeam':60,
   'Delayed Blast Fireball':150,'Finger of Death':60,'Fire Storm':150,'Prismatic Spray':60,
@@ -2407,7 +2582,8 @@ const SPELL_RANGE={
   'Meteor Swarm':500
 };
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
-const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10},'Shocking Grasp':{c:'No Reactions',r:1},'Chill Touch':{c:"Can't Heal",r:1},'Guiding Bolt':{c:'Guided',r:1},'Power Word Stun':{c:'Stunned',r:10}};
+const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10},'Shocking Grasp':{c:'No Reactions',r:1},'Chill Touch':{c:"Can't Heal",r:1},'Guiding Bolt':{c:'Guided',r:1},'Power Word Stun':{c:'Stunned',r:10},'Forcecage':{c:'Restrained',r:6000},
+'Calm Emotions':{c:'Charmed',r:10},'Compulsion':{c:'Charmed',r:10},'Mass Suggestion':{c:'Charmed',r:14400}};
 // Dominate Person/Beast/Monster: a Dominated monster fights for the party — the Quick
 // Battle brain retargets its former allies, and the DM attack modal offers monsters
 // instead of players. (Simplification: no repeat save on damage; ends when rounds expire.)
@@ -2451,6 +2627,15 @@ function parseSpellMechanics(name){
   if(groups.length){ const dice=groups.map(g=>g[1].replace(/\s+/g,'')).join('+');
     if(/\b(heal|heals|restore|restores|regain|temporary)\b/i.test(d)) out.heal=dice; else out.dmg=dice;
     for(const g of groups){ const word=(g[2]||'').toLowerCase(); if(DMG_TYPES.includes(word)){ out.dtype=word; break; } } }
+  // A flat (non-dice) heal amount — Heal "Restore 70 HP", Mass Heal "Distribute 700 HP" —
+  // still deserves the same roll-helper treatment castModal already gives Cure Wounds; a
+  // flat number is valid rollNotation input (parseDice treats it as a constant, no dice).
+  // Excludes Goodberry — its "1 HP" is per-berry, not a one-shot total; it gets its own
+  // bespoke consumable-counter handling in castSpell instead (see castGoodberry).
+  else if(name!=='Goodberry' && /\b(heal|heals|healing|restore|restores|regain)\b/i.test(d)){
+    const flat=d.match(/\b(\d+)\s*(?:hp|hit points?)\b/i);
+    if(flat) out.heal=flat[1];
+  }
   if(!out.save && !out.heal && /\b(ranged|melee|spell attack|attack roll|beam|ray|rays|bolt)\b/i.test(d)) out.attack=true;
   return out;
 }
@@ -3139,8 +3324,16 @@ function spendHitDie(c){
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
   render();
 }
+// Beacon of Hope (PHB): advantage on death saves and Wisdom saves, and healing spells restore
+// the maximum possible on affected creatures for the duration. Only the death-save advantage
+// is auto-applied (rollDeathSave, below) — Wis-save advantage and max-healing would need
+// hooking into every save roll and every heal application site respectively; tracked as a
+// real effect (Active Effects, dismissable) with the rest left narrative, same simplification
+// tier as Globe of Invulnerability.
+function hasBeaconOfHope(c){ return !!(c&&(c.effects||[]).some(e=>e.name==='Beacon of Hope')); }
 function rollDeathSave(c){
-  const d=rnd(20);
+  const adv=hasBeaconOfHope(c);
+  const d=adv?Math.max(rnd(20),rnd(20)):rnd(20);
   if(d===20){ c.hp.cur=1; c.death={succ:0,fail:0}; if(c.conditions) delete c.conditions['Unconscious']; pushRoll({label:'Death save', total:d, detail:'nat 20 — back up at 1 HP', crit:'crit', kind:'check'}); logChange(c,'NAT 20 death save — regained 1 HP, conscious'); flashBanner('Back up at 1 HP!'); save(); render(); return; }
   if(d===1){ c.death.fail=Math.min(3,(c.death.fail||0)+2); pushRoll({label:'Death save', total:d, detail:'nat 1 — 2 failures', crit:'fumble', kind:'check'}); }
   else if(d>=10){ c.death.succ=Math.min(3,(c.death.succ||0)+1); pushRoll({label:'Death save', total:d, detail:'success (≥10)', kind:'check'}); }
@@ -4317,6 +4510,11 @@ function renderItems(c){
       <button class="btn ghost" id="packBtn">🎒 Adventurer's pack</button>
     </div>
   </div>
+  ${c.goodberries?`<div class="card">
+    <h2>🫐 Goodberries — ${c.goodberries} left</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Each restores 1 HP when eaten — action, one at a time.</p>
+    <button class="btn block" id="eatBerry"${c.hp.cur>=c.hp.max?' disabled':''}>🫐 Eat a Goodberry (+1 HP)</button>
+  </div>`:''}
 
   <div class="card">
     <h2>${chev('equip')}Equipment <span class="muted" style="text-transform:none;font-size:11px">— equipped gear changes your stats</span></h2>
@@ -4378,6 +4576,11 @@ function renderItems(c){
   }));
   $('#shopBtn').addEventListener('click',()=>openShop(c));
   $('#packBtn').addEventListener('click',()=>{ addEssentials(c); logChange(c,'Added adventurer pack'); save(); render(); flashBanner('Added adventurer pack'); });
+  { const eb=$('#eatBerry'); if(eb) eb.addEventListener('click',()=>{
+    if(!c.goodberries) return;
+    c.goodberries--; applyHp(c,1); logChange(c,'🫐 Ate a Goodberry (+1 HP)'); save(); render(); flashBanner('🫐 +1 HP ('+c.goodberries+' berries left)');
+    if(net&&net.role==='player') playerHello();
+  }); }
   $('#addItem').addEventListener('click',()=>{
     const name=$('#it_name').value.trim(); if(!name) return;
     c.items.push({name, qty:Number($('#it_qty').value)||1, notes:$('#it_notes').value.trim(), kind:'gear'});
@@ -5001,7 +5204,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
-  else if(d.t==='paintHazard'){ paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc); dmBroadcast(); render(); }
+  else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
   else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true;
     if(net.session.battle&&net.session.battle.active) sendTerrainHazardCheck(net.session,p,d.x,d.y);
@@ -5358,6 +5561,7 @@ function effectiveHeight(s,x,y){
 const FLYING_RACES=new Set(['Aarakocra','Owlin','Fairy']);
 function isFlying(c){ if(!c) return false; if((c.effects||[]).some(e=>e.name==='Fly'||e.name==='Levitate')) return true; return FLYING_RACES.has(c.race); }
 function monsterFlies(mo){ return !!(mo&&mo.fly); }
+function hasFeatherFall(c){ return !!(c&&(c.effects||[]).some(e=>e.name==='Feather Fall')); }
 function lavaDmg(){ const r=rollNotation('6d10'); return r?r.total:30; }
 /* ---- 5e vertical movement (PHB Jump / Climb / Falling) ----
    Height level × 5 = feet of elevation. Running high jump = 3+STR mod ft (≥10 ft run-up);
@@ -5381,7 +5585,11 @@ function moverHasClimbSpeed(mover){
     if(['Tabaxi','Lizardfolk','Simic Hybrid'].includes(mover.c.race)) return true; }
   return /climb/i.test(String(mover.spd||mover.speed||''));
 }
-function runningHighJumpFt(mover){ return Math.max(0, 3+moverStrMod(mover)); }
+// Jump (PHB): triples jump distance for the duration — single point of truth for every jump
+// calc in the app (pathfinding, climb-check thresholds, the movement-UI jump prompt), so one
+// multiplier here covers all of them instead of hunting down each call site separately.
+function hasJumpBuff(mover){ return !!(mover&&(mover.effects||[]).some(e=>e.name==='Jump')); }
+function runningHighJumpFt(mover){ return Math.max(0, 3+moverStrMod(mover))*(hasJumpBuff(mover)?3:1); }
 function standingHighJumpFt(mover){ return Math.floor(runningHighJumpFt(mover)/2); }
 /** Extra feet + mode for elevation (5e jump/climb). null = impassable. runUp = already spent >=10 ft. */
 function elevationMoveExtra(s,x,y,nx,ny,mover,fly,runUp){
@@ -6101,6 +6309,7 @@ function playerAttackMenu(c){
       atk:{name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}}); });
   if(canOffhand(c)){ const seen=new Set(); offhandWeapons(c).forEach(w=>{ if(seen.has(w.n))return; seen.add(w.n); const oa=offhandAtk(c,w);
     actions.push({label:w.n+' — off-hand', sub:'bonus action · '+oa.dmg+' '+(w.dt||''), tiles:weaponRangeTiles(c,w), atk:oa}); }); }
+  if(hasNaturalWeapons(c)) actions.push({label:'Claws (Alter Self)', sub:'melee · 1d6 slashing', tiles:1, atk:{name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing'}});
   // (spells & cantrips are cast via the ✨ Spells button → map targeting)
   if(!actions.length){ flashBanner('No weapons — use ✨ Spells to cast'); return; }
   let pick=null;
@@ -6434,7 +6643,14 @@ const TERRAIN={
   void:  {name:'Pit / chasm', c:'#15110b', e:'🕳', solid:true, deadly:true},
   pit:   {name:'Pit', c:'#15110b', e:'🕳', solid:true, deadly:true}, // alias of void
   grease:{name:'Grease', c:'#5c6b2e', e:'', diff:true, prone:true},
-  web:{name:'Web', c:'#c9c2a6', e:'', diff:true, restrain:true}
+  web:{name:'Web', c:'#c9c2a6', e:'', diff:true, restrain:true},
+  // Spell-conjured walls — same solid/opaque shape as a real dungeon wall, painted/expired
+  // via the existing SPELL_TERRAIN + paintHazardTerrain/expireHazards hazard machinery
+  // (see WALL_SPELLS below) rather than a bespoke wall-geometry system.
+  wall_force:{name:'Wall of Force', c:'#8ec9e8', e:'◆', solid:true, opaque:false, climbable:false},
+  wall_ice:{name:'Wall of Ice', c:'#a8e0f0', e:'❄', solid:true, opaque:true, climbable:false},
+  wall_stone:{name:'Wall of Stone', c:'#6b6459', e:'🧱', solid:true, opaque:true, climbable:false},
+  wind_wall:{name:'Wind Wall', c:'#d8e8ea', e:'💨', diff:true}
 };
 // Wall-family terrain a wall-mounted decor item (torch) can be placed against.
 const WALL_LIKE_TERRAIN=new Set(['wall','cave_wall','low_wall','window']);
@@ -7265,7 +7481,14 @@ function openMageHandUI(c, s, me){
 // Spells that paint temporary terrain onto the battle map — works in Quick Battle, DM,
 // and player-net alike (see paintHazardTerrain). The tiles a blast covers become this
 // TERRAIN key for `rounds` (6s each), then revert.
-const SPELL_TERRAIN={'Grease':{terrain:'grease', rounds:10}, 'Web':{terrain:'web', rounds:600}};
+const SPELL_TERRAIN={'Grease':{terrain:'grease', rounds:10}, 'Web':{terrain:'web', rounds:600},
+  'Wall of Force':{terrain:'wall_force', rounds:600}, 'Wall of Ice':{terrain:'wall_ice', rounds:100},
+  'Wall of Stone':{terrain:'wall_stone', rounds:Infinity}, 'Wind Wall':{terrain:'wind_wall', rounds:100}};
+// Real 5e walls are precise player-drawn panels/lines; this app approximates one as a small
+// filled zone centered on the aimed tile (reusing paintHazardTerrain's existing blast-fill
+// logic) rather than building a line/panel-drawing UI — documented simplification, same
+// spirit as this app's other AoE-shape approximations (see AUDIT.md's cone/line notes).
+const WALL_SPELLS=new Set(['Wall of Force','Wall of Ice','Wall of Stone','Wind Wall']);
 // Lingering damage/condition clouds (Cloudkill, Insect Plague) — unlike SPELL_TERRAIN,
 // these don't repaint the floor (no `terrain` key), they just mark cells as a hazard
 // zone that ticks every round via tickGasHazards: a Con save (hz.dc, set at cast from
@@ -8351,7 +8574,7 @@ const Engine = {
     const ac=(t?ad.ac(t):(atk.targetAC||10)) + cover;
     const dist=(a&&t&&a.x!=null&&t.x!=null)?gridDist(a.x,a.y,t.x,t.y):null;
     const melee=dist!=null?dist<=1:!((atk.tiles||1)>1);
-    const cx=attackAdvantage(unitConds(a), unitConds(t), melee);
+    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a)});
     const r=Engine.roll(atk.toHit, ac, face, cx.adv);
     if(cx.autoCrit && r.hit) r.crit=true;
     return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why}, r);
@@ -8526,9 +8749,13 @@ function qbPcAttacks(c){ const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w,it);
     out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}); });
   (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0; out.push({name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:'', tiles:1, melee:true}); });
+  // Alter Self's "natural weapons" option (PHB): unarmed strikes deal 1d6 and count as
+  // magical — a real damage bump over the flat 1+STR fallback below, not just cosmetic.
+  if(hasNaturalWeapons(c)) out.push({name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing', tiles:1, melee:true});
   if(!out.length) out.push({name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
   return out;
 }
+function hasNaturalWeapons(c){ return !!(c&&(c.effects||[]).some(e=>e.name==='Alter Self')); }
 function qbInRange(att, tgt, atk){ if(!inBlast(att.x,att.y,tgt.x,tgt.y,atk.tiles||1)) return false; if((atk.tiles||1)>1) return losClear(QB,att.x,att.y,tgt.x,tgt.y); return true; }
 function qbEnemiesAlive(){ return QB.monsters.some(isHostile); }   // allies / dominated don't keep the fight going
 const DOMINATE_SPELLS=new Set(['Dominate Beast','Dominate Person','Dominate Monster']);
@@ -9219,6 +9446,7 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
       }
       if(!fly && (meta.needsDrop || dropFt>=10)){
         if(opts.useRope){ qbLog('🪢 '+c.name+' rappels down '+(meta.maxDrop||dropFt)+' ft with rope — no fall damage'); }
+        else if(hasFeatherFall(c)){ qbLog('🪶 '+c.name+' falls '+dropFt+' ft — Feather Fall, no damage'); }
         else if(dropFt>=10){ const fd=fallDamageTotal(dropFt); if(fd){ applyHp(c,-fd); qbLog('📉 '+c.name+' falls '+dropFt+' ft — '+fd+' bludgeoning'); } }
       }
       if(!fly) qbCheckTerrainProne(s,c,x,y,true);
@@ -9666,6 +9894,25 @@ function expireHazards(s){ if(!s.hazards||!s.hazards.length) return;
     hz.cells.forEach(c=>{ const k=c.x+','+c.y; if(c.prev) s.map.tiles[k]=c.prev; else delete s.map.tiles[k]; });
     qbLog('🌿 The '+hz.name+' fades away', s); return false; }); }
 function hazardAt(s,x,y){ if(!s.hazards) return null; return s.hazards.find(hz=>hz.cells.some(c=>c.x===x&&c.y===y))||null; }
+// Silence / Antimagic Field: a zone that blocks spellcasting for anyone inside, reusing the
+// exact same s.hazards cell-tracking + expireHazards revert machinery as Grease/Web/gas —
+// just with no terrain repaint (cells keep whatever floor they already had) and a `noCast`
+// flag instead of a damage/condition one. Simplification: doesn't suppress EXISTING magical
+// effects already active on creatures inside (Antimagic Field's other real effect) or
+// distinguish somatic/verbal/material components (Silence RAW only blocks verbal) — both
+// collapse to "can't cast at all while standing in it," the mechanically dominant case.
+const SPELL_NOCAST_ZONE={'Silence':10, 'Antimagic Field':100};
+function paintNoCastZone(s,ctr,aoeR,name){
+  const rounds=SPELL_NOCAST_ZONE[name]; if(!rounds) return;
+  s.map.tiles=s.map.tiles||{}; const cells=[];
+  for(let x=Math.max(0,ctr.x-aoeR); x<=Math.min(s.map.cols-1,ctr.x+aoeR); x++)
+    for(let y=Math.max(0,ctr.y-aoeR); y<=Math.min(s.map.rows-1,ctr.y+aoeR); y++){
+      if(!inBlast(ctr.x,ctr.y,x,y,aoeR)) continue;
+      cells.push({x,y,prev:s.map.tiles[x+','+y]||null});
+    }
+  s.hazards=s.hazards||[]; s.hazards.push({cells, until:s.battle.round+rounds, name, noCast:true, gas:true});
+}
+function inNoCastZone(s,x,y){ const hz=hazardAt(s,x,y); return !!(hz&&hz.noCast); }
 // Dex save or suffer a condition when a creature ends its move on hazardous terrain
 // (Grease → Prone, Web → Restrained). Mode-agnostic, same reasoning as paintHazardTerrain.
 function checkTerrainHazardCond(s,unit,x,y,isPc){ const tdef=TERRAIN[terrainAt(s,x,y)]; if(!tdef||!(tdef.prone||tdef.restrain)) return;
@@ -9788,6 +10035,19 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
       qbCheckEnd(); finish(); return; }
     if(name==='Eyebite'){ openEyebiteChoice(qbAdapter,'pc',mo, dc0, msg=>{ qbLog(msg); qbCheckEnd(); finish(); }); return; }
     if(name==='Detect Thoughts'){ castDetectThoughts(c, mo, qbLog); qbCheckEnd(); finish(); return; }
+    if(name==='Telekinesis'){
+      const saved=telekinesisSavedKnown(c, mo);
+      Engine.castApply(qbAdapter,'pc',mo.id,{name,savedKnown:saved,cond:{c:'Restrained',rounds:10},dmgTotal:0});
+      qbLog(saved ? mo.name+' resists Telekinesis' : mo.name+' is Restrained by Telekinesis');
+      flashBanner(saved ? mo.name+' resists Telekinesis' : mo.name+' is Restrained by Telekinesis');
+      qbCheckEnd(); finish(); return;
+    }
+    if(name==='Dispel Magic'||name==='Counterspell'){
+      const n=dispelMonsterConds(mo);
+      const msg=n ? (name+' strips '+n+' condition'+(n>1?'s':'')+' from '+mo.name) : (name+' — '+mo.name+' has nothing to dispel');
+      qbLog('✨ '+msg); flashBanner(msg);
+      qbCheckEnd(); finish(); return;
+    }
     if(mc.attack){ qbResolveAttack(me, mo, {name, toHit:spellAtk, dmg:mc.dmg||'0', tiles:tilesR, dtype:mc.dtype, spell:true}, (ev)=>{ if(ev&&ev.hit) qbApplyCond(mo,name); finish(); }); }
     else {
       // Save/utility: roll damage if any, then bolt FX, then apply
@@ -9816,6 +10076,29 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
       if(isoView&&iso3dView&&QB) try{ syncIso3DHost(QB); }catch(e){}
       applyGustOfWind(s, {x:me.x,y:me.y}, {x:ctr.x,y:ctr.y}, c.name);
       sfx('cast');
+      finish();
+      return;
+    }
+    // Walls: no damage/save roll to interrupt with — paint the zone and be done (see
+    // WALL_SPELLS/paintHazardTerrain; bypasses the damage-blast modal entirely, same as
+    // Gust of Wind above).
+    if(WALL_SPELLS.has(name)){
+      if(!castSpell(c,name,level,{x:ctr.x,y:ctr.y})) return;
+      $('#modalRoot').innerHTML='';
+      paintHazardTerrain(s, ctr, aoeR, name, dc0);
+      qbLog('🧱 '+c.name+' conjures '+name);
+      flashBanner(name+' conjured!'); sfx('cast');
+      if(isoView&&iso3dView&&QB) try{ syncIso3DHost(QB); }catch(e){}
+      finish();
+      return;
+    }
+    if(SPELL_NOCAST_ZONE[name]){
+      if(!castSpell(c,name,level,{x:ctr.x,y:ctr.y})) return;
+      $('#modalRoot').innerHTML='';
+      paintNoCastZone(s, ctr, aoeR, name);
+      qbLog('🔇 '+c.name+' casts '+name+' — no spellcasting inside');
+      flashBanner(name+' — magic suppressed in the area'); sfx('cast');
+      if(isoView&&iso3dView&&QB) try{ syncIso3DHost(QB); }catch(e){}
       finish();
       return;
     }
@@ -9968,7 +10251,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.181';
+const APP_VERSION='v120.182';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

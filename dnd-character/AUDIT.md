@@ -913,3 +913,101 @@ turn" is a real no-op call (not a crash, not a silent tactical fallback), and
 cast → pick → place flow through the actual summon UI, the spawned unit's real stats, the
 passive brain's no-op turn, and Command Servant's move-tile picker actually repositioning the
 unit and correctly refusing a second command once the bonus action is spent.
+
+### Spell audit — 30 narrative-only spells given real mechanics (v120.182)
+
+Full audit: 254 spells total, 150 already had real mechanics (attack/save/damage/condition/
+effect), 104 were narrative no-ops (spend the slot, log a line, nothing else). Of those 104,
+~70 are legitimately fine as-is — out-of-combat/social/downtime spells (Legend Lore, Sending,
+Scrying, Raise Dead, Tongues, Water Walk, etc.) where a tactical combat-grid app has nothing
+meaningful to simulate; mechanizing them would be pure busywork. The other ~30 were real gaps,
+fixed here, grouped by how they were fixed rather than by spell (several turned out to be one
+data-table fix applied to multiple spells, not 30 separate pieces of bespoke code):
+
+**Cheapest fix — description reworded to include real dice/save keywords, zero new code.**
+`parseSpellMechanics` already regex-parses SPELL_DESC for save types and dice groups; several
+spells were narrative purely because their one-line description never stated the mechanic in
+parseable words. Reworded + added SPELL_AOE/SPELL_COND/SPELL_RANGE table entries only:
+**Reverse Gravity** (now "Dex save or 4d6 bludgeoning"), **Forcecage** (now "Cha save or
+Restrained"), **Calm Emotions**/**Compulsion**/**Mass Suggestion** (now state their real save +
+Charmed condition), **Regenerate** (now states its real 4d8+15 dice instead of vague prose).
+These all flow through the exact same Engine.castApply pipeline every other save spell already
+uses — no bespoke resolution code at all.
+
+**Flat (non-dice) healing — parseSpellMechanics gained a second heal-detection path.**
+Cure Wounds/Healing Word "worked" because castModal shows a roll-helper whenever
+`parseSpellMechanics` detects dice notation + a heal keyword — but that regex required actual
+`\d+d\d+` dice, so **Heal** ("Restore 70 HP") and **Mass Heal** ("Distribute 700 HP") silently
+fell through despite clearly being heal spells. Added a flat-number fallback path (excludes
+Goodberry deliberately — its "1 HP" is per-berry, not a one-shot total).
+
+**New shared "no-cast zone" mechanism.** **Silence** and **Antimagic Field** block spellcasting
+for anyone inside — a genuinely new hazard type (`SPELL_NOCAST_ZONE`/`paintNoCastZone`/
+`inNoCastZone`), reusing the existing `s.hazards` cell-tracking + `expireHazards` revert
+machinery from Grease/Web/gas (just no terrain repaint, a `noCast` flag instead of a damage/
+condition one), checked in `canCast` before any cast is allowed. Simplification: doesn't
+suppress effects already active before someone entered the zone (Antimagic Field's other real
+effect), and doesn't distinguish verbal/somatic/material components — both collapse to "can't
+cast at all while standing in it," the mechanically dominant case either way.
+
+**New shared "conjure a wall" mechanism.** **Wall of Force/Ice/Stone** and **Wind Wall** paint
+real solid (or difficult, for Wind Wall) terrain via the same hazard pipeline, new TERRAIN
+entries (`wall_force`/`wall_ice`/`wall_stone`/`wind_wall`) and a `WALL_SPELLS` bespoke
+early-return in both QB's and player-net's `resolveBlast` (mirroring the existing Gust-of-Wind
+special case) that skips the damage-roll modal entirely — these spells have no damage to roll.
+Simplification: real 5e walls are precise player-drawn panels/lines; this approximates one as a
+small filled zone centered on the aimed tile, same spirit as this app's existing cone/line-AoE
+approximations. Wall of Stone uses `rounds:Infinity` (doesn't expire on its own, matching RAW).
+
+**Real, previously-missing core rule found and fixed along the way.** Implementing
+**See Invisibility**/**True Seeing** required attacking-an-invisible-target to actually impose
+disadvantage — and `attackAdvantage` never modeled that at all (only the invisible creature's
+own advantage when IT attacks was checked, not the reciprocal penalty on whoever's attacking
+IT). Added the missing `T('Invisible')` disadvantage check, with an `opts.seesInvisible` escape
+hatch threaded through `Engine.hitResult` via a new `hasSeesInvisible(u)` helper — the two
+spells set a `mods.seesInvisible` flag via ordinary SPELL_EFFECTS, no bespoke code needed
+beyond the core rule fix itself. Also **Levitate** turned out to be a one-line fix:
+`isFlying()` already checked for an effect literally named `'Levitate'` (defensive code written
+ahead of the feature existing), it just never had a `SPELL_EFFECTS` entry to actually create.
+
+**Single-point multiplier/gate fixes.** **Jump** triples `runningHighJumpFt()` — the one
+function every jump/climb/pathfinding check in the app already calls — so a single
+`hasJumpBuff()` check there covers every call site for free. **Feather Fall** gates the (only
+one, QB-only) fall-damage application site. **Alter Self**'s natural-weapons choice adds a real
+1d6 Claws option to both QB's (`qbPcAttacks`) and player-net's (`playerAttackMenu`) attack
+lists — a genuine damage change, not just a tracked note, while the appearance-change/aquatic
+options stay narrative (nothing to hook — no appearance or swim-speed system exists).
+
+**Reused the existing interact-object system.** **Knock** doesn't defeat a distinct "locked"
+state (this app only ever modeled open/closed, no lock at all) — it auto-opens the nearest
+closed door/chest within range via the same `listInteractInRange`/`runInteractAction` the Use
+button already uses. **Spare the Dying** auto-stabilizes the nearest adjacent downed ally
+(player-net only, reusing the `stabilize`/`stabilized` net messages from the Use-menu Stabilize
+maneuver) with no roll, matching its cantrip/no-check RAW text.
+
+**Bespoke opposed-check spell.** **Telekinesis** is a spell-ability-check-vs-target-Strength
+contest, not a saving throw — `telekinesisSavedKnown(c, mo)` computes it directly (reusing
+`unitSkillRoll` for the target's side) and feeds the result into `Engine.castApply` via its
+existing `savedKnown` shape (same mechanism the DM-adjudicated-save pattern already uses)
+rather than hand-rolling a parallel condition-application path.
+
+**Honest partial implementations** (documented rather than silently claimed as complete):
+**Globe of Invulnerability** and **Beacon of Hope**'s non-death-save effects are tracked as
+real concentration effects (visible in Active Effects, dismissable) but the actual
+spell-blocking / max-healing / Wis-save-advantage isn't enforced anywhere — doing so would mean
+checking every single attack/cast/save resolution in the app against zone membership or a buff
+flag, disproportionate to a spell whose main value is a rare set-piece moment. **Counterspell**
+and **Dispel Magic** both collapse to "strip a monster's spell-imposed conditions" (QB only) —
+Counterspell's real timing (interrupt a cast in progress) doesn't fit this app's model at all
+(spells resolve immediately when cast, no reactive-interrupt system exists), and Dispel Magic's
+real targeting (end one specific known spell) isn't tracked per-condition, so both settle on the
+same real, useful, if imprecise, outcome instead of doing nothing.
+
+Coverage: every fix above has direct `rules-test.js` assertions (data-table parsing, the new
+zone/wall mechanisms, the Invisible-disadvantage rule fix, the flat-heal detection, Telekinesis's
+opposed check, Knock's real door-open, Alter Self's real Claws attack) — 60+ new assertions
+across the eight batches. Also spot-verified live in a real browser: casting Wall of Force
+through the actual targeting UI paints real solid terrain and blocks movement (confirmed the
+same "sprite image 404s, CSS color renders" pattern the pre-existing, shipped `grease` terrain
+already has — not a new bug), and casting Silence creates a real no-cast hazard zone through the
+same UI path.

@@ -42,7 +42,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
   'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;'+
   'globalThis.ABILITIES=ABILITIES;globalThis.playerNetAdapter=playerNetAdapter;'+
-  'globalThis.DETECT_THOUGHTS_FALLBACK=DETECT_THOUGHTS_FALLBACK;');
+  'globalThis.DETECT_THOUGHTS_FALLBACK=DETECT_THOUGHTS_FALLBACK;'+
+  'globalThis.setNet=v=>{net=v;};globalThis.getNet=()=>net;');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -1080,6 +1081,184 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   s.map.tiles[(unit.x+1)+','+unit.y]='wall';
   const tilesAfterWall=servantMoveTiles({map:()=>s.map}, unit);
   T('servantMoveTiles excludes a walled tile (tileClearFor)', !tilesAfterWall.some(t=>t.x===unit.x+1&&t.y===unit.y));
+}
+
+/* ---- Healing batch: Heal/Mass Heal/Regenerate get real roll-helper detection; ---- */
+/* ---- Goodberry is a real consumable counter; Spare the Dying auto-stabilizes.   ---- */
+{
+  T('parseSpellMechanics detects a flat (non-dice) heal amount for Heal', parseSpellMechanics('Heal').heal==='70');
+  T('parseSpellMechanics detects a flat heal amount for Mass Heal', parseSpellMechanics('Mass Heal').heal==='700');
+  T('parseSpellMechanics detects Regenerate\'s dice heal (4d8+15) after the SPELL_DESC fix', parseSpellMechanics('Regenerate').heal==='4d8+15');
+  T('parseSpellMechanics deliberately excludes Goodberry from the flat-heal path (per-berry, not one-shot)', parseSpellMechanics('Goodberry').heal==null);
+
+  const druid=newCharacter('Berry'); druid.cls='Druid'; druid.level=3; druid.abilities={str:10,dex:10,con:10,int:10,wis:16,cha:10}; applyClassDefaults(druid);
+  druid.spells=[{name:'Goodberry', level:1, prepared:true}];
+  T('casting Goodberry creates a real 10-charge consumable counter', castSpell(druid,'Goodberry',1) && druid.goodberries===10);
+  druid.hp={cur:5,max:20,temp:0};
+  druid.goodberries--; applyHp(druid,1);   // the actual "eat a berry" mechanic (renderItems' #eatBerry handler)
+  T('eating a berry heals 1 HP and decrements the counter', druid.hp.cur===6 && druid.goodberries===9);
+
+  // Spare the Dying: player-net auto-stabilizes the nearest adjacent downed ally, no roll.
+  // castSpell's Spare the Dying branch works off `c`/`net`/`battleSession()` directly — it
+  // never calls playerChar()/DB, so no DB fixture is needed here.
+  setQB(null);
+  const medic2=newCharacter('Medic2'); medic2.cls='Cleric'; medic2.level=1; applyClassDefaults(medic2);
+  medic2.spells=[{name:'Spare the Dying', level:0, prepared:true}];
+  const sends=[];
+  setNet({role:'player', charId:medic2.id, peer:{id:'me1'}, conn:{send:m=>sends.push(m)},
+    session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[], order:[], turn:0,
+      players:[{id:'me1', name:medic2.name, x:0,y:0}, {id:'down1', name:'Downed', x:1,y:0, hpCur:0, stable:false, deathFail:1}]}});
+  T('casting Spare the Dying next to a downed ally sends a stabilize message with no roll needed', castSpell(medic2,'Spare the Dying',0) && sends.some(m=>m.t==='stabilize'&&m.targetId==='down1'));
+  setNet(null);
+}
+
+/* ---- Condition removal: Lesser/Greater Restoration, Remove Curse, Protection from Poison ---- */
+{
+  const cleric=newCharacter('Purify'); cleric.cls='Cleric'; cleric.level=5; applyClassDefaults(cleric);
+  cleric.spells=[{name:'Lesser Restoration',level:2,prepared:true},{name:'Greater Restoration',level:5,prepared:true},
+    {name:'Remove Curse',level:3,prepared:true},{name:'Protection from Poison',level:2,prepared:true}];
+
+  T('Lesser Restoration offers nothing to cure when no qualifying condition is active', SPELL_CHOICES['Lesser Restoration'](cleric).length===1 && /Nothing to cure/.test(SPELL_CHOICES['Lesser Restoration'](cleric)[0].t));
+  cleric.conditions={Poisoned:true};
+  const lrOpts=SPELL_CHOICES['Lesser Restoration'](cleric);
+  T('Lesser Restoration offers to end an actually-active condition', lrOpts.some(o=>/End Poisoned/.test(o.t)));
+  lrOpts.find(o=>/End Poisoned/.test(o.t)).f(cleric);
+  T('picking the option actually clears the condition', !cleric.conditions.Poisoned);
+
+  cleric.conditions={Charmed:true}; cleric.exhaustion=2;
+  const grOpts=SPELL_CHOICES['Greater Restoration'](cleric);
+  T('Greater Restoration offers both the active condition and exhaustion reduction', grOpts.some(o=>/End Charmed/.test(o.t)) && grOpts.some(o=>/Reduce Exhaustion/.test(o.t)));
+  grOpts.find(o=>/Reduce Exhaustion/.test(o.t)).f(cleric);
+  T('reducing exhaustion actually decrements the tracked counter', cleric.exhaustion===1);
+
+  cleric.conditions={Cursed:true};
+  T('Remove Curse clears the Cursed condition', castSpell(cleric,'Remove Curse',3) && !cleric.conditions.Cursed);
+
+  cleric.conditions={Poisoned:true}; cleric.effects=[];
+  castSpell(cleric,'Protection from Poison',2);
+  T('Protection from Poison cures existing Poisoned and tracks a real effect', !cleric.conditions.Poisoned && cleric.effects.some(e=>e.name==='Protection from Poison'));
+}
+
+/* ---- See Invisibility / True Seeing: real reciprocal-Invisible-rule fix ---- */
+{
+  T('attacking an invisible target is disadvantage (previously missing entirely)', attackAdvantage(new Set(), new Set(['Invisible']), true).adv===-1);
+  T('...unless the attacker can see invisible (seesInvisible opt)', attackAdvantage(new Set(), new Set(['Invisible']), true, {seesInvisible:true}).adv===0);
+  T('an invisible attacker still gets its own advantage independent of the target\'s state', attackAdvantage(new Set(['Invisible']), new Set(), true).adv===1);
+
+  const seer=newCharacter('Seer'); seer.cls='Wizard'; applyClassDefaults(seer);
+  T('hasSeesInvisible is false with no active effect', hasSeesInvisible({c:seer})===false);
+  addEffect(seer, 'See Invisibility');
+  T('casting See Invisibility (SPELL_EFFECTS) makes hasSeesInvisible true for that PC-backed unit', hasSeesInvisible({c:seer})===true);
+  T('hasSeesInvisible is false for a monster (no buff tracking)', hasSeesInvisible({side:'mon',hp:7})===false);
+
+  // End-to-end through Engine.hitResult: a target with Invisible should no longer impose
+  // disadvantage once the attacker's adapter-resolved unit carries the effect.
+  const ad={ unit:id=>id==='atk'?{c:seer}:{conditions:{Invisible:true}, ac:14, x:0,y:0}, ac:u=>u.ac||14, cover:()=>0 };
+  const res=Engine.hitResult(ad, 'atk', 'tgt', {toHit:5, tiles:1}, 10);
+  T('Engine.hitResult threads hasSeesInvisible through to attackAdvantage (no disadvantage on the invisible target)', res.adv===0);
+}
+
+/* ---- Movement batch: Levitate, Feather Fall, Jump, Telekinesis ---- */
+{
+  const acro=newCharacter('Leaper'); acro.cls='Wizard'; acro.abilities={str:14,dex:10,con:10,int:16,wis:10,cha:10}; applyClassDefaults(acro);
+  T('Levitate was already checked by isFlying() but never actually creatable — SPELL_EFFECTS entry fixes that', !!SPELL_EFFECTS['Levitate']);
+  addEffect(acro,'Levitate');
+  T('casting Levitate now makes isFlying true (isFlying already looked for this effect name)', isFlying(acro)===true);
+
+  T('hasFeatherFall is false with no active effect', hasFeatherFall(acro)===false);
+  addEffect(acro,'Feather Fall');
+  T('casting Feather Fall (SPELL_EFFECTS) makes hasFeatherFall true', hasFeatherFall(acro)===true);
+
+  const base=runningHighJumpFt(acro);
+  addEffect(acro,'Jump');
+  T('casting Jump triples runningHighJumpFt — the single function every jump/climb check in the app reads', runningHighJumpFt(acro)===base*3);
+  endEffect(acro, acro.effects.find(e=>e.name==='Jump').id);
+  T('ending the Jump effect reverts the multiplier', runningHighJumpFt(acro)===base);
+
+  // Telekinesis: opposed spell-ability-check vs target Strength, reusing Engine.castApply's
+  // existing savedKnown+cond pipeline instead of a bespoke condition-application path.
+  const weakGoblin={id:'m1', side:'mon', base:'Goblin', name:'Goblin', hp:7, max:7, x:0,y:0};
+  { const orig=Math.random; Math.random=()=>0.99;   // caster rolls high
+    T('telekinesisSavedKnown: caster wins the opposed check against a weak target', telekinesisSavedKnown(acro, weakGoblin)===false);
+    Math.random=orig; }
+  setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, order:[], turn:0, battle:{active:true,round:1},
+    monsters:[Object.assign({},weakGoblin)], players:[{id:'pc',side:'pc',name:acro.name,c:acro,x:1,y:0}]});
+  const mo=getQB().monsters[0];
+  Engine.castApply(qbAdapter,'pc',mo.id,{name:'Telekinesis',savedKnown:false,cond:{c:'Restrained',rounds:10},dmgTotal:0});
+  T('a failed Telekinesis check actually applies Restrained to the target, through the real Engine pipeline', mo.conds.some(c=>c.name==='Restrained'));
+  setQB(null);
+}
+
+/* ---- Battlefield control: walls, Reverse Gravity/Forcecage (data-table reuse), no-cast zones ---- */
+{
+  const s={map:{cols:10,rows:10,tiles:{}}, battle:{round:1}, hazards:[]};
+  paintHazardTerrain(s, {x:5,y:5}, 2, 'Wall of Force', 10);
+  T('Wall of Force paints real solid terrain (blocks movement) via the existing hazard pipeline', TERRAIN[s.map.tiles['5,5']].solid===true);
+  T('Wall of Force is transparent (opaque:false) — you can see through it, unlike a real wall', TERRAIN[s.map.tiles['5,5']].opaque===false);
+  T('a wall tile correctly reports as tileClearFor()===false (blocks a Shove push etc.)', tileClearFor(s,5,5)===false);
+  paintHazardTerrain(s, {x:0,y:0}, 2, 'Wall of Stone', 10);
+  T('Wall of Stone never expires on its own (rounds:Infinity)', s.hazards.find(h=>h.name==='Wall of Stone').until===Infinity);
+
+  T('Reverse Gravity now parses as a real Dex-save damage spell from its reworded description', (()=>{ const mc=parseSpellMechanics('Reverse Gravity'); return mc.save==='dex' && mc.dmg==='4d6'; })());
+  T('Forcecage now parses as a real Cha-save spell and carries a Restrained SPELL_COND', (()=>{ const mc=parseSpellMechanics('Forcecage'); return mc.save==='cha' && SPELL_COND['Forcecage'].c==='Restrained'; })());
+
+  // No-cast zones: Silence/Antimagic Field block canCast for whoever's standing in them.
+  const zoneS={active:true, over:null, log:[], map:{cols:8,rows:8,tiles:{}}, order:[], turn:0, battle:{active:true,round:1}, monsters:[], players:[{id:'pc',side:'pc',x:3,y:3}]};
+  setQB(zoneS);
+  const wiz=newCharacter('Silenced'); wiz.cls='Wizard'; wiz.level=3; applyClassDefaults(wiz);
+  zoneS.players[0].c=wiz;
+  T('casting works normally with no active no-cast zone', canCast(wiz,'Fire Bolt',0)===true);
+  paintNoCastZone(zoneS, {x:3,y:3}, 2, 'Silence');
+  T('inNoCastZone correctly finds the painted Silence zone', inNoCastZone(zoneS,3,3)===true);
+  T('canCast refuses to cast for a PC standing inside an active no-cast zone', canCast(wiz,'Fire Bolt',0)===false);
+  zoneS.players[0].x=7; zoneS.players[0].y=7;
+  T('canCast allows casting again once the PC leaves the zone', canCast(wiz,'Fire Bolt',0)===true);
+  setQB(null);
+}
+
+/* ---- Counterspell / Dispel Magic: strip a monster's spell-imposed conditions ---- */
+{
+  T('spellTargetsEnemy routes Dispel Magic and Counterspell into single-target battle picking', spellTargetsEnemy('Dispel Magic')===true && spellTargetsEnemy('Counterspell')===true);
+  const cursed={id:'m1', side:'mon', name:'Goblin', hp:7, conds:[{name:'Restrained',rounds:10},{name:'Charmed',rounds:5}]};
+  T('dispelMonsterConds clears every tracked condition and reports how many', dispelMonsterConds(cursed)===2 && cursed.conds.length===0);
+  T('dispelMonsterConds on an already-clean target reports zero', dispelMonsterConds(cursed)===0);
+}
+
+/* ---- Social/mind: Calm Emotions/Compulsion/Mass Suggestion (save+cond reuse), Beacon of Hope ---- */
+{
+  T('Calm Emotions now parses as a real Cha-save spell carrying a Charmed SPELL_COND', (()=>{ const mc=parseSpellMechanics('Calm Emotions'); return mc.save==='cha' && SPELL_COND['Calm Emotions'].c==='Charmed'; })());
+  T('Compulsion now parses as a real Wis-save spell carrying a Charmed SPELL_COND', (()=>{ const mc=parseSpellMechanics('Compulsion'); return mc.save==='wis' && SPELL_COND['Compulsion'].c==='Charmed'; })());
+  T('Mass Suggestion now parses as a real Wis-save spell with a 24-hour Charmed duration', (()=>{ const mc=parseSpellMechanics('Mass Suggestion'); return mc.save==='wis' && SPELL_COND['Mass Suggestion'].r===14400; })());
+
+  const hopeful=newCharacter('Hopeful'); hopeful.death={succ:0,fail:0}; hopeful.hp={cur:0,max:20,temp:0};
+  T('hasBeaconOfHope is false with no active effect', hasBeaconOfHope(hopeful)===false);
+  addEffect(hopeful,'Beacon of Hope');
+  T('casting Beacon of Hope (SPELL_EFFECTS) makes hasBeaconOfHope true', hasBeaconOfHope(hopeful)===true);
+  { const orig=Math.random; let i=0; const seq=[0.05,0.90];   // rolls 2 then 19 (avoid nat 20's special-case branch) — advantage keeps the 19
+    Math.random=()=>seq[i++%seq.length];
+    rollDeathSave(hopeful);
+    Math.random=orig;
+    T('Beacon of Hope grants real advantage on death saves (keeps the better of two rolls)', hopeful.death.succ===1);
+  }
+}
+
+/* ---- Utility: Knock (real door-open), Alter Self's real Claws attack ---- */
+{
+  const rogue=newCharacter('Locksmith'); rogue.cls='Wizard'; rogue.level=5; applyClassDefaults(rogue);
+  rogue.spells=[{name:'Knock',level:2,prepared:true}];
+  setQB({active:true, over:null, log:[], map:{cols:6,rows:6,tiles:{},interact:{'2,2':{type:'door',state:'closed'}}}, order:[], turn:0, battle:{active:true,round:1},
+    monsters:[], players:[{id:'pc',side:'pc',name:rogue.name,c:rogue,x:1,y:2}]});
+  castSpell(rogue,'Knock',2);
+  T('Knock auto-opens the nearest closed door within range, through the real interact system', getQB().map.interact['2,2'].state==='open');
+  setQB(null);
+
+  const shifter=newCharacter('Shifter'); shifter.abilities={str:14,dex:10,con:10,int:10,wis:10,cha:10}; applyClassDefaults(shifter);
+  T('hasNaturalWeapons is false with no active Alter Self', hasNaturalWeapons(shifter)===false);
+  T('qbPcAttacks has no Claws option yet', !qbPcAttacks(shifter).some(a=>/Claws/.test(a.name)));
+  addEffect(shifter,'Alter Self');
+  T('casting Alter Self makes hasNaturalWeapons true', hasNaturalWeapons(shifter)===true);
+  const claws=qbPcAttacks(shifter).find(a=>/Claws/.test(a.name));
+  T('qbPcAttacks now offers a real 1d6 slashing Claws attack, not just the flat unarmed-strike fallback', !!claws && claws.dmg==='1d6' && claws.dt==='slashing');
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
