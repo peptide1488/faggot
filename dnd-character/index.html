@@ -4654,22 +4654,14 @@ function importData(e){
 /* ============ DM / MULTIPLAYER (WebRTC via PeerJS) ============ */
 let net=null;   // {role:'dm'|'player', ...}
 let QB=null;    // Quick Battle (solo vs AI) state, see the Quick Battle section
-let isoView=localStorage.getItem('grimoire.iso')==='1';   // display pref: isometric vs top-down battle grid
-let iso3dView=localStorage.getItem('grimoire.iso3d')==='1'; // WebGL Iso3D battle renderer (needs isoView)
+let isoView=true;   // always isometric — top-down/2D-iso toggle removed per user request
+let iso3dView=true; // always the WebGL Iso3D renderer
 let mapRotation=Number(localStorage.getItem('grimoire.maprot'))||0;   // 0-3, 90° steps, iso view only
 function rotateMap(){ mapRotation=(mapRotation+1)%4; localStorage.setItem('grimoire.maprot',mapRotation); render(); }
 // Rotate a grid position by mapRotation (90° steps); for 90/270 the effective board dimensions
 // swap (a cols x rows board rotated a quarter-turn occupies a rows x cols footprint).
 function rotXY(x,y,cols,rows,rot){ switch(rot){ case 1: return [rows-1-y, x]; case 2: return [cols-1-x, rows-1-y]; case 3: return [y, cols-1-x]; default: return [x,y]; } }
 function rotDelta(dx,dy,rot){ switch(rot){ case 1: return [-dy,dx]; case 2: return [-dx,-dy]; case 3: return [dy,-dx]; default: return [dx,dy]; } }
-function toggleIsoView(){ isoView=!isoView; localStorage.setItem('grimoire.iso', isoView?'1':'0'); if(!isoView){ iso3dView=false; localStorage.setItem('grimoire.iso3d','0'); destroyIso3DHost(); } render(); }
-function toggleIso3dView(){
-  iso3dView=!iso3dView;
-  if(iso3dView){ isoView=true; localStorage.setItem('grimoire.iso','1'); }
-  localStorage.setItem('grimoire.iso3d', iso3dView?'1':'0');
-  if(!iso3dView) destroyIso3DHost();
-  render();
-}
 function destroyIso3DHost(){
   if(window.__iso3dHost){ try{ window.__iso3dHost.destroy(); }catch(e){} window.__iso3dHost=null; }
   window.__iso3dCamKeep=false;
@@ -6019,7 +6011,7 @@ function renderPlayerBattle(c){
     ${hasActionSurge(c)?`<button class="btn ghost sm block" data-pbt="surge" style="margin-top:8px${c.actionSurgeUsed?';opacity:.5':''}" ${c.actionSurgeUsed?'disabled':''}>⚡ ${c.actionSurgeUsed?'Action Surge spent (rest to recharge)':'Action Surge (+1 action)'}</button>`:''}
   </div>
   <div class="card">
-    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button><button class="btn ghost sm" id="pbIsoBtn" style="float:right;margin-right:6px">${isoView?'⬜ Top-down':'🧊 Isometric'}</button>${isoView?`<button class="btn ghost sm" id="pbIso3dBtn" style="float:right;margin-right:6px">${iso3dView?'🕹 3D on':'🕹 3D'}</button><button class="btn ghost sm" id="pbRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button>`:''}</h2>
+    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button><button class="btn ghost sm" id="pbRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button></h2>
     ${mapGridHTML(s,false, net.moveMode?buildMoveRangeOpts(s,me,b.move||0,hasAction(c),effSpeed(c),isFlying(c)):{})}
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?('Green: <='+(b.move||0)+' ft left (still act) · sheet speed '+effSpeed(c)+' ft'+(hasAction(c)?' · Red: Dash (Action) adds '+effSpeed(c)+' ft':' · no Action left for Dash')+' · Jump/climb marked on path') :'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
   </div>
@@ -6076,8 +6068,6 @@ function renderPlayerBattle(c){
     else b[k]=!b[k];
     save(); render(); });
   { const mv=$('#pbMoveBtn'); if(mv) mv.onclick=()=>{ net.moveMode=!net.moveMode; render(); }; }
-  { const iv=$('#pbIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
-  { const i3=$('#pbIso3dBtn'); if(i3) i3.onclick=toggleIso3dView; }
   { const rv=$('#pbRotBtn'); if(rv) rv.onclick=rotateMap; }
   if(isoView&&iso3dView&&net&&net.session) syncIso3DHost(net.session);
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
@@ -7631,7 +7621,7 @@ function renderDM(){
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
-    <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span><button class="btn ghost sm" id="dmIsoBtn" style="float:right">${isoView?'⬜ Top-down':'🧊 Isometric'}</button>${isoView?`<button class="btn ghost sm" id="dmIso3dBtn" style="float:right;margin-right:6px">${iso3dView?'🕹 3D on':'🕹 3D'}</button><button class="btn ghost sm" id="dmRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button>`:''}</h2>
+    <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span><button class="btn ghost sm" id="dmRotBtn" style="float:right">🔄 Rotate</button></h2>
     ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0); return buildMoveRangeOpts(s,mo,mo.moveLeft||0,dashAvail,mo.speed||30,monsterFlies(mo)); })():{})}
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
@@ -7663,8 +7653,6 @@ function renderDM(){
       // DM oversees everyone — start on a full view of the map, not any one combatant.
       setTimeout(()=>frameCameraOnMapCenter(s, 1.1), 60); }
     dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
-  { const iv=$('#dmIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
-  { const i3=$('#dmIso3dBtn'); if(i3) i3.onclick=toggleIso3dView; }
   { const rv=$('#dmRotBtn'); if(rv) rv.onclick=rotateMap; }
   if(isoView&&iso3dView) syncIso3DHost(s);
   { const rr=$('#dmReroll'); if(rr) rr.onclick=rollInitiative; }
@@ -7939,7 +7927,7 @@ function openBestiary(){
 /* ---- player session map (modal) ---- */
 function openSessionMap(){ if(!net||!net.session){ flashBanner('Not in a game'); return; } const s=net.session;
   $('#modalRoot').innerHTML=`<div class="modal" id="smModal"><div class="sheet"><div class="grip"></div>
-    <h2>🗺 ${net.session.battle.active?'Battle — Round '+s.battle.round:'Map'}<button class="btn ghost sm" id="smIsoBtn" style="float:right">${isoView?'⬜ Top-down':'🧊 Isometric'}</button>${isoView?`<button class="btn ghost sm" id="smIso3dBtn" style="float:right;margin-right:6px">${iso3dView?'🕹 3D on':'🕹 3D'}</button><button class="btn ghost sm" id="smRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button>`:''}</h2>
+    <h2>🗺 ${net.session.battle.active?'Battle — Round '+s.battle.round:'Map'}<button class="btn ghost sm" id="smRotBtn" style="float:right">🔄 Rotate</button></h2>
     ${mapGridHTML(s,false)}
     <p class="muted" style="font-size:12px;margin:8px 0 4px">Tap a monster to attack it.</p>
     ${s.monsters.length? s.monsters.map(mo=>`<div class="spell"><span class="tok mon" style="flex:none">${esc((mo.name[0]||'M').toUpperCase())}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp>0?mo.hp+'/'+mo.max:'down'}</small></div><button class="btn sm" data-attackmon="${mo.id}">⚔ Attack</button></div>`).join('') : '<div class="empty">No monsters on the field.</div>'}
@@ -7947,8 +7935,6 @@ function openSessionMap(){ if(!net||!net.session){ flashBanner('Not in a game');
   </div></div>`;
   $('#smClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#smModal').onclick=e=>{ if(e.target.id==='smModal') $('#modalRoot').innerHTML=''; };
-  { const iv=$('#smIsoBtn'); if(iv) iv.onclick=()=>{ toggleIsoView(); openSessionMap(); }; }
-  { const i3=$('#smIso3dBtn'); if(i3) i3.onclick=()=>{ toggleIso3dView(); openSessionMap(); }; }
   { const rv=$('#smRotBtn'); if(rv) rv.onclick=()=>{ rotateMap(); openSessionMap(); }; }
   if(isoView&&iso3dView) syncIso3DHost(s);
   document.querySelectorAll('[data-attackmon]').forEach(b=>b.onclick=()=>{ const mo=s.monsters.find(m=>m.id===b.dataset.attackmon); if(!mo) return;
@@ -8778,7 +8764,7 @@ function renderQuickBattle(){
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'Green: remaining speed (can still Attack). Red: Dash uses your Action. Jump/climb marked on path. Tap a tile.':'⚔ Attack a monster in range, ✨ cast a spell, or 🥾 Move. You can also tap a 🟥 monster directly.'):'⏳ Waiting for '+esc(o?o.name:'…')+'…'}</p>
   </div>
   <div class="card">
-    <h2>Battlefield <button class="btn ghost sm" id="qbIsoBtn" style="float:right">${isoView?'⬜ Top-down':'🧊 Isometric'}</button>${isoView?`<button class="btn ghost sm" id="qbIso3dBtn" style="float:right;margin-right:6px" title="WebGL Iso3D renderer">${iso3dView?'🕹 3D on':'🕹 3D'}</button><button class="btn ghost sm" id="qbRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button>`:''}</h2>
+    <h2>Battlefield <button class="btn ghost sm" id="qbRotBtn" style="float:right">🔄 Rotate</button></h2>
     ${mapGridHTML(s,false,moveOpts)}
   </div>`}
   <div class="card">
@@ -8792,8 +8778,6 @@ function renderQuickBattle(){
   { const a=$('#qbAgain'); if(a) a.onclick=()=>{ QB=null; openQuickBattle(); }; }
   { const d=$('#qbDone'); if(d) d.onclick=qbExit; }
   { const mv=$('#qbMove'); if(mv&&myTurn) mv.onclick=()=>{ s.moveMode=!s.moveMode; render(); }; }
-  { const iv=$('#qbIsoBtn'); if(iv) iv.onclick=toggleIsoView; }
-  { const i3=$('#qbIso3dBtn'); if(i3) i3.onclick=toggleIso3dView; }
   { const rv=$('#qbRotBtn'); if(rv) rv.onclick=rotateMap; }
   { const at=$('#qbAttack'); if(at&&myTurn) at.onclick=()=>qbOpenAttack(c); }
   { const ca=$('#qbCast'); if(ca&&myTurn) ca.onclick=()=>qbOpenSpells(c); }
@@ -9405,7 +9389,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.175';
+const APP_VERSION='v120.176';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
