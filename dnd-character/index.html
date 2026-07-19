@@ -503,6 +503,7 @@ function attackAdvantage(aC, tC, melee, opts){
   if(A('Blinded')){ adv--; why.push('you are blinded'); }
   if(A('Frightened')){ adv--; why.push('you are frightened'); }
   if(A('Invisible')){ adv++; why.push('you are invisible'); }
+  if(A('Hidden')){ adv++; why.push('attacking from hiding'); }
   ['Restrained','Blinded','Paralyzed','Stunned','Unconscious','Petrified'].forEach(cn=>{ if(T(cn)){ adv++; why.push('target '+cn.toLowerCase()); } });
   if(T('Prone')){ adv+=melee?1:-1; why.push('target prone'+(melee?'':' (ranged)')); }
   if(T('Faerie Fire')){ adv++; why.push('target outlined by faerie fire'); }
@@ -5706,6 +5707,8 @@ function skillCheckBonus(c, skillKey){
 // save bonus (monsterSaveBonus, used for saves today) as the monster side of any opposed
 // check. Same simplification this project already uses for monster saves.
 function monsterCheckBonus(mo){ return monsterSaveBonus(mo); }
+// Monsters have no tracked passive Perception either — same CR-scaled simplification.
+function monsterPassivePerception(mo){ return 10+monsterCheckBonus(mo); }
 // Roll a skill check for either a PC (c-shaped: real ability scores/proficiencies) or a
 // monster (CR-scaled flat bonus, no advantage tracking) — lets callers treat either side
 // of a contest uniformly.
@@ -6938,7 +6941,8 @@ function openAdjacentUseUI(c, s, me){
   const inQB=(typeof QB!=='undefined' && s===QB);
   const foes=inQB ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=1) : [];
   const grappled=inQB && !!(c.conditions&&c.conditions.Grappled);
-  if(!items.length && !foes.length && !grappled){
+  const canHide=inQB && !(c.conditions&&c.conditions.Hidden); // qbHide itself checks cover/darkness and bails with a banner if ineligible
+  if(!items.length && !foes.length && !grappled && !canHide){
     flashBanner('Nothing interactive within 5 ft');
     if(typeof qbLog==='function'&&s===QB) qbLog('🖐 No usable objects adjacent');
     return;
@@ -6948,6 +6952,7 @@ function openAdjacentUseUI(c, s, me){
       <p class="muted" style="font-size:12px;margin:0 0 8px">Objects and foes on or next to your tile. (Mage Hand reaches 30 ft.)</p>`;
     if(!pick){
       if(grappled) body+=`<button class="btn block" id="useEscape" style="margin-bottom:8px;text-align:left">🤸 Escape Grapple<small style="display:block;opacity:.75">Athletics/Acrobatics (your choice) vs the grappler's Athletics</small></button>`;
+      if(canHide) body+=`<button class="btn block" id="useHide" style="margin-bottom:8px;text-align:left">🫥 Hide<small style="display:block;opacity:.75">Needs darkness, full cover, or (Skulker) dim light</small></button>`;
       body+=items.map((it,i)=>{
         const st=it.obj.state||it.def.default;
         return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
@@ -6976,7 +6981,8 @@ function openAdjacentUseUI(c, s, me){
     $('#useClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     $('#useModal').onclick=e=>{ if(e.target.id==='useModal') $('#modalRoot').innerHTML=''; };
     { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(null); }
-    { const es=$('#useEscape'); if(es) es.onclick=()=>{ $('#modalRoot').innerHTML=''; qbEscapeGrapple({c}, true); }; }
+    { const es=$('#useEscape'); if(es) es.onclick=()=>{ $('#modalRoot').innerHTML=''; qbEscapeGrapple(me, true); }; }
+    { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ $('#modalRoot').innerHTML=''; qbHide(me); }; }
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
       draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : Object.assign({kind:'obj'}, items[Number(idx)]));
@@ -8695,6 +8701,10 @@ function qbResolveAttack(att, tgt, atk, done){
     lightOpts={seeTarget:see, attackerVision:selfL};
   }
   const cx=attackAdvantage(unitConds(att), unitConds(tgt), melee, lightOpts);
+  // Attacking reveals a hidden PC (PHB) — cx above already captured the advantage this
+  // grants for THIS attack, so clearing here doesn't affect it. Simplification: unlike
+  // Skulker's real text, a missed ranged attack still reveals you in this pass.
+  if(isPc && att.c && att.c.conditions && att.c.conditions.Hidden){ delete att.c.conditions.Hidden; att.c.hiddenDC=null; }
   // Merge light into Engine adv if needed
   let useAdv=pre.adv, useWhy=(pre.advWhy||[]).slice();
   if(cx.adv&&!pre.adv){ useAdv=cx.adv; useWhy=cx.why; }
@@ -8770,9 +8780,12 @@ function qbApplyIntent(u, it, done){
 BRAINS.tactical = function(qb, u){
   if(isIncapacitated(u)) return [];   // Asleep/Paralyzed/Banished… — it loses the turn
   // Party allies (summons + dominated) fight hostiles; hostiles fight PC + party allies
-  const foes = isPartyAlly(u)
+  const foes0 = isPartyAlly(u)
     ? qb.monsters.filter(m=>m.id!==u.id&&isHostile(m))
     : qb.players.filter(p=>p.c.hp.cur>0).concat(qb.monsters.filter(m=>m.id!==u.id&&isPartyAlly(m)));
+  // A hidden PC (see qbHide) can't be targeted unless this unit's passive Perception beats
+  // their Stealth total — otherwise every monster would just ignore Hide entirely.
+  const foes = foes0.filter(f=>!(f.c && f.c.conditions && f.c.conditions.Hidden && monsterPassivePerception(u) < (f.c.hiddenDC||0)));
   if(!foes.length) return [];
   const atks=parseMonsterAttacks(u.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:a.tiles||1, dtype:a.dtype, cond:a.cond})).filter(a=>true);
   const usable=atks.length?atks:[{name:'Attack',toHit:0,dmg:'1d6',tiles:1}];
@@ -9019,6 +9032,7 @@ function qbShove(pc, mo, mode){
   const s=QB, c=pc.c;
   if(gridDist(pc.x,pc.y,mo.x,mo.y)>1){ flashBanner('Too far to shove — must be adjacent'); return; }
   if(!qbSpendAttackBudget(c)) return;
+  if(c.conditions&&c.conditions.Hidden){ delete c.conditions.Hidden; c.hiddenDC=null; } // a maneuver reveals you like any attack
   const res=opposedCheck(c,'athletics','str', mo, [['athletics','str'],['acrobatics','dex']]);
   const detail='('+res.attacker.total+' vs '+res.defender.total+')';
   if(!res.success){ qbLog('🤼 '+c.name+' tries to shove '+mo.name+' '+detail+' — fails'); flashBanner('Shove failed'); save(); render(); return; }
@@ -9045,6 +9059,7 @@ function qbGrapple(pc, mo){
   const s=QB, c=pc.c;
   if(gridDist(pc.x,pc.y,mo.x,mo.y)>1){ flashBanner('Too far to grapple — must be adjacent'); return; }
   if(!qbSpendAttackBudget(c)) return;
+  if(c.conditions&&c.conditions.Hidden){ delete c.conditions.Hidden; c.hiddenDC=null; } // a maneuver reveals you like any attack
   const res=opposedCheck(c,'athletics','str', mo, [['athletics','str'],['acrobatics','dex']]);
   const detail='('+res.attacker.total+' vs '+res.defender.total+')';
   if(!res.success){ qbLog('🤼 '+c.name+' tries to grapple '+mo.name+' '+detail+' — fails'); flashBanner('Grapple failed'); save(); render(); return; }
@@ -9078,6 +9093,30 @@ function qbEscapeGrapple(unit, isPc){
     qbLog('🤸 '+name+' fails to escape the grapple');
     flashBanner('Escape failed');
   }
+  save(); render();
+}
+// Hide (PHB): needs heavy obscurement (darkness) at your own tile, full cover from the
+// nearest hostile, or — with the Skulker feat — just dim light. Success sets hiddenDC
+// (your Stealth total): hostile monsters can't target you unless their passive
+// Perception (monsterPassivePerception, CR-scaled like monsterSaveBonus) beats it (see
+// BRAINS.tactical's foes filter), and your next attack gets advantage (attackAdvantage's
+// 'Hidden' check) — cleared the moment you attack (qbResolveAttack) or use a maneuver.
+function qbHide(pc){
+  const s=QB, c=pc.c;
+  if(!hasAction(c)){ flashBanner('No action left'); return; }
+  const lvl=tileLightLevel(s, pc.x, pc.y);
+  const foes=s.monsters.filter(mo=>mo.hp>0&&isHostile(mo));
+  const closest=foes.slice().sort((a,b)=>gridDist(pc.x,pc.y,a.x,a.y)-gridDist(pc.x,pc.y,b.x,b.y))[0];
+  const fullCover=!!(closest && coverBetween(s, pc.x,pc.y, closest.x, closest.y)>=5);
+  const eligible = lvl===0 || (lvl===1 && hasFeat(c,'Skulker')) || fullCover;
+  if(!eligible){ flashBanner('Nothing to hide behind — need darkness, full cover, or (Skulker) dim light'); return; }
+  spendAction(c);
+  const adv=skillCheckAdvantage(c,'stealth','dex');
+  const r=rollSkillCheck(c,'stealth','dex',{adv:adv.adv, flatBonus:skillCheckBonus(c,'stealth')});
+  if(!c.conditions) c.conditions={};
+  c.conditions.Hidden=true; c.hiddenDC=r.total;
+  qbLog('🫥 '+c.name+' hides (Stealth '+r.total+')');
+  flashBanner('Hidden! (Stealth '+r.total+' — foes must beat this to notice you)');
   save(); render();
 }
 /** Weapon / spell attack vs a hazard barrel (no AC dance — objects don't dodge). */
@@ -9546,7 +9585,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.177';
+const APP_VERSION='v120.178';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

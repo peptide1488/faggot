@@ -237,6 +237,37 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
   setQB(null);
 }
 
+/* ---- Hide (Use-menu Stealth action) + monster passive Perception ---- */
+{
+  T('attackAdvantage: attacking while Hidden grants advantage', attackAdvantage(new Set(['Hidden']), new Set(), true).adv===1);
+
+  const weak={name:'Goblin'}, strong={name:'Young Red Dragon'};
+  T('monsterPassivePerception is CR-scaled (weak monster < strong monster)', monsterPassivePerception(weak) < monsterPassivePerception(strong));
+  T('monsterPassivePerception formula matches 10 + monsterCheckBonus', monsterPassivePerception(weak)===10+monsterCheckBonus(weak));
+
+  const sneak=newCharacter('Sneak'); sneak.cls='Rogue'; sneak.level=1; sneak.abilities={str:10,dex:16,con:10,int:10,wis:10,cha:10}; sneak.skillProf.stealth=true;
+  sneak.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{},light:{mode:'day'}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:4,y:4,hp:7,max:7,ac:15,attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:sneak.name,c:sneak,x:0,y:0,hpCur:sneak.hp.cur,hpMax:sneak.hp.max}] });
+  const spc=getQB().players[0];
+  qbHide(spc);
+  T('qbHide refuses in the open (bright light, no cover, not adjacent)', !(sneak.conditions&&sneak.conditions.Hidden));
+
+  getQB().map.tiles={'2,0':'wall'}; getQB().monsters[0].x=4; getQB().monsters[0].y=0; // full-wall obstruction on the line from pc (0,0) to the monster
+  sneak.battle.action=false; sneak.battle.actionsUsed=0;
+  { const orig=Math.random; Math.random=()=>0.99; qbHide(spc); Math.random=orig; } // force a high Stealth roll — deterministic vs. the Goblin's passive Perception below
+  T('qbHide succeeds with full cover (wall) from the nearest hostile', sneak.conditions&&sneak.conditions.Hidden===true && Number.isFinite(sneak.hiddenDC));
+
+  const foes1=BRAINS.tactical(getQB(), Object.assign({id:'m1',brain:'tactical',hp:7,x:4,y:0,attacksLeft:1,moveLeft:30,speed:30,atk:'Bite +4 (1d6+2)',base:'Goblin',name:'Goblin'}));
+  T('a weak monster (low passive Perception) cannot target the hidden PC', !foes1.some(it=>it.type==='attack'&&it.targetId==='pc'));
+
+  sneak.hiddenDC=1; // trivially low DC any monster's passive Perception clears
+  const foes2=BRAINS.tactical(getQB(), Object.assign({id:'m1',brain:'tactical',hp:7,x:4,y:0,attacksLeft:1,moveLeft:30,speed:30,atk:'Bite +4 (1d6+2)',base:'Goblin',name:'Goblin'}));
+  T('a monster whose passive Perception beats a low hiddenDC can still target the PC', foes2.some(it=>it.type==='attack'&&it.targetId==='pc'));
+  setQB(null);
+}
+
 /* ---- sorcery points ---- */
 const so=newCharacter('So'); so.cls='Sorcerer'; so.level=5;
 T('Sorcery points max = level (5), none before L2', sorcMax(so)===5 && sorcMax({cls:'Sorcerer',level:1})===0);
