@@ -7564,11 +7564,22 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       // both mounts always agree — no more resize-on-reparent, still viewport-safe.
       const viewportW=(typeof window!=='undefined'&&window.innerWidth)?window.innerWidth:1200;
       const viewportH=(typeof window!=='undefined'&&window.innerHeight)?window.innerHeight:800;
-      const w3=Math.max(300,Math.min(Math.max(stageW,720), viewportW-32));
-      // Cap height too — stageH grows with map size/rotation and on a big map could
-      // otherwise take up most of the page (live report: "render window is too big").
-      // Still at least 420px so small maps don't look cramped.
-      const h3=Math.max(420,Math.min(Math.max(stageH,520), Math.round(viewportH*0.65)));
+      // The app's own content column (main#app) is CSS-capped at 760px and centered.
+      // A wide map used to only cap against viewportW-32, so on any desktop-width
+      // screen it stayed far wider than that column — .mapwrap scrolled it, but the
+      // WebGL canvas is position:fixed on <body> (see host.js), so it isn't clipped by
+      // that scroll and visually bled out across the rest of the page ("still too
+      // big" even after the height cap). Cap width to the real visible column too.
+      const appEl=(typeof document!=='undefined')?document.getElementById('app'):null;
+      const colW=appEl&&appEl.clientWidth?appEl.clientWidth:760;
+      const w3=Math.max(300,Math.min(Math.max(stageW,720), Math.min(colW-24, viewportW-32)));
+      // Cap height hard — prior 65%-of-viewport cap didn't visibly shrink the board
+      // because stageH often sits well under that ceiling already (live report:
+      // "the screen still is too big" even after the first cap attempt). Use a low
+      // absolute pixel ceiling (whichever is smaller vs. a viewport percentage) so it
+      // actually bites regardless of stageH, with a floor so small maps aren't cramped.
+      const hCap=Math.min(480, Math.round(viewportH*0.42));
+      const h3=Math.max(360, Math.min(stageH, hCap));
       return `<div class="mapwrap" style="max-width:100%;overflow:auto"><div class="mapgrid iso iso3dmode" style="width:${w3}px;height:${h3}px;min-height:420px;position:relative"><div id="iso3dMount" class="iso3d-mount"></div>${canvasTag}${cells}</div></div>`;
     }
     return `<div class="mapwrap"><div class="mapgrid iso" style="width:${stageW}px;height:${stageH}px;position:relative">${canvasTag}${cells}</div></div>`;
@@ -9390,7 +9401,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.170';
+const APP_VERSION='v120.172';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
