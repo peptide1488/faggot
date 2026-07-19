@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.15';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.15';
+import { Renderer } from './renderer.js?v=0.6.16';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.16';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.15';
+} from './adapter.js?v=0.6.16';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.15';
+} from './sprites.js?v=0.6.16';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.15';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.15';
-import { APP_VERSION } from './version.js?v=0.6.15';
-import { resolveLighting } from './lighting.js?v=0.6.15';
+} from './fx.js?v=0.6.16';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.16';
+import { APP_VERSION } from './version.js?v=0.6.16';
+import { resolveLighting } from './lighting.js?v=0.6.16';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -215,6 +215,16 @@ export class Iso3DHost {
       this.glCanvas.style.display = 'none';
       this.overlay.style.display = 'none';
       return;
+    }
+    // Defensive: this container's rect is meaningless if an ancestor .mapwrap has been
+    // scrolled (a real bug once did exactly that — see index.html's iso3D host-sync
+    // comment — and this canvas is position:fixed, so it isn't clipped by that scroll and
+    // visually desyncs from the visible box the instant it happens). Zero it out here so
+    // no future scroll trigger, from anywhere, can reintroduce that class of bug.
+    const scrollWrap = c.closest('.mapwrap');
+    if (scrollWrap && (scrollWrap.scrollLeft || scrollWrap.scrollTop)) {
+      scrollWrap.scrollLeft = 0;
+      scrollWrap.scrollTop = 0;
     }
     const rect = c.getBoundingClientRect();
     // Above .modal's z-index:50 when the logical target is inside a modal (attack/spell
@@ -1719,4 +1729,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.15';
+export { Renderer } from './renderer.js?v=0.6.16';

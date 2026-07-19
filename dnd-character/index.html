@@ -464,7 +464,7 @@
 <div id="modalRoot"></div>
 
 <script src="iso-renderer.js"></script>
-<script type="module" src="iso3d/boot.js?v=0.6.15&t=115"></script>
+<script type="module" src="iso3d/boot.js?v=0.6.16&t=115"></script>
 <script>
 "use strict";
 /* ----------------------------------------------------------------------------
@@ -4796,8 +4796,14 @@ function syncIso3DHost(session, highlightOpts){
       } else if(!inModal){
         window.__iso3dCamKeep=true;
       }
-      // 2D scroll backup (iso3d mode still has map cells for hit-testing)
-      if(p0&&p0.x!=null&&wantFrame) scrollMapToCell(p0.x|0, p0.y|0);
+      // NOTE: used to also call scrollMapToCell() here as a "2D scroll backup" — that
+      // scrolls .mapwrap using classic-2D absolute pixel math sized to the full/uncapped
+      // stage, which is now much bigger than the capped container, so it kept scrolling
+      // .mapwrap by hundreds of px to "center" the PC. The WebGL canvas is position:fixed
+      // and synced to the container's getBoundingClientRect() every frame (host.js), so
+      // that scroll desynced it from its visible box (live report: "offset massively").
+      // The 3D camera already centers via frameOnCell/setCameraFollowTarget above — this
+      // legacy backup was actively fighting it, not helping hit-testing.
       host.onTileClick=(x,y,unit)=>{
         // Prefer the same mapgrid as this mount (modal or main)
         const root=mount.closest('.mapgrid')||mount.closest('.sheet')||document;
@@ -9399,7 +9405,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.174';
+const APP_VERSION='v120.175';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
