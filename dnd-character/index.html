@@ -7354,6 +7354,11 @@ function openAdjacentUseUI(c, s, me){
       else body+=`<p class="muted" style="font-size:12px;margin:8px 0">Nothing for it to interact with nearby.</p>`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='confirmRoll'){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">${esc(pick.desc)}</p>
+        <button class="btn block" id="useRollGo">🎲 Roll ${esc(pick.skillLabel)}</button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='maneuverResult'){
       const r=pick.res;
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">${esc(pick.label)}</p>
@@ -7368,6 +7373,7 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn block" data-usea="shove-prone" style="margin-bottom:8px;text-align:left">🤼 Shove — knock Prone</button>
         <button class="btn block" data-usea="shove-push" style="margin-bottom:8px;text-align:left">🤼 Shove — push 5 ft</button>
         <button class="btn block" data-usea="grapple" style="margin-bottom:8px;text-align:left">🤼 Grapple<small style="display:block;opacity:.75">Grappled: speed 0 until it escapes</small></button>
+        <button class="btn block" data-usea="taunt" style="margin-bottom:8px;text-align:left">😠 Taunt<small style="display:block;opacity:.75">Intimidation vs Insight — success: Frightened of you</small></button>
         <button class="btn block" data-study="1" style="margin-bottom:8px;text-align:left">📖 Recall Knowledge<small style="display:block;opacity:.75">Arcana/History/Nature/Religion vs DC 10+CR — uses your action</small></button>`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
@@ -7408,15 +7414,22 @@ function openAdjacentUseUI(c, s, me){
       if(!res || !res.ok || res.atkTotal==null){ afterManeuver(); return; }   // no roll happened (e.g. blocked by range/no action) — nothing to show
       draw({kind:'maneuverResult', label, res});
     };
-    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='study'?{kind:'foe',mo:pick.mo}:null); }
+    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='confirmRoll'?pick.backTo:pick&&pick.kind==='study'?{kind:'foe',mo:pick.mo}:null); }
     { const ok=$('#useManeuverOk'); if(ok) ok.onclick=afterManeuver; }
-    { const es=$('#useEscape'); if(es) es.onclick=()=>{ const res=maneuverEscape(ad, me, true, log); showManeuverResult('Escape Grapple', res); }; }
-    { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ maneuverHide(ad, me, log); afterManeuver(); }; }
+    // Every maneuver used to roll the instant you tapped it — one click, no visible "this is
+    // the moment of the roll" beat. Now every skill-based Use action routes through a confirm
+    // screen with its own explicit "🎲 Roll" button first, matching the same pick-target-then-
+    // roll rhythm the attack modal already uses — the roll itself only happens on that tap.
+    { const rg=$('#useRollGo'); if(rg) rg.onclick=()=>{ const out=pick.run(); if(out) showManeuverResult(out.label, out.res); else afterManeuver(); }; }
+    { const es=$('#useEscape'); if(es) es.onclick=()=>{ draw({kind:'confirmRoll', desc:'Escape the grapple — Athletics/Acrobatics (your choice) vs the grappler\'s Athletics.', skillLabel:'Athletics/Acrobatics', backTo:null, run:()=>({label:'Escape Grapple', res:maneuverEscape(ad, me, true, log)})}); }; }
+    { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ draw({kind:'confirmRoll', desc:'Attempt to Hide — needs darkness, full cover, or (Skulker) dim light.', skillLabel:'Stealth', backTo:null, run:()=>{ maneuverHide(ad, me, log); return null; }}); }; }
     { const stb=$('#useStabilize'); if(stb) stb.onclick=()=>{
       const al=pick.al;
-      const res=maneuverStabilize(ad, me, al.name, log);
-      if(res.ok && res.success && net.conn){ try{ net.conn.send({t:'stabilize', targetId:al.id}); }catch(e){} }
-      afterManeuver();
+      draw({kind:'confirmRoll', desc:'Stabilize '+al.name+' — Medicine DC 10.', skillLabel:'Medicine', backTo:{kind:'ally',al}, run:()=>{
+        const res=maneuverStabilize(ad, me, al.name, log);
+        if(res.ok && res.success && net.conn){ try{ net.conn.send({t:'stabilize', targetId:al.id}); }catch(e){} }
+        return null;
+      }});
     }; }
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
@@ -7446,16 +7459,18 @@ function openAdjacentUseUI(c, s, me){
       spendServantCommand();
     });
     document.querySelectorAll('[data-study]').forEach(b=>b.onclick=()=>draw({kind:'study', mo:pick.mo}));
-    document.querySelectorAll('[data-studysk]').forEach(b=>b.onclick=()=>{ maneuverStudy(ad, me, pick.mo, b.dataset.studysk, log); afterManeuver(); });
+    document.querySelectorAll('[data-studysk]').forEach(b=>b.onclick=()=>{
+      const sk=b.dataset.studysk, mo=pick.mo, skNames={arcana:'Arcana',history:'History',nature:'Nature',religion:'Religion'};
+      draw({kind:'confirmRoll', desc:'Recall Knowledge about '+esc(mo.name)+' — '+skNames[sk]+' vs DC 10+CR. Uses your action.', skillLabel:skNames[sk], backTo:{kind:'study',mo}, run:()=>{ maneuverStudy(ad, me, mo, sk, log); return null; }});
+    });
     document.querySelectorAll('[data-usea]').forEach(b=>b.onclick=()=>{
       const actId=b.dataset.usea;
       if(pick&&pick.kind==='foe'){
         const mo=pick.mo;
-        let res, label;
-        if(actId==='shove-prone'){ res=maneuverShove(ad, me, mo, 'prone', log); label='Shove ('+mo.name+') — knock Prone'; }
-        else if(actId==='shove-push'){ res=maneuverShove(ad, me, mo, 'push', log); label='Shove ('+mo.name+') — push 5 ft'; }
-        else if(actId==='grapple'){ res=maneuverGrapple(ad, me, mo, log); label='Grapple ('+mo.name+')'; }
-        showManeuverResult(label, res);
+        if(actId==='shove-prone') draw({kind:'confirmRoll', desc:'Shove '+esc(mo.name)+' — knock Prone. Athletics vs Athletics/Acrobatics. Uses one of your attacks.', skillLabel:'Athletics', backTo:pick, run:()=>({label:'Shove ('+mo.name+') — knock Prone', res:maneuverShove(ad, me, mo, 'prone', log)})});
+        else if(actId==='shove-push') draw({kind:'confirmRoll', desc:'Shove '+esc(mo.name)+' — push 5 ft. Athletics vs Athletics/Acrobatics. Uses one of your attacks.', skillLabel:'Athletics', backTo:pick, run:()=>({label:'Shove ('+mo.name+') — push 5 ft', res:maneuverShove(ad, me, mo, 'push', log)})});
+        else if(actId==='grapple') draw({kind:'confirmRoll', desc:'Grapple '+esc(mo.name)+'. Athletics vs Athletics/Acrobatics. Uses one of your attacks.', skillLabel:'Athletics', backTo:pick, run:()=>({label:'Grapple ('+mo.name+')', res:maneuverGrapple(ad, me, mo, log)})});
+        else if(actId==='taunt') draw({kind:'confirmRoll', desc:'Taunt '+esc(mo.name)+'. Intimidation vs Insight. Uses one of your attacks.', skillLabel:'Intimidation', backTo:pick, run:()=>({label:'Taunt ('+mo.name+')', res:maneuverTaunt(ad, me, mo, log)})});
         return;
       }
       if(c.battle&&!hasAction(c)){ flashBanner('No Action left this turn'); return; }
@@ -9802,6 +9817,27 @@ function maneuverGrapple(ad, pcUnit, mo, log){
   sfx('hit');
   return Object.assign({ok:true, success:true}, rollInfo);
 }
+// Taunt (Intimidation): not a core 5e action, but a well-understood variant built on the exact
+// same opposed-check + impose-a-condition machinery Shove/Grapple already use — Intimidation
+// (Cha) vs the target's Insight (Wis); success imposes Frightened (of the taunter) for a few
+// rounds, same default-duration convention SPELL_COND already uses elsewhere. Costs one of
+// your attacks, same resource class as Shove/Grapple in the same foe menu.
+function maneuverTaunt(ad, pcUnit, mo, log){
+  const c=ad.checkSubject(pcUnit);
+  if(gridDist(pcUnit.x,pcUnit.y,mo.x,mo.y)>1){ flashBanner('Too far to taunt — must be adjacent'); return {ok:false}; }
+  if(!qbSpendAttackBudget(c)) return {ok:false};
+  if(c.conditions&&c.conditions.Hidden){ delete c.conditions.Hidden; c.hiddenDC=null; } // a maneuver reveals you like any attack
+  const name=ad.name(pcUnit), moName=ad.name(mo);
+  const res=opposedCheck(c,'intimidation','cha', ad.checkSubject(mo), [['insight','wis']]);
+  const detail='('+res.attacker.total+' vs '+res.defender.total+')';
+  const rollInfo={atkTotal:res.attacker.total, defTotal:res.defender.total, atkSkill:'Intimidation', defSkill:'Insight'};
+  if(!res.success){ log('😠 '+name+' tries to taunt '+moName+' '+detail+' — fails'); flashBanner('Taunt failed'); return Object.assign({ok:true, success:false}, rollInfo); }
+  ad.addCond(mo,'Frightened',3);
+  log('😠 '+name+' taunts '+moName+' '+detail+' — Frightened');
+  flashBanner(moName+' is Frightened of you!');
+  sfx('hit');
+  return Object.assign({ok:true, success:true}, rollInfo);
+}
 // Escape a grapple as your action — the escaper rolls the better of Athletics/Acrobatics,
 // contested by the grappler's Athletics (PHB); a tie favors the grappler (still grappled),
 // which opposedCheck already gives us for free by rolling the grappler as the "attacker".
@@ -10429,7 +10465,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.184';
+const APP_VERSION='v120.185';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

@@ -1112,3 +1112,35 @@ mundane AC untouched; an end-to-end `qbAC` test confirms a buffed PC's AC actual
 between standing inside vs. outside a live-painted Antimagic Field zone. Also spot-verified
 live in a real browser (not just the eval'd test-harness copy): the same buffed-PC-in/out-of-
 field scenario run directly against the served `index.html`'s `QB`/`qbAC` confirms AC 12→10→12.
+
+## Explicit "roll" step for Use-menu maneuvers, and a new Taunt action (v120.185)
+
+**Every skill-based Use-menu action used to roll the instant you tapped it** — Shove/Grapple/
+Escape/Hide/Recall Knowledge/Stabilize collapsed pick-target, roll, and result into one click,
+with no visible "this is the moment of the die lands" beat, unlike the DM's own attack modal
+(pick attack → confirm target → **tap "🎲 Roll to hit"** → see the result). Every one of those
+now routes through a new `confirmRoll` view first — a short description of what's about to
+happen plus an explicit `🎲 Roll <Skill>` button — and the actual `maneuverX(...)` call (and
+the dice) only fires on that tap. The maneuver functions themselves are unchanged (still
+resolve roll+apply atomically in one call, no split return-then-apply phases like Attack's
+damage step needs) — this is purely a UI-pacing fix: an extra confirm screen in front of the
+existing atomic call, not a resolver rewrite.
+
+**New Taunt action.** Not a core 5e rule (5e has no built-in "Taunt"), but a well-understood
+variant built on the *exact* same opposed-check + impose-a-condition machinery Shove/Grapple
+already use: `maneuverTaunt` rolls Intimidation (Cha) vs the target's Insight (Wis); success
+imposes Frightened for 3 rounds (matching this app's existing default-condition-duration
+convention). Costs one of the actor's attacks — the same resource class as Shove/Grapple in
+the same foe menu, not a separate Action. Reachable from the Use menu's foe submenu alongside
+Shove/Grapple/Recall Knowledge. Persuasion/Deception weren't added alongside it: neither has an
+established mechanical effect against a *hostile* monster mid-combat in this engine (no NPC
+disposition/attitude system exists to talk one down), so adding them now would mean inventing
+mechanics with no clear right answer rather than reusing an established pattern — left for a
+follow-up if a concrete use case comes up.
+
+Tests: the existing Shove/Grapple/Escape fixture is reused for `maneuverTaunt`'s success case
+(imposes Frightened, spends an attack, reports Intimidation/Insight in its roll info) and
+failure case (target unaffected). Also spot-verified live end-to-end via Playwright against the
+real running app: opening the Use menu, picking a foe, tapping Taunt shows the confirm screen
+with *zero* roll having happened yet (target's conditions still empty), and only tapping
+"🎲 Roll Intimidation" actually rolls, applies Frightened, and spends the attack.

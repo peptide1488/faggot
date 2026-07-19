@@ -237,6 +237,20 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
   getQB().map.tiles['1,1']='wall';
   T('tileClearFor rejects an actual wall tile', tileClearFor(getQB(),1,1)===false);
   T('tileClearFor rejects out-of-bounds', tileClearFor(getQB(),-1,0)===false && tileClearFor(getQB(),5,0)===false);
+
+  mo.conds=[]; resetTurn(); mo.x=2; mo.y=3;
+  Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
+  const tres=maneuverTaunt(qbAdapter, pc, mo, qbLog);
+  T('Taunt success imposes Frightened on the target', mo.conds.some(x=>x.name==='Frightened'));
+  T('Taunt spends one of the attacker\'s attacks, same resource class as Shove/Grapple', sc.battle.attacksLeft===0);
+  T('Taunt reports Intimidation vs Insight in its roll info', tres.atkSkill==='Intimidation' && tres.defSkill==='Insight');
+
+  mo.conds=[]; resetTurn();
+  Math.random=(()=>{ const seq=[0.01,0.99,0.99]; let i=0; return ()=>seq[i++ % seq.length]; })();
+  maneuverTaunt(qbAdapter, pc, mo, qbLog);
+  T('Taunt failure (defender rolls high) leaves the target unaffected', !mo.conds.some(x=>x.name==='Frightened'));
+
+  Math.random=orig;
   setQB(null);
 }
 
