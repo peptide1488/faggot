@@ -325,6 +325,34 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
   T('needsStabilizing: down and not yet stable/dead', needsStabilizing({hpCur:0,stable:false,deathFail:1})===true);
   T('needsStabilizing refuses a conscious target', needsStabilizing({hpCur:5,stable:false,deathFail:0})===false);
   T('needsStabilizing refuses an already-stable target', needsStabilizing({hpCur:0,stable:true,deathFail:1})===false);
+
+  // "Make the systems" (5): Healer's Kit charges — a real 10-use consumable, spent by an
+  // auto-succeeding kit-stabilize (no Medicine roll) instead of the check-based path above.
+  T('hasHealersKit: false with no kit in inventory', hasHealersKit(medic)===false);
+  medic.items=[{name:"Healer's Kit",qty:1,kind:'gear'}];
+  T('hasHealersKit: true once one is owned', hasHealersKit(medic)===true);
+  medic.battle.action=false; medic.battle.actionsUsed=0;
+  const down3=newCharacter('Down3'); down3.hp={cur:0,max:20}; down3.death={succ:0,fail:2};
+  const orig=Math.random; Math.random=()=>0.01;   // would fail a Medicine roll — kit skips the roll entirely
+  const kitRes=maneuverStabilize(qbAdapter, {side:'pc',c:medic,x:0,y:0}, down3.name, qbLog, {kit:true});
+  Math.random=orig;
+  T('maneuverStabilize with a kit auto-succeeds even on a would-be-failing roll', kitRes.success===true);
+  T('maneuverStabilize with a kit lazily initializes and spends one of 10 charges', medic.healerKitCharges===9);
+  T('maneuverStabilize: no Healer feat → no bonus HP reported', kitRes.healerFeatHp===0);
+
+  medic.feats=[{name:'Healer'}];
+  medic.battle.action=false; medic.battle.actionsUsed=0;
+  const down4=newCharacter('Down4'); down4.hp={cur:0,max:20}; down4.death={succ:0,fail:1};
+  const kitRes2=maneuverStabilize(qbAdapter, {side:'pc',c:medic,x:0,y:0}, down4.name, qbLog, {kit:true});
+  T('maneuverStabilize with a kit + Healer feat reports +1 HP', kitRes2.healerFeatHp===1);
+  T('a second kit use spends a second charge (9 → 8)', medic.healerKitCharges===8);
+
+  medic.healerKitCharges=0;
+  medic.battle.action=false; medic.battle.actionsUsed=0;
+  const rollOrig=Math.random; Math.random=()=>0.99;   // would succeed on a roll — proves the fallback path, not a fluke
+  const noKitRes=maneuverStabilize(qbAdapter, {side:'pc',c:medic,x:0,y:0}, 'Down5', qbLog, {kit:true});
+  Math.random=rollOrig;
+  T('maneuverStabilize falls back to a real Medicine roll once charges are exhausted', noKitRes.success===true && medic.healerKitCharges===0);
   T('needsStabilizing refuses a dead target (3 failed death saves)', needsStabilizing({hpCur:0,stable:false,deathFail:3})===false);
 
   // Taking more damage at 0 HP ends a Stabilize (PHB) — applyHp must clear c.stable.

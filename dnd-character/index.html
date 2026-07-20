@@ -842,6 +842,11 @@ const FORGE_GEAR={
 function totalCoins(c){ const q=c.currency||{}; return (q.cp||0)+(q.sp||0)+(q.ep||0)+(q.gp||0)+(q.pp||0); }
 function grantStartingGold(c){ if(totalCoins(c)===0) c.currency.gp=CLASS_GOLD[c.cls]||60; }
 function addGearItem(c, name){ const ex=(c.items||[]).find(it=>it.name===name && (it.kind==='gear'||!it.kind)); if(ex) ex.qty=(ex.qty||1)+1; else c.items.push({name, qty:1, kind:'gear'}); }
+// A Healer's Kit has 10 uses (PHB); tracked as one flat counter on the character rather than
+// per-item, the same simplification Goodberries already uses. Lazily defaults to 10 the first
+// time it's actually spent, not at purchase — nothing to migrate for characters who bought one
+// before this system existed.
+function hasHealersKit(c){ return (c.items||[]).some(it=>it.name==="Healer's Kit" && (it.qty||1)>0); }
 function addEssentials(c){ ESSENTIALS.forEach(([n,q])=>{ for(let k=0;k<q;k++) addGearItem(c,n); }); }
 function forgeEquip(c){ const g=FORGE_GEAR[c.cls]; if(!g) return;
   if(g.w) c.items.push({name:g.w,kind:'weapon',qty:1,equipped:true});
@@ -6238,7 +6243,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   // Stabilize targets ANOTHER connected player — the actor already rolled locally (see
   // maneuverStabilize) and only needs the DM to relay the result to the target's own device,
   // since that's the only device whose c.stable/death fields are real.
-  else if(d.t==='stabilize'){ dmSend(d.targetId,{t:'stabilized'}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' stabilizes an ally'); }
+  else if(d.t==='stabilize'){ dmSend(d.targetId,{t:'stabilized', healHp:d.healHp||0}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' stabilizes an ally'); }
   // Channel Divinity: Preserve Life healing ANOTHER connected player — same "can't mutate
   // another player's real character from here" reason as Stabilize above; relayed through the
   // existing generic 'apply' message (already used for DM-driven HP deltas) so the target's own
@@ -6376,7 +6381,7 @@ function playerOnData(d){ if(!d) return;
       flashBanner((d.name?d.name+' — ':'')+'you are '+cond);
     } else flashBanner((d.name?d.name+' — ':'')+'you resist it');
     render();
-  } else if(d.t==='stabilized'){ const c=playerChar(); if(c){ c.stable=true; c.death={succ:0,fail:0}; save(); render(); playerHello(); flashBanner('🩹 You are stabilized'); } }
+  } else if(d.t==='stabilized'){ const c=playerChar(); if(c){ c.stable=true; c.death={succ:0,fail:0}; if(d.healHp) applyHp(c, d.healHp); save(); render(); playerHello(); flashBanner('🩹 You are stabilized'+(d.healHp?' (+'+d.healHp+' HP)':'')); } }
   // Echo Knight — Reclaim Potential: the DM applied damage that destroyed our echo (its real
   // hp.temp field only exists on our own device, same reason 'stabilized' above can't just be
   // applied DM-side) — resolve it locally, same as every other "DM prompts, we roll/apply,
@@ -8424,8 +8429,10 @@ function openAdjacentUseUI(c, s, me){
       body+=`<button class="btn ghost block" id="useClose" style="margin-top:10px">Cancel</button>`;
     } else if(pick.kind==='ally'){
       const al=pick.al;
+      const kitOk=hasHealersKit(c) && (c.healerKitCharges==null?10:c.healerKitCharges)>0;
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(al.name)}</b> is down at (${al.x},${al.y}) — Medicine DC 10. Uses your action.</p>
-        <button class="btn block" id="useStabilize" style="margin-bottom:8px;text-align:left">🩹 Stabilize</button>`;
+        <button class="btn block" id="useStabilize" style="margin-bottom:8px;text-align:left">🩹 Stabilize</button>
+        ${kitOk?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="useStabKit" checked> 🧰 Use Healer's Kit <span class="muted" style="font-size:11px">(auto-succeeds, no roll · ${c.healerKitCharges==null?10:c.healerKitCharges} charge${(c.healerKitCharges==null?10:c.healerKitCharges)===1?'':'s'} left${hasFeat(c,'Healer')?' · +1 HP':''})</span></label>`:''}`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='manifestEchoPick'){
@@ -8667,9 +8674,10 @@ function openAdjacentUseUI(c, s, me){
     { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ draw({kind:'confirmRoll', desc:'Attempt to Hide — needs darkness, full cover, or (Skulker) dim light.', skillLabel:'Stealth', backTo:null, run:()=>{ maneuverHide(ad, me, log); return null; }}); }; }
     { const stb=$('#useStabilize'); if(stb) stb.onclick=()=>{
       const al=pick.al;
-      draw({kind:'confirmRoll', desc:'Stabilize '+al.name+' — Medicine DC 10.', skillLabel:'Medicine', backTo:{kind:'ally',al}, run:()=>{
-        const res=maneuverStabilize(ad, me, al.name, log);
-        if(res.ok && res.success && net.conn){ try{ net.conn.send({t:'stabilize', targetId:al.id}); }catch(e){} }
+      const kb=$('#useStabKit'); const useKit=!!(kb&&kb.checked);
+      draw({kind:'confirmRoll', desc:'Stabilize '+al.name+(useKit?' — healer\'s kit (auto-succeeds).':' — Medicine DC 10.'), skillLabel:'Medicine', backTo:{kind:'ally',al}, run:()=>{
+        const res=maneuverStabilize(ad, me, al.name, log, {kit:useKit});
+        if(res.ok && res.success && net.conn){ try{ net.conn.send({t:'stabilize', targetId:al.id, healHp:res.healerFeatHp||0}); }catch(e){} }
         return null;
       }});
     }; }
@@ -11610,16 +11618,26 @@ function maneuverStudy(ad, pcUnit, mo, skillKey, log){
 // function so it stays unit-testable even though maneuverStabilize itself no longer touches
 // a target object directly.
 function needsStabilizing(p){ return (p.hpCur||0)<=0 && !p.stable && (p.deathFail||0)<3; }
-function maneuverStabilize(ad, pcUnit, targetName, log){
+function maneuverStabilize(ad, pcUnit, targetName, log, opts){
   const c=ad.checkSubject(pcUnit);
   if(!hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
+  // Healer's Kit (PHB tool rule): a kit auto-stabilizes, no Medicine roll needed, at the cost
+  // of one of its 10 uses. Healer feat: that same kit-stabilize also restores 1 HP.
+  const useKit = !!(opts&&opts.kit) && hasHealersKit(c) && (c.healerKitCharges==null?10:c.healerKitCharges)>0;
   spendAction(c);
-  const adv=skillCheckAdvantage(c,'medicine','wis');
-  const r=rollSkillCheck(c,'medicine','wis',{adv:adv.adv});
-  const ok=r.total>=10;
-  log('⚕️ '+ad.name(pcUnit)+' tries to stabilize '+targetName+' ('+r.total+' vs DC 10) — '+(ok?'stable':'fails'));
+  let ok;
+  if(useKit){
+    c.healerKitCharges = (c.healerKitCharges==null?10:c.healerKitCharges) - 1;
+    ok=true;
+    log('🩹 '+ad.name(pcUnit)+' uses a healer\'s kit to stabilize '+targetName+' ('+c.healerKitCharges+' charge'+(c.healerKitCharges===1?'':'s')+' left)');
+  } else {
+    const adv=skillCheckAdvantage(c,'medicine','wis');
+    const r=rollSkillCheck(c,'medicine','wis',{adv:adv.adv});
+    ok=r.total>=10;
+    log('⚕️ '+ad.name(pcUnit)+' tries to stabilize '+targetName+' ('+r.total+' vs DC 10) — '+(ok?'stable':'fails'));
+  }
   flashBanner(ok?targetName+' is stabilized':'Stabilize failed');
-  return {ok:true, success:ok};
+  return {ok:true, success:ok, healerFeatHp: (ok && useKit && hasFeat(c,'Healer')) ? 1 : 0};
 }
 /** Weapon / spell attack vs a hazard barrel (no AC dance — objects don't dodge). */
 function qbStrikeObject(pc, objEntry, atk){
@@ -12149,7 +12167,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.203';
+const APP_VERSION='v120.204';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

@@ -2208,3 +2208,39 @@ Combatant), Battle Master maneuvers/superiority dice (Martial Adept), Unseen Ser
 wiring through `openSummonSpellUI`, and the smaller "genuinely borderline" feats (Athlete, Actor,
 Grappler, Inspiring Leader, Charger, Dungeon Delver, Crossbow Expert, Spell Sniper's remaining
 clauses). Continuing in the next pass.
+
+## "Make the systems" (5): Healer's Kit charges (v120.204)
+
+- `hasHealersKit(c)`: checks `c.items` for an owned Healer's Kit — the shop item already existed
+  (`ADV_GEAR`), it just never did anything mechanically.
+- `c.healerKitCharges`: a flat 10-use counter, the same simplification Goodberries already uses
+  for a physical consumable rather than tracking per-item charges. Lazily initializes to 10 the
+  first time it's actually spent (nothing to migrate for characters who already own a kit).
+- `maneuverStabilize` (the existing shared Stabilize function — already adapter-based across QB/
+  player-net) gained an `opts.kit` flag: when set and a kit with charges remains, it skips the
+  Medicine DC 10 roll entirely (PHB tool rule — a healer's kit auto-stabilizes) and spends one
+  charge instead. If the character also has the Healer feat, the kit-stabilize additionally
+  reports 1 HP of healing (`healerFeatHp` on the returned result) — RAW: "that creature also
+  regains 1 hit point" specifically when a kit (not a bare roll) is used to stabilize them.
+  Falls back to the normal roll automatically once charges hit 0.
+- Wired into the one real UI surface Stabilize already has (player-net's Use-menu ally screen —
+  Quick Battle is solo, no second ally to stabilize, an existing documented limitation): a
+  "🧰 Use Healer's Kit" checkbox appears next to the Stabilize button whenever the character owns
+  one with charges left, defaulting checked. The `healHp` amount now rides along the existing
+  stabilize/stabilized network relay (player → DM → target device) so the Healer feat's +1 HP
+  actually lands on the target's own sheet via `applyHp`, not just the actor's.
+- Scope not covered this pass: the Healer feat's OTHER action — "restore 1d6+4 + the creature's
+  hit dice, once per rest" to an already-conscious injured ally — needs its own target list (any
+  nearby ally, not just a downed one) and its own once-per-rest-per-target tracking. Flagged
+  honestly as remaining work rather than half-built into the Stabilize flow it doesn't belong in.
+
+Tests: 8 new assertions — `hasHealersKit` gating, kit-stabilize auto-succeeding on a
+would-otherwise-fail roll, charge decrementing from a lazy 10, the Healer feat's +1 HP only
+appearing when both the kit AND the feat are present, and the automatic fallback to a real
+Medicine roll once charges are exhausted.
+
+Remaining "make the systems" items: the Healer feat's bigger heal action (above), a mount system
+(Mounted Combatant), Battle Master maneuvers/superiority dice (Martial Adept), Unseen Servant's
+ritual wiring through `openSummonSpellUI`, and the smaller "genuinely borderline" feats (Athlete,
+Actor, Grappler, Inspiring Leader, Charger, Dungeon Delver, Crossbow Expert, Spell Sniper's
+remaining clauses). Continuing in the next pass.
