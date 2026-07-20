@@ -646,6 +646,14 @@ const SUBCLASS_FEATURES = {
     [11,'Tranquility','At the end of a long rest, gain the effect of Sanctuary (DC = your ki save DC) until your next long rest.'],
     [17,'Quivering Palm','Spend 3 ki on an unarmed strike hit to set imperceptible vibrations; later, spend your action to force a Con save — fail and it drops to 0 HP, succeed and it takes 10d10 necrotic.'],
   ],
+  'Devotion':[
+    [3,'Oath Spells','Protection from Evil and Good, Sanctuary always prepared (5th: Lesser Restoration, Zone of Truth; 9th: Beacon of Hope, Dispel Magic; 13th: Freedom of Movement, Guardian of Faith; 17th: Commune, Flame Strike).'],
+    [3,'Channel Divinity: Sacred Weapon','Action: +Cha mod (min +1) to attack rolls with one weapon for 1 minute; it sheds light and becomes magical.'],
+    [3,'Channel Divinity: Turn the Unholy','Action: fiends/undead within 30 ft make a Wisdom save or flee for 1 minute.'],
+    [7,'Aura of Devotion','You can\'t be Charmed while conscious.'],
+    [15,'Purity of Spirit','You are always under the effect of Protection from Evil and Good.'],
+    [20,'Holy Nimbus','Action: bright light 30 ft; enemies starting their turn in it take 10 radiant; advantage on saves vs fiend/undead spells. 1 minute, once per long rest.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -848,6 +856,10 @@ function weaponProficient(c,w){
 // explicitly or, if it got lost upstream (e.g. offhandWeapons), it rides along as w._it.
 function weaponToHit(c,w,it){ it=it||(w&&w._it); const ab=weaponAbil(c,w); let b=mod(abil(c,ab)) + (weaponProficient(c,w)?profBonus(c):0);
   if(c.fightingStyle==='Archery' && w.type==='ranged') b+=2;                          // Archery style: +2 ranged attack rolls
+  // Channel Divinity: Sacred Weapon (Devotion 3rd) — +Cha mod (min +1) to attack rolls with
+  // the imbued weapon for 1 minute. Self-contained here rather than a generic effect-mods.atk
+  // field, since this is the only feature in the app that needs one right now.
+  if((c.effects||[]).some(e=>e.name==='Sacred Weapon')) b+=Math.max(1,mod(abil(c,'cha')));
   return b+((it&&it.magicBonus)||0); }
 function weaponDmgBonus(c,w,it){ it=it||(w&&w._it); const ab=weaponAbil(c,w); let b=mod(abil(c,ab)); if(isRaging(c)&&w.type==='melee'&&ab==='str') b+=rageDamage(c);
   if(c.fightingStyle==='Dueling' && w.type==='melee' && !/two-handed/.test(w.props||'')) b+=2;   // Dueling: +2 dmg, one-handed melee
@@ -899,6 +911,20 @@ function isOpenHandMonk(c,lvl){ return !!(c && c.cls==='Monk' && c.subclass==='O
 // Hand Technique, Tranquility, Quivering Palm) shares this one DC.
 function kiDC(c){ return 8+profBonus(c)+mod(abil(c,'wis')); }
 function kiMax(c){ return Number(c.level)||1; }
+function isDevotionPaladin(c,lvl){ return !!(c && c.cls==='Paladin' && c.subclass==='Devotion' && (Number(c.level)||1)>=(lvl||3)); }
+// Divine Sense (1st) and Lay on Hands (1st) were both flavor-text-only base Paladin features
+// before this pass (Divine Smite was already real — see attackFlow's afSmite rider).
+function divineSenseMax(c){ return Math.max(1, 1+mod(abil(c,'cha'))); }   // long rest only (PHB)
+function layOnHandsMax(c){ return 5*(Number(c.level)||1); }               // long rest only (PHB)
+// Channel Divinity (base Paladin, 3rd level): unlike Cleric's, this never grows past 1 use from
+// the base class — refills on short or long rest. A distinct field (paladinCDLeft) from
+// Cleric's channelDivinityLeft since the two classes' progressions differ.
+function paladinCDMax(c){ return 1; }
+// Monster "type" (celestial/fiend/undead) isn't tracked anywhere in MONSTERS_5E — inferred from
+// the existing sprite key instead of adding a whole new data column, the same
+// minimal-footprint approach BEAST_SHAPES took for Wild Shape's missing content.
+function monsterIsUndead(mo){ return ['skeleton','zombie','ghost'].includes(mo&&mo.sprite); }
+function monsterIsFiend(mo){ return mo&&mo.sprite==='demon'; }
 // Bardic Inspiration's own resource pool (the base Bard class feature, never mechanized in
 // this app before now — CLASS_FEATURES only ever had flavor text for it) — built here because
 // College of Lore's Cutting Words/Peerless Skill both spend a use of it directly for an
@@ -911,6 +937,12 @@ function bardicInspDie(c){ const l=Number(c.level)||1; return l>=15?12:l>=10?10:
 // 'cond' message handler for DM-hosted — a monster's own fear/charm attack sets this via
 // exactly those two paths in QB vs. DM-hosted, so this needed both, not just one).
 function mindlessRageBlocks(c, cond){ return !!(c && isRaging(c) && isBerserker(c,6) && (cond==='Charmed'||cond==='Frightened')); }
+// Aura of Devotion (Devotion 7th): you can't be Charmed while conscious. RAW also protects
+// friendly creatures within 10/30 ft of the paladin — scoped to self-only here, the same
+// self-only simplification Mindless Rage above already established (checking OTHER party
+// members' distance to a paladin at this exact condition-application choke point would need
+// session/party context this function doesn't have; a real, documented scope limit).
+function auraOfDevotionBlocks(c, cond){ return !!(c && isDevotionPaladin(c,7) && cond==='Charmed' && (c.hp.cur>0) && !(c.conditions&&c.conditions.Unconscious)); }
 // Shared "Uses = CON mod (min 1)" formula — both Unleash Incarnation and Reclaim Potential use
 // the exact same real-RAW resource-pool size, tracked as two independent counters.
 function echoResourceMax(c){ return Math.max(1, mod(abil(c,'con'))); }
@@ -1002,6 +1034,7 @@ function battleCard(c){
       ${c.cls==='Barbarian'?`<button class="btn sm" id="rageBtn" style="flex:1;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
       ${c.cls==='Druid' && (Number(c.level)||1)>=2?`<button class="btn sm" id="wildShapeBtn" style="flex:1;${c.wildShape?'background:var(--accent2);border-color:var(--accent2)':''}">🐾 ${c.wildShape?c.wildShape.name:'Wild Shape'}</button>`:''}
       ${c.cls==='Monk' && (Number(c.level)||1)>=2?`<button class="btn sm" id="kiBtn" style="flex:1">🥋 Ki (${c.kiLeft==null?kiMax(c):c.kiLeft})</button>`:''}
+      ${c.cls==='Paladin'?`<button class="btn sm" id="palBtn" style="flex:1">✝️ Paladin</button>`:''}
     </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
     <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">Battle log</div>
@@ -1162,6 +1195,118 @@ function openKiUI(c){
     flashBanner('🕉 Wholeness of Body — +'+heal+' HP');
     $('#modalRoot').innerHTML=''; save(); render();
   }; }
+}
+// Paladin — Divine Sense, Lay on Hands, Channel Divinity (Sacred Weapon / Turn the Unholy),
+// Holy Nimbus. One modal covering every resource-spending base/Devotion feature, mirroring
+// openKiUI/openWildShapeUI's shape (self-contained, reads battleSession() for range checks).
+function openPaladinUI(c){
+  if(c.divineSenseLeft==null) c.divineSenseLeft=divineSenseMax(c);
+  if(c.layOnHandsLeft==null) c.layOnHandsLeft=layOnHandsMax(c);
+  if((Number(c.level)||1)>=3 && c.paladinCDLeft==null) c.paladinCDLeft=paladinCDMax(c);
+  const s=battleSession();
+  const me=s ? ((typeof QB!=='undefined'&&QB&&QB.active) ? s.players[0] : (s.players||[]).find(p=>p.id===net.peer.id)) : null;
+  const sacredWeaponOn=(c.effects||[]).some(e=>e.name==='Sacred Weapon');
+  const canHolyNimbus=isDevotionPaladin(c,20) && !c.holyNimbusUsed;
+  $('#modalRoot').innerHTML=`<div class="modal" id="palModal"><div class="sheet"><div class="grip"></div>
+    <h2>✝️ Paladin</h2>
+    <button class="btn block" id="palDivineSense" style="margin-bottom:8px;text-align:left"${(c.divineSenseLeft||0)<=0?' disabled style="opacity:.5"':''}>👁 Divine Sense (${c.divineSenseLeft} left)<small style="display:block;opacity:.75">Action — detect celestials/fiends/undead within 60 ft</small></button>
+    <button class="btn block" id="palLayOnHands" style="margin-bottom:8px;text-align:left"${(c.layOnHandsLeft||0)<=0||!me?' disabled style="opacity:.5"':''}>🖐 Lay on Hands (${c.layOnHandsLeft||0} HP left)<small style="display:block;opacity:.75">Action, touch — heal any amount from the pool, or spend 5 to cure disease/poison</small></button>
+    ${(Number(c.level)||1)>=3?`<button class="btn block" id="palSacredWeapon" style="margin-bottom:8px;text-align:left"${(!sacredWeaponOn&&(c.paladinCDLeft||0)<=0)?' disabled style="opacity:.5"':''}>⚔ ${sacredWeaponOn?'Sacred Weapon — ARMED (tap to end)':'Channel Divinity: Sacred Weapon'}<small style="display:block;opacity:.75">${sacredWeaponOn?'Ends early — no cost':'Action — +Cha mod (min +1) to hit, 1 minute ('+(c.paladinCDLeft||0)+' use'+((c.paladinCDLeft||0)===1?'':'s')+' left)'}</small></button>
+      <button class="btn block" id="palTurnUnholy" style="margin-bottom:8px;text-align:left"${(c.paladinCDLeft||0)<=0?' disabled style="opacity:.5"':''}>☀ Channel Divinity: Turn the Unholy<small style="display:block;opacity:.75">Action — fiends/undead within 30 ft: Wis save or flee (${c.paladinCDLeft||0} use${(c.paladinCDLeft||0)===1?'':'s'} left)</small></button>`:''}
+    ${canHolyNimbus?`<button class="btn block" id="palHolyNimbus" style="margin-bottom:8px;text-align:left">☀ Holy Nimbus<small style="display:block;opacity:.75">Action — bright light 30 ft, 10 radiant to enemies starting their turn in it, 1 minute. Once per long rest</small></button>`:''}
+    <button class="btn ghost block" id="palClose">Close</button>
+  </div></div>`;
+  $('#palModal').onclick=e=>{ if(e.target.id==='palModal') $('#modalRoot').innerHTML=''; };
+  $('#palClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  { const ds=$('#palDivineSense'); if(ds) ds.onclick=()=>{
+    if((c.divineSenseLeft||0)<=0){ flashBanner('No Divine Sense uses left — long rest to recharge'); return; }
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    if(c.battle) spendAction(c);
+    c.divineSenseLeft--;
+    let msg='Divine Sense — nothing detected within 60 ft';
+    if(s && me){
+      const relevant=(s.monsters||[]).filter(mo=>mo.hp>0 && gridDist(me.x,me.y,mo.x,mo.y)<=12 && (monsterIsUndead(mo)||monsterIsFiend(mo)));
+      if(relevant.length) msg='Divine Sense — '+relevant.map(mo=>mo.name+' ('+(monsterIsUndead(mo)?'undead':'fiend')+')').join(', ');
+    }
+    logChange(c,'👁 '+msg); flashBanner(msg);
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  }; }
+  { const lh=$('#palLayOnHands'); if(lh) lh.onclick=()=>{ $('#modalRoot').innerHTML=''; openLayOnHandsTarget(c, me); }; }
+  { const sw=$('#palSacredWeapon'); if(sw) sw.onclick=()=>{
+    if(sacredWeaponOn){ c.effects=(c.effects||[]).filter(e=>e.name!=='Sacred Weapon'); logChange(c,'⚔ Sacred Weapon ends'); flashBanner('Sacred Weapon ends'); $('#modalRoot').innerHTML=''; save(); render(); return; }
+    if((c.paladinCDLeft||0)<=0){ flashBanner('No Channel Divinity left — rest to recharge'); return; }
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    if(c.battle) spendAction(c);
+    c.paladinCDLeft--;
+    addEffect(c,'Sacred Weapon',{rounds:10, note:'+'+Math.max(1,mod(abil(c,'cha')))+' to hit; bright light 20 ft/dim 20 ft.'});
+    logChange(c,'⚔ Channel Divinity: Sacred Weapon');
+    flashBanner('⚔ Sacred Weapon — +'+Math.max(1,mod(abil(c,'cha')))+' to hit for 1 minute');
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  }; }
+  { const tu=$('#palTurnUnholy'); if(tu) tu.onclick=()=>{
+    if((c.paladinCDLeft||0)<=0){ flashBanner('No Channel Divinity left — rest to recharge'); return; }
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    if(c.battle) spendAction(c);
+    c.paladinCDLeft--;
+    const dc=8+profBonus(c)+mod(abil(c,'cha'));
+    const ad = (typeof QB!=='undefined'&&QB&&QB.active) ? qbAdapter : (net&&net.role==='player') ? playerNetAdapter : null;
+    let n=0;
+    if(s && me && ad){
+      (s.monsters||[]).filter(mo=>mo.hp>0 && gridDist(me.x,me.y,mo.x,mo.y)<=6 && (monsterIsUndead(mo)||monsterIsFiend(mo))).forEach(mo=>{
+        const roll=rnd(20)+(ad.saveBonus?ad.saveBonus(mo,'wis'):0);
+        if(roll<dc){ n++; ad.addCond(mo,'Frightened',10); logChange(c,'☀ Turns '+mo.name+' (Wis '+roll+' vs DC '+dc+')'); }
+      });
+    }
+    flashBanner(n?'☀ Turn the Unholy — '+n+' creature'+(n===1?'':'s')+' turned':'☀ Turn the Unholy — nothing in range resisted (or nothing to turn)');
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  }; }
+  { const hn=$('#palHolyNimbus'); if(hn) hn.onclick=()=>{
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    if(c.battle) spendAction(c);
+    c.holyNimbusUsed=true;
+    addEffect(c,'Holy Nimbus',{rounds:10, note:'Bright light 30 ft — enemies starting their turn in it take 10 radiant. Advantage on saves vs fiend/undead spells.'});
+    logChange(c,'☀ Holy Nimbus');
+    flashBanner('☀ Holy Nimbus — 1 minute');
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  }; }
+}
+// Lay on Hands: heal from the pool (any amount, capped at what's left) touching self or an
+// adjacent connected player — the same self-vs-other-player round-trip shape Preserve Life
+// already established (self applies locally, another player routes through the DM via the
+// existing generic 'apply' message).
+function openLayOnHandsTarget(c, me){
+  const s=battleSession();
+  const targets=[{self:true,id:'me',name:c.name}];
+  if(s && me && net && net.role==='player'){ (s.players||[]).filter(p=>p.id!==net.peer.id && gridDist(me.x,me.y,p.x,p.y)<=1).forEach(p=>targets.push({self:false,id:p.id,name:p.name})); }
+  $('#modalRoot').innerHTML=`<div class="modal" id="lohModal"><div class="sheet"><div class="grip"></div>
+    <h2>🖐 Lay on Hands</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">${c.layOnHandsLeft||0} HP left in the pool. Touch — action.</p>
+    ${targets.map((t,i)=>`<div class="listrow"><div class="nm">${esc(t.name)}</div><input type="number" id="loh-${i}" placeholder="HP" style="max-width:70px"><button class="btn sm" data-lohheal="${i}">Heal</button></div>`).join('')}
+    <button class="btn ghost block" id="lohCureBtn" style="margin-top:8px">Cure disease/poison instead (5 HP from pool, self)</button>
+    <button class="btn ghost block" id="lohClose" style="margin-top:8px">Close</button>
+  </div></div>`;
+  $('#lohModal').onclick=e=>{ if(e.target.id==='lohModal') $('#modalRoot').innerHTML=''; };
+  $('#lohClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  document.querySelectorAll('[data-lohheal]').forEach(b=>b.onclick=()=>{
+    const i=Number(b.dataset.lohheal), t=targets[i]; const amt=Math.max(0,Math.min(c.layOnHandsLeft||0, Number($('#loh-'+i).value)||0));
+    if(amt<=0) return;
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    if(c.battle) spendAction(c);
+    c.layOnHandsLeft=(c.layOnHandsLeft||0)-amt;
+    if(t.self){ applyHp(c, amt); logChange(c,'🖐 Lay on Hands — heals '+amt+' HP'); }
+    else { if(net.conn) try{ net.conn.send({t:'healApply', targetId:t.id, amount:amt, from:c.name}); }catch(e){} logChange(c,'🖐 Lay on Hands — sends '+amt+' HP to '+t.name); }
+    flashBanner('🖐 Lay on Hands — '+amt+' HP');
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  });
+  $('#lohCureBtn').onclick=()=>{
+    if((c.layOnHandsLeft||0)<5){ flashBanner('Needs 5 HP left in the pool'); return; }
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    if(c.battle) spendAction(c);
+    c.layOnHandsLeft-=5;
+    logChange(c,'🖐 Lay on Hands — cures a disease or neutralizes a poison');
+    flashBanner('🖐 Cured!');
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  };
 }
 function openMove(c){
   if(!c.battle) return; const b=c.battle;
@@ -1739,7 +1884,20 @@ function preparedMax(c){ const l=Number(c.level)||1, m=mod(abil(c,c.spellAbility
   if(['Wizard','Cleric','Druid'].includes(c.cls)) return Math.max(1, m+l);
   if(['Paladin','Artificer'].includes(c.cls)) return Math.max(1, m+Math.floor(l/2));
   return null; }
-function preparedCount(c){ return (c.spells||[]).filter(s=>s.prepared && (s.level||0)>0).length; }
+function preparedCount(c){ return (c.spells||[]).filter(s=>s.prepared && (s.level||0)>0 && !s.oathSpell).length; }
+// Oath Spells (Paladin subclass, e.g. Oath of Devotion 3rd/5th/9th/13th/17th): always prepared,
+// don't count against preparedMax. This app has no "spells granted automatically, not chosen"
+// mechanism anywhere else (Cleric Divine Domain spells have the exact same real gap — out of
+// scope for this pass, which only touches Oath of Devotion) — synced into c.spells (marked
+// `oathSpell:true` so preparedCount above skips them) from ensureFields, the same self-healing
+// migration spot every other derived field in this app already gets fixed up in.
+const OATH_SPELLS = { 'Devotion': {3:['Protection from Evil and Good','Sanctuary'],5:['Lesser Restoration','Zone of Truth'],9:['Beacon of Hope','Dispel Magic'],13:['Freedom of Movement','Guardian of Faith'],17:['Commune','Flame Strike']} };
+function oathSpellNames(c){
+  const table=c && OATH_SPELLS[c.subclass]; if(!table) return [];
+  const lvl=Number(c.level)||1, out=[];
+  Object.keys(table).forEach(l=>{ if(lvl>=Number(l)) out.push(...table[l]); });
+  return out;
+}
 // Sorcerer Font of Magic (PHB): sorcery points = sorcerer level, from level 2; refresh on a long rest.
 function sorcMax(c){ return (c.cls==='Sorcerer' && (Number(c.level)||1)>=2) ? Number(c.level) : 0; }
 function sorcCur(c){ const m=sorcMax(c); if(!m) return 0; return Math.max(0, Math.min(m, c.sorcPts!=null?Number(c.sorcPts):m)); }
@@ -3244,6 +3402,7 @@ function ensureFields(c){
   if(c.portrait===undefined) c.portrait='';
   if(!c.effects) c.effects=[];
   if(Array.isArray(c.items)) c.items.forEach(it=>{ if(it && !it.kind) it.kind='gear'; });
+  oathSpellNames(c).forEach(name=>{ if(!c.spells.some(s=>s.name.toLowerCase()===name.toLowerCase())){ const m=spellMeta(name); c.spells.push({name, level:m?m.l:0, prepared:true, oathSpell:true}); } });
   return c;
 }
 function setPortrait(file){
@@ -3664,6 +3823,7 @@ function spendHitDie(c){
   if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: short or long rest
   if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: short or long rest
   if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: short or long rest
+  if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: short or long rest
   logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
@@ -4520,6 +4680,7 @@ function renderCombat(c){
   { const rb2=$('#rageBtn2'); if(rb2) rb2.addEventListener('click',()=>rageButtonClick(c)); }
   { const wsb=$('#wildShapeBtn'); if(wsb) wsb.addEventListener('click',()=>openWildShapeUI(c)); }
   { const kib=$('#kiBtn'); if(kib) kib.addEventListener('click',()=>openKiUI(c)); }
+  { const pab=$('#palBtn'); if(pab) pab.addEventListener('click',()=>openPaladinUI(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }   // tap to spend/reset (cycles for multi-action)
     else if(k==='bonus'||k==='reaction') b[k]=!b[k];
@@ -4809,6 +4970,9 @@ function renderSpells(c){
     if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
     if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: long rest too
     if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: long rest too
+    if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: long rest too
+    if(c.cls==='Paladin'){ c.divineSenseLeft=divineSenseMax(c); c.layOnHandsLeft=layOnHandsMax(c); }   // long rest only (PHB)
+    if(isDevotionPaladin(c,20)) c.holyNimbusUsed=false;   // once per long rest
     if(c.cls==='Monk' && (Number(c.level)||1)>=6) c.wholenessUsed=false;   // Wholeness of Body: long rest only
     // Tranquility (11th): grants the real Sanctuary EFFECT (same name, same dc field every
     // existing Sanctuary check already reads — sanctuaryDC, dmOpportunityAttack's block, etc.
@@ -5631,7 +5795,11 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   // another player's real character from here" reason as Stabilize above; relayed through the
   // existing generic 'apply' message (already used for DM-driven HP deltas) so the target's own
   // device applies it and resyncs itself via playerHello().
-  else if(d.t==='preserveLifeApply'){ dmSend(d.targetId,{t:'apply', delta:d.amount}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' channels Preserve Life for '+d.amount+' HP'); }
+  // Generic "heal another connected player" relay — shared by Preserve Life and Lay on Hands
+  // (any feature that heals someone other than the caster needs the same round-trip, since the
+  // caster's device can't mutate another player's real HP directly). Reuses the existing
+  // generic 'apply' message the same way Stabilize's own relay does.
+  else if(d.t==='healApply'){ dmSend(d.targetId,{t:'apply', delta:d.amount}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' heals an ally for '+d.amount+' HP'+(d.from?' ('+d.from+')':'')); }
   // A DM-controlled monster's Shove/Grapple against a connected player (see dmMonsterAttack) —
   // the targeted player's own device rolled its real Athletics/Acrobatics and applied the
   // effect to itself already (conditions sync back via the normal hello/moncond-style resync,
@@ -5736,7 +5904,7 @@ function playerOnData(d){ if(!d) return;
     render();
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
   else if(d.t==='oachance'){ const c=playerChar(); if(c) playerOpportunityPrompt(c, d); }
-  else if(d.t==='cond'){ const c=playerChar(); if(c){ if(d.on!==false && mindlessRageBlocks(c,d.name)) return; if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
+  else if(d.t==='cond'){ const c=playerChar(); if(c){ if(d.on!==false && (mindlessRageBlocks(c,d.name)||auraOfDevotionBlocks(c,d.name))) return; if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
   else if(d.t==='hazard'){
     // DM-hosted hazard check (gas cloud OR Grease/Web terrain) — the DM device can't roll
     // our save (it only ever syncs hp/ac/conds, never ability scores), so it asks us to
@@ -7956,7 +8124,7 @@ function openAdjacentUseUI(c, s, me){
       if(amt<=0) return;
       pick.pool-=amt; pick.healed[i]+=amt;
       if(t.self){ applyHp(c, amt); log('✝️ '+c.name+' channels Preserve Life — heals '+amt+' HP'); }
-      else { if(net.conn) try{ net.conn.send({t:'preserveLifeApply', targetId:t.id, amount:amt}); }catch(e){} log('✝️ '+c.name+' channels Preserve Life — sends '+amt+' HP to '+t.name); }
+      else { if(net.conn) try{ net.conn.send({t:'healApply', targetId:t.id, amount:amt, from:c.name}); }catch(e){} log('✝️ '+c.name+' channels Preserve Life — sends '+amt+' HP to '+t.name); }
       draw(pick);
     });
     { const upld=$('#usePreserveLifeDone'); if(upld) upld.onclick=afterManeuver; }
@@ -9644,7 +9812,7 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
   saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
   addCond:(u,cond,rounds)=>{ if(u.echo) return;   // an Echo Knight's echo is immune to all conditions (RAW)
     if(u.side==='mon'){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); }
-    else { if(mindlessRageBlocks(u.c,cond)) return; if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } },
+    else { if(mindlessRageBlocks(u.c,cond)||auraOfDevotionBlocks(u.c,cond)) return; if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } },
   sanctuaryDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Sanctuary')||{}).dc||null : null,
   holyAuraDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Holy Aura')||{}).dc||null : null,
   allMonsters:()=> QB.monsters,
@@ -11365,7 +11533,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.192';
+const APP_VERSION='v120.193';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

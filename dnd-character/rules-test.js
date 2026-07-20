@@ -1845,5 +1845,55 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- Oath of Devotion: Divine Sense/Lay on Hands/Channel Divinity (base Paladin, all
+   flavor-text-only before this pass), Oath Spells, Sacred Weapon, Aura of Devotion ---- */
+{
+  const pd=newCharacter('Sir Galahad'); pd.cls='Paladin'; pd.level=9; pd.subclass='Devotion'; pd.abilities={str:16,dex:10,con:14,int:10,wis:10,cha:18};
+  T('isDevotionPaladin gates on class+subclass+level', isDevotionPaladin(pd,3)===true && isDevotionPaladin(pd,20)===false);
+  const notPd=newCharacter('Oathbreaker'); notPd.cls='Paladin'; notPd.level=20; notPd.subclass='Vengeance';
+  T('a Vengeance paladin (even level 20) is never a Devotion paladin', isDevotionPaladin(notPd,3)===false);
+
+  T('divineSenseMax is 1 + Cha mod, min 1', divineSenseMax(pd)===1+mod(abil(pd,'cha')));
+  T('layOnHandsMax is 5 x paladin level', layOnHandsMax(pd)===45);
+  T('paladinCDMax is a flat 1 use (unlike Cleric\'s growing pool)', paladinCDMax(pd)===1);
+
+  T('monsterIsUndead reads the sprite key', monsterIsUndead({sprite:'skeleton'})===true && monsterIsUndead({sprite:'goblin'})===false);
+  T('monsterIsFiend reads the sprite key', monsterIsFiend({sprite:'demon'})===true && monsterIsFiend({sprite:'skeleton'})===false);
+
+  // Oath Spells: auto-synced into c.spells by ensureFields (self-healing migration, same spot
+  // every other derived field gets fixed up), and don't count against preparedMax.
+  ensureFields(pd);
+  T('Oath Spells at 9th level are all auto-added and pre-prepared', ['Protection from Evil and Good','Sanctuary','Lesser Restoration','Zone of Truth','Beacon of Hope','Dispel Magic'].every(n=>pd.spells.some(s=>s.name===n && s.prepared)));
+  T('9th-level-and-higher Oath Spells (13th/17th) are not granted yet', !pd.spells.some(s=>s.name==='Freedom of Movement'||s.name==='Commune'));
+  T('Oath Spells do not count against preparedCount', !pd.spells.some(s=>s.name==='Sanctuary'&&false) && preparedCount(pd)===0);
+  ensureFields(pd);   // idempotent — running it again shouldn't duplicate entries
+  T('ensureFields does not duplicate Oath Spells on repeated calls', pd.spells.filter(s=>s.name==='Sanctuary').length===1);
+
+  // Sacred Weapon: +Cha mod (min +1) to hit while the effect is active, via the real weaponToHit path.
+  const w=weaponByName('Longsword');
+  const before=weaponToHit(pd,w);
+  addEffect(pd,'Sacred Weapon',{rounds:10});
+  T('Sacred Weapon adds Cha mod (min +1) to weaponToHit', weaponToHit(pd,w)===before+Math.max(1,mod(abil(pd,'cha'))));
+  pd.effects=pd.effects.filter(e=>e.name!=='Sacred Weapon');
+  T('weaponToHit drops back to normal once Sacred Weapon ends', weaponToHit(pd,w)===before);
+
+  // Aura of Devotion: self-only Charmed immunity, gated on level 7+ and consciousness.
+  T('auraOfDevotionBlocks is true for a conscious 7th+ Devotion paladin vs Charmed', auraOfDevotionBlocks(pd,'Charmed')===true);
+  T('auraOfDevotionBlocks does not block unrelated conditions', auraOfDevotionBlocks(pd,'Frightened')===false);
+  const lowPd=newCharacter('Squire'); lowPd.cls='Paladin'; lowPd.level=3; lowPd.subclass='Devotion';
+  T('Aura of Devotion does not apply below 7th level', auraOfDevotionBlocks(lowPd,'Charmed')===false);
+  pd.conditions={Unconscious:true};
+  T('an unconscious Devotion paladin loses Aura of Devotion\'s protection', auraOfDevotionBlocks(pd,'Charmed')===false);
+  pd.conditions={};
+
+  // Wired through the real qbAdapter.addCond PC path, same as Mindless Rage's own test.
+  setQB({battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[], players:[{side:'pc', x:0, y:0, c:pd}], monsters:[]});
+  qbAdapter.addCond({side:'pc', c:pd}, 'Charmed', 3);
+  T('qbAdapter.addCond is blocked by Aura of Devotion', !(pd.conditions&&pd.conditions.Charmed));
+  qbAdapter.addCond({side:'pc', c:pd}, 'Poisoned', 3);
+  T('qbAdapter.addCond still allows unrelated conditions', pd.conditions&&pd.conditions.Poisoned===true);
+  setQB(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

@@ -1550,3 +1550,81 @@ each verified via a real save roll, and `quiveringPalmStrike`/`quiveringPalmTrig
 ki spend and kill-vs-damage branches.
 
 Playwright wasn't available to spot-check this live either (server still disconnected).
+
+## Oath of Devotion — seventh subclass, and Divine Sense/Lay on Hands/Channel Divinity (v120.193)
+
+Seventh entry in `SUBCLASS_FEATURES`. Divine Smite was the one base Paladin feature already real
+(the `afSmite` rider in `attackFlow`); **Divine Sense, Lay on Hands, and base Channel Divinity**
+were all flavor-text-only before this pass, same gap shape as every earlier base-class
+prerequisite this session. Verified real 2014 PHB text via WebFetch before building.
+
+- **Divine Sense (1st)**: `divineSenseMax(c)` = 1+Cha mod, long-rest-only refill (confirmed via
+  research — unlike most other resource pools this session, this one does NOT refill on a short
+  rest). Action, spends a use, banners/logs which monsters within 60 ft are undead or fiends.
+  Needed real monster-type data this app never tracked (`MONSTERS_5E` has no type column at
+  all) — added `monsterIsUndead`/`monsterIsFiend`, inferring type from the existing `sprite` key
+  (skeleton/zombie/ghost → undead, demon → fiend) rather than adding a whole new data column,
+  the same minimal-footprint approach `BEAST_SHAPES` took for Wild Shape's missing beast data.
+- **Lay on Hands (1st)**: a real `layOnHandsLeft` pool (5×level, long-rest only), spent via a new
+  target picker with a typed HP amount — the first real numeric-amount-typed heal in this app
+  (Preserve Life deliberately avoided one, since RAW lets it be sized per-target; Lay on Hands'
+  RAW literally is "restore any number of hit points, up to what's left in the pool," so a typed
+  amount is the correct fit here, not a missing-input-field shortcut). Healing a DIFFERENT
+  connected player reuses the exact round-trip Preserve Life established — renamed that message
+  from `preserveLifeApply` to the generic `healApply` since it's now shared by two features (DM
+  relays the existing generic `'apply'` message to the target's own device either way). A 5-HP
+  disease/poison cure option spends from the same pool without healing.
+- **Channel Divinity (3rd)**: `paladinCDMax(c)` is a flat 1 (a real, verified distinction from
+  Cleric's growing 1→2→3 pool — Paladins never get more CD uses from the base class), refilling
+  on short or long rest, tracked in its own `paladinCDLeft` field so it can't collide with
+  Cleric's `channelDivinityLeft`.
+  - **Sacred Weapon**: a new self-contained check in `weaponToHit` (`+Cha mod, min +1, while a
+    'Sacred Weapon' effect is active`) — the first attack-roll-modifying effect anywhere in this
+    app; scoped as a single inline check rather than a new generic `mods.atk` effect field, since
+    nothing else needs one yet (the same "don't build for a hypothetical second user" call as
+    everywhere else this session).
+  - **Turn the Unholy**: Wisdom save (DC = paladin spell DC) for every fiend/undead within 30 ft;
+    a failed save applies Frightened — RAW's actual "Turned" condition (must flee, can't take
+    reactions, Dash/Dodge only) has no dedicated tracked condition anywhere in this app, so
+    Frightened is reused as the closest existing "wants to get away" condition, the same
+    documented-simplification bar Taunt/Intimidating Presence already set for similar "make it
+    flee" effects.
+- **Oath Spells (3rd/5th/9th/13th/17th)**: the always-prepared fixed list. This app had NO
+  "spells granted automatically, not chosen" mechanism anywhere (Cleric's own Divine Domain
+  spells have the identical real gap — out of scope for this pass, which only touches Devotion).
+  Auto-synced into `c.spells` from `ensureFields` — the same self-healing migration spot every
+  other derived field in this app already gets fixed up in, so existing saved Devotion paladins
+  pick this up automatically on next load, not just newly-created ones. Marked `oathSpell:true`
+  so `preparedCount` (which enforces `preparedMax`) skips them, matching RAW's "don't count
+  against the number of spells you can prepare."
+- **Aura of Devotion (7th)**: Charmed immunity while conscious — `auraOfDevotionBlocks(c,cond)`,
+  wired into the exact same two condition-application choke points Mindless Rage already
+  established (`qbAdapter.addCond`'s PC branch, `playerOnData`'s `'cond'` handler). RAW also
+  protects nearby ALLIES within range, not just the paladin themself — scoped to self-only here,
+  the same self-only simplification Mindless Rage's own doc comment already accepted, since
+  checking other party members' distance at this exact choke point needs session/party context
+  neither function currently has.
+- **Purity of Spirit (15th)** and **Divine Smite's undead/fiend +1d8 bonus** (a real, separate
+  pre-existing gap found while building the new monster-type helpers, not introduced by this
+  pass): both documented as "nothing to build" for now rather than forced in — Purity of Spirit's
+  Protection from Evil and Good has no tracked mechanical effect anywhere in this app (no
+  `SPELL_EFFECTS` entry, no advantage-vs-creature-type check), and Divine Smite's existing
+  implementation lives in `attackFlow`, which only the player-net path actually calls (`net.
+  targetMon`-driven) — QB has its own separate `qbResolveAttack` resolution path, so wiring the
+  undead/fiend bonus in correctly would mean touching both, a bigger, more tangential lift than
+  this pass's actual scope. Flagging both for a future pass rather than silently leaving them
+  unmentioned.
+- **Holy Nimbus (20th)**: action, applies a tracked effect (bright light note, 1 minute), once
+  per long rest. The "10 radiant to enemies starting their turn in the light" and "advantage vs
+  fiend/undead spell saves" clauses are recorded on the effect's description for the player to
+  apply manually — this app has no "start of turn, check who's standing in a light radius"
+  automated tick anywhere (lighting is otherwise purely visual/cosmetic here), a documented
+  simplification rather than new automated-lighting-damage infrastructure for one capstone.
+
+Tests: 22 new assertions — `isDevotionPaladin`/resource-pool-sizing gating, `monsterIsUndead`/
+`monsterIsFiend`'s sprite-based inference, Oath Spells' real `ensureFields` auto-sync (including
+idempotency and the `preparedCount` exclusion), Sacred Weapon's bonus verified through the real
+`weaponToHit` path (on and back off), and Aura of Devotion's gating/consciousness-check both
+standalone and wired through the real `qbAdapter.addCond` path.
+
+Playwright wasn't available to spot-check this live either (server still disconnected).
