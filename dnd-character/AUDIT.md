@@ -1293,3 +1293,47 @@ Tests: 20 new assertions — Frenzy's exhaustion cost and the no-arg-callers-una
 Mindless Rage blocking Charmed/Frightened but not unrelated conditions (both standalone and
 wired through the real `qbAdapter.addCond` path), Intimidating Presence's pass/fail/already-
 immune states and its 30-ft reach.
+
+## College of Lore — third subclass, and Bardic Inspiration's resource pool (v120.189)
+
+Third entry in `SUBCLASS_FEATURES`. Building Cutting Words/Peerless Skill first required
+mechanizing **Bardic Inspiration itself**, which — like every subclass feature before this
+session — had only ever been flavor text in `CLASS_FEATURES` for the base Bard class. Scoped
+narrowly: `bardicInspMax(c)` (CHA mod, min 1 use per rest) and `bardicInspDie(c)` (the real PHB
+d6→d8→d10→d12 progression by level) are the whole pool — NOT the base class's own "give an ally
+a die to hold for up to 10 minutes" grant-and-redeem mechanic, since neither Lore subclass
+feature actually needs that shape (both spend a use for an *immediate* effect). Refills on long
+rest always; short rest too once Font of Inspiration (5th level, already flavor-text-only in
+`CLASS_FEATURES`) applies.
+
+- **Bonus Proficiencies (3rd)**: a one-time `{t:'skill', n:3}` entry pushed into
+  `pendingChoiceSpecs` — the exact same choice-queue shape Half-Elf/Variant Human's bonus
+  skills already use, so this needed zero new picker UI, just another spec and a
+  `c.loreBonusProfsChosen` flag so it only ever fires once.
+- **Cutting Words (3rd)**: reaction, reduces a monster's attack roll within 60 ft — scoped to
+  attack rolls specifically (RAW also covers ability/damage rolls; same "highest-value case,
+  not every RAW variant" pragmatism as Shadow Martyr's own doc note). **Unified across QB and
+  DM-hosted from the start this time**: `cuttingWordsReduce(s, mo, atk, candidates)` takes a
+  `candidates` array (QB's single-PC array, or DM-hosted's real `net.session.players`) and
+  checks each the same way — `cand.c` present means the real character is available locally
+  (QB), absent means DM-hosted's mirror-only case with a `cuttingWordsTriggered` round-trip
+  message, the exact same branch shape `shadowMartyrRedirect` established. Armed via the same
+  arm/disarm toggle pattern; mutates a *cloned* `atk` object in QB's `qbResolveAttack` (never
+  the shared/cached one `parseMonsterAttacks` produces) and a freshly-built one in
+  `dmMonsterAttack`'s `#maRoll`.
+- **Additional Magical Secrets (6th)**: learn 2 spells from any class. Not a dedicated picker —
+  the existing spell-adding dropdown's "+ Custom spell…" free-text option (`renderSpells`,
+  already there for any character) already lets a player add any spell by name unrestricted by
+  class; a nicer cross-class *picker* specifically for this feature would be a pure UI nicety,
+  not a missing mechanic, so it's left as a documented "already achievable, not polished."
+- **Peerless Skill (14th)**: self-only, rolls a Bardic Inspiration die and reports it as a bonus
+  to apply to your next ability check. This app has no universal "roll any skill check" UI hook
+  a temporary bonus could attach to automatically, so the die is surfaced via flashBanner/log
+  for the player to apply manually — a real, honest simplification given that infrastructure
+  gap, not a missing mechanic being silently skipped.
+
+Tests: 18 new assertions — the Bardic Inspiration pool's CHA-mod sizing and level-based die
+progression, Bonus Proficiencies' one-shot choice-spec gating, and `cuttingWordsReduce` verified
+against BOTH candidate shapes (QB's `.c`-bearing wrapper and DM-hosted's `.c`-less mirror entry)
+covering not-armed, range-gating, and the actual roll-reduction/resource-spend/disarm sequence
+for each.

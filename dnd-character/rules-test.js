@@ -1637,5 +1637,51 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- College of Lore: Bonus Proficiencies, Cutting Words, Additional Magical Secrets (via
+   the existing custom-spell entry), Peerless Skill ---- */
+{
+  const lb=newCharacter('Skald'); lb.cls='Bard'; lb.level=3; lb.subclass='College of Lore'; lb.abilities.cha=16;
+  T('isLoreBard gates on class+subclass+level', isLoreBard(lb,3)===true && isLoreBard(lb,14)===false);
+  const notLb=newCharacter('OtherBard'); notLb.cls='Bard'; notLb.level=20; notLb.subclass='College of Valor';
+  T('a Valor Bard (even level 20) is never a Lore Bard', isLoreBard(notLb,3)===false);
+
+  T('bardicInspMax reads Charisma modifier, min 1', bardicInspMax(lb)===3);
+  T('bardicInspDie follows the PHB progression by level (d6 below 5th)', bardicInspDie(lb)===6);
+  const highLb=newCharacter('EldSkald'); highLb.cls='Bard'; highLb.level=15;
+  T('bardicInspDie reaches d12 at 15th level', bardicInspDie(highLb)===12);
+
+  // Bonus Proficiencies — a one-time {t:'skill',n:3} choice spec, same shape Half-Elf/Variant
+  // Human already use, gated so it only appears once (loreBonusProfsChosen).
+  const specs=pendingChoiceSpecs(lb);
+  T('College of Lore at 3rd level owes a 3-skill Bonus Proficiencies choice', specs.some(s=>s.t==='skill' && s.n===3 && s._loreBonus));
+  lb.loreBonusProfsChosen=true;
+  T('once chosen, the same spec never appears again', !pendingChoiceSpecs(lb).some(s=>s._loreBonus));
+
+  // Cutting Words — unified across QB (candidate has .c) and DM-hosted (candidate is the
+  // mirror entry itself, no .c) via the same function, same shape as shadowMartyrRedirect.
+  lb.bardicInspLeft=bardicInspMax(lb);
+  lb.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  const s={monsters:[]};
+  const mo={x:0,y:0};
+  const qbCand={x:2,y:0,c:lb};   // within 60 ft (12 tiles) — QB-shaped candidate
+  T('cuttingWordsReduce does nothing when not armed', cuttingWordsReduce(s,mo,{toHit:5},[qbCand])===0);
+  lb.cuttingWordsArmed=true;
+  const atk={toHit:5};
+  const orig=Math.random; Math.random=()=>0.5;   // deterministic die
+  const die=cuttingWordsReduce(s,mo,atk,[qbCand]);
+  Math.random=orig;
+  T('cuttingWordsReduce (QB-shaped) reduces atk.toHit by the rolled die', die>0 && atk.toHit===5-die);
+  T('triggering it spends the reaction and a Bardic Inspiration use, and disarms', lb.battle.reaction===true && lb.bardicInspLeft===bardicInspMax(lb)-1 && lb.cuttingWordsArmed===false);
+
+  setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:10,rows:10,tiles:{}}, monsters:[], players:[], order:[], turn:0}});   // dmSend needs a live net
+  const dmCand={id:'p1', x:20, y:0, cuttingWordsArmed:true, level:3};   // DM-hosted mirror shape, no .c, far away
+  T('cuttingWordsReduce (DM-hosted-shaped) is range-gated the same as the QB path — too far, no reduction', cuttingWordsReduce(s,mo,{toHit:5},[dmCand])===0);
+  dmCand.x=2;
+  const atk2={toHit:5};
+  const die2=cuttingWordsReduce(s,mo,atk2,[dmCand]);
+  T('cuttingWordsReduce (DM-hosted-shaped) in range reduces the roll and disarms its own mirror flag', die2>0 && atk2.toHit===5-die2 && dmCand.cuttingWordsArmed===false);
+  setNet(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

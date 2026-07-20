@@ -619,6 +619,12 @@ const SUBCLASS_FEATURES = {
     [10,'Intimidating Presence','Action: frighten one creature within 30 ft (Wisdom save, DC 8+prof+Cha) until the end of your next turn; extend it each turn while in range. A successful save makes that creature immune to this for 24 hours.'],
     [14,'Retaliation','Reaction: when a creature within 5 ft damages you, make a melee attack against it.'],
   ],
+  'College of Lore':[
+    [3,'Bonus Proficiencies','Gain proficiency in three skills of your choice.'],
+    [3,'Cutting Words','Reaction: expend a Bardic Inspiration use to subtract a rolled die from a creature\'s attack roll within 60 ft.'],
+    [6,'Additional Magical Secrets','Learn two spells of your choice from any class.'],
+    [14,'Peerless Skill','Expend a Bardic Inspiration use to add a rolled die to one of your own ability checks.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -844,6 +850,14 @@ function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
 function hasActionSurge(c){ return c && c.cls==='Fighter' && (Number(c.level)||1)>=2; }
 function isEchoKnight(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Echo Knight' && (Number(c.level)||1)>=(lvl||3)); }
 function isBerserker(c,lvl){ return !!(c && c.cls==='Barbarian' && c.subclass==='Path of the Berserker' && (Number(c.level)||1)>=(lvl||3)); }
+function isLoreBard(c,lvl){ return !!(c && c.cls==='Bard' && c.subclass==='College of Lore' && (Number(c.level)||1)>=(lvl||3)); }
+// Bardic Inspiration's own resource pool (the base Bard class feature, never mechanized in
+// this app before now — CLASS_FEATURES only ever had flavor text for it) — built here because
+// College of Lore's Cutting Words/Peerless Skill both spend a use of it directly for an
+// IMMEDIATE effect (reduce an enemy's roll / boost your own), unlike the base feature's
+// give-an-ally-a-die-to-hold-for-later shape, which neither subclass feature actually needs.
+function bardicInspMax(c){ return Math.max(1, mod(abil(c,'cha'))); }
+function bardicInspDie(c){ const l=Number(c.level)||1; return l>=15?12:l>=10?10:l>=5?8:6; }
 // Mindless Rage (6th level): can't be Charmed/Frightened while raging. Checked at every
 // PC-condition-application choke point (qbAdapter.addCond's PC branch, and player-net's own
 // 'cond' message handler for DM-hosted — a monster's own fear/charm attack sets this via
@@ -1502,12 +1516,16 @@ function pendingChoiceSpecs(c){
   if(c.race==='Dragonborn' && !c.dragon){ specs.push({t:'ancestry'}); }
   if(!c.fightingStyle){ const fl=FIGHTING_STYLE_LEVEL[c.cls]; if(fl && (Number(c.level)||1)>=fl) specs.push({t:'fightingStyle',cls:c.cls}); }
   const eo=expertiseOwed(c); if(eo>0) specs.push({t:'expertise',n:eo,label:'Expertise · choose '+eo+' proficient skill'+(eo>1?'s':'')});
+  // College of Lore — Bonus Proficiencies (3rd level): 3 more skill proficiencies, a one-time
+  // grant. Reuses the exact same {t:'skill',n} choice shape Half-Elf/Variant Human already use
+  // — no new choice-picker UI needed, just another spec pushed into the same queue.
+  if(c.cls==='Bard' && c.subclass==='College of Lore' && (Number(c.level)||1)>=3 && !c.loreBonusProfsChosen) specs.push({t:'skill',n:3,label:'College of Lore · three skill proficiencies',_loreBonus:1});
   return specs;
 }
 function resolveChoices(c){
   const specs=pendingChoiceSpecs(c);
   if(!specs.length) return false;
-  promptChoices('Make your character choices', specs, c, ()=>{ if(specs.some(s=>s._race)) c.raceDone=true; });
+  promptChoices('Make your character choices', specs, c, ()=>{ if(specs.some(s=>s._race)) c.raceDone=true; if(specs.some(s=>s._loreBonus)) c.loreBonusProfsChosen=true; });
   return true;
 }
 const SUBCLASSES = {
@@ -3444,6 +3462,7 @@ function spendHitDie(c){
   c.actionSurgeUsed=false;   // Action Surge recharges on a short rest
   if(isEchoKnight(c,7)) c.echoAvatarUsed=false;      // Echo Avatar: short or long rest
   if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;   // Shadow Martyr: short or long rest
+  if(isLoreBard(c) && (Number(c.level)||1)>=5) c.bardicInspLeft=bardicInspMax(c);   // Font of Inspiration (5th): short rest too
   logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
@@ -4558,6 +4577,7 @@ function renderSpells(c){
     if(isEchoKnight(c,7)) c.echoAvatarUsed=false;
     if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;
     if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
+    if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
     logChange(c, 'Long rest — HP, slots & hit dice restored');
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
@@ -5333,7 +5353,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -5453,7 +5473,7 @@ function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed}}); }catch(e){} }
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ const wasActive=net.session&&net.session.battle&&net.session.battle.active; net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -5504,6 +5524,7 @@ function playerOnData(d){ if(!d) return;
   // then resync" round-trip this session established.
   else if(d.t==='echoDestroyed'){ const c=playerChar(); if(c){ reclaimPotential(c, m=>logChange(c,m)); save(); render(); playerHello(); if((c.hp.temp||0)>0) flashBanner('🩸 Reclaim Potential — +'+c.hp.temp+' temporary HP'); } }
   else if(d.t==='shadowMartyrTriggered'){ const c=playerChar(); if(c){ if(c.battle) c.battle.reaction=true; c.shadowMartyrUsed=true; c.shadowMartyrArmed=false; logChange(c,'👤 Shadow Martyr — the echo steps into an attack meant for you'); save(); render(); playerHello(); flashBanner('🛡 Shadow Martyr triggered — the echo takes the hit'); } }
+  else if(d.t==='cuttingWordsTriggered'){ const c=playerChar(); if(c){ if(c.battle) c.battle.reaction=true; c.bardicInspLeft=Math.max(0,(c.bardicInspLeft||0)-1); c.cuttingWordsArmed=false; logChange(c,'🎵 Cutting Words — reduced an attack roll by '+d.die); save(); render(); playerHello(); flashBanner('🎵 Cutting Words triggered — reduced the roll by '+d.die); } }
   else if(d.t==='maneuverCheck'){
     // A DM-controlled monster attempts Shove/Grapple on this player — the DM can't roll our
     // side (same reason as 'hazard' above: it only ever syncs hp/ac/conds, never ability
@@ -7476,6 +7497,8 @@ function openAdjacentUseUI(c, s, me){
       if(canManifestEcho) body+=`<button class="btn block" id="useManifestEcho" style="margin-bottom:8px;text-align:left">👤 Manifest Echo<small style="display:block;opacity:.75">${echo?'Replaces your current echo — ':''}Bonus action, within 15 ft</small></button>`;
       if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
       if(intimidateTargets.length) body+=`<button class="btn block" data-use="intimidate" style="margin-bottom:8px;text-align:left">😱 Intimidating Presence<small style="display:block;opacity:.75">Action — frighten a foe within 30 ft (Wis save)</small></button>`;
+      if(mode && isLoreBard(c,3)) body+=`<button class="btn ${c.cuttingWordsArmed?'':'ghost'} block" id="useCuttingWords" style="margin-bottom:8px;text-align:left"${(c.bardicInspLeft||0)<=0?' disabled style="opacity:.5"':''}>🎵 ${c.cuttingWordsArmed?'Cutting Words — ARMED (tap to cancel)':'Ready Cutting Words'}<small style="display:block;opacity:.75">${(c.bardicInspLeft||0)<=0?'No Bardic Inspiration left — rest to recharge':'Reaction — reduce a monster attack roll within 60 ft ('+(c.bardicInspLeft||0)+' use'+((c.bardicInspLeft||0)===1?'':'s')+' left)'}</small></button>`;
+      if(mode && isLoreBard(c,14) && (c.bardicInspLeft||0)>0) body+=`<button class="btn block" id="usePeerlessSkill" style="margin-bottom:8px;text-align:left">🎵 Peerless Skill<small style="display:block;opacity:.75">Add a Bardic Inspiration die to your next ability check (${c.bardicInspLeft} use${c.bardicInspLeft===1?'':'s'} left)</small></button>`;
       body+=items.map((it,i)=>{
         const st=it.obj.state||it.def.default;
         return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
@@ -7727,6 +7750,21 @@ function openAdjacentUseUI(c, s, me){
       c.shadowMartyrArmed=!c.shadowMartyrArmed;
       flashBanner(c.shadowMartyrArmed?'🛡 Shadow Martyr armed — the next attack on you near the echo hits it instead':'Shadow Martyr disarmed');
       draw({kind:'echo'});
+    }; }
+    { const cw=$('#useCuttingWords'); if(cw) cw.onclick=()=>{
+      if((c.bardicInspLeft||0)<=0){ flashBanner('No Bardic Inspiration left — rest to recharge'); return; }
+      c.cuttingWordsArmed=!c.cuttingWordsArmed;
+      flashBanner(c.cuttingWordsArmed?'🎵 Cutting Words armed — the next monster attack roll within 60 ft is reduced':'Cutting Words disarmed');
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    }; }
+    { const ps=$('#usePeerlessSkill'); if(ps) ps.onclick=()=>{
+      if((c.bardicInspLeft||0)<=0){ flashBanner('No Bardic Inspiration left — rest to recharge'); return; }
+      if(c.bardicInspLeft==null) c.bardicInspLeft=bardicInspMax(c);
+      c.bardicInspLeft--;
+      const die=rnd(bardicInspDie(c));
+      log('🎵 '+c.name+' calls on Peerless Skill — +'+die+' to an ability check');
+      flashBanner('🎵 Peerless Skill — add +'+die+' to your next ability check');
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
     }; }
     document.querySelectorAll('[data-inctgt]').forEach(b=>b.onclick=()=>{
       const targets=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(echo.x,echo.y,mo.x,mo.y)<=1);
@@ -8840,7 +8878,13 @@ function dmMonsterAttack(mo){
       st.echoRedirect = !dominated ? shadowMartyrRedirect(net.session, tgt()) : null;
       const rollTargetId = st.echoRedirect ? st.echoRedirect.id : st.targetId;
       if(st.echoRedirect) flashBanner('🛡 Shadow Martyr — the echo steps into the attack meant for '+tgt().name);
-      const res=Engine.hitResult(sessionAdapter, mo.id, rollTargetId, {toHit:st.atk.hit||0, tiles:st.atk.tiles}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+      // College of Lore — Cutting Words, DM-hosted counterpart (same shared cuttingWordsReduce
+      // QB's qbResolveAttack calls, checking every connected player for an armed Lore Bard
+      // within 60 ft of the ATTACKING monster, not just one).
+      const cwAtk={toHit:st.atk.hit||0, tiles:st.atk.tiles};
+      const cwDie=!dominated ? cuttingWordsReduce(net.session, mo, cwAtk, net.session.players) : 0;
+      if(cwDie) flashBanner('🎵 Cutting Words — the attack roll is reduced by '+cwDie);
+      const res=Engine.hitResult(sessionAdapter, mo.id, rollTargetId, cwAtk); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
     { const mm=$('#maManeuver'); if(mm) mm.onclick=()=>{ if(!commitAttack()) return; sfx('swing');
       const bonus=monsterCheckBonus(mo), d20=rnd(20); st.total=d20+bonus; st.maneuverSent=true;
       dmSend(t.id, {t:'maneuverCheck', kind:st.atk.maneuver, monTotal:st.total, mon:mo.id, monName:mo.name});
@@ -9757,6 +9801,28 @@ function shadowMartyrRedirect(s, tgt){
   else { tgt.shadowMartyrArmed=false; dmSend(tgt.id, {t:'shadowMartyrTriggered'}); }
   return echo;
 }
+// College of Lore — Cutting Words (3rd level): reaction, expend a use of Bardic Inspiration to
+// subtract a rolled die from a creature's attack roll within 60 ft (5e also covers ability/
+// damage rolls — scoped to attack rolls here, the single highest-value case, same "not every
+// RAW variant" pragmatism Shadow Martyr's own doc note already established for this app).
+// Unified across QB and DM-hosted from the outset this time (see grimoire-unify-modes memory)
+// — `candidates` is QB's single-PC array or DM-hosted's real net.session.players, so this is
+// ONE function for both, not a parallel pair. Armed via the same arm/disarm toggle shape as
+// Shadow Martyr; mutates `atk.toHit` in place for the ONE roll about to happen.
+function cuttingWordsReduce(s, mo, atk, candidates){
+  for(const cand of (candidates||[])){
+    const c=cand.c;
+    const armed = c ? c.cuttingWordsArmed : cand.cuttingWordsArmed;
+    if(!armed) continue;
+    if(c && (!isLoreBard(c,3) || c.battle.reaction || (c.bardicInspLeft||0)<=0)) continue;
+    if(gridDist(mo.x,mo.y,cand.x,cand.y)>12) continue;   // 60 ft
+    const die=rnd(bardicInspDie(c||{level:cand.level||1}));
+    atk.toHit=(atk.toHit||0)-die;
+    if(c){ c.battle.reaction=true; c.bardicInspLeft--; c.cuttingWordsArmed=false; return die; }
+    cand.cuttingWordsArmed=false; dmSend(cand.id, {t:'cuttingWordsTriggered', die}); return die;
+  }
+  return 0;
+}
 // Echo Knight — Reclaim Potential (15th level): when the echo is DESTROYED (reduced to 0 HP —
 // not a voluntary dismiss, RAW is specific about this), gain 2d6+CON temp HP if you have none
 // yet. Same CON-mod-scaled resource pool shape as Unleash Incarnation (echoResourceMax),
@@ -9776,6 +9842,9 @@ function qbResolveAttack(att, tgt, atk, done){
   const isPc=att.side==='pc'||att.id==='pc';
   // Monsters / AI: keep fast auto-resolve
   if(!isPc){
+    atk=Object.assign({}, atk);   // Cutting Words mutates toHit for this ONE roll only — never the caller's shared atk object (parseMonsterAttacks' cache, etc.)
+    const cwDie=cuttingWordsReduce(QB, att, atk, [QB.players[0]]);
+    if(cwDie) qbLog('🎵 Cutting Words — '+qbName(att)+"'s attack roll is reduced by "+cwDie);
     const redirected=shadowMartyrRedirect(QB, tgt);
     if(redirected){ qbLog('👤 Shadow Martyr — the echo steps into the attack meant for '+qbName(tgt)); tgt=redirected; }
     const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});
@@ -10882,7 +10951,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.188';
+const APP_VERSION='v120.189';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
