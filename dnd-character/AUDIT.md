@@ -1967,3 +1967,98 @@ Playwright still wasn't available for a live click-through smoke test of the act
 underlying math is now directly tested, but a real end-to-end "open Quick Battle, attack with a
 Rogue, tick the Sneak Attack box, see the number" pass is still owed once a browser is available
 again — noting this honestly rather than claiming full verification.
+
+## Feat audit — "check the feats and make sure they work" (v120.200)
+
+Requested audit: 42 feats total in `FEAT_DESC`. Only 7 had any mechanical hook anywhere
+(`hasFeat(...)` never appeared for the other 35): Dual Wielder, Lucky, Alert, Observant, Savage
+Attacker, War Caster, Skulker. Everything else was pure flavor text — take the feat, get nothing
+but the sheet entry (and, for ~15 of them, an ability-score bump via `FEAT_GRANTS`).
+
+**Three real bugs found and fixed** (a feat's own description promised something the code never
+delivered):
+- **Gunner**: `FEAT_DESC` says "+1 DEX," but `FEAT_GRANTS` had no `'Gunner'` entry at all —
+  taking the feat granted literally nothing. Added `[{t:'fixed',k:'dex'}]`.
+- **Spell Sniper**: "learn one attack cantrip" was likewise missing from `FEAT_GRANTS`. Added a
+  `spellChoice` grant with a new `attackOnly` filter flag (`parseSpellMechanics(s.n).attack`) so
+  the picker only offers cantrips that actually make an attack roll.
+- **Weapon Master**: `weaponProficient(c,w)` was, and had always been, purely class-based —
+  it never checked feats at all, so the "gain proficiency with four weapons" grant did nothing
+  whatsoever; someone who took this feat for a longsword got no to-hit benefit from it, ever.
+  Fixed by adding a new `weaponProf` choice-spec type (pick N weapons from the full `WEAPONS`
+  list, same `{t:'pick'}`-style plumbing as everything else this session), storing the choice as
+  `c.weaponMasterProfs`, and checking it first in `weaponProficient`.
+
+**A regression caught before it shipped**: while adding Great Weapon Master's power-attack
+toggle, `attackFlow`'s `rollToHit` turned out to reference `wref` (used for the melee/ranged
+advantage check) — a variable the earlier same-session rider-extraction refactor (v120.199) had
+accidentally deleted the declaration of. `node --check` and the full test suite both passed
+anyway, because `rules-test.js` has never called `attackFlow` directly (it's UI-embedded, the
+same testing boundary noted throughout this session) — this would have thrown a live
+`ReferenceError` on the very next real attack roll in player-net mode. Re-declared it; flagging
+this as a reminder that the UI-embedded-code testing gap is a real blind spot, not just a
+theoretical one.
+
+**New mechanics built** (7 feats):
+- **Tough**: `+2` max HP per level. `levelUp`'s own per-level HP calc picks it up going forward;
+  `applyFeat` backfills `2 × current level` retroactively the moment it's taken (mirrors how
+  Draconic Resilience's ordering issue was solved earlier this session).
+- **Durable**: hit-die healing floors at `2 × Con modifier`, in `spendHitDie`.
+- **Medium Armor Master**: `computeAC` now caps Dex-to-AC at +3 instead of +2 specifically when
+  `dexCap===2` (medium armor) and the feat is present.
+- **Mobile**: `+10 ft` in `effSpeed`. Dash-ignores-difficult-terrain and the "can't be
+  opportunity-attacked by a creature you just attacked" clause aren't built — this app has no
+  terrain-cost-by-movement-type distinction for Dash specifically, and no automatic
+  attack-of-opportunity-on-moving-away system at all (the same gap Cunning Action's Disengage
+  already documented).
+- **Tavern Brawler**: unarmed strikes deal `1d4+Str` instead of the flat `1+Str` fallback,
+  offered alongside any weapons (not a replacement) in both `qbPcAttacks` and
+  `playerAttackMenu`. The bonus-action grapple-after-a-hit clause isn't built (documented).
+- **Great Weapon Master / Sharpshooter**: a real `-5 to hit / +10 damage` toggle, the first
+  power-attack-style feature this session (every other mechanic tweaks damage or advantage, not
+  the to-hit roll itself). New `powerAttackKind(c,atk)` gates on weapon type/property (heavy
+  melee for GWM, any ranged for Sharpshooter) plus the matching feat. Wired into BOTH `attackFlow`
+  and `openCombatRollModal`/`qbResolveAttack` from the first draft, following this session's own
+  established "extract a shared function, don't duplicate" rule. One subtlety caught while
+  wiring QB: `Engine.attack` re-derives hit/crit from `atk.toHit` even when a `face` (pre-rolled
+  d20) is supplied, so `qbResolveAttack`'s `onCommit` now passes a toHit-adjusted **clone** of
+  `atk` when power attack was used — otherwise the roll modal's shown result and `Engine.attack`'s
+  authoritative event could disagree on whether the attack even hit. GWM's bonus attack on a
+  crit/kill isn't built (would need the same Events-based "on kill" hook Dark One's Blessing
+  uses, plus a bonus-action spend — scoped out to keep this batch shippable).
+- **Fey Touched / Shadow Touched / Magic Initiate**: their "cast the granted spell once per day
+  for free" clause had never been implemented — the spell was learnable but always needed a real
+  slot. Fixed via the same `noSlotNeeded`-style bypass Thousand Forms already established in
+  `canCast`/`castSpell` (renamed from `thousandForms` now that it covers more than one feature),
+  tracked per-spell-name in a new `c.featFreeCastUsed` object, reset on long rest (this app has
+  no daily-vs-long-rest clock, so "once per day" is approximated the same way every other
+  once/day feature in this app already is). Magic Initiate's granted spell is dynamic (whichever
+  the player picked), identified via the `'(from Magic Initiate)'` origin tag already written
+  into `c.spells`' notes field at grant time — no new tracking needed for that part.
+
+**Still pure flavor text, documented rather than silently left** (roughly 28 feats): Athlete,
+Actor, Charger, Crossbow Expert, Defensive Duelist, Dungeon Delver, Elemental Adept, Grappler,
+Healer, Heavily/Lightly/Moderately Armored (the "armor proficiency" grant itself has nothing to
+lift — this app has never modeled an armor-non-proficiency PENALTY of any kind, so there's no
+negative state for the grant to remove), Heavy Armor Master's damage reduction (needs a
+damage-TYPE-CATEGORY parameter threaded through `applyHp`, which has none at all — the identical
+architectural gap Fiendish Resilience hit last entry), Inspiring Leader, Mage Slayer, Martial
+Adept, Mounted Combatant (no mount system exists), Polearm Master, Resilient/Skill Expert/Skilled
+(these three already work — their whole mechanic IS the choice grant, already wired), Ritual
+Caster, Sentinel, Shield Master, Spell Sniper's range/cover clauses (only its missing cantrip
+grant was fixed), Weapon Master's ability-score half (already worked before this pass) — most of
+these would need either a reactive "you were just attacked/hit/cast-near, act now" interrupt
+system (the same category of gap flagged repeatedly since Shadow Martyr), a mount/vehicle system,
+or a consumable-charges system (Healer's kit) this app has never built. Not attempted here to
+keep this pass shippable rather than half-building a dozen more systems at once.
+
+Tests: 19 new assertions — the three FEAT_GRANTS bug fixes verified structurally, Weapon Master's
+proficiency grant verified through the real `weaponProficient` path (with and without the chosen
+weapon), Tough's retroactive backfill through the real `applyFeat`, Durable through the real
+`spendHitDie`, Medium Armor Master and Mobile through the real `computeAC`/`effSpeed` paths,
+Tavern Brawler through the real `qbPcAttacks` path, `powerAttackKind`'s weapon/feat gating, and
+Fey Touched/Magic Initiate's free-cast-once bypass through the real `canCast`/`castSpell` paths
+(including the "second cast same day is blocked" case).
+
+Playwright still wasn't available for a live click-through of the new Great Weapon Master/
+Sharpshooter checkbox in either modal — same honest caveat as the rider fix above.

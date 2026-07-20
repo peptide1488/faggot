@@ -38,7 +38,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
   'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
   'globalThis.SPELL_HANDLERS=SPELL_HANDLERS;globalThis.SUMMON_CATALOG=SUMMON_CATALOG;globalThis.summonCatalogEntry=summonCatalogEntry;'+
-  'globalThis.DRACONIC_ANCESTRY_DAMAGE=DRACONIC_ANCESTRY_DAMAGE;globalThis.Events=Events;'+
+  'globalThis.DRACONIC_ANCESTRY_DAMAGE=DRACONIC_ANCESTRY_DAMAGE;globalThis.Events=Events;globalThis.FEAT_GRANTS=FEAT_GRANTS;'+
   'globalThis.spawnSummon=spawnSummon;globalThis.dismissSummonsForSpell=dismissSummonsForSpell;globalThis.nearbySpawnTiles=nearbySpawnTiles;globalThis.isConcentration=isConcentration;'+
   'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
   'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;'+
@@ -2096,6 +2096,82 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     Math.random=orig;
     T('Death Strike doubles when the Con save fails (low roll vs a real DC)', rr.doubled===true);
   }
+}
+
+/* ---- Feat audit follow-up: FEAT_GRANTS bugs (Gunner missing entirely, Spell Sniper missing its
+   cantrip grant, Weapon Master's proficiency grant doing nothing) plus newly-mechanized feats
+   (Tough, Durable, Medium Armor Master, Mobile, Tavern Brawler, Great Weapon Master/Sharpshooter's
+   power-attack toggle). 35 of 42 feats were pure flavor text before this pass — 7 already worked
+   (Dual Wielder, Lucky, Alert, Observant, Savage Attacker, War Caster, Skulker). ---- */
+{
+  T('Gunner is no longer missing from FEAT_GRANTS (was a real bug — description promised +1 Dex, granted nothing)', !!FEAT_GRANTS['Gunner'] && FEAT_GRANTS['Gunner'][0].t==='fixed' && FEAT_GRANTS['Gunner'][0].k==='dex');
+  T('Spell Sniper now grants its "one attack cantrip" spellChoice', !!FEAT_GRANTS['Spell Sniper'] && FEAT_GRANTS['Spell Sniper'][0].t==='spellChoice' && FEAT_GRANTS['Spell Sniper'][0].attackOnly===true);
+  T('Weapon Master now grants a weaponProf choice alongside its ability bump', FEAT_GRANTS['Weapon Master'].some(g=>g.t==='weaponProf'&&g.n===4));
+
+  // Weapon Master: weaponProficient() used to be purely class-based and never checked feats at
+  // all, so the feat's whole proficiency grant did nothing. A Wizard has no martial weapon
+  // proficiency by class — Weapon Master should now grant it for a chosen weapon specifically.
+  const wiz=newCharacter('Booksmith'); wiz.cls='Wizard';
+  const longsword=weaponByName('Longsword');
+  T('a Wizard is not proficient with a longsword by class alone', weaponProficient(wiz,longsword)===false);
+  wiz.weaponMasterProfs=['Longsword'];
+  T('Weapon Master grants real proficiency with the chosen weapon (feeds weaponToHit\'s prof bonus)', weaponProficient(wiz,longsword)===true);
+  T('...but not with a DIFFERENT weapon it wasn\'t chosen for', weaponProficient(wiz,weaponByName('Greataxe'))===false);
+
+  // Tough: +2 max HP per level. applyFeat backfills retroactively for every level already
+  // gained (levelUp's own per-level calc only picks it up starting the NEXT level, since
+  // c.feats doesn't have Tough yet at the point that calc runs the level you first take it).
+  const barb=newCharacter('Bruiser'); barb.cls='Barbarian'; barb.level=5; barb.hp={max:40,cur:40,temp:0}; barb.feats=[];
+  applyFeat(barb,'Tough');
+  T('Tough backfills +2 HP per level already gained (5th level → +10)', barb.hp.max===50 && barb.hp.cur===50);
+
+  // Durable: healing from a spent Hit Die is at least 2x your Con modifier.
+  const dur=newCharacter('Ironhide'); dur.cls='Fighter'; dur.level=3; dur.abilities.con=16; dur.hp={max:30,cur:10,temp:0}; dur.hitDice={total:'3d10',used:0}; dur.feats=[{name:'Durable'}];
+  { const orig=Math.random; Math.random=()=>0.01;   // force a minimal hit-die roll
+    spendHitDie(dur);
+    Math.random=orig;
+    T('Durable floors hit-die healing at 2x Con modifier even on a low roll', dur.hp.cur-10===2*mod(abil(dur,'con')));
+  }
+
+  // Medium Armor Master: DEX cap +3 instead of +2 in medium armor, via the real computeAC path.
+  const mam=newCharacter('Scout'); mam.cls='Ranger'; mam.armor='chainshirt'; mam.abilities.dex=18; mam.feats=[]; // dex mod +4, armor dexCap 2
+  T('normally a chain shirt caps Dex bonus to AC at +2', computeAC(mam)===13+2);
+  mam.feats=[{name:'Medium Armor Master'}];
+  T('Medium Armor Master raises that cap to +3', computeAC(mam)===13+3);
+
+  // Mobile: +10 ft speed, via the real effSpeed path.
+  const mob=newCharacter('Runner'); mob.speed=30; mob.feats=[];
+  T('normal speed is unaffected without Mobile', effSpeed(mob)===30);
+  mob.feats=[{name:'Mobile'}];
+  T('Mobile adds +10 ft speed', effSpeed(mob)===40);
+
+  // Tavern Brawler: unarmed strike becomes 1d4+Str instead of the flat 1+Str fallback, offered
+  // alongside any weapons (not a replacement) via the real qbPcAttacks path.
+  const brawler=newCharacter('Knuckles'); brawler.cls='Fighter'; brawler.abilities.str=16; brawler.feats=[{name:'Tavern Brawler'}];
+  const tbAtk=qbPcAttacks(brawler).find(a=>a.name.includes('Tavern Brawler'));
+  T('Tavern Brawler adds a 1d4 unarmed strike option', !!tbAtk && tbAtk.dmg==='1d4'+sgn(mod(abil(brawler,'str'))));
+
+  // Great Weapon Master / Sharpshooter: -5 to hit for +10 damage, gated on weapon type/property
+  // and the matching feat.
+  const gwmChar=newCharacter('Barbarian Bruiser'); gwmChar.cls='Barbarian'; gwmChar.feats=[{name:'Great Weapon Master'}];
+  T('Great Weapon Master applies to a heavy melee weapon', powerAttackKind(gwmChar,{name:'Greataxe'})==='gwm');
+  T('Great Weapon Master does not apply to a light non-heavy weapon', powerAttackKind(gwmChar,{name:'Dagger'})===null);
+  T('Great Weapon Master does not apply without the feat', powerAttackKind(newCharacter('x'),{name:'Greataxe'})===null);
+  const ssChar=newCharacter('Marksman'); ssChar.feats=[{name:'Sharpshooter'}];
+  T('Sharpshooter applies to any ranged weapon', powerAttackKind(ssChar,{name:'Shortbow'})==='sharpshooter');
+  T('Sharpshooter does not apply to a melee weapon', powerAttackKind(ssChar,{name:'Dagger'})===null);
+
+  // Fey Touched/Shadow Touched/Magic Initiate: the granted spell casts once/day with no slot —
+  // previously just decorative text (the spell was granted but always needed a real slot).
+  const fey=newCharacter('Hollow'); fey.cls='Fighter'; fey.feats=[{name:'Fey Touched'}]; fey.slots={1:{total:0,used:0}};
+  T('Fey Touched can cast Misty Step with zero slots the first time', canCast(fey,'Misty Step',1)===true);
+  castSpell(fey,'Misty Step',1);
+  T('...and it is marked used after casting', fey.featFreeCastUsed && fey.featFreeCastUsed['Misty Step']===true);
+  T('...so a second cast the same day is blocked (no slots, grant already spent)', canCast(fey,'Misty Step',1)===false);
+  const magi=newCharacter('Dabbler'); magi.cls='Fighter'; magi.feats=[{name:'Magic Initiate'}]; magi.slots={1:{total:0,used:0}};
+  magi.spells=[{name:'Cure Wounds',level:1,prepared:true,notes:'(from Magic Initiate)'}];
+  T('Magic Initiate\'s free-cast identification works off the granted spell\'s origin tag', featFreeCastSpell(magi,'Cure Wounds')===true);
+  T('...and does not apply to an unrelated spell of the same level', featFreeCastSpell(magi,'Burning Hands')===false);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

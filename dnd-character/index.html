@@ -877,7 +877,9 @@ const WEAP_PROF_FULL=['Barbarian','Fighter','Paladin','Ranger'];           // al
 const WEAP_MARTIAL_EXTRA={ Bard:['Hand Crossbow','Longsword','Rapier','Shortsword'], Rogue:['Hand Crossbow','Longsword','Rapier','Shortsword'], Monk:['Shortsword'] };
 const WIZ_SORC_OK=['Dagger','Quarterstaff','Light Crossbow'];               // Wizard & Sorcerer limited list
 function weaponProficient(c,w){
-  if(!w) return true; const cls=c.cls;
+  if(!w) return true;
+  if(c.weaponMasterProfs && c.weaponMasterProfs.includes(w.n)) return true;   // Weapon Master feat
+  const cls=c.cls;
   if(WEAP_PROF_FULL.includes(cls)) return true;
   if(cls==='Wizard'||cls==='Sorcerer') return WIZ_SORC_OK.includes(w.n);
   if(cls==='Other'||!cls) return true;                                     // homebrew — don't penalise
@@ -1856,6 +1858,18 @@ function applyAttackRiders(c, atk, targetMo, choices, isCrit, targetSurprised, l
   }
   return {total, detail:parts.length?(' · '+parts.join(' · ')):'', doubled};
 }
+// Great Weapon Master / Sharpshooter: -5 to hit for +10 damage. A choice made BEFORE the to-hit
+// roll (not a damage-step rider like the others above), so it lives in its own small helper
+// rather than attackRiderOptions/applyAttackRiders. Returns which feat applies for this attack
+// (weapon type + property gated), or null if neither is eligible.
+function powerAttackKind(c, atk){
+  if(atk.spell) return null;
+  const wref=weaponByName(String(atk.name||'').replace(/\s*\((off-hand|opportunity)\)$/,''));
+  if(!wref) return null;
+  if(wref.type==='melee' && /heavy/.test(wref.props||'') && hasFeat(c,'Great Weapon Master')) return 'gwm';
+  if(wref.type==='ranged' && hasFeat(c,'Sharpshooter')) return 'sharpshooter';
+  return null;
+}
 function attackFlow(c, atk){
   // The Attack action lets you make (extraAttacks+1) attacks. Starting a fresh
   // attack sequence costs one action; mid-sequence attacks are free. If you're out
@@ -1872,7 +1886,11 @@ function attackFlow(c, atk){
   }
   const toHit=Number(atk.toHit)||0;
   const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
-  const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false, mode:rollMode};
+  const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false, mode:rollMode, powerAttack:false};
+  const paKind=powerAttackKind(c, atk);   // Great Weapon Master / Sharpshooter eligibility
+  // Regression fix: this declaration was accidentally dropped during the attackRiderOptions
+  // extraction (rollToHit's melee/range check below still reads it) — restored.
+  const wref=(!atk.spell)?weaponByName(String(atk.name||'').replace(/\s*\((off-hand|opportunity)\)$/,'')):null;
   // Real target lookup: net.targetMon only carries {id,name,ac}; the actual monster object
   // (needed for Colossus Slayer's below-max-HP check, Hurl Through Hell's fiend check, Death
   // Strike's save bonus) lives in the synced session.
@@ -1913,13 +1931,14 @@ function attackFlow(c, atk){
       if(hasNotActedYet(net.session, targetMoReal.id)){ cx.adv=1; cx.why=(cx.why||[]).concat('Assassinate — hasn\'t acted yet'); }
       if(targetMoReal.surprised) cx.autoCrit=true;
     }
-    const r=Engine.roll(toHit, ac, face, cx.adv); sfx('swing');   // unified d20 resolver
+    const effToHit=toHit-(st.powerAttack?5:0);   // Great Weapon Master / Sharpshooter
+    const r=Engine.roll(effToHit, ac, face, cx.adv); sfx('swing');   // unified d20 resolver
     if(cx.autoCrit && (r.hit||ac==null)) r.crit=true;   // Paralyzed/Unconscious target hit in melee
     const d20=r.d20; st.d20=d20; st.crit=r.crit; st.total=r.total;
     st.targetSurprised=!!(targetMoReal&&targetMoReal.surprised);   // Death Strike (17th) reads this in rollDmg
     const advTag=(face==null&&cx.adv)?((cx.adv>0?' · ADV':' · DIS')+' — '+cx.why.join(', ')):'';
     if(advTag) flashBanner((cx.adv>0?'⬆ Advantage':'⬇ Disadvantage')+': '+cx.why.join(', '));
-    pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit)+advTag, crit:st.crit?'crit':d20===1?'fumble':null, kind:'check'});
+    pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(effToHit)+advTag, crit:st.crit?'crit':d20===1?'fumble':null, kind:'check'});
     if(c.battle && !atk.spell && !atk.offhand && !atk.reaction){ c.battle.attacksLeft=Math.max(0,c.battle.attacksLeft-1); save(); }
     if(ac!=null){   // known target AC → auto-resolve, no Hit/Miss prompt
       const hit = r.hit;
@@ -1935,6 +1954,7 @@ function attackFlow(c, atk){
     let total, detail;
     if(manual!=null){ total=manual; detail='entered'+(st.crit?' (crit)':''); }
     else { const r=rollNotation(notation)||{total:0,detail:''}; total=r.total; detail=r.detail; }
+    if(st.powerAttack){ total+=10; detail+=' · power attack +10'; }
     // riders: chosen in the damage step, shared logic via applyAttackRiders (attackRiderOptions'
     // pair) so QB's openCombatRollModal gets byte-identical behavior from the same function.
     { const sk=document.getElementById('afSneak'), sm=document.getElementById('afSmite'), ds=document.getElementById('afDivStrike'), cs=document.getElementById('afColossus'), hth=document.getElementById('afHurl');
@@ -1952,13 +1972,14 @@ function attackFlow(c, atk){
   function draw(){
     let body=`<h2>⚔ ${esc(atk.name)}</h2>`;
     if(st.phase==='tohit'){
-      body+=`<p class="muted" style="font-size:13px">To hit <b>${sgn(toHit)}</b></p>
+      body+=`<p class="muted" style="font-size:13px">To hit <b>${sgn(toHit-(st.powerAttack?5:0))}</b>${st.powerAttack?' (−5 power attack)':''}</p>
+        ${paKind?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afPower" ${st.powerAttack?'checked':''}> ${paKind==='gwm'?'💥 Great Weapon Master':'🎯 Sharpshooter'} — −5 to hit, +10 damage</label>`:''}
         ${st.mode==='manual'
           ? `<div class="addrow"><input id="afManual" type="number" placeholder="enter d20 (1–20)"><button class="btn" id="afUse">Use</button></div>`
           : `<button class="btn block" id="afAuto">🎲 Roll to hit</button>`}
         <button class="btn ghost sm" id="afModeSwitch" style="margin-top:8px">${st.mode==='manual'?'🎲 Auto-roll instead':'✎ Enter manually instead'}</button>`;
     } else if(st.phase==='hit'){
-      body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--accent)">${st.total}</div><div class="muted">d20 (${st.d20}) ${sgn(toHit)}${st.crit?' · 💥 NAT 20':st.d20===1?' · NAT 1':''}</div></div>
+      body+=`<div class="card" style="text-align:center;margin:0 0 10px"><div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:var(--accent)">${st.total}</div><div class="muted">d20 (${st.d20}) ${sgn(toHit-(st.powerAttack?5:0))}${st.crit?' · 💥 NAT 20':st.d20===1?' · NAT 1':''}</div></div>
         <p style="text-align:center;margin:0 0 8px">Did it beat the target's AC?</p>
         <div class="row2"><button class="btn" id="afHit">✓ Hit${st.crit?' (crit)':''}</button><button class="btn bad" id="afMiss">✗ Miss</button></div>`;
     } else if(st.phase==='dmg'){
@@ -1989,6 +2010,7 @@ function attackFlow(c, atk){
       const a=$('#afAuto'); if(a) a.onclick=()=>rollToHit(null);
       const u=$('#afUse'); if(u) u.onclick=()=>{ const v=Number($('#afManual').value); if(v>=1&&v<=20) rollToHit(v); else flashBanner('Enter 1–20'); };
       $('#afModeSwitch').onclick=()=>{ st.mode=st.mode==='manual'?'auto':'manual'; draw(); };
+      const pw=$('#afPower'); if(pw) pw.onchange=()=>{ st.powerAttack=pw.checked; draw(); };
     }
     else if(st.phase==='hit'){ $('#afHit').onclick=()=>{ st.hit=true; st.phase='dmg'; sfx(st.crit?'crit':'hit'); attackFx(st.crit?'crit':'hit'); draw(); }; $('#afMiss').onclick=()=>{ st.hit=false; st.phase='done'; sfx('miss'); attackFx('miss'); logChange(c, atk.name+' — attack missed'); if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:false}); }catch(e){} } draw(); }; }
     else if(st.phase==='dmg'){
@@ -2260,7 +2282,11 @@ const FEAT_GRANTS = {
 'Athlete':[{t:'ability',n:1,options:['str','dex']}],
 'Lightly Armored':[{t:'ability',n:1,options:['str','dex']}],
 'Moderately Armored':[{t:'ability',n:1,options:['str','dex']}],
-'Weapon Master':[{t:'ability',n:1,options:['str','dex']}],
+// Weapon Master's proficiency grant used to do nothing at all — weaponProficient() only ever
+// checked class, never c.weaponMasterProfs — so someone who took this feat for, say, a
+// longsword got no actual to-hit benefit from it. Fixed by adding the missing weapon-choice
+// picker (a new 'weaponProf' spec type) and wiring weaponProficient() to check it.
+'Weapon Master':[{t:'ability',n:1,options:['str','dex']},{t:'weaponProf',n:4}],
 'Tavern Brawler':[{t:'ability',n:1,options:['str','con']}],
 'Observant':[{t:'ability',n:1,options:['int','wis']}],
 'Actor':[{t:'fixed',k:'cha'}],
@@ -2268,11 +2294,16 @@ const FEAT_GRANTS = {
 'Heavily Armored':[{t:'fixed',k:'str'}],
 'Heavy Armor Master':[{t:'fixed',k:'str'}],
 'Keen Mind':[{t:'fixed',k:'int'}],
+// Gunner was missing entirely — its own FEAT_DESC promises "+1 DEX" but no grant existed at
+// all, so taking it gave nothing.
+'Gunner':[{t:'fixed',k:'dex'}],
 'Fey Touched':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Misty Step']},{t:'spellChoice',lvl:1,schools:['E','D'],n:1}],
 'Shadow Touched':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Invisibility']},{t:'spellChoice',lvl:1,schools:['I','N'],n:1}],
 'Telekinetic':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Mage Hand']}],
 'Telepathic':[{t:'ability',n:1,options:['int','wis','cha']},{t:'autospell',spells:['Detect Thoughts']}],
-'Magic Initiate':[{t:'spellChoice',lvl:0,n:2,any:true},{t:'spellChoice',lvl:1,n:1,any:true}]
+'Magic Initiate':[{t:'spellChoice',lvl:0,n:2,any:true},{t:'spellChoice',lvl:1,n:1,any:true}],
+// Spell Sniper's "learn one attack cantrip" grant was also missing entirely.
+'Spell Sniper':[{t:'spellChoice',lvl:0,n:1,any:true,attackOnly:true}]
 };
 function abilSelect(id, opts){ return `<select id="${id}" class="ch-ab">`+(opts||['str','dex','con','int','wis','cha']).map(k=>`<option value="${k}">${k.toUpperCase()}</option>`).join('')+`</select>`; }
 function choiceControl(sp, i, c){
@@ -2282,6 +2313,7 @@ function choiceControl(sp, i, c){
   if(sp.t==='skill'){ return `<div class="field">${lab('Choose '+sp.n+' skill proficienc'+(sp.n>1?'ies':'y'))}<div class="cklist">${SKILLS.map(([k,nm])=>c.skillProf[k]?'':`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join('')}</div></div>`; }
   if(sp.t==='expertise'){ const prof=SKILLS.filter(([k])=>c.skillProf[k]&&!c.skillExp[k]); return `<div class="field">${lab('Choose '+sp.n+' skill for expertise')}<div class="cklist">${prof.length?prof.map(([k,nm])=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${k}"> ${nm}</label>`).join(''):'<span class="muted small">Gain skill proficiencies first.</span>'}</div></div>`; }
   if(sp.t==='spellChoice'){ const known=new Set(c.spells.map(s=>s.name.toLowerCase())); let list=SPELLS.filter(s=>s.l===sp.lvl && !known.has(s.n.toLowerCase())); if(sp.schools) list=list.filter(s=>sp.schools.includes(s.s)); if(!sp.any){ const lt=CLASS_LETTER[c.cls]; if(lt) list=list.filter(s=>s.c.includes(lt)); }
+    if(sp.attackOnly) list=list.filter(s=>parseSpellMechanics(s.n).attack);   // Spell Sniper: an attack-roll cantrip only
     return `<div class="field">${lab('Choose '+sp.n+' '+lvlLabel(sp.lvl).toLowerCase()+' spell'+(sp.n>1?'s':''))}<div class="cklist">${list.map(s=>`<label class="listrow" style="cursor:pointer;padding:5px 0;align-items:flex-start"><input type="checkbox" class="chk" data-csp="${i}" value="${esc(s.n)}|${s.l}"> <span style="flex:none">${SCHOOL_ICON[s.s]}</span> <span class="nm" style="margin-left:6px">${esc(s.n)}${SPELL_DESC[s.n]?`<small>${esc(SPELL_DESC[s.n])}</small>`:''}</span></label>`).join('')}</div></div>`; }
   if(sp.t==='ancestry') return `<div class="field">${lab('Draconic ancestry (breath weapon & resistance)')}<select id="csp_${i}_anc">${DRAGON_ANCESTRY.map(a=>`<option>${a}</option>`).join('')}</select></div>`;
   if(sp.t==='fightingStyle') return `<div class="field">${lab('Fighting Style')}<select id="csp_${i}_fs">${(FIGHTING_STYLES[sp.cls]||[]).map(f=>`<option>${f}</option>`).join('')}</select></div>`;
@@ -2290,12 +2322,15 @@ function choiceControl(sp, i, c){
   // stored as a plain string) all share this one shape rather than a bespoke render/resolve
   // pair each.
   if(sp.t==='pick') return `<div class="field">${lab(sp.label)}<select id="csp_${i}_pick">${sp.options.map(o=>`<option>${esc(o)}</option>`).join('')}</select></div>`;
+  // Weapon Master: choose n weapons to gain proficiency with (weaponProficient() checks
+  // c.weaponMasterProfs for these by name).
+  if(sp.t==='weaponProf'){ const already=new Set(c.weaponMasterProfs||[]); return `<div class="field">${lab('Choose '+sp.n+' weapons for proficiency')}<div class="cklist">${WEAPONS.filter(w=>!already.has(w.n)).map(w=>`<label class="listrow" style="cursor:pointer;padding:5px 0"><input type="checkbox" class="chk" data-csp="${i}" value="${esc(w.n)}"> ${esc(w.n)}</label>`).join('')}</div></div>`; }
   return '';
 }
 function applyChoices(specs, c){
   // validate counts first
   for(let i=0;i<specs.length;i++){ const sp=specs[i];
-    if(sp.t==='skill'||sp.t==='expertise'||sp.t==='spellChoice'){ const got=document.querySelectorAll('[data-csp="'+i+'"]:checked').length; if(got!==sp.n){ flashBanner('Pick exactly '+sp.n+' for one of the choices'); return false; } }
+    if(sp.t==='skill'||sp.t==='expertise'||sp.t==='spellChoice'||sp.t==='weaponProf'){ const got=document.querySelectorAll('[data-csp="'+i+'"]:checked').length; if(got!==sp.n){ flashBanner('Pick exactly '+sp.n+' for one of the choices'); return false; } }
     if(sp.t==='ability' && sp.n>1){ const vals=[...document.querySelectorAll('#csp_'+i+'_0, #csp_'+i+'_1')].map(s=>s.value); if(new Set(vals).size!==vals.length){ flashBanner('Choose two different abilities'); return false; } }
   }
   specs.forEach((sp,i)=>{
@@ -2307,6 +2342,7 @@ function applyChoices(specs, c){
     else if(sp.t==='ancestry'){ const el=document.getElementById('csp_'+i+'_anc'); if(el) c.dragon=el.value; }
     else if(sp.t==='fightingStyle'){ const el=document.getElementById('csp_'+i+'_fs'); if(el) c.fightingStyle=el.value; }
     else if(sp.t==='pick'){ const el=document.getElementById('csp_'+i+'_pick'); if(el){ if(sp.multi){ if(!c[sp.key]) c[sp.key]=[]; c[sp.key].push(el.value); } else c[sp.key]=el.value; } }
+    else if(sp.t==='weaponProf'){ if(!c.weaponMasterProfs) c.weaponMasterProfs=[]; document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>c.weaponMasterProfs.push(el.value)); }
   });
   return true;
 }
@@ -2324,8 +2360,12 @@ function applyFeat(c, name, then){
     if(g.t==='fixed') c.asiBonus[g.k]=(c.asiBonus[g.k]||0)+1;
     else if(g.t==='autospell') g.spells.forEach(sp=>{ if(!c.spells.some(s=>s.name.toLowerCase()===sp.toLowerCase())){ const m=spellMeta(sp); c.spells.push({name:sp,level:m?m.l:0,prepared:false,notes:'(from '+name+')'}); } });
   });
+  // Tough: +2 max HP per level — backfilled retroactively for every level already gained (the
+  // per-level level-up flow's own hpGain calc only picks this up starting NEXT level, since
+  // c.feats doesn't have Tough yet at the point that calc runs this same transaction).
+  if(name==='Tough'){ const bonus=2*(Number(c.level)||1); c.hp.max+=bonus; c.hp.cur+=bonus; }
   clampAbil(c); save();
-  const inputs=grants.filter(g=>['ability','skill','expertise','resilient','spellChoice'].includes(g.t));
+  const inputs=grants.filter(g=>['ability','skill','expertise','resilient','spellChoice','weaponProf'].includes(g.t));
   if(inputs.length) promptChoices(name+' — make your choices', inputs, c, then);
   else { render(); if(then) then(); }
 }
@@ -2357,7 +2397,9 @@ function computeAC(c,opts){
   if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + (ignoreFx?0:effBonus(c,'ac')) + gearBonus(c,'ac');
   const a=armorDef(c.armor||'none');
   const hasFx=n=>!ignoreFx && (c.effects||[]).some(e=>e.name===n);
-  let base = a.base + Math.min(mod(abil(c,'dex')), a.dexCap);
+  // Medium Armor Master: DEX bonus to AC caps at +3 instead of +2 in medium armor (dexCap===2).
+  const dexCap = (a.dexCap===2 && hasFeat(c,'Medium Armor Master')) ? 3 : a.dexCap;
+  let base = a.base + Math.min(mod(abil(c,'dex')), dexCap);
   // Unarmored Defense (Barbarian 1st, Monk 1st) — was flavor-text-only in CLASS_FEATURES
   // before this pass; a real base-class feature every Barbarian/Monk needs regardless of
   // subclass, same as Bardic Inspiration/Channel Divinity/Wild Shape were for earlier classes.
@@ -2493,7 +2535,7 @@ function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mo
 // unarmored (armor OR shield breaks it, same as Unarmored Defense).
 function unarmoredMoveBonus(c){ if(!(c && c.cls==='Monk' && (c.armor||'none')==='none' && !c.shield)) return 0; const l=Number(c.level)||1;
   return l>=18?30:l>=14?25:l>=10?20:l>=6?15:l>=2?10:0; }
-function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+unarmoredMoveBonus(c)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
+function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+unarmoredMoveBonus(c)+(hasFeat(c,'Mobile')?10:0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
 function modSummary(mods){ if(!mods) return ''; const parts=[];
   if(mods.ac) parts.push(sgn(mods.ac)+' AC');
   if(mods.speed) parts.push(sgn(mods.speed)+' ft');
@@ -2574,11 +2616,26 @@ function advanceRound(c){
   save(); render();
   flashBanner(expired.length?('Round advanced — expired: '+expired.map(e=>e.name).join(', ')):'Round advanced');
 }
+// Fey Touched/Shadow Touched/Magic Initiate: the granted 1st-level spell can be cast once per
+// day without a slot. This app has no daily-vs-long-rest clock, so "once per day" is
+// approximated as "once per long rest," the same simplification already used elsewhere for
+// other once/day features. Magic Initiate's spell is dynamic (whichever the player chose), so
+// it's identified by the origin tag already written into c.spells' notes field when granted.
+function featFreeCastSpell(c, name){
+  if(!name) return false;
+  if(hasFeat(c,'Fey Touched') && name==='Misty Step') return true;
+  if(hasFeat(c,'Shadow Touched') && name==='Invisibility') return true;
+  if(hasFeat(c,'Magic Initiate') && (c.spells||[]).some(s=>s.name===name && (s.notes||'').includes('Magic Initiate'))) return true;
+  return false;
+}
 function canCast(c, name, level){
   if(typeof level==='undefined'){ level=name; name=''; }   // back-compat: canCast(c, level)
   level=Number(level)||0;
   if(name && wishFreeName===name) return true;   // Wish-duplicated spell: no slot, no prep, no action cost
-  const thousandForms = name==='Alter Self' && isMoonDruid(c,14);   // still needs prep/action, just no slot — checked below, not an early bypass
+  // "No slot needed" cases (Thousand Forms, feat-granted once/day spells) still need prep/
+  // action — checked below, not an early bypass like Wish's fully-free `free` above.
+  const noSlotNeeded = (name==='Alter Self' && isMoonDruid(c,14))
+    || (featFreeCastSpell(c,name) && !(c.featFreeCastUsed&&c.featFreeCastUsed[name]));
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
   // Silence/Antimagic Field: can't cast while standing in an active no-cast zone.
   { const s=battleSession();
@@ -2604,16 +2661,19 @@ function canCast(c, name, level){
       if(b.castBonusSpell && level>0){ flashBanner('After a bonus-action spell you can only cast a cantrip'); return false; }
     }
   }
-  if(level>0 && !thousandForms){ const tot=spellSlots(c)[level]||0, used=Math.min(tot,(c.slots[level]&&c.slots[level].used)||0); if(tot-used<=0){ flashBanner('No level '+level+' spell slots left'); return false; } }
+  if(level>0 && !noSlotNeeded){ const tot=spellSlots(c)[level]||0, used=Math.min(tot,(c.slots[level]&&c.slots[level].used)||0); if(tot-used<=0){ flashBanner('No level '+level+' spell slots left'); return false; } }
   return true;
 }
 function castSpell(c, name, level, lightAt, spellOpts){
   level=Number(level)||0;
   if(!canCast(c,name,level)) return false;
   const free=(name && wishFreeName===name); if(free) wishFreeName=null;   // Wish duplication: consume the grant
-  // Thousand Forms (14th): no spell slot expended, but the action/bonus-action cost below still
-  // applies — a narrower bypass than Wish's `free` (which also skips the action-economy spend).
-  const freeSlot = free || (name==='Alter Self' && isMoonDruid(c,14));
+  // Thousand Forms / feat-granted once/day spells: no spell slot expended, but the action/
+  // bonus-action cost below still applies — a narrower bypass than Wish's `free` (which also
+  // skips the action-economy spend).
+  const featFree = !free && featFreeCastSpell(c,name) && !(c.featFreeCastUsed&&c.featFreeCastUsed[name]);
+  if(featFree){ if(!c.featFreeCastUsed) c.featFreeCastUsed={}; c.featFreeCastUsed[name]=true; }
+  const freeSlot = free || featFree || (name==='Alter Self' && isMoonDruid(c,14));
   const ct=spellCastTime(name);
   if(level>0 && !freeSlot){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
   if(c.battle && !free){
@@ -4093,6 +4153,8 @@ function spendHitDie(c){
   const conMod=mod(abil(c,"con"));
   const note='1d'+hd.sides+(conMod?(conMod>0?'+'+conMod:String(conMod)):'');
   const res=rollNotation(note);
+  // Durable: healed HP from a spent Hit Die is at least 2x your Con modifier.
+  if(hasFeat(c,'Durable')) res.total=Math.max(res.total, 2*conMod);
   c.hp.cur=Math.min(c.hp.max, c.hp.cur+Math.max(0,res.total));
   c.hitDice.used=(c.hitDice.used||0)+1;
   c.actionSurgeUsed=false;   // Action Surge recharges on a short rest
@@ -4458,6 +4520,7 @@ function levelUp(){
     if(newCantrips>0 && learnedCantrips<newCantrips){ flashBanner('Choose your new cantrip'+(newCantrips>1?'s':'')+' first ('+learnedCantrips+'/'+newCantrips+')'); return; }
     if(isAsi && asiMode==='feat'){ const fv=$('#luFeat'); if(!fv||!fv.value){ flashBanner('Pick a feat first'); return; } }
     if(hpGain==null) hpGain=Math.max(1,avg+con);
+    if(hasFeat(c,'Tough')) hpGain+=2;   // Tough: +2 max HP per level, every level after you take it
     c.hp.max+=hpGain; c.hp.cur+=hpGain;
     if(needsSub){ const s=$('#luSub'); if(s) c.subclass=s.value; }
     // Draconic Resilience (1st level): +1 max HP this level AND every level after — checked
@@ -4489,7 +4552,7 @@ function renderSheet(c){
   ${pend.length?`<div class="card" style="border:1px solid var(--accent);background:rgba(180,140,255,.08)">
     <h2 style="margin-top:0">⚑ Choices to make</h2>
     <p class="muted" style="margin:4px 0 10px">Your race, class or level grants picks you haven't made yet:</p>
-    <ul style="margin:0 0 12px 18px;padding:0">${pend.map(s=>`<li>${esc(s.label||({ancestry:'Draconic ancestry',fightingStyle:'Fighting Style',expertise:'Expertise',skill:'Skill proficiencies',ability:'Ability score increases'}[s.t]||'Choice'))}</li>`).join('')}</ul>
+    <ul style="margin:0 0 12px 18px;padding:0">${pend.map(s=>`<li>${esc(s.label||({ancestry:'Draconic ancestry',fightingStyle:'Fighting Style',expertise:'Expertise',skill:'Skill proficiencies',ability:'Ability score increases',weaponProf:'Weapon Master — weapon proficiencies'}[s.t]||'Choice'))}</li>`).join('')}</ul>
     <button class="btn block" id="resolveChoices">Make these choices</button>
   </div>`:''}
   <div class="card">
@@ -5266,6 +5329,7 @@ function renderSpells(c){
     if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: long rest too
     if(isFiendWarlock(c,14)) c.hurlThroughHellUsed=false;   // Hurl Through Hell: long rest only
     if(isEvocationWizard(c,14)) c.overchannelUses=0;   // Overchannel: backlash counter resets on a long rest
+    c.featFreeCastUsed={};   // Fey Touched/Shadow Touched/Magic Initiate: once/day free casts, approximated as once/long rest
     if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: long rest too
     if(c.cls==='Paladin'){ c.divineSenseLeft=divineSenseMax(c); c.layOnHandsLeft=layOnHandsMax(c); }   // long rest only (PHB)
     if(isDevotionPaladin(c,20)) c.holyNimbusUsed=false;   // once per long rest
@@ -7232,6 +7296,7 @@ function playerAttackMenu(c){
     actions.push({label:w.n+' — off-hand', sub:'bonus action · '+oa.dmg+' '+(w.dt||''), tiles:weaponRangeTiles(c,w), atk:oa}); }); }
   if(hasNaturalWeapons(c)) actions.push({label:'Claws (Alter Self)', sub:'melee · 1d6 slashing', tiles:1, atk:{name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing'}});
   if(c.cls==='Monk'){ const ma=martialArtsUnarmedAtk(c); actions.push({label:ma.name, sub:'melee · '+ma.dmg+' '+ma.dt, tiles:1, atk:ma}); }
+  else if(hasFeat(c,'Tavern Brawler')){ const tb={name:'Unarmed strike (Tavern Brawler)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d4'+sgn(mod(abil(c,'str'))), dt:'bludgeoning'}; actions.push({label:tb.name, sub:'melee · '+tb.dmg+' '+tb.dt, tiles:1, atk:tb}); }
   }
   // (spells & cantrips are cast via the ✨ Spells button → map targeting)
   if(!actions.length){ flashBanner('No weapons — use ✨ Spells to cast'); return; }
@@ -10239,6 +10304,9 @@ function qbPcAttacks(c){ if(c.wildShape) return wildShapeAttacks(c); const out=[
   // magical — a real damage bump over the flat 1+STR fallback below, not just cosmetic.
   if(hasNaturalWeapons(c)) out.push({name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing', tiles:1, melee:true});
   if(c.cls==='Monk') out.push(martialArtsUnarmedAtk(c));
+  // Tavern Brawler: unarmed strikes deal 1d4 instead of the flat 1+Str fallback (offered
+  // alongside any weapons — the feat doesn't replace them, just makes punching worthwhile).
+  else if(hasFeat(c,'Tavern Brawler')) out.push({name:'Unarmed strike (Tavern Brawler)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d4'+sgn(mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
   if(!out.length) out.push({name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
   return out;
 }
@@ -10532,7 +10600,7 @@ function animateDamagePips(rowEl, rolls, msEach, onDone){
  * onCommit should call Engine.attack with face + dmgTotal and return the event.
  */
 function openCombatRollModal(opts){
-  const st={phase:'ready', d20:null, total:null, crit:false, hit:null, dmgTotal:null, dmgRolls:[], face:null};
+  const st={phase:'ready', d20:null, total:null, crit:false, hit:null, dmgTotal:null, dmgRolls:[], face:null, powerAttack:false};
   const kind=opts.kind||((opts.tiles||1)>1?'ranged':'melee');
   const dismiss=()=>{ $('#modalRoot').innerHTML=''; };
   function flavorReady(){
@@ -10546,7 +10614,8 @@ function openCombatRollModal(opts){
     if(st.phase==='ready'){
       body+=`<p class="cr-flavor">${esc(flavorReady())}</p>
         <div class="cr-stage"><div class="cr-diebox"><span class="face">?</span></div>
-        <p class="cr-sub">To hit ${sgn(opts.toHit||0)}${opts.advWhy&&opts.advWhy.length?' · '+esc(opts.advWhy.join(', ')):''}</p></div>
+        <p class="cr-sub">To hit ${sgn((opts.toHit||0)-(st.powerAttack?5:0))}${st.powerAttack?' (−5 power attack)':''}${opts.advWhy&&opts.advWhy.length?' · '+esc(opts.advWhy.join(', ')):''}</p></div>
+        ${opts.paKind?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="crPower" ${st.powerAttack?'checked':''}> ${opts.paKind==='gwm'?'💥 Great Weapon Master':'🎯 Sharpshooter'} — −5 to hit, +10 damage</label>`:''}
         <button class="btn block" id="crRollHit">🎲 Roll to hit</button>`;
     } else if(st.phase==='rollingHit'){
       body+=`<p class="cr-flavor">${esc(combatFlavor('swing',opts))}</p>
@@ -10561,7 +10630,7 @@ function openCombatRollModal(opts){
       body+=`<p class="cr-flavor">${esc(fl)}</p>
         <div class="cr-stage"><div class="cr-diebox ${boxCls}"><span class="face">${st.d20}</span></div>
         <div class="cr-big ${st.hit?(st.crit?'gold':'good'):'bad'}">${st.total}</div>
-        <p class="cr-sub">d20 (${st.d20}) ${sgn(opts.toHit||0)}${st.crit?' · NAT 20':st.d20===1?' · NAT 1':''} vs AC ${opts.ac}${st.hit?(st.crit?' — CRITICAL HIT':' — HIT'):' — MISS'}</p>
+        <p class="cr-sub">d20 (${st.d20}) ${sgn((opts.toHit||0)-(st.powerAttack?5:0))}${st.crit?' · NAT 20':st.d20===1?' · NAT 1':''} vs AC ${opts.ac}${st.hit?(st.crit?' — CRITICAL HIT':' — HIT'):' — MISS'}</p>
         <div class="cr-chips">${st.hit?`<span class="pill">${st.crit?'💥 Crit':'✓ Hit'}</span>`:`<span class="pill">✗ Miss</span>`}
           ${opts.adv?`<span class="pill">${opts.adv>0?'⬆ ADV':'⬇ DIS'}</span>`:''}</div></div>
         ${canLucky?`<button class="btn ghost block" id="crLucky">🍀 Lucky re-roll (${luckPointsLeft(pc)} left)</button>`:''}
@@ -10587,7 +10656,7 @@ function openCombatRollModal(opts){
     $('#modalRoot').innerHTML=`<div class="modal" id="crModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
     $('#crClose').onclick=()=>{ dismiss(); opts.onCancel&&opts.onCancel(); };
     $('#crModal').onclick=e=>{ if(e.target.id==='crModal'){ /* don't dismiss mid-roll by backdrop */ } };
-    if(st.phase==='ready'){ $('#crRollHit').onclick=()=>doHitRoll(); }
+    if(st.phase==='ready'){ $('#crRollHit').onclick=()=>doHitRoll(); const pw=$('#crPower'); if(pw) pw.onchange=()=>{ st.powerAttack=pw.checked; draw(); }; }
     if(st.phase==='hitResult'){
       const d=$('#crRollDmg'); if(d) d.onclick=()=>doDmgRoll();
       const dn=$('#crDone'); if(dn) dn.onclick=()=>finishOut(null);
@@ -10621,7 +10690,7 @@ function openCombatRollModal(opts){
     const r1=rnd(20), r2=rnd(20);
     let d20=r1;
     if(opts.adv>0) d20=Math.max(r1,r2); else if(opts.adv<0) d20=Math.min(r1,r2);
-    st.d20=d20; st.face=d20; st.total=d20+(opts.toHit||0);
+    st.d20=d20; st.face=d20; st.total=d20+(opts.toHit||0)-(st.powerAttack?5:0);
     st.crit=d20===20; st.fumble=d20===1;
     st.hit=st.crit||(!st.fumble&&st.total>=(opts.ac||10));
     if(opts.autoCrit && st.hit) st.crit=true;
@@ -10633,6 +10702,7 @@ function openCombatRollModal(opts){
     const parsed=parseDice(notation);
     const rolls=[]; let total=parsed.flat||0;
     (parsed.terms||[]).forEach(t=>{ for(let i=0;i<t.n;i++){ const r=rnd(t.sides); rolls.push(r); total+=r*t.sign; } });
+    if(st.powerAttack) total+=10;   // Great Weapon Master / Sharpshooter
     // Class riders (Sneak Attack, Divine Smite, Divine Strike, Colossus Slayer, Hurl Through
     // Hell, Death Strike) — same applyAttackRiders() attackFlow uses, read from the checkboxes
     // riderChecksHTML rendered in the hitResult phase. This is the QB half of the fix for the
@@ -10649,7 +10719,7 @@ function openCombatRollModal(opts){
   function finishOut(dmgTotal){
     // Dismiss the roll sheet first so the battlefield (and projectiles) are visible
     dismiss();
-    const meta={d20:st.d20, total:st.total, hit:st.hit, crit:st.crit, face:st.face, dmgTotal:st.hit?(dmgTotal!=null?dmgTotal:st.dmgTotal):0};
+    const meta={d20:st.d20, total:st.total, hit:st.hit, crit:st.crit, face:st.face, dmgTotal:st.hit?(dmgTotal!=null?dmgTotal:st.dmgTotal):0, powerAttack:st.powerAttack};
     // Re-attach Iso3D to the main map under the modal
     const sess=battleSession();
     if(isoView&&iso3dView&&sess) try{ syncIso3DHost(sess); }catch(e){}
@@ -10835,10 +10905,16 @@ function qbResolveAttack(att, tgt, atk, done){
     // in Quick Battle too, not just player-net.
     riders: att.c ? attackRiderOptions(att.c, atk, tgt) : null,
     riderChar: att.c, riderAtk: atk, riderTarget: tgt, riderTargetSurprised: !!tgt.surprised, riderLog: qbLog,
+    paKind: att.c ? powerAttackKind(att.c, atk) : null,   // Great Weapon Master / Sharpshooter
     from:{x:att.x,y:att.y}, to:{x:tgt.x,y:tgt.y},
     onCommit:(meta)=>{
-      // FX already played in finishOut → playCombatShotFx; only apply rules + log here
-      const ev=Engine.attack(qbAdapter, att.id, tgt.id, atk, {face:meta.face, dmgTotal:meta.hit?meta.dmgTotal:0});
+      // FX already played in finishOut → playCombatShotFx; only apply rules + log here.
+      // Power attack (-5/+10): Engine.attack re-derives hit/crit from atk.toHit + the same
+      // fixed face — if that used the unadjusted toHit, its authoritative hit/miss could
+      // disagree with what the roll modal already showed and committed to. Pass a toHit-
+      // adjusted CLONE instead of mutating the caller's shared atk object.
+      const effAtk = meta.powerAttack ? Object.assign({}, atk, {toHit:(atk.toHit||0)-5}) : atk;
+      const ev=Engine.attack(qbAdapter, att.id, tgt.id, effAtk, {face:meta.face, dmgTotal:meta.hit?meta.dmgTotal:0});
       if(ev.sanctuary&&ev.sanctuary.blocked){
         qbLog('🛡️ '+qbName(att)+' can’t bring itself to attack '+qbName(tgt)+' — Sanctuary holds (Wis '+ev.sanctuary.roll+' vs DC '+ev.sanctuary.dc+')');
       } else if(ev.hit){
@@ -10849,7 +10925,7 @@ function qbResolveAttack(att, tgt, atk, done){
       } else {
         qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')');
       }
-      pushRoll({label:atk.name+' attack', total:ev.total, detail:'d20 ('+ev.d20+') '+sgn(atk.toHit||0)+' vs AC '+ev.ac, crit:ev.crit?'crit':ev.d20===1?'fumble':null, kind:'check', bonus:atk.toHit||0});
+      pushRoll({label:atk.name+' attack', total:ev.total, detail:'d20 ('+ev.d20+') '+sgn(effAtk.toHit||0)+' vs AC '+ev.ac, crit:ev.crit?'crit':ev.d20===1?'fumble':null, kind:'check', bonus:effAtk.toHit||0});
       if(ev.hit) pushRoll({label:atk.name+' damage', total:ev.dmg, detail:(atk.dmg||'')+(ev.crit?' crit':''), kind:'dmg', notation:ev.crit?critNotation(atk.dmg||'1d6'):(atk.dmg||'1d6')});
       return ev;
     },
@@ -11967,7 +12043,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.199';
+const APP_VERSION='v120.200';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
