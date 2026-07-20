@@ -1794,3 +1794,54 @@ Resilience's AC verified through the real `computeAC` path (on and off armor), a
 Dragon Ancestor's owed-count shrinking as picks are made.
 
 Playwright wasn't available to spot-check this live either (server still disconnected).
+
+## The Fiend — eleventh subclass, and a new centralized "on kill" hook (v120.197)
+
+Eleventh entry in `SUBCLASS_FEATURES`. Pact Magic's slot table (few slots, always highest level,
+short-rest recharge) was ALREADY real; Eldritch Invocations and Pact Boon (base Warlock) were
+flavor-text-only.
+
+- **Dark One's Blessing (1st)** — the standout piece of this entry: rather than threading a new
+  hook through every attack-resolution path (QB's `qbResolveAttack`, player-net's `attackFlow`,
+  and any future one), this subscribes to the existing global `Events` pub/sub system that
+  `Engine.attack` ALREADY emits `'attack'` and `'death'` events into. A `'death'` event doesn't
+  carry `actorId`, but `Engine.attack` emits it synchronously immediately after the `'attack'`
+  event when the hit finishes the target — so the module-level `_lastAttackEv` tracks the most
+  recent attack and is read the instant a death event follows it. This is the first feature this
+  session wired through `Events` instead of touching each mode's UI layer directly, and it means
+  Dark One's Blessing works identically in QB and player-net (and any other future path) with
+  zero per-mode code — a stronger, more centralized fix than the per-path pattern every earlier
+  rider (Sneak Attack, Divine Smite, Divine Strike, Colossus Slayer, Death Strike) had to use,
+  worth remembering for future features that need an "any kill, anywhere" trigger.
+- **Dark One's Own Luck (6th)**: a new small `openWarlockUI` modal button that rolls 1d10 and
+  adds it to `lastRoll` (the existing global roll-log state every roll already pushes into),
+  re-logging the adjusted total — the first feature this session to retroactively modify an
+  already-shown roll rather than computing a fresh one.
+- **Fiendish Resilience (10th)**: a real damage-type picker (persisted as `c.fiendishResilience`)
+  but the resistance itself isn't auto-applied — `applyHp(c,delta)` has no damage-type parameter
+  at all anywhere in this app (a real, pre-existing architectural gap; threading dtype through
+  every one of its many call sites is a bigger lift than this pass), so the UI explicitly tells
+  the player to halve incoming damage of that type themselves, the same manual-application
+  fallback used everywhere else this session lacks a clean hook.
+- **Hurl Through Hell (14th)**: a new `afHurl` rider in `attackFlow` (same shape as Colossus
+  Slayer/Death Strike, same QB-mode gap already flagged for that whole family). The RAW "target
+  vanishes until the end of your next turn" clause is log-text only — this app has no "removed
+  from play, returns later" token state to hook a real disappearance into; the 10d10-unless-a-
+  fiend damage (checked via the existing `monsterIsFiend` sprite heuristic from Divine Sense) is
+  the real, mechanically-enforced part.
+- **Eldritch Invocations / Pact Boon**: real choice-count tracking via the same `{t:'pick'}` infra
+  (known-count table: 2/3/4/5/6/7/8 at levels 2/5/7/9/12/15/18 for invocations; one-shot Pact
+  Boon at 3rd). Deliberately scoped to selection only, same call as Metamagic last entry — most
+  individual invocations (Agonizing Blast modifying Eldritch Blast's cantrip-scaling damage,
+  Devil's Sight altering darkvision/lighting checks, Mask of Many Faces granting at-will
+  Disguise Self) and Pact of the Blade's summoned weapon are each their own bounded feature, not
+  something to half-build inside an already-large subclass pass. `ELDRITCH_INVOCATIONS` is a
+  curated 15-name list, not the full PHB roster — the same scope call `BEAST_SHAPES` made for
+  Wild Shape's missing beast data.
+
+Tests: 10 new assertions — `isFiendWarlock` gating, Dark One's Blessing verified through a real
+synthetic `Events.emit('attack')`→`Events.emit('death')` pair (proving the centralized hook fires
+without any QB/player-net-specific test setup beyond a minimal fixture), and Eldritch Invocation/
+Pact Boon's owed-count tracking.
+
+Playwright wasn't available to spot-check this live either (server still disconnected).

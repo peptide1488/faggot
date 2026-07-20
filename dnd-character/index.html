@@ -674,6 +674,12 @@ const SUBCLASS_FEATURES = {
     [14,'Dragon Wings','Bonus action: sprout wings, flying speed equal to your current speed.'],
     [18,'Draconic Presence','Action, 5 sorcery points: 60 ft aura of awe (Charmed) or fear (Frightened) — Wisdom save.'],
   ],
+  'The Fiend':[
+    [1,"Dark One's Blessing",'When you reduce a hostile creature to 0 HP, gain temporary HP = Cha mod + warlock level (min 1).'],
+    [6,"Dark One's Own Luck",'Once per short/long rest: add 1d10 to an ability check or saving throw after seeing the roll.'],
+    [10,'Fiendish Resilience','Choose a damage type at a rest; resistance to it until you choose again.'],
+    [14,'Hurl Through Hell','Once per long rest, on a hit: the target vanishes until the end of your next turn and takes 10d10 psychic damage (fiends immune).'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -948,6 +954,7 @@ function monsterIsFiend(mo){ return mo&&mo.sprite==='demon'; }
 function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunter' && (Number(c.level)||1)>=(lvl||3)); }
 function isAssassin(c,lvl){ return !!(c && c.cls==='Rogue' && c.subclass==='Assassin' && (Number(c.level)||1)>=(lvl||3)); }
 function isDraconicSorcerer(c,lvl){ return !!(c && c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && (Number(c.level)||1)>=(lvl||1)); }
+function isFiendWarlock(c,lvl){ return !!(c && c.cls==='Warlock' && c.subclass==='The Fiend' && (Number(c.level)||1)>=(lvl||1)); }
 // Dragon Ancestor's type→damage-type table (PHB) — Draconic Bloodline's own ancestry choice,
 // a SEPARATE field from Dragonborn's racial c.dragon (a race trait, not a sorcerer subclass
 // choice — a character could theoretically be both a Dragonborn AND a Draconic Bloodline
@@ -1071,6 +1078,7 @@ function battleCard(c){
       ${c.cls==='Monk' && (Number(c.level)||1)>=2?`<button class="btn sm" id="kiBtn" style="flex:1">🥋 Ki (${c.kiLeft==null?kiMax(c):c.kiLeft})</button>`:''}
       ${c.cls==='Paladin'?`<button class="btn sm" id="palBtn" style="flex:1">✝️ Paladin</button>`:''}
       ${isDraconicSorcerer(c,14)?`<button class="btn sm" id="sorcBtn" style="flex:1">🐉 Draconic</button>`:''}
+      ${isFiendWarlock(c,6)?`<button class="btn sm" id="wlBtn" style="flex:1">😈 The Fiend</button>`:''}
     </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
     <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">Battle log</div>
@@ -1394,6 +1402,33 @@ function openSorcererUI(c){
     $('#sorcAwe').onclick=()=>go('Charmed');
     $('#sorcFear').onclick=()=>go('Frightened');
   }; }
+}
+// The Fiend — Dark One's Own Luck (6th) and Fiendish Resilience (10th). Dark One's Blessing
+// (1st) is wired centrally via Events.on above (works in every mode for free); Hurl Through
+// Hell (14th) is a rider in attackFlow, same pattern as Colossus Slayer/Death Strike.
+function openWarlockUI(c){
+  $('#modalRoot').innerHTML=`<div class="modal" id="wlModal"><div class="sheet"><div class="grip"></div>
+    <h2>😈 The Fiend</h2>
+    ${isFiendWarlock(c,6)?`<button class="btn block" id="wlLuck" style="margin-bottom:8px;text-align:left"${c.darkOneLuckUsed?' disabled style="opacity:.5"':''}>🎲 Dark One's Own Luck<small style="display:block;opacity:.75">${c.darkOneLuckUsed?'Used — rest to recharge':'Add 1d10 to your last roll ('+(lastRoll?esc(lastRoll.label)+' = '+lastRoll.total:'no roll yet')+')'}</small></button>`:''}
+    ${isFiendWarlock(c,10)?`<div class="field"><label>Fiendish Resilience — damage type${c.fiendishResilience?' (current: '+esc(c.fiendishResilience)+')':''}</label>
+      <select id="wlResist"><option value="">— choose —</option>${DMG_TYPES.map(t=>`<option ${c.fiendishResilience===t?'selected':''}>${t}</option>`).join('')}</select>
+      <p class="muted" style="font-size:11px;margin:4px 0 0">Resistance isn't auto-applied to incoming damage — halve it yourself when you take a hit of this type.</p></div>`:''}
+    <button class="btn ghost block" id="wlClose" style="margin-top:8px">Close</button>
+  </div></div>`;
+  $('#wlModal').onclick=e=>{ if(e.target.id==='wlModal') $('#modalRoot').innerHTML=''; };
+  $('#wlClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  { const wl=$('#wlLuck'); if(wl) wl.onclick=()=>{
+    if(c.darkOneLuckUsed){ flashBanner('Already used — rest to recharge'); return; }
+    if(!lastRoll){ flashBanner('No roll to add to yet'); return; }
+    c.darkOneLuckUsed=true;
+    const r=rollNotation('1d10')||{total:0,detail:''};
+    lastRoll.total+=r.total; lastRoll.detail=(lastRoll.detail||'')+' + Dark One\'s Luck '+r.detail;
+    pushRoll({label:lastRoll.label+' (+Dark One\'s Luck)', total:lastRoll.total, detail:lastRoll.detail, kind:lastRoll.kind});
+    logChange(c,'😈 Dark One\'s Own Luck — +'+r.total+' to '+lastRoll.label);
+    flashBanner('😈 +'+r.total+' — new total '+lastRoll.total);
+    $('#modalRoot').innerHTML=''; save(); render();
+  }; }
+  { const wr=$('#wlResist'); if(wr) wr.onchange=()=>{ c.fiendishResilience=wr.value||null; logChange(c,'😈 Fiendish Resilience — '+(c.fiendishResilience||'none chosen')); save(); render(); }; }
 }
 function openMove(c){
   if(!c.battle) return; const b=c.battle;
@@ -1765,6 +1800,10 @@ function attackFlow(c, atk){
   // target HP isn't on net.targetMon (only {id,name,ac}) — looked up from the synced session.
   const targetMo = (net&&net.session&&net.targetMon) ? net.session.monsters.find(m=>m.id===net.targetMon.id) : null;
   const canColossusSlayer = c.cls==='Ranger' && c.hunterPrey==='Colossus Slayer' && !atk.spell && targetMo && targetMo.hp>0 && targetMo.hp<targetMo.max;
+  // Hurl Through Hell (The Fiend 14th): once/long rest, on a hit. The "vanishes until the end
+  // of your next turn" half is flavor/log only — this app has no "removed from play, returns
+  // later" token state to hook it into; the 10d10-unless-fiend damage is the real, testable part.
+  const canHurlThroughHell = isFiendWarlock(c,14) && !c.hurlThroughHellUsed && targetMo;
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
     if(c.battle && atk.offhand){
@@ -1832,6 +1871,14 @@ function attackFlow(c, atk){
       const cs=document.getElementById('afColossus');
       if(cs && cs.checked && !(c.battle&&c.battle.colossusSlayerUsed)){ const dice=st.crit?2:1; const r=rollNotation(dice+'d8');
         if(r){ total+=r.total; detail+=' · colossus slayer '+r.detail; if(c.battle){ c.battle.colossusSlayerUsed=true; } logChange(c,'🏹 Colossus Slayer +'+r.total); } }
+      const hth=document.getElementById('afHurl');
+      if(hth && hth.checked){
+        c.hurlThroughHellUsed=true;
+        const isFiendTarget = targetMo && monsterIsFiend(targetMo);
+        logChange(c,'😈 Hurl Through Hell — the target vanishes until the end of your next turn');
+        if(!isFiendTarget){ const r=rollNotation('10d10')||{total:0,detail:''}; total+=r.total; detail+=' · Hurl Through Hell '+r.detail; logChange(c,'😈 Hurl Through Hell +'+r.total+' psychic'); }
+        else detail+=' · Hurl Through Hell (fiend — immune to the psychic damage)';
+      }
       // Death Strike (Assassin 17th): automatic on any hit against a surprised creature — not a
       // player choice, so no checkbox; rolls the Con save itself and doubles the FULL total
       // (every other rider included) on a failure.
@@ -1867,6 +1914,7 @@ function attackFlow(c, atk){
         ${smiteLvls.length?`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚡ Divine Smite</span><select id="afSmite" style="flex:1"><option value="">— no smite —</option>${smiteLvls.map(l=>`<option value="${l}">L${l} slot — +${Math.min(5,1+l)}d8 radiant</option>`).join('')}</select></div>`:''}
         ${(canDivineStrike && st.hit!==false && !(c.battle&&c.battle.divineStrikeUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afDivStrike"> ✝️ Divine Strike +${divineStrikeDice}d8 radiant <span class="muted" style="font-size:11px">(once/turn)</span></label>`:''}
         ${(canColossusSlayer && st.hit!==false && !(c.battle&&c.battle.colossusSlayerUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afColossus"> 🏹 Colossus Slayer +1d8 <span class="muted" style="font-size:11px">(once/turn — target below max HP)</span></label>`:''}
+        ${(canHurlThroughHell && st.hit!==false)?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afHurl"> 😈 Hurl Through Hell <span class="muted" style="font-size:11px">(once/long rest — 10d10 psychic unless a fiend)</span></label>`:''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
         ${st.mode==='manual'
           ? `<div class="addrow"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn" id="afDmgUse">Use</button></div>`
@@ -1969,9 +2017,21 @@ function pendingChoiceSpecs(c){
   // Dragon Ancestor (Draconic Bloodline, 1st level): one-shot ancestry choice, drives Elemental
   // Affinity's damage type via DRACONIC_ANCESTRY_DAMAGE.
   if(c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && !c.sorcererDragon) specs.push({t:'pick', key:'sorcererDragon', options:Object.keys(DRACONIC_ANCESTRY_DAMAGE), label:'Dragon Ancestor'});
+  // Eldritch Invocations (base Warlock, 2nd+): known-count by level (PHB table), repeatable —
+  // no prerequisite checking (pact-boon/level gates some real invocations require), a curated
+  // list rather than the full PHB roster, same scope call BEAST_SHAPES made for Wild Shape.
+  if(c.cls==='Warlock'){
+    const lvl=Number(c.level)||1, tiers=[[2,2],[5,3],[7,4],[9,5],[12,6],[15,7],[18,8]];
+    let known=0; tiers.forEach(([l,n])=>{ if(lvl>=l) known=n; });
+    const owed=known-(c.invocations||[]).length;
+    for(let i=0;i<owed;i++) specs.push({t:'pick', key:'invocations', multi:true, options:ELDRITCH_INVOCATIONS, label:'Eldritch Invocation'});
+  }
+  // Pact Boon (base Warlock, 3rd level): one-shot.
+  if(c.cls==='Warlock' && (Number(c.level)||1)>=3 && !c.pactBoon) specs.push({t:'pick', key:'pactBoon', options:['Pact of the Chain','Pact of the Blade','Pact of the Tome'], label:'Pact Boon'});
   return specs;
 }
 const METAMAGIC_OPTIONS=['Careful Spell','Distant Spell','Empowered Spell','Extended Spell','Heightened Spell','Quickened Spell','Subtle Spell','Twinned Spell'];
+const ELDRITCH_INVOCATIONS=['Agonizing Blast','Armor of Shadows','Beast Speech','Beguiling Influence','Devil\'s Sight','Eldritch Mind','Eyes of the Rune Keeper','Fiendish Vigor','Mask of Many Faces','Misty Visions','Repelling Blast','Thief of Five Fates','Gaze of Two Minds','One with Shadows','Sign of Ill Omen'];
 const FAVORED_ENEMY_TYPES=['Aberrations','Beasts','Celestials','Constructs','Dragons','Elementals','Fey','Fiends','Giants','Monstrosities','Oozes','Plants','Undead'];
 const FAVORED_TERRAIN_TYPES=['Arctic','Coast','Desert','Forest','Grassland','Mountain','Swamp'];
 function resolveChoices(c){
@@ -3973,6 +4033,7 @@ function spendHitDie(c){
   if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: short or long rest
   if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: short or long rest
   if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: short or long rest
+  if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: short or long rest
   if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: short or long rest
   logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
@@ -4836,6 +4897,7 @@ function renderCombat(c){
   { const kib=$('#kiBtn'); if(kib) kib.addEventListener('click',()=>openKiUI(c)); }
   { const pab=$('#palBtn'); if(pab) pab.addEventListener('click',()=>openPaladinUI(c)); }
   { const sob=$('#sorcBtn'); if(sob) sob.addEventListener('click',()=>openSorcererUI(c)); }
+  { const wlb=$('#wlBtn'); if(wlb) wlb.addEventListener('click',()=>openWarlockUI(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }   // tap to spend/reset (cycles for multi-action)
     else if(k==='bonus'||k==='reaction') b[k]=!b[k];
@@ -5132,6 +5194,8 @@ function renderSpells(c){
     if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
     if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: long rest too
     if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: long rest too
+    if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: long rest too
+    if(isFiendWarlock(c,14)) c.hurlThroughHellUsed=false;   // Hurl Through Hell: long rest only
     if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: long rest too
     if(c.cls==='Paladin'){ c.divineSenseLeft=divineSenseMax(c); c.layOnHandsLeft=layOnHandsMax(c); }   // long rest only (PHB)
     if(isDevotionPaladin(c,20)) c.holyNimbusUsed=false;   // once per long rest
@@ -9871,6 +9935,29 @@ const Events = { log:[], subs:[],
   emit(ev){ if(!ev) return ev; ev.ts=Date.now(); this.log.unshift(ev); if(this.log.length>250) this.log.pop(); this.subs.forEach(f=>{ try{ f(ev); }catch(e){} }); return ev; },
   on(fn){ this.subs.push(fn); return ()=>{ this.subs=this.subs.filter(x=>x!==fn); }; } };
 try{ if(typeof window!=='undefined') window.GrimoireEvents=Events; }catch(e){}
+// Dark One's Blessing (The Fiend, Warlock 1st): temp HP equal to Cha mod + warlock level
+// (min 1) whenever YOU reduce a hostile creature to 0 HP. Engine.attack always emits an
+// 'attack' event immediately followed by a 'death' event (synchronously, nothing else can run
+// between them) when the hit finishes the target off — the death event alone doesn't carry
+// actorId, so the immediately-preceding attack event is used to recover who did it. This is
+// the one central choke point every attack in every mode (QB, player-net) already funnels
+// through, so no per-mode wiring is needed.
+let _lastAttackEv=null;
+Events.on(ev=>{
+  if(ev.type==='attack') _lastAttackEv=ev;
+  else if(ev.type==='death' && _lastAttackEv && _lastAttackEv.hit){
+    const aid=_lastAttackEv.actorId;
+    let c=null;
+    if(typeof QB!=='undefined' && QB && QB.active && aid==='pc') c=QB.players[0]&&QB.players[0].c;
+    else if(net && net.role==='player' && (aid==='me'||(net.peer&&aid===net.peer.id))) c=playerChar();
+    if(c && isFiendWarlock(c,1)){
+      const gain=Math.max(1, mod(abil(c,'cha'))+(Number(c.level)||1));
+      c.hp.temp=Math.max(c.hp.temp||0, gain);   // temp HP doesn't stack (PHB) — take the better
+      logChange(c,'😈 Dark One\'s Blessing — +'+gain+' temporary HP'); save(); render();
+      if(net&&net.role==='player') playerHello();
+    }
+  }
+});
 const Engine = {
   // pure d20 roll vs an AC (adapter-free). ac==null → hit unknown (caller prompts).
   // adv: +1 roll twice take high, −1 take low (a manual `face` overrides advantage).
@@ -11793,7 +11880,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.196';
+const APP_VERSION='v120.197';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

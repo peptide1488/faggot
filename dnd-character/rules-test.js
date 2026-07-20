@@ -38,7 +38,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
   'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
   'globalThis.SPELL_HANDLERS=SPELL_HANDLERS;globalThis.SUMMON_CATALOG=SUMMON_CATALOG;globalThis.summonCatalogEntry=summonCatalogEntry;'+
-  'globalThis.DRACONIC_ANCESTRY_DAMAGE=DRACONIC_ANCESTRY_DAMAGE;'+
+  'globalThis.DRACONIC_ANCESTRY_DAMAGE=DRACONIC_ANCESTRY_DAMAGE;globalThis.Events=Events;'+
   'globalThis.spawnSummon=spawnSummon;globalThis.dismissSummonsForSpell=dismissSummonsForSpell;globalThis.nearbySpawnTiles=nearbySpawnTiles;globalThis.isConcentration=isConcentration;'+
   'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
   'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;'+
@@ -1979,6 +1979,33 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('once chosen, Dragon Ancestor is no longer owed', !pendingChoiceSpecs(sc).some(s=>s.t==='pick'&&s.key==='sorcererDragon'));
   sc.metamagic=['Twinned Spell','Quickened Spell'];
   T('owed Metamagic count shrinks as picks are made', pendingChoiceSpecs(sc).filter(s=>s.t==='pick'&&s.key==='metamagic').length===2);
+}
+
+/* ---- The Fiend: Dark One's Blessing wired centrally through Events (works in every mode for
+   free), Eldritch Invocation/Pact Boon choice infra ---- */
+{
+  const wl=newCharacter('Grimfang'); wl.cls='Warlock'; wl.level=9; wl.subclass='The Fiend'; wl.abilities.cha=18; wl.hp={max:50,cur:50,temp:0};
+  wl.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  T('isFiendWarlock gates on class+subclass+level', isFiendWarlock(wl,1)===true && isFiendWarlock(wl,14)===false);
+  const notWl=newCharacter('Greenwarden'); notWl.cls='Warlock'; notWl.level=20; notWl.subclass='The Archfey';
+  T('an Archfey warlock (even level 20) is never The Fiend', isFiendWarlock(notWl,1)===false);
+
+  // Dark One's Blessing: wired centrally via Events — an 'attack' event that hits, immediately
+  // followed by a 'death' event (Engine.attack's own synchronous shape), grants temp HP with
+  // NO per-mode wiring needed at all.
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[], turn:0, battle:{active:true,round:1},
+    monsters:[], players:[{id:'pc', side:'pc', name:wl.name, c:wl, x:0, y:0}]});
+  Events.emit({type:'attack', actorId:'pc', targetId:'m1', hit:true, dmg:7});
+  Events.emit({type:'death', unitId:'m1'});
+  T("Dark One's Blessing grants temp HP = Cha mod + level (min 1) the moment a kill is detected", wl.hp.temp===mod(abil(wl,'cha'))+wl.level);
+  setQB(null);
+
+  // Eldritch Invocations (known-count by level) / Pact Boon (one-shot) — same {t:'pick'} infra.
+  const specs=pendingChoiceSpecs(wl);
+  T('a 9th-level warlock owes 5 Eldritch Invocations (PHB table)', specs.filter(s=>s.t==='pick'&&s.key==='invocations').length===5);
+  T('a 3rd+-level warlock owes a Pact Boon pick', specs.some(s=>s.t==='pick'&&s.key==='pactBoon'));
+  wl.pactBoon='Pact of the Blade';
+  T('once chosen, Pact Boon is no longer owed', !pendingChoiceSpecs(wl).some(s=>s.t==='pick'&&s.key==='pactBoon'));
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
