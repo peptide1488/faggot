@@ -1402,3 +1402,75 @@ only the pure helpers extracted for them are covered here, consistent with that 
 Playwright wasn't available to spot-check any of this live in a real browser this pass (the MCP
 server disconnected mid-session, same as every subclass since Echo Knight) — noting this honestly
 rather than claiming a check that didn't happen.
+
+## Circle of the Moon — fifth subclass, and Wild Shape itself (v120.191)
+
+Fifth entry in `SUBCLASS_FEATURES`, and the first of the twelve where the SUBCLASS wasn't the
+hard part — **Wild Shape**, the base 2nd-level Druid feature every earlier subclass in this pass
+got to skip, had never been mechanized at all (`CLASS_FEATURES` had flavor text only, same as
+every other base-class prerequisite this session — Bardic Inspiration, Channel Divinity — had to
+be built from scratch first). Verified real 2014 PHB text before building (a research pass
+flagged and corrected two premises this task started with: Circle Forms only overrides the CR
+cap, not the fly/swim-by-level restriction; and Circle of the Moon grants **no extra Wild Shape
+uses** over the base class's flat 2 — its entire advantage is *what* you can become and *when*).
+
+This app's bestiary (`MONSTERS_5E`) is curated for DM encounters (goblins, undead, dragons) and
+had zero actual beasts or elementals in it — a real content gap, not just a wiring one. Added two
+small curated catalogs following the exact same condensed-stat-block convention `MONSTERS_5E`
+already uses: `BEAST_SHAPES` (8 beasts spanning CR 1/8–2: Giant Rat through Giant Elk) and
+`ELEMENTAL_SHAPES` (the 4 named CR-5 elementals Elemental Wild Shape grants access to as a
+special case, ignoring the normal CR cap entirely per RAW).
+
+- **Wild Shape (base, 2nd)**: transforming gives the beast its own separate HP pool
+  (`c.wildShape={name,hpCur,hpMax,ac,atk,speed}`) — `applyHp` grew a dedicated branch at the very
+  top that redirects all damage/healing to this pool instead of touching `c.hp` at all while it's
+  set, so none of the existing death-save/rage-resistance/concentration logic below needs to know
+  Wild Shape exists. When the beast pool is destroyed, the PHB's "excess damage carries over"
+  rule fires exactly as written: the overflow amount is applied to your REAL hp via a normal
+  recursive `applyHp` call, which correctly triggers real death saves if that overflow is what
+  finishes you off. `computeAC`/`effSpeed` both defer to the beast's own AC/speed the instant
+  `c.wildShape` is set — centralized there rather than at every call site, so every existing
+  screen that already calls those two functions picked this up for free. Your attack options
+  become the beast's own (`wildShapeAttacks(c)`, parsed via the same `parseMonsterAttacks` the
+  bestiary already uses for monster-vs-party attacks) — unified from the first draft between QB's
+  `qbPcAttacks` and player-net's separately-coded `playerAttackMenu`, both of which now check
+  `c.wildShape` before falling back to their own (pre-existing, still-separate) weapon-listing
+  logic.
+- **Circle Forms (2nd/6th)**: `moonMaxCR(c)` — CR 1 below 6th level, `⌊level/3⌋` at 6th+, exactly
+  the PHB formula. A non-Moon Druid still gets working Wild Shape too (the base feature, gated
+  only on level 2/4/8 CR steps) since it's a real base-class feature, not something exclusive to
+  this pass's one chosen subclass — matching how Bardic Inspiration/Channel Divinity work for
+  ANY Bard/Cleric, not just Lore/Life.
+- **Combat Wild Shape (2nd)**: transforming costs a bonus action instead of an action for Moon
+  druids (`isMoonDruid(c,2)` branch in the same `openWildShapeUI` modal that handles the whole
+  feature). While shapeshifted, a bonus action + a spent spell slot heals `1d8` per slot level
+  into the beast's pool via `applyHp` — same slot-tracking idiom Divine Smite/Cutting Words
+  already use.
+- **Primal Strike (6th)**: documented as a real "nothing to build" simplification, not a missing
+  mechanic quietly skipped — this app's `MONSTER_RVI` table has no monster anywhere with
+  resistance/immunity to *nonmagical* damage specifically (only damage-type resist/vuln/imm is
+  tracked at all), so "counts as magical" has no mechanical hook to attach to yet.
+- **Elemental Wild Shape (10th)**: same transform modal, gated `isMoonDruid(c,10)` and 2 spent
+  uses instead of 1, offering the 4-entry `ELEMENTAL_SHAPES` list — the named RAW exception that
+  ignores `moonMaxCR` entirely.
+- **Thousand Forms (14th)**: cast Alter Self with no spell slot expended. `canCast`/`castSpell`
+  grew a narrow `thousandForms`/`freeSlot` bypass distinct from the existing Wish-duplication
+  bypass (`wishFreeName`) — Wish is a fully free cast (no slot AND no action), but Thousand Forms
+  only waives the *slot*; the action-economy spend and the "must be prepared" check both still
+  run normally. A nice side effect: `hasNaturalWeapons(c)` (the Claws attack option, added
+  earlier this session for ordinary Alter Self) already keys off having the Alter Self *effect*
+  active, so it works for a Thousand-Forms cast with zero extra code.
+- **DM-hosted sync**: `playerHello()`'s payload now reports the beast's `hpCur`/`hpMax` (via
+  `computeAC`'s existing centralization, AC already came along for free) instead of your real
+  hidden HP while shapeshifted, plus a `wildShapeName` field so the DM's mirror knows you're
+  currently a beast — same `hello`/`Object.assign` sync path every other per-player flag
+  (`sanctuaryDC`, `cuttingWordsArmed`, …) already uses.
+
+Tests: 15 new assertions — `isMoonDruid`/`moonMaxCR`/`wildShapeMax` gating and the flat-2-uses
+correction, `computeAC`/`effSpeed` deferring to the beast while shapeshifted, `wildShapeAttacks`
+parsing a real attack string, `qbPcAttacks` deferring to it, `applyHp`'s beast-pool damage/heal/
+overflow-carries-to-real-HP sequence, and Thousand Forms' slot-free bypass contrasted against a
+13th-level Moon druid with the same slots exhausted (still blocked).
+
+Playwright wasn't available to spot-check this live in a real browser either (server still
+disconnected) — same honest caveat as every subclass since Echo Knight.

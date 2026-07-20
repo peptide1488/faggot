@@ -632,6 +632,13 @@ const SUBCLASS_FEATURES = {
     [8,'Divine Strike','Once per turn, one weapon hit deals an extra 1d8 radiant damage (2d8 at 14th level).'],
     [17,'Supreme Healing','Instead of rolling any dice for a spell you cast to restore hit points, use the highest number possible for each die.'],
   ],
+  'Circle of the Moon':[
+    [2,'Combat Wild Shape','Use Wild Shape as a bonus action instead of an action. While shapeshifted, spend a bonus action and a spell slot to regain 1d8 HP per level of the slot.'],
+    [2,'Circle Forms','Wild Shape into a beast of challenge rating up to 1 (up to your druid level ÷ 3, rounded down, starting at 6th level).'],
+    [6,'Primal Strike','Your attacks in beast form count as magical for overcoming resistance and immunity to nonmagical attacks.'],
+    [10,'Elemental Wild Shape','Expend two uses of Wild Shape at once to transform into an air, earth, fire, or water elemental.'],
+    [14,'Thousand Forms','Cast Alter Self at will, without expending a spell slot.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -867,6 +874,16 @@ function preserveLifePool(c){ return 5*(Number(c.level)||1); }
 // How much of the pool a single tap gives one target: capped at half its max HP (minus
 // whatever it's already been given this same casting) and at whatever's left in the pool.
 function preserveLifeAmount(pool, hpMax, healedSoFar){ return Math.max(0, Math.min(pool, Math.floor(hpMax/2)-(healedSoFar||0))); }
+function isMoonDruid(c,lvl){ return !!(c && c.cls==='Druid' && c.subclass==='Circle of the Moon' && (Number(c.level)||1)>=(lvl||2)); }
+// Circle Forms (2nd/6th): Circle of the Moon overrides Wild Shape's normal CR cap (not its
+// fly/swim-by-level restriction, which this app doesn't separately model anyway — BEAST_SHAPES
+// is curated small enough that isn't a real gap in practice).
+function moonMaxCR(c){ const l=Number(c.level)||1; return l>=6 ? Math.floor(l/3) : 1; }
+// Wild Shape (base Druid, 2nd level): a flat 2 uses per short/long rest — Circle of the Moon
+// does NOT grant extra uses (a common misconception; its advantage is entirely in Circle
+// Forms' higher CR cap, Combat Wild Shape's bonus action + in-form healing, and Elemental Wild
+// Shape's named exception), confirmed against the 2014 PHB text before building this.
+function wildShapeMax(c){ return 2; }
 // Bardic Inspiration's own resource pool (the base Bard class feature, never mechanized in
 // this app before now — CLASS_FEATURES only ever had flavor text for it) — built here because
 // College of Lore's Cutting Words/Peerless Skill both spend a use of it directly for an
@@ -939,10 +956,11 @@ function battleCard(c){
       <div class="tile"><div class="lab">Attacks left</div><div class="big">${b.attacksLeft}/${atk}</div></div>
       <div class="tile"><div class="lab">Move left${b.moveUsed?' · used '+b.moveUsed:''}</div><div class="big">${b.move}</div></div>
     </div>
+    ${c.wildShape?`<p class="muted" style="font-size:12px;margin:8px 0 0">🐾 Wild Shape: <b>${esc(c.wildShape.name)}</b> — AC ${c.wildShape.ac}. Your own HP/AC are hidden until you revert.</p>`:''}
     <div class="hp" style="margin-top:10px">
-      <div class="tile" style="${c.hp.cur<=0?'box-shadow:inset 0 0 0 1px var(--bad)':''}"><div class="lab">HP${c.hp.cur<=0?' · DOWN':''}</div><div class="big" style="color:${c.hp.cur<=0?'var(--bad)':'var(--good)'}">${c.hp.cur}</div></div>
-      <div class="tile"><div class="lab">Max</div><div class="big">${c.hp.max}</div></div>
-      <div class="tile"><div class="lab">Temp</div><div class="big">${c.hp.temp||0}</div></div>
+      <div class="tile" style="${(c.wildShape?c.wildShape.hpCur:c.hp.cur)<=0?'box-shadow:inset 0 0 0 1px var(--bad)':''}"><div class="lab">HP${(c.wildShape?c.wildShape.hpCur:c.hp.cur)<=0?' · DOWN':''}</div><div class="big" style="color:${(c.wildShape?c.wildShape.hpCur:c.hp.cur)<=0?'var(--bad)':'var(--good)'}">${c.wildShape?c.wildShape.hpCur:c.hp.cur}</div></div>
+      <div class="tile"><div class="lab">Max</div><div class="big">${c.wildShape?c.wildShape.hpMax:c.hp.max}</div></div>
+      <div class="tile"><div class="lab">Temp</div><div class="big">${c.wildShape?0:(c.hp.temp||0)}</div></div>
     </div>
     <div class="hpbtns" style="margin-top:8px">
       <button class="btn bad sm" id="bDmg">– Damage</button>
@@ -967,6 +985,7 @@ function battleCard(c){
       <button class="btn sm" id="bqAttack" style="flex:1">⚔ Attacks</button>
       ${(isCaster(c)||c.spells.length)?`<button class="btn sm" id="bqSpells" style="flex:1">✨ Spells</button>`:''}
       ${c.cls==='Barbarian'?`<button class="btn sm" id="rageBtn" style="flex:1;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
+      ${c.cls==='Druid' && (Number(c.level)||1)>=2?`<button class="btn sm" id="wildShapeBtn" style="flex:1;${c.wildShape?'background:var(--accent2);border-color:var(--accent2)':''}">🐾 ${c.wildShape?c.wildShape.name:'Wild Shape'}</button>`:''}
     </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
     <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">Battle log</div>
@@ -1015,6 +1034,72 @@ function rageButtonClick(c){
   $('#frenzyModal').onclick=e=>{ if(e.target.id==='frenzyModal') $('#modalRoot').innerHTML=''; };
   $('#frenzyYes').onclick=()=>{ $('#modalRoot').innerHTML=''; toggleRage(c,true); };
   $('#frenzyNo').onclick=()=>{ $('#modalRoot').innerHTML=''; toggleRage(c,false); };
+}
+// Wild Shape (base Druid 2nd) + Circle of the Moon's Circle Forms/Combat Wild Shape/Elemental
+// Wild Shape (2nd/2nd/10th). One modal covers both transforming and, once shapeshifted,
+// reverting or (Moon only) healing via a spent spell slot — mirrors rageButtonClick's shape
+// (a single entry point that branches on current state) rather than separate functions per state.
+function openWildShapeUI(c){
+  if(c.wildShapeLeft==null) c.wildShapeLeft=wildShapeMax(c);
+  if(c.wildShape){
+    const beastName=c.wildShape.name;
+    const slots=spellSlots(c);
+    const healOpts=isMoonDruid(c,2) ? [1,2,3,4,5,6,7,8,9].filter(l=>{ const t=slots[l]||0; return t-Math.min(t,(c.slots[l]&&c.slots[l].used)||0)>0; }) : [];
+    $('#modalRoot').innerHTML=`<div class="modal" id="wsModal"><div class="sheet"><div class="grip"></div>
+      <h2>🐾 ${esc(beastName)}</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">${c.wildShape.hpCur}/${c.wildShape.hpMax} HP · AC ${c.wildShape.ac}</p>
+      ${healOpts.length?`<div class="addrow" style="align-items:center;margin-bottom:8px"><span class="muted" style="font-size:12px;flex:none">Combat Wild Shape — heal</span><select id="wsHealLvl" style="flex:1">${healOpts.map(l=>`<option value="${l}">L${l} slot — ${l}d8 HP</option>`).join('')}</select><button class="btn sm" id="wsHealGo">Heal</button></div>`:''}
+      <button class="btn block" id="wsRevert" style="margin-bottom:8px">↩ Revert (bonus action)</button>
+      <button class="btn ghost block" id="wsClose">Close</button>
+    </div></div>`;
+    $('#wsModal').onclick=e=>{ if(e.target.id==='wsModal') $('#modalRoot').innerHTML=''; };
+    $('#wsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    $('#wsRevert').onclick=()=>{
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      if(c.battle) c.battle.bonus=true;
+      c.wildShape=null;
+      logChange(c,'🐾 Reverts from '+beastName+' form');
+      flashBanner('Reverted to '+c.name);
+      $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+    };
+    { const hg=$('#wsHealGo'); if(hg) hg.onclick=()=>{
+      const l=Number($('#wsHealLvl').value); if(!l) return;
+      if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      if(c.battle) c.battle.bonus=true;
+      if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1);
+      const r=rollNotation(l+'d8')||{total:0,detail:''};
+      applyHp(c, r.total);
+      logChange(c,'🐾 Combat Wild Shape — spends a L'+l+' slot, heals '+r.total+' HP ('+r.detail+')');
+      flashBanner('🐾 +'+r.total+' HP');
+      $('#modalRoot').innerHTML=''; save(); render();
+    }; }
+    return;
+  }
+  if((c.wildShapeLeft||0)<=0){ flashBanner('No Wild Shape uses left — rest to recharge'); return; }
+  const bonusAction=isMoonDruid(c,2);
+  if(c.battle){ if(bonusAction){ if(c.battle.bonus){ flashBanner('Bonus action already used'); return; } } else if(!hasAction(c)){ flashBanner('No action left this turn'); return; } }
+  const cap=isMoonDruid(c,2) ? moonMaxCR(c) : ((Number(c.level)||1)>=8?1:(Number(c.level)||1)>=4?0.5:0.25);
+  const beasts=BEAST_SHAPES.filter(b=>crToNum(b.cr)<=cap+1e-6);
+  const elementalOk = isMoonDruid(c,10) && (c.wildShapeLeft||0)>=2;
+  $('#modalRoot').innerHTML=`<div class="modal" id="wsModal"><div class="sheet"><div class="grip"></div>
+    <h2>🐾 Wild Shape</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">${c.wildShapeLeft} use${c.wildShapeLeft===1?'':'s'} left · ${bonusAction?'bonus action':'action'} · max CR ${cap}</p>
+    ${beasts.map((b,i)=>`<div class="spell"><div class="nm"><b>${esc(b.n)}</b><small>CR ${b.cr} · AC ${b.ac} · HP ${b.hp} · ${esc(b.desc)}</small></div><button class="btn sm" data-wsbeast="${i}">Shape</button></div>`).join('')}
+    ${elementalOk?`<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px">Elemental Wild Shape (spends 2 uses)</div>${ELEMENTAL_SHAPES.map((b,i)=>`<div class="spell"><div class="nm"><b>${esc(b.n)}</b><small>AC ${b.ac} · HP ${b.hp} · ${esc(b.desc)}</small></div><button class="btn sm" data-wselem="${i}">Shape</button></div>`).join('')}`:''}
+    <button class="btn ghost block" id="wsClose" style="margin-top:8px">Cancel</button>
+  </div></div>`;
+  $('#wsModal').onclick=e=>{ if(e.target.id==='wsModal') $('#modalRoot').innerHTML=''; };
+  $('#wsClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  const doTransform=(b, cost)=>{
+    if(c.battle){ if(bonusAction) c.battle.bonus=true; else spendAction(c); }
+    c.wildShapeLeft=Math.max(0,(c.wildShapeLeft||0)-cost);
+    c.wildShape={name:b.n, hpCur:b.hp, hpMax:b.hp, ac:b.ac, atk:b.atk, speed:b.speed};
+    logChange(c,'🐾 Wild Shapes into a '+b.n);
+    flashBanner('🐾 Wild Shape — you are now a '+b.n);
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  };
+  document.querySelectorAll('[data-wsbeast]').forEach(btn=>btn.onclick=()=>{ const b=beasts[Number(btn.dataset.wsbeast)]; if(b) doTransform(b,1); });
+  document.querySelectorAll('[data-wselem]').forEach(btn=>btn.onclick=()=>{ const b=ELEMENTAL_SHAPES[Number(btn.dataset.wselem)]; if(b) doTransform(b,2); });
 }
 function openMove(c){
   if(!c.battle) return; const b=c.battle;
@@ -1791,6 +1876,7 @@ function armorDef(key){ return ARMOR.find(a=>a.key===key)||ARMOR[0]; }
 // magic). Callers with no live battle position to check against (every pre-existing call site)
 // simply never pass opts, so behavior there is byte-identical to before this existed.
 function computeAC(c,opts){
+  if(c.wildShape) return c.wildShape.ac;   // Wild Shape: your own AC doesn't apply, the beast's does (PHB)
   const ignoreFx=!!(opts&&opts.ignoreEffects);
   if(c.acOverride!=='' && c.acOverride!=null && !isNaN(c.acOverride)) return Number(c.acOverride) + (ignoreFx?0:effBonus(c,'ac')) + gearBonus(c,'ac');
   const a=armorDef(c.armor||'none');
@@ -1920,7 +2006,7 @@ const SPELL_EFFECTS = {
 };
 function effBonus(c, key){ let n=0; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods[key]) n+=e.mods[key]; }); return n; }
 function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods.speedMul) m*=e.mods.speedMul; }); return m; }
-function effSpeed(c,opts){ const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
+function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
 function modSummary(mods){ if(!mods) return ''; const parts=[];
   if(mods.ac) parts.push(sgn(mods.ac)+' AC');
   if(mods.speed) parts.push(sgn(mods.speed)+' ft');
@@ -2005,6 +2091,7 @@ function canCast(c, name, level){
   if(typeof level==='undefined'){ level=name; name=''; }   // back-compat: canCast(c, level)
   level=Number(level)||0;
   if(name && wishFreeName===name) return true;   // Wish-duplicated spell: no slot, no prep, no action cost
+  const thousandForms = name==='Alter Self' && isMoonDruid(c,14);   // still needs prep/action, just no slot — checked below, not an early bypass
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
   // Silence/Antimagic Field: can't cast while standing in an active no-cast zone.
   { const s=battleSession();
@@ -2030,15 +2117,18 @@ function canCast(c, name, level){
       if(b.castBonusSpell && level>0){ flashBanner('After a bonus-action spell you can only cast a cantrip'); return false; }
     }
   }
-  if(level>0){ const tot=spellSlots(c)[level]||0, used=Math.min(tot,(c.slots[level]&&c.slots[level].used)||0); if(tot-used<=0){ flashBanner('No level '+level+' spell slots left'); return false; } }
+  if(level>0 && !thousandForms){ const tot=spellSlots(c)[level]||0, used=Math.min(tot,(c.slots[level]&&c.slots[level].used)||0); if(tot-used<=0){ flashBanner('No level '+level+' spell slots left'); return false; } }
   return true;
 }
 function castSpell(c, name, level, lightAt, spellOpts){
   level=Number(level)||0;
   if(!canCast(c,name,level)) return false;
   const free=(name && wishFreeName===name); if(free) wishFreeName=null;   // Wish duplication: consume the grant
+  // Thousand Forms (14th): no spell slot expended, but the action/bonus-action cost below still
+  // applies — a narrower bypass than Wish's `free` (which also skips the action-economy spend).
+  const freeSlot = free || (name==='Alter Self' && isMoonDruid(c,14));
   const ct=spellCastTime(name);
-  if(level>0 && !free){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
+  if(level>0 && !freeSlot){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
   if(c.battle && !free){
     if(ct==='reaction'){ c.battle.reaction=true; }
     else if(ct==='bonus'){ c.battle.bonus=true; c.battle.castBonusSpell=true; }
@@ -3500,6 +3590,7 @@ function spendHitDie(c){
   if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;   // Shadow Martyr: short or long rest
   if(isLoreBard(c) && (Number(c.level)||1)>=5) c.bardicInspLeft=bardicInspMax(c);   // Font of Inspiration (5th): short rest too
   if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: short or long rest
+  if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: short or long rest
   logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
@@ -4354,6 +4445,7 @@ function renderCombat(c){
   { const bh=$('#bHeal'); if(bh) bh.addEventListener('click',()=>applyHp(c,Math.abs(Number($('#bAmt').value)||0))); }
   { const bds=$('#bDeath'); if(bds) bds.addEventListener('click',()=>rollDeathSave(c)); }
   { const rb2=$('#rageBtn2'); if(rb2) rb2.addEventListener('click',()=>rageButtonClick(c)); }
+  { const wsb=$('#wildShapeBtn'); if(wsb) wsb.addEventListener('click',()=>openWildShapeUI(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }   // tap to spend/reset (cycles for multi-action)
     else if(k==='bonus'||k==='reaction') b[k]=!b[k];
@@ -4398,6 +4490,31 @@ function hdPips(total, used){
   return h;
 }
 function applyHp(c,delta){
+  // Wild Shape: damage/healing hits the beast's own HP pool, not yours (PHB) — a completely
+  // separate branch rather than threading wildShape checks through every death-save/rage/
+  // concentration line below, so none of that real-HP logic needs to know this exists.
+  if(c.wildShape){
+    if(delta<0){
+      const dmg=-delta, before=c.wildShape.hpCur;
+      c.wildShape.hpCur=Math.max(0,c.wildShape.hpCur-dmg);
+      logChange(c,'('+c.wildShape.name+' form) took '+dmg+' damage → '+c.wildShape.hpCur+'/'+c.wildShape.hpMax+' HP');
+      if(before>0 && c.wildShape.hpCur<=0){
+        // PHB: excess damage that drops the beast form to 0 carries over to your normal form
+        const overflow=dmg-before, beastName=c.wildShape.name;
+        c.wildShape=null;
+        logChange(c,'Beast form destroyed — you revert to '+c.name);
+        flashBanner('💥 '+beastName+' form destroyed — you revert'+(overflow>0?' and take '+overflow+' overflow damage':''));
+        if(overflow>0){ applyHp(c,-overflow); return; }
+      }
+      save(); render(); if(net&&net.role==='player') playerHello();
+      return;
+    } else {
+      c.wildShape.hpCur=Math.min(c.wildShape.hpMax, c.wildShape.hpCur+delta);
+      logChange(c,'('+c.wildShape.name+' form) healed '+delta+' → '+c.wildShape.hpCur+'/'+c.wildShape.hpMax+' HP');
+      save(); render(); if(net&&net.role==='player') playerHello();
+      return;
+    }
+  }
   let concDmg=0;
   if(delta<0){
     let dmg=-delta; const wasAt0=c.hp.cur<=0;
@@ -4616,6 +4733,7 @@ function renderSpells(c){
     if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
     if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
     if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
+    if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: long rest too
     logChange(c, 'Long rest — HP, slots & hit dice restored');
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
@@ -5391,7 +5509,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -5516,7 +5634,7 @@ function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed}}); }catch(e){} }
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.wildShape?c.wildShape.hpCur:c.hp.cur,hpMax:c.wildShape?c.wildShape.hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed,wildShapeName:c.wildShape?c.wildShape.name:null}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ const wasActive=net.session&&net.session.battle&&net.session.battle.active; net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -6549,12 +6667,16 @@ function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; retu
 function playerAttackMenu(c){
   const me=myMapPos();
   const actions=[];
+  if(c.wildShape){
+    wildShapeAttacks(c).forEach(a=>actions.push({label:a.name, sub:(a.melee?'melee':'ranged')+' · '+a.dmg, tiles:a.tiles, atk:a}));
+  } else {
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const b=weaponDmgBonus(c,w,it);
     actions.push({label:it.name+(it.magicBonus?' +'+it.magicBonus:''), sub:(w.type==='ranged'?'ranged':/reach/.test(w.props||'')?'reach':'melee')+' · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
       atk:{name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}}); });
   if(canOffhand(c)){ const seen=new Set(); offhandWeapons(c).forEach(w=>{ if(seen.has(w.n))return; seen.add(w.n); const oa=offhandAtk(c,w);
     actions.push({label:w.n+' — off-hand', sub:'bonus action · '+oa.dmg+' '+(w.dt||''), tiles:weaponRangeTiles(c,w), atk:oa}); }); }
   if(hasNaturalWeapons(c)) actions.push({label:'Claws (Alter Self)', sub:'melee · 1d6 slashing', tiles:1, atk:{name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing'}});
+  }
   // (spells & cantrips are cast via the ✨ Spells button → map targeting)
   if(!actions.length){ flashBanner('No weapons — use ✨ Spells to cast'); return; }
   let pick=null;
@@ -6856,6 +6978,31 @@ const MONSTERS_5E=[
   {n:'Young Red Dragon',cr:'10',ac:18,hp:178,spd:'40/80 fly',init:0,attacks:3,sprite:'dragon',atk:'Bite +10 (2d10+6 + 1d6 fire) · Claw +10 (2d6+6) · Fire Breath (DC17 Dex, 16d6)',desc:'Multiattack (bite + 2 claws); breath recharges on 5-6.'},
   {n:'Gazer',cr:'1/2',ac:13,hp:13,spd:'10/30 fly',init:3,attacks:2,sprite:'eye',atk:'Eye Rays +5 (1d6) · Bite +1 (1)',desc:'A tiny aberration; two random eye rays a turn.'},
   {n:'Beholder',cr:'13',ac:18,hp:180,spd:'0/20 fly',init:2,attacks:3,sprite:'eye',atk:'Eye Rays +9 (3 of 10, ~4d8 each) · Bite +5 (4d6)',desc:'Fires three random eye rays a turn; its central-eye cone negates magic. Legendary: up to 3 extra rays between turns (DM adjudicates).'}
+];
+// Curated beast stat blocks for Wild Shape (2014 MM, condensed the same way MONSTERS_5E already
+// is — not the full Monster Manual, one per CR tier a Circle of the Moon druid would actually
+// want). `speed` is the beast's best relevant locomotion in ft/round (effSpeed reads it while
+// shapeshifted); `atk` follows the exact same "Name +hit (dice)" `·`-joined convention
+// MONSTERS_5E already uses, parsed by the same parseMonsterAttacks.
+const BEAST_SHAPES=[
+  {n:'Giant Rat',cr:'1/8',ac:12,hp:7,speed:30,atk:'Bite +4 (1d4+2 piercing)',desc:'A scavenging rodent the size of a dog.'},
+  {n:'Wolf',cr:'1/4',ac:13,hp:11,speed:40,atk:'Bite +4 (2d4+2 piercing, DC 11 Str or knocked prone)',desc:'A pack hunter with a strong sense of smell.'},
+  {n:'Panther',cr:'1/4',ac:12,hp:13,speed:50,atk:'Bite +3 (1d6+2 piercing) · Claw +3 (1d4+2 slashing)',desc:'A stealthy climber that pounces from above.'},
+  {n:'Crocodile',cr:'1/2',ac:12,hp:19,speed:20,atk:'Bite +4 (1d10+2 piercing, DC 12 Str or grappled)',desc:'An ambush predator that drags prey underwater.'},
+  {n:'Giant Spider',cr:'1',ac:14,hp:26,speed:30,atk:'Bite +5 (1d8+3 piercing + 2d8 poison, DC 11 Con)',desc:'A web-slinging horror the size of a horse.'},
+  {n:'Brown Bear',cr:'1',ac:11,hp:34,speed:40,atk:'Bite +5 (1d8+4 piercing) · Claws +5 (2d6+4 slashing)',desc:'A powerful omnivore, fierce when provoked.'},
+  {n:'Giant Boar',cr:'2',ac:12,hp:42,speed:40,atk:'Tusk +7 (2d6+4 slashing)',desc:'A massive, bristling hog that charges its foes.'},
+  {n:'Giant Elk',cr:'2',ac:12,hp:42,speed:60,atk:'Ram +6 (2d6+4 bludgeoning) · Hooves +6 (2d6+4 bludgeoning)',desc:'A huge antlered elk, fast and hard-hitting.'},
+];
+// Elemental Wild Shape (10th level): a NAMED exception that ignores the normal Circle Forms CR
+// cap entirely ("expend two uses of Wild Shape... to transform into an air, earth, fire, or
+// water elemental" — no CR gate in the RAW text), so this is a separate small catalog, not
+// filtered by moonMaxCR the way BEAST_SHAPES is.
+const ELEMENTAL_SHAPES=[
+  {n:'Air Elemental',cr:'5',ac:15,hp:90,speed:90,atk:'Slam +8 (2d8+5 bludgeoning)',desc:'A whirling vortex of wind given fury and shape.'},
+  {n:'Earth Elemental',cr:'5',ac:17,hp:126,speed:30,atk:'Slam +8 (2d8+5 bludgeoning)',desc:'A lumbering giant of living stone and soil.'},
+  {n:'Fire Elemental',cr:'5',ac:13,hp:102,speed:50,atk:'Touch +6 (2d6+3 fire + 2d6 fire, ignites flammables)',desc:'A roaring column of living flame.'},
+  {n:'Water Elemental',cr:'5',ac:14,hp:114,speed:90,atk:'Slam +7 (2d8+4 bludgeoning, DC 14 Str or engulfed)',desc:'A crashing wave given sapient shape.'},
 ];
 // props: solid (impassable + blocks path), opaque (blocks line of sight), diff (difficult, ×2 move), dmg (dice on enter), deadly (instant down)
 const TERRAIN={
@@ -9395,7 +9542,11 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
   solePc:()=> QB.players[0]&&QB.players[0].c,
   findGrappler:name=> QB.players.find(p=>p.name===name) };
 // the PC's usable attacks (weapons + custom), as generic atk objects
-function qbPcAttacks(c){ const out=[];
+// Wild Shape: your attack options are limited to your beast form's (PHB) — shared between QB
+// and player-net so the same list of attacks shows up either way, same idea as every other
+// unified maneuver this session.
+function wildShapeAttacks(c){ if(!c.wildShape) return []; return parseMonsterAttacks(c.wildShape.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d4', dt:'', tiles:a.tiles||1, melee:(a.tiles||1)<=2})); }
+function qbPcAttacks(c){ if(c.wildShape) return wildShapeAttacks(c); const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w,it);
     out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}); });
   (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0; out.push({name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:'', tiles:1, melee:true}); });
@@ -11026,7 +11177,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.190';
+const APP_VERSION='v120.191';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

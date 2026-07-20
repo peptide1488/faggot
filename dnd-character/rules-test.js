@@ -1711,5 +1711,49 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('maxNotation handles a flat number with no dice', maxNotation('23')===23);
 }
 
+/* ---- Circle of the Moon: Wild Shape's own beast-HP pool, Circle Forms' CR cap, Combat Wild
+   Shape/Elemental Wild Shape/Thousand Forms ---- */
+{
+  const md=newCharacter('Ranger of the Wood'); md.cls='Druid'; md.level=6; md.subclass='Circle of the Moon'; md.hp={max:30,cur:30,temp:0};
+  T('isMoonDruid gates on class+subclass+level', isMoonDruid(md,2)===true && isMoonDruid(md,14)===false);
+  const notMd=newCharacter('Lorekeeper'); notMd.cls='Druid'; notMd.level=20; notMd.subclass='Circle of the Land';
+  T('a Circle of the Land druid (even level 20) is never a Moon druid', isMoonDruid(notMd,2)===false);
+
+  T('wildShapeMax is a flat 2 uses regardless of subclass (Moon grants no extra charges)', wildShapeMax(md)===2 && wildShapeMax(notMd)===2);
+  T('moonMaxCR is 1 below 6th level', moonMaxCR(newCharacter('Lowbie'))===1);
+  T('moonMaxCR is level/3 rounded down at 6th+', moonMaxCR(md)===2);
+  const md9=newCharacter('Elder'); md9.level=9;
+  T('moonMaxCR reaches 3 at 9th level', moonMaxCR(md9)===3);
+
+  // computeAC / effSpeed both defer to the beast's own stats while shapeshifted.
+  md.wildShape={name:'Brown Bear', hpCur:34, hpMax:34, ac:11, atk:'Bite +5 (1d8+4 piercing) · Claws +5 (2d6+4 slashing)', speed:40};
+  T('computeAC returns the beast\'s AC while shapeshifted, ignoring armor entirely', computeAC(md)===11);
+  T('effSpeed returns the beast\'s speed while shapeshifted', effSpeed(md)===40);
+
+  // wildShapeAttacks: your attack list becomes the beast's own attacks (shared by qbPcAttacks
+  // and playerAttackMenu, same function either way).
+  const atks=wildShapeAttacks(md);
+  T('wildShapeAttacks parses the beast\'s attack string into the normal PC-attack shape', atks.length===2 && atks[0].name==='Bite' && atks[0].toHit===5 && atks[0].dmg==='1d8+4');
+  T('qbPcAttacks defers entirely to the beast\'s attacks while shapeshifted', qbPcAttacks(md).length===2 && qbPcAttacks(md)[0].name==='Bite');
+
+  // applyHp: damage/healing hits the beast's own pool, not your real HP.
+  applyHp(md,-10);
+  T('damage while shapeshifted is absorbed by the beast\'s own HP pool', md.wildShape.hpCur===24 && md.hp.cur===30);
+  applyHp(md,5);
+  T('healing while shapeshifted heals the beast\'s pool, capped at its max', md.wildShape.hpCur===29);
+  md.wildShape.hpCur=8;   // reset to a known low value before the overflow hit
+  applyHp(md,-20);   // 12 more than the beast has left → 12 overflow
+  T('excess damage that destroys the beast form carries over to your real HP (PHB)', md.wildShape===null && md.hp.cur===30-12);
+
+  // Combat Wild Shape / Thousand Forms hooks — both characters have their level-2 slots fully
+  // exhausted, so the only way canCast can still succeed is Thousand Forms' slot-free bypass.
+  const md14=newCharacter('Shapechanger'); md14.cls='Druid'; md14.level=14; md14.subclass='Circle of the Moon'; md14.spellAbility='wis';
+  md14.slots[2]={total:0,used:spellSlots(md14)[2]};
+  T('Thousand Forms lets you cast Alter Self with no spell slots left at all', canCast(md14,'Alter Self',2)===true);
+  const md13=newCharacter('Almost'); md13.cls='Druid'; md13.level=13; md13.subclass='Circle of the Moon'; md13.spellAbility='wis';
+  md13.slots[2]={total:0,used:spellSlots(md13)[2]};
+  T('below 14th level, Alter Self with no slots left is blocked like any other spell', canCast(md13,'Alter Self',2)===false);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
