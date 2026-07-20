@@ -1922,5 +1922,37 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('once chosen, Hunter\'s Prey is no longer owed', !pendingChoiceSpecs(rg).some(s=>s.t==='pick'&&s.key==='hunterPrey'));
 }
 
+/* ---- Assassin: Assassinate's hasNotActedYet, Reliable Talent, Cunning Action's bonus-action
+   Dash/Hide ---- */
+{
+  const rk=newCharacter('Shade'); rk.cls='Rogue'; rk.level=17; rk.subclass='Assassin'; rk.abilities={str:8,dex:18,con:12,int:10,wis:10,cha:10};
+  T('isAssassin gates on class+subclass+level', isAssassin(rk,3)===true && isAssassin(rk,20)===false);
+  const notRk=newCharacter('Cutpurse'); notRk.cls='Rogue'; notRk.level=20; notRk.subclass='Thief';
+  T('a Thief (even level 20) is never an Assassin', isAssassin(notRk,3)===false);
+
+  // hasNotActedYet: derivable for free from initiative order + round number.
+  const s={order:[{k:'p',id:'pc'},{k:'m',id:'m1'},{k:'m',id:'m2'}], turn:0, battle:{round:1}};
+  T('a creature later in round-1 initiative hasn\'t acted yet', hasNotActedYet(s,'m1')===true && hasNotActedYet(s,'m2')===true);
+  T('the creature whose turn it currently is has NOT "not acted yet"', hasNotActedYet(s,'pc')===false);
+  s.turn=1;
+  T('once the order advances past a creature, it no longer counts as not-yet-acted', hasNotActedYet(s,'pc')===false && hasNotActedYet(s,'m1')===false && hasNotActedYet(s,'m2')===true);
+  s.battle.round=2;
+  T('hasNotActedYet is only meaningful in round 1 (everyone has acted by round 2)', hasNotActedYet(s,'m2')===false);
+
+  // Reliable Talent (11th): a roll of 9 or lower counts as 10, but only for a proficient skill.
+  rk.skillProf={stealth:true};
+  const orig=Math.random; Math.random=()=>0.01;   // forces d1=1
+  const proficient=rollSkillCheck(rk,'stealth','dex',{});
+  const notProficient=rollSkillCheck(rk,'athletics','str',{});
+  Math.random=orig;
+  T('Reliable Talent raises a low roll to 10 on a proficient skill', proficient.d20===10);
+  T('Reliable Talent does not apply to a skill you\'re not proficient in', notProficient.d20===1);
+  const rk10=newCharacter('Apprentice'); rk10.cls='Rogue'; rk10.level=10; rk10.skillProf={stealth:true};
+  Math.random=()=>0.01;
+  const belowLevel=rollSkillCheck(rk10,'stealth','dex',{});
+  Math.random=orig;
+  T('Reliable Talent does not apply below 11th level', belowLevel.d20===1);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

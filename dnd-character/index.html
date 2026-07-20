@@ -660,6 +660,13 @@ const SUBCLASS_FEATURES = {
     [11,'Multiattack','Choose one: Volley (ranged attack against every foe within 10 ft of a point) or Whirlwind Attack (melee attack against every adjacent foe).'],
     [15,"Superior Hunter's Defense",'Choose one: Evasion, Stand Against the Tide, or Uncanny Dodge.'],
   ],
+  'Assassin':[
+    [3,'Assassinate','Advantage on attack rolls against any creature that hasn\'t taken a turn yet this combat. A hit against a Surprised creature is an automatic critical hit.'],
+    [3,'Bonus Proficiencies','Proficiency with the disguise kit and the poisoner\'s kit.'],
+    [9,'Infiltration Expertise','Spend 7 days and 25 gp to establish a false identity.'],
+    [13,'Impostor','After 3+ hours of study, unerringly mimic a person\'s speech and writing; advantage on Deception checks to maintain the act.'],
+    [17,'Death Strike','On a hit against a Surprised creature, it makes a Con save (DC 8+Dex+prof) or takes double damage.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -932,6 +939,14 @@ function paladinCDMax(c){ return 1; }
 function monsterIsUndead(mo){ return ['skeleton','zombie','ghost'].includes(mo&&mo.sprite); }
 function monsterIsFiend(mo){ return mo&&mo.sprite==='demon'; }
 function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunter' && (Number(c.level)||1)>=(lvl||3)); }
+function isAssassin(c,lvl){ return !!(c && c.cls==='Rogue' && c.subclass==='Assassin' && (Number(c.level)||1)>=(lvl||3)); }
+// Assassinate's first clause ("hasn't taken a turn in the combat yet") is derivable for free
+// from initiative order — no new tracking needed. The auto-crit/Death Strike clauses need an
+// actual "surprised" flag (this app has no ambush/surprise-round system at all), toggled
+// manually by the DM/player the same way other DM-adjudicated states already are in this app
+// (e.g. hazard terrain painting) — cleared automatically the first time that unit's own turn
+// is processed, since surprise never lasts past a creature's first turn (PHB).
+function hasNotActedYet(s, unitId){ if(!s.order||!s.order.length||(s.battle&&s.battle.round)>1) return false; const idx=s.order.findIndex(o=>o.id===unitId); return idx>(s.turn||0); }
 // Bardic Inspiration's own resource pool (the base Bard class feature, never mechanized in
 // this app before now — CLASS_FEATURES only ever had flavor text for it) — built here because
 // College of Lore's Cutting Words/Peerless Skill both spend a use of it directly for an
@@ -1707,14 +1722,20 @@ function attackFlow(c, atk){
     }
     let ac=(net&&net.targetMon&&typeof net.targetMon.ac==='number')?net.targetMon.ac:null, cover=0;
     // condition-driven advantage: my conditions always count; the target's when known
-    let tSet=new Set(), melee=!(wref&&wref.type==='ranged');
+    let tSet=new Set(), melee=!(wref&&wref.type==='ranged'), targetMoReal=null;
     if(net&&net.session&&net.targetMon){ const me=myMapPos(); const mo=net.session.monsters.find(m=>m.id===net.targetMon.id);
-      if(mo){ tSet=unitConds(mo); melee=gridDist(me.x,me.y,mo.x,mo.y)<=1;
+      if(mo){ tSet=unitConds(mo); melee=gridDist(me.x,me.y,mo.x,mo.y)<=1; targetMoReal=mo;
         if(ac!=null && !atk.spell){ cover=coverBetween(net.session, me.x,me.y, mo.x,mo.y); ac+=cover; } } }
     const cx=attackAdvantage(new Set(Object.keys(c.conditions||{})), tSet, melee);
+    // Assassinate (Assassin 3rd) — same rules as the QB path (qbResolveAttack).
+    if(isAssassin(c,3) && targetMoReal){
+      if(hasNotActedYet(net.session, targetMoReal.id)){ cx.adv=1; cx.why=(cx.why||[]).concat('Assassinate — hasn\'t acted yet'); }
+      if(targetMoReal.surprised) cx.autoCrit=true;
+    }
     const r=Engine.roll(toHit, ac, face, cx.adv); sfx('swing');   // unified d20 resolver
     if(cx.autoCrit && (r.hit||ac==null)) r.crit=true;   // Paralyzed/Unconscious target hit in melee
     const d20=r.d20; st.d20=d20; st.crit=r.crit; st.total=r.total;
+    st.targetSurprised=!!(targetMoReal&&targetMoReal.surprised);   // Death Strike (17th) reads this in rollDmg
     const advTag=(face==null&&cx.adv)?((cx.adv>0?' · ADV':' · DIS')+' — '+cx.why.join(', ')):'';
     if(advTag) flashBanner((cx.adv>0?'⬆ Advantage':'⬇ Disadvantage')+': '+cx.why.join(', '));
     pushRoll({label:atk.name+' attack', total:st.total, detail:'d20 ('+d20+') '+sgn(toHit)+advTag, crit:st.crit?'crit':d20===1?'fumble':null, kind:'check'});
@@ -1745,7 +1766,15 @@ function attackFlow(c, atk){
         if(r){ total+=r.total; detail+=' · divine strike '+r.detail; if(c.battle){ c.battle.divineStrikeUsed=true; } logChange(c,'✝️ Divine Strike +'+r.total); } }
       const cs=document.getElementById('afColossus');
       if(cs && cs.checked && !(c.battle&&c.battle.colossusSlayerUsed)){ const dice=st.crit?2:1; const r=rollNotation(dice+'d8');
-        if(r){ total+=r.total; detail+=' · colossus slayer '+r.detail; if(c.battle){ c.battle.colossusSlayerUsed=true; } logChange(c,'🏹 Colossus Slayer +'+r.total); } } }
+        if(r){ total+=r.total; detail+=' · colossus slayer '+r.detail; if(c.battle){ c.battle.colossusSlayerUsed=true; } logChange(c,'🏹 Colossus Slayer +'+r.total); } }
+      // Death Strike (Assassin 17th): automatic on any hit against a surprised creature — not a
+      // player choice, so no checkbox; rolls the Con save itself and doubles the FULL total
+      // (every other rider included) on a failure.
+      if(st.targetSurprised && isAssassin(c,17)){
+        const dc=8+mod(abil(c,'dex'))+profBonus(c), save=rnd(20)+(net&&net.session&&net.targetMon?monsterSaveBonus(net.session.monsters.find(m=>m.id===net.targetMon.id)):0);
+        if(save<dc){ total*=2; detail+=' · Death Strike DOUBLED (Con '+save+' vs DC '+dc+')'; logChange(c,'💀 Death Strike — '+atk.name+' damage doubled'); }
+        else detail+=' · Death Strike resisted (Con '+save+' vs DC '+dc+')';
+      } }
     st.dmgTotal=total; st.phase='done'; sfx(atk.heal?'heal':'damage'); attackFx(atk.heal?'heal':(st.crit?'crit':'hit'));
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg', notation});
     if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total, dtype:atk.dt||atk.dtype||''}); }catch(e){} }
@@ -4730,7 +4759,14 @@ function renderCombat(c){
     else if(k==='roundUp') b.round++;
     else if(k==='roundDown') b.round=Math.max(1,b.round-1);
     else if(k==='surge'){ if(c.actionSurgeUsed){ flashBanner('Action Surge spent — rest to recharge'); return; } b.actionsMax=(b.actionsMax!=null?b.actionsMax:actionsPerTurn(c))+1; c.actionSurgeUsed=true; b.action=!hasAction(c); logChange(c,'⚡ Action Surge — extra action'); flashBanner('⚡ Action Surge — +1 action'); }
-    else if(k==='dash'){ if(!hasAction(c)){ flashBanner('No action left to Dash this turn'); return; } spendAction(c); b.move+=effSpeed(c); logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
+    else if(k==='dash'){
+      // Cunning Action (Rogue 2nd): Dash as a bonus action instead — preferred automatically
+      // whenever the bonus action is still free, falling back to the normal action otherwise
+      // (a player can still use their action to Dash even with Cunning Action available).
+      const cunning=c.cls==='Rogue' && (Number(c.level)||1)>=2 && !(b.bonus);
+      if(cunning){ b.bonus=true; b.move+=effSpeed(c); logChange(c,'🏃 Dash (Cunning Action, bonus action) — +'+effSpeed(c)+' ft movement'); }
+      else { if(!hasAction(c)){ flashBanner('No action left to Dash this turn'); return; } spendAction(c); b.move+=effSpeed(c); logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
+    }
     save(); render(); }));
   $('#addAtk').addEventListener('click',()=>{
     const name=$('#atk_name').value.trim(); if(!name) return;
@@ -6598,6 +6634,9 @@ function rollSkillCheck(c, skillKey, abilKey, opts){
   const d1=1+Math.floor(Math.random()*20);
   let d=d1, d2=null;
   if(adv){ d2=1+Math.floor(Math.random()*20); d=adv>0?Math.max(d1,d2):Math.min(d1,d2); }
+  // Reliable Talent (Rogue 11th): a roll of 9 or lower counts as a 10, but only on checks that
+  // actually add your proficiency bonus (i.e. you're proficient in this skill).
+  if(c && c.cls==='Rogue' && (Number(c.level)||1)>=11 && c.skillProf && c.skillProf[skillKey] && d<10) d=10;
   return {d20:d, d1, d2, adv, bonus, total:d+bonus, skillKey, abilKey};
 }
 // Ability-check advantage from tracked conditions/effects — mirrors attackAdvantage's
@@ -8000,7 +8039,8 @@ function openAdjacentUseUI(c, s, me){
         return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
           <button class="btn sm" data-use="obj:${i}">Use</button></div>`;
       }).join('');
-      body+=foes.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>Combat maneuver · (${mo.x},${mo.y})</small></div>
+      body+=foes.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}${mo.surprised?' · 😲 Surprised':''}</b><small>Combat maneuver · (${mo.x},${mo.y})</small></div>
+        ${(isAssassin(c,3)&&mode==='qb')?`<button class="btn ghost sm" data-suptgl="${i}">${mo.surprised?'Un-':''}Surprise</button>`:''}
         <button class="btn sm" data-use="foe:${i}">Use</button></div>`).join('');
       body+=allies.map((al,i)=>`<div class="spell"><div class="nm"><b>${esc(al.name)}</b><small>Down — Stabilize · (${al.x},${al.y})</small></div>
         <button class="btn sm" data-use="ally:${i}">Use</button></div>`).join('');
@@ -8215,6 +8255,17 @@ function openAdjacentUseUI(c, s, me){
       group.forEach(mo=>{ const ev=Engine.attack(ad, me.id, mo.id, {name:'Volley ('+rangedAtk.name+')', toHit:rangedAtk.toHit, dmg:rangedAtk.dmg, dtype:rangedAtk.dt, tiles:rangedAtk.tiles}); if(ev.hit) hits++; log('🏹 Volley — '+(ev.hit?'hits '+mo.name+' for '+ev.dmg:'misses '+mo.name)); });
       flashBanner('🏹 Volley — hit '+hits+'/'+group.length);
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello();
+    });
+    // Marking a foe Surprised (Assassinate's auto-crit clause, Death Strike) — QB only for now:
+    // this app has no ambush/surprise-round system, and QB is the only mode where the local
+    // monster list is authoritative (player-net's is a synced mirror, so a local toggle here
+    // wouldn't reach the DM's real session without a round-trip this pass doesn't build).
+    document.querySelectorAll('[data-suptgl]').forEach(b=>b.onclick=()=>{
+      const mo=foes[Number(b.dataset.suptgl)]; if(!mo) return;
+      mo.surprised=!mo.surprised;
+      flashBanner(mo.name+(mo.surprised?' is now marked Surprised':' is no longer marked Surprised'));
+      qbLog((mo.surprised?'😲 ':'')+mo.name+(mo.surprised?' — Surprised':' — no longer surprised'));
+      draw(null); save();
     });
     document.querySelectorAll('[data-hbtgt]').forEach(b=>b.onclick=()=>{
       const mo0=pick.mo, second=foes.filter(m=>m!==mo0 && gridDist(mo0.x,mo0.y,m.x,m.y)<=1);
@@ -10502,6 +10553,13 @@ function qbResolveAttack(att, tgt, atk, done){
     lightOpts={seeTarget:see, attackerVision:selfL};
   }
   const cx=attackAdvantage(unitConds(att), unitConds(tgt), melee, lightOpts);
+  // Assassinate (Assassin 3rd): advantage vs a target that hasn't acted yet this combat;
+  // auto-crit on a hit against a target flagged 'surprised' (a new manually-toggled flag — this
+  // app has no ambush/surprise-round system to derive it from automatically).
+  if(isPc && att.c && isAssassin(att.c,3)){
+    if(hasNotActedYet(QB, tgt.id)){ cx.adv=1; cx.why=(cx.why||[]).concat('Assassinate — hasn\'t acted yet'); }
+    if(tgt.surprised) cx.autoCrit=true;
+  }
   // Attacking reveals a hidden PC (PHB) — cx above already captured the advantage this
   // grants for THIS attack, so clearing here doesn't affect it. Simplification: unlike
   // Skulker's real text, a missed ranged attack still reveals you in this pass.
@@ -11056,7 +11114,10 @@ function maneuverEscape(ad, unit, isPc, log){
 // 'Hidden' check) — cleared the moment you attack (qbResolveAttack) or use a maneuver.
 function maneuverHide(ad, pcUnit, log){
   const c=ad.checkSubject(pcUnit);
-  if(!hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
+  // Cunning Action (Rogue 2nd): Hide as a bonus action when it's still free, same preference
+  // order Dash's own Cunning Action branch uses.
+  const cunning=c.cls==='Rogue' && (Number(c.level)||1)>=2 && !(c.battle&&c.battle.bonus);
+  if(!cunning && !hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
   const mapS={map:ad.map()};
   const lvl=tileLightLevel(mapS, pcUnit.x, pcUnit.y);
   const foes=ad.allMonsters().filter(mo=>mo.hp>0&&isHostile(mo));
@@ -11064,7 +11125,7 @@ function maneuverHide(ad, pcUnit, log){
   const fullCover=!!(closest && coverBetween(mapS, pcUnit.x,pcUnit.y, closest.x, closest.y)>=5);
   const eligible = lvl===0 || (lvl===1 && hasFeat(c,'Skulker')) || fullCover;
   if(!eligible){ flashBanner('Nothing to hide behind — need darkness, full cover, or (Skulker) dim light'); return {ok:true, success:false}; }
-  spendAction(c);
+  if(cunning){ if(c.battle) c.battle.bonus=true; } else spendAction(c);
   const adv=skillCheckAdvantage(c,'stealth','dex');
   const r=rollSkillCheck(c,'stealth','dex',{adv:adv.adv, flatBonus:skillCheckBonus(c,'stealth')});
   if(!c.conditions) c.conditions={};
@@ -11646,7 +11707,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.194';
+const APP_VERSION='v120.195';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

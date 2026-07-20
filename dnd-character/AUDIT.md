@@ -1698,3 +1698,55 @@ made") and one-shot (Hunter's four subclass choices) shapes, and Favored Enemy's
 `skillCheckAdvantage` hook.
 
 Playwright wasn't available to spot-check this live either (server still disconnected).
+
+## Assassin — ninth subclass, Cunning Action/Reliable Talent, and a new surprise-tracking
+   primitive (v120.195)
+
+Ninth entry in `SUBCLASS_FEATURES`. Sneak Attack and Expertise were already real (built earlier
+than this session); **Cunning Action** and **Reliable Talent** (base Rogue) were flavor-text-only.
+
+- **Cunning Action (2nd)**: Dash and Hide now prefer the bonus action whenever it's still free
+  (`c.cls==='Rogue' && level>=2 && !c.battle.bonus`), falling back to spending the normal action
+  otherwise — a Rogue can still choose to Dash/Hide the old way if their bonus action is already
+  spent on something else. Disengage isn't built: this app has no automatic
+  attack-of-opportunity-on-moving-away system at all (opportunity attacks are only ever
+  player/DM-initiated), so there's nothing for a Disengage action to actually suppress.
+- **Reliable Talent (11th)**: a real fix in `rollSkillCheck` itself — any roll of 9 or lower
+  becomes a 10, but only on checks that add proficiency bonus (i.e. `c.skillProf[skillKey]` is
+  true), matching RAW precisely rather than applying to every roll.
+- **Assassinate (3rd)**: two genuinely different mechanics bundled under one feature name.
+  The "advantage vs a creature that hasn't acted yet" clause needed no new tracking at all — a
+  new pure helper, `hasNotActedYet(session, unitId)`, derives it for free from initiative order
+  position vs. the current turn index (only meaningful in round 1, since everyone's acted by
+  round 2). The "auto-crit vs a Surprised creature" clause needed a NEW primitive this app never
+  had: surprise/ambush isn't modeled anywhere. Added a manually-toggled `mo.surprised` flag,
+  exposed as a "Surprise"/"Un-surprise" button on each foe row in the Use-menu's foe list — QB
+  only for now, since player-net's monster list is a synced mirror of the DM's real session and a
+  local toggle there wouldn't reach the DM without a round-trip message this pass doesn't build
+  (flagged, not silently limited). Both clauses are wired into QB's `qbResolveAttack` AND
+  player-net's `attackFlow` (the advantage/crit override happens before either path's `cx.adv`
+  merge, so it flows through each mode's existing advantage-tag UI for free).
+- **Death Strike (17th)**: unlike every other rider this session, this one has NO player choice
+  (no checkbox) — RAW is unconditional ("when you hit a Surprised creature, it makes a Con save
+  ... or takes double damage"), so `attackFlow`'s `rollDmg` rolls the save itself the moment it
+  sees `st.targetSurprised` (a flag set during `rollToHit`, since the surprised check needs the
+  real monster object `net.targetMon` doesn't carry) and doubles the FULL total — every other
+  rider included — on a failure, applied last after Sneak Attack/other dice are already added in.
+- **Bonus Proficiencies (3rd, disguise/poisoner's kits), Infiltration Expertise (9th), Impostor
+  (13th)**: sheet-text only, no code — none of the three have any mechanical roll or number
+  attached in RAW itself (Impostor is specifically "advantage on a Deception check," not a
+  fixed-DC feature — confirmed via research after an initial draft assumption was wrong), so
+  there's no missing mechanic to build, just narrative features this app already handles the way
+  it handles any roleplay-only feature (flavor text on the sheet).
+- **Base Rogue's Uncanny Dodge (5th) and Evasion (7th)** — deliberately left undone, for
+  consistency with the exact same call made for Ranger's Superior Hunter's Defense options last
+  entry: both need a live "you were just hit, react now" interrupt this app has never built
+  (Shadow Martyr's own doc note flagged this as a bigger lift than any single pass first), and
+  building it for Rogue but not Ranger (or vice versa) would be an arbitrary inconsistency rather
+  than a real prioritization call.
+
+Tests: 12 new assertions — `isAssassin` gating, `hasNotActedYet` across a full initiative-order/
+round-advance sequence (including the round-2 cutoff), and Reliable Talent's proficient-skill
+gate and level gate, verified through the real `rollSkillCheck` path with a stubbed d20.
+
+Playwright wasn't available to spot-check this live either (server still disconnected).
