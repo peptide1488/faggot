@@ -680,6 +680,13 @@ const SUBCLASS_FEATURES = {
     [10,'Fiendish Resilience','Choose a damage type at a rest; resistance to it until you choose again.'],
     [14,'Hurl Through Hell','Once per long rest, on a hit: the target vanishes until the end of your next turn and takes 10d10 psychic damage (fiends immune).'],
   ],
+  'Evocation':[
+    [2,'Evocation Savant','Halved gold/time cost to copy an evocation spell into your spellbook.'],
+    [2,'Sculpt Spells','Choose 1 + the spell\'s level of creatures affected by your evocation spell to auto-succeed their save and take no damage.'],
+    [6,'Potent Cantrip','A creature that succeeds on a save against your cantrip takes half damage but suffers no other effect.'],
+    [10,'Empowered Evocation','Add your Int modifier to one damage roll of any evocation spell you cast.'],
+    [14,'Overchannel','Deal maximum damage with a 1st-5th level damage spell; the first use each rest is free, later uses before your next long rest deal you escalating necrotic backlash (ignores resistance/immunity).'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -955,6 +962,13 @@ function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunte
 function isAssassin(c,lvl){ return !!(c && c.cls==='Rogue' && c.subclass==='Assassin' && (Number(c.level)||1)>=(lvl||3)); }
 function isDraconicSorcerer(c,lvl){ return !!(c && c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && (Number(c.level)||1)>=(lvl||1)); }
 function isFiendWarlock(c,lvl){ return !!(c && c.cls==='Warlock' && c.subclass==='The Fiend' && (Number(c.level)||1)>=(lvl||1)); }
+function isEvocationWizard(c,lvl){ return !!(c && c.cls==='Wizard' && c.subclass==='Evocation' && (Number(c.level)||1)>=(lvl||2)); }
+// Overchannel (14th): max damage on a leveled spell; the SECOND and later uses before your next
+// long rest backlash you with escalating necrotic (2d12/level on the first repeat, +1d12/level
+// each further use). `c.overchannelUses` holds how many times it's ALREADY been used this rest
+// (0 before the very first use, 1 before the second, ...), so the backlash die count at any
+// given use is 1 + that count.
+function overchannelBacklashDice(c){ return 1+(Number(c.overchannelUses)||0); }
 // Dragon Ancestor's type→damage-type table (PHB) — Draconic Bloodline's own ancestry choice,
 // a SEPARATE field from Dragonborn's racial c.dragon (a race trait, not a sorcerer subclass
 // choice — a character could theoretically be both a Dragonborn AND a Draconic Bloodline
@@ -3346,6 +3360,14 @@ function castModal(c, name, baseLevel){
   // built here — apply it via the Effects tab's own "+ Add" custom-effect entry, the same
   // manual-application pattern already used for anything this app has no dedicated toggle for.
   if(m.dmg && isDraconicSorcerer(c,6) && m.dtype===DRACONIC_ANCESTRY_DAMAGE[c.sorcererDragon]){ const cm=mod(abil(c,'cha')); if(cm) m.dmg+=sgn(cm); }
+  // Empowered Evocation (Evocation Wizard 10th): +Int mod to one damage roll of ANY evocation
+  // spell (school 'V' in this app's letter code, per CLASS_LETTER's own comment).
+  if(m.dmg && isEvocationWizard(c,10) && meta && meta.s==='V'){ const im=mod(abil(c,'int')); if(im) m.dmg+=sgn(im); }
+  // Overchannel (14th): max damage on a leveled (1st-5th) damage spell. First use each rest is
+  // free; further uses before your next long rest backlash you with escalating necrotic —
+  // applied via applyHp right when the box is checked (not deferred), since RAW is explicit the
+  // backlash lands "immediately after you cast it," and this modal's Cast button is that moment.
+  const canOverchannel = m.dmg && isEvocationWizard(c,14) && baseLevel>=1 && baseLevel<=5;
   const slots=spellSlots(c); let lvlOpts='';
   if(baseLevel>0){ for(let l=baseLevel;l<=9;l++){ const tot=slots[l]||0; if(tot){ const used=Math.min(tot,(c.slots[l]&&c.slots[l].used)||0), avail=tot-used; lvlOpts+=`<option value="${l}" ${avail<=0?'disabled':''}>Level ${l} — ${avail}/${tot} left</option>`; } } }
   const eff=SPELL_EFFECTS[name];
@@ -3362,6 +3384,7 @@ function castModal(c, name, baseLevel){
     ${(m.attack||m.dmg||m.heal)?`<div class="card" style="margin:0 0 10px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🎲 You roll — tap 🎲 to auto-roll, or type your own</div>
       ${m.attack?`<div class="listrow"><div class="nm">Spell attack <span class="sub">${sgn(atkB)} to hit</span></div><input type="number" id="mAtk" placeholder="d20" style="max-width:62px"><button class="val rollbtn" data-rollcheck data-label="${esc(name)} attack" data-bonus="${atkB}" title="Auto-roll">🎲 ${sgn(atkB)}</button></div>`:''}
       ${m.dmg?`<div class="listrow"><div class="nm">Damage${m.dtype?' · '+m.dtype:''} <span class="sub">${m.dmg}</span></div><input type="number" id="mDmg" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(name)} damage" data-notation="${m.dmg}" title="Auto-roll">🎲 ${m.dmg}</button></div>`:''}
+      ${canOverchannel?`<button class="btn ghost sm block" id="ocBtn" style="margin-top:6px">⚡ Overchannel — max damage (${maxNotation(m.dmg)})${(c.overchannelUses||0)>0?' · backlash '+(overchannelBacklashDice(c)*baseLevel)+'d12 necrotic':' · free this rest'}</button>`:''}
       ${m.heal?`<div class="listrow"><div class="nm">Healing <span class="sub">${m.heal}</span></div><input type="number" id="mHeal" placeholder="total" style="max-width:62px"><button class="val rollbtn" data-rolldmg data-label="${esc(name)} healing" data-notation="${m.heal}" title="Auto-roll">🎲 ${m.heal}</button></div>`:''}
     </div>`:''}
     ${m.save?`<div class="card" style="margin:0 0 10px;background:rgba(156,59,44,.08)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🛡️ Each target rolls a save</div>
@@ -3414,6 +3437,14 @@ function castModal(c, name, baseLevel){
   manual('mAtk', v=>({label:name+' attack (manual)', total:v+atkB, detail:'d20 ('+v+') '+sgn(atkB), crit:v===20?'crit':v===1?'fumble':null, kind:'check'}));
   manual('mDmg', v=>({label:name+' damage (manual)', total:v, detail:'entered', kind:'dmg'}));
   manual('mHeal', v=>({label:name+' healing (manual)', total:v, detail:'entered', kind:'dmg'}));
+  { const ocb=$('#ocBtn'); if(ocb) ocb.onclick=()=>{
+    const total=maxNotation(m.dmg);
+    pushRoll({label:name+' damage (Overchannel — MAX)', total, detail:'maximized', kind:'dmg'});
+    if((c.overchannelUses||0)>0){ const dice=overchannelBacklashDice(c)*baseLevel, r=rollNotation(dice+'d12')||{total:0,detail:''};
+      applyHp(c,-r.total); logChange(c,'⚡ Overchannel backlash — '+r.total+' necrotic ('+r.detail+', ignores resistance/immunity)'); flashBanner('⚡ Overchannel — '+total+' damage, but you take '+r.total+' necrotic'); }
+    else flashBanner('⚡ Overchannel — '+total+' damage (free this rest)');
+    c.overchannelUses=(c.overchannelUses||0)+1; save(); render();
+  }; }
 }
 function effectsCard(c){
   const fx=c.effects||[];
@@ -5196,6 +5227,7 @@ function renderSpells(c){
     if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: long rest too
     if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: long rest too
     if(isFiendWarlock(c,14)) c.hurlThroughHellUsed=false;   // Hurl Through Hell: long rest only
+    if(isEvocationWizard(c,14)) c.overchannelUses=0;   // Overchannel: backlash counter resets on a long rest
     if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: long rest too
     if(c.cls==='Paladin'){ c.divineSenseLeft=divineSenseMax(c); c.layOnHandsLeft=layOnHandsMax(c); }   // long rest only (PHB)
     if(isDevotionPaladin(c,20)) c.holyNimbusUsed=false;   // once per long rest
@@ -11880,7 +11912,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.197';
+const APP_VERSION='v120.198';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

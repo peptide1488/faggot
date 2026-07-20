@@ -2008,5 +2008,21 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('once chosen, Pact Boon is no longer owed', !pendingChoiceSpecs(wl).some(s=>s.t==='pick'&&s.key==='pactBoon'));
 }
 
+/* ---- School of Evocation: Empowered Evocation/Overchannel (castModal-embedded, like every
+   other notation-bump feature this session — only the pure helper is unit-tested here) ---- */
+{
+  const wz=newCharacter('Vex'); wz.cls='Wizard'; wz.level=14; wz.subclass='Evocation';
+  T('isEvocationWizard gates on class+subclass+level', isEvocationWizard(wz,2)===true && isEvocationWizard(wz,14)===true);
+  const notWz=newCharacter('Bookworm'); notWz.cls='Wizard'; notWz.level=20; notWz.subclass='Abjuration';
+  T('an Abjuration wizard (even level 20) is never Evocation', isEvocationWizard(notWz,2)===false);
+
+  wz.overchannelUses=1;   // 1 prior use this rest → this is the 2nd use, the first one that backlashes
+  T('overchannelBacklashDice is 2 on the first backlash-eligible use (the 2nd overall)', overchannelBacklashDice(wz)===2);
+  wz.overchannelUses=2;
+  T('overchannelBacklashDice escalates by 1 per further use before a long rest', overchannelBacklashDice(wz)===3);
+  wz.overchannelUses=4;
+  T('overchannelBacklashDice keeps escalating', overchannelBacklashDice(wz)===5);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

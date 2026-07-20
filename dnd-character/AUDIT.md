@@ -1845,3 +1845,69 @@ without any QB/player-net-specific test setup beyond a minimal fixture), and Eld
 Pact Boon's owed-count tracking.
 
 Playwright wasn't available to spot-check this live either (server still disconnected).
+
+## School of Evocation — twelfth and final subclass of this pass (v120.198)
+
+Twelfth entry in `SUBCLASS_FEATURES`, closing out the "one iconic subclass per class" sweep
+(Echo Knight, Path of the Berserker, College of Lore, Life Domain, Circle of the Moon, Way of the
+Open Hand, Oath of Devotion, Hunter, Assassin, Draconic Bloodline, The Fiend, and now Evocation).
+Base Wizard's Spellcasting and Arcane Recovery were already real; School of Evocation had no
+prerequisite base-class gap the way most of the last several entries did.
+
+- **Empowered Evocation (10th)**: another `castModal` notation-bump, same shape as Elemental
+  Affinity/Disciple of Life — `+Int mod` on `m.dmg` gated on `spellMeta(name).s==='V'` (this
+  app's own letter code for the Evocation school, from `CLASS_LETTER`'s comment).
+- **Overchannel (14th)**: a new `⚡ Overchannel` button (not a checkbox — toggling a checkbox
+  can't retroactively change the already-rendered roll button's notation without a live
+  re-render, so this is a direct action instead) offering `maxNotation(m.dmg)` as damage,
+  gated to 1st-5th level spells. A pure helper, `overchannelBacklashDice(c)`, computes the
+  escalating self-damage die count from `c.overchannelUses` (a caught-and-fixed off-by-one along
+  the way: the count read at the START of a given use reflects PRIOR uses this rest, so the
+  backlash die count is `1 + that count`, not `2 + that count` — the first BACKLASH-eligible use
+  is the 2nd overall use and must come out to 2d12/level, verified via a real test). The backlash
+  applies via `applyHp` immediately when the button is tapped (matching RAW's "immediately after
+  you cast it"), resets only on a long rest.
+- **Sculpt Spells (2nd)**: documented, not built. Excluding chosen creatures from an AoE spell's
+  damage/save resolution would mean touching `resolveBlast` — which, like several other systems
+  flagged this session, exists as two separate implementations (QB and player-net each have
+  their own `resolveBlast`), so building this "properly" means the same double-path problem
+  already flagged for Divine Smite/Sneak Attack/Colossus Slayer in QB's attack modal. Scoped out
+  rather than half-built into just one path.
+- **Potent Cantrip (6th)**: documented, not built. This app's save-based spell damage is shown as
+  a single flat notation for the caster to roll once (see `SPELL_DESC`'s regex-parsed mechanics);
+  it has no per-target save-outcome tracking inside `castModal` to conditionally halve damage
+  against — the player already applies damage manually per target today, so halving Potent
+  Cantrip's damage against a save-succeeding target is achievable the same way (manual
+  arithmetic), not a missing mechanic requiring new code.
+- **Evocation Savant (2nd)**: documented only — this app has no spellbook-copying gold/time
+  economy system at all (adding a spell to your list is instant and free everywhere), so there's
+  nothing for "halved cost" to apply to.
+
+Tests: 5 new assertions — `isEvocationWizard` gating and `overchannelBacklashDice`'s escalation
+sequence across three successive uses, including the off-by-one correction caught while writing
+the test (the implementation's own comment now spells out the indexing explicitly so it doesn't
+recur).
+
+Playwright wasn't available to spot-check this live either (server still disconnected).
+
+## Session summary: the full 12-subclass "one per class" pass
+
+Across this whole pass (Echo Knight → Berserker → College of Lore → Life Domain → Circle of the
+Moon → Way of the Open Hand → Oath of Devotion → Hunter → Assassin → Draconic Bloodline →
+The Fiend → Evocation), the recurring shape was: audit which BASE-class feature the subclass
+depends on (often itself flavor-text-only — Wild Shape, Martial Arts/Ki, Divine Sense/Lay on
+Hands/base Channel Divinity, Favored Enemy/Cunning Action/Reliable Talent, Metamagic, Eldritch
+Invocations/Pact Boon), build that first, then layer the subclass's own features on top with the
+QB/DM-hosted unification rule applied from the first draft. Two significant CROSS-CUTTING issues
+were found and flagged loudly rather than silently worked around: (1) Barbarian/Monk Unarmored
+Defense had never been implemented at all, meaning every unarmored Barbarian/Monk in this app
+was missing their signature AC bonus — fixed as part of the Open Hand pass; (2) Quick Battle's
+own attack modal (`openCombatRollModal`) has no rider system at all, so Sneak Attack/Divine
+Smite/Divine Strike/Colossus Slayer/Hurl Through Hell only ever apply in player-net mode via the
+separate `attackFlow` modal — a real violation of "same rules QB/DM-hosted" that predates this
+pass, not fixed here but documented clearly enough that a future session can retrofit it in one
+bounded piece of work instead of rediscovering it feature by feature. Also fixed, separately from
+any subclass: GitHub Pages had been building from `claude/elegant-bohr-zx67jk`, a branch that
+sat 13+ commits behind `iso3d-engine` for the entire back half of this session — every push from
+here forward should go to both branches (or Pages' configured source should be repointed at
+`iso3d-engine` directly) to avoid repeating that gap.
