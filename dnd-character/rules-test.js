@@ -27,6 +27,7 @@ require('./iso-renderer.js');   // mapGridHTML calls IsoRenderer.stageSize/tileS
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
+  'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
@@ -2309,6 +2310,48 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   ev=Engine.attack(qbAdapter,'pc','m1',{name:'Longsword',toHit:5,dmg:'1d8',dtype:'slashing',tiles:1});
   T('Engine.attack: no armor penalty once unarmored', ev.adv===0);
   setQB(null);
+}
+
+/* ---- "make the systems" (4): ritual casting ---- */
+{
+  const wiz=newCharacter('Ritualist'); wiz.cls='Wizard'; wiz.level=3;
+  wiz.spells=[{name:'Detect Magic',level:1,prepared:false},{name:'Fire Bolt',level:0,prepared:true}];
+  wiz.slots={1:{total:2,used:0}};
+  T('canRitualCast: Wizard qualifies on a known-but-unprepared ritual spell', canRitualCast(wiz,'Detect Magic')===true);
+  T('canRitualCast: false for a spell not in RITUAL_SPELLS', canRitualCast(wiz,'Fire Bolt')===false);
+  T('canRitualCast: false for a ritual spell not known at all', canRitualCast(wiz,'Legend Lore')===false);
+
+  const cleric=newCharacter('Priest'); cleric.cls='Cleric'; cleric.level=3;
+  cleric.spells=[{name:'Augury',level:2,prepared:false}]; cleric.slots={2:{total:1,used:0}};
+  T('canRitualCast: Cleric needs the ritual spell PREPARED, unlike Wizard', canRitualCast(cleric,'Augury')===false);
+  cleric.spells[0].prepared=true;
+  T('canRitualCast: Cleric qualifies once prepared', canRitualCast(cleric,'Augury')===true);
+
+  const sorc=newCharacter('Spark'); sorc.cls='Sorcerer'; sorc.level=3;
+  sorc.spells=[{name:'Alarm',level:1,prepared:true}];
+  T('canRitualCast: Sorcerer has no innate ritual casting', canRitualCast(sorc,'Alarm')===false);
+  sorc.feats=[{name:'Ritual Caster'}];
+  T('canRitualCast: Ritual Caster feat grants it for a known ritual spell', canRitualCast(sorc,'Alarm')===true);
+
+  // canCast/castSpell: ritual bypasses the slot, doesn't need prepared (Wizard), and doesn't
+  // touch action economy — verified through the real functions, not just canRitualCast alone.
+  wiz.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  spendAction(wiz);
+  T('canCast: normal cast blocked once the action is spent', canCast(wiz,'Detect Magic',1)===false);
+  T('canCast: ritual cast is allowed even with no action left', canCast(wiz,'Detect Magic',1,{ritual:true})===true);
+  wiz.battle.action=false; wiz.battle.actionsUsed=0;   // fresh turn, so a real spend would be observable below
+  const usedBefore=wiz.slots[1].used;
+  const ok=castSpell(wiz,'Detect Magic',1,null,{ritual:true});
+  T('castSpell: ritual cast succeeds', ok===true);
+  T('castSpell: ritual cast spends no spell slot', wiz.slots[1].used===usedBefore);
+  T('castSpell: ritual cast does not spend the action', wiz.battle.action===false);
+  T('castSpell: ritual cast leaves the spell still unprepared (ritual bypasses prep, doesn\'t grant it)', wiz.spells.find(s=>s.name==='Detect Magic').prepared===false);
+
+  // A cleric without the spell prepared can't ritual-cast it, and canCast correctly blocks
+  // the normal (non-ritual) attempt too since it isn't prepared.
+  const cleric2=newCharacter('Unprepped'); cleric2.cls='Cleric'; cleric2.level=3;
+  cleric2.spells=[{name:'Augury',level:2,prepared:false}]; cleric2.slots={2:{total:1,used:0}};
+  T('canCast: Cleric ritual attempt on an unprepared ritual spell still fails', canCast(cleric2,'Augury',2,{ritual:true})===false);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

@@ -2160,6 +2160,29 @@ const CLASS_SPELL_ABILITY = {Bard:'cha',Paladin:'cha',Sorcerer:'cha',Warlock:'ch
 function isCaster(c){ return !!CLASS_SPELL_ABILITY[c.cls]; }
 // Prepared-spell tracking (preparation casters choose a limited number each day).
 function isPrepCaster(c){ return ['Cleric','Druid','Wizard','Artificer','Paladin'].includes(c.cls); }
+// Ritual casting (PHB): a curated set of this app's actual spells that carry the ritual tag —
+// only names confirmed present in SPELL_SRC, not the full RAW ritual list (some rituals this
+// app doesn't have data for at all, e.g. Locate Animals or Plants, are simply absent).
+const RITUAL_SPELLS = new Set(['Alarm','Comprehend Languages','Detect Magic','Find Familiar',
+  'Identify','Purify Food and Drink','Unseen Servant','Animal Messenger','Augury',
+  'Gentle Repose','Silence','Water Breathing','Water Walk','Zone of Truth','Clairvoyance',
+  'Speak with Dead','Tongues','Divination','Commune','Commune with Nature',
+  'Contact Other Plane','Legend Lore']);
+// Classes with the innate Ritual Casting class feature (PHB/Tasha's) — Paladin is deliberately
+// excluded despite being in isPrepCaster above (it never gets ritual casting).
+const RITUAL_CASTERS = ['Bard','Cleric','Druid','Wizard','Artificer'];
+// Bard/Wizard/Artificer: any known ritual spell qualifies (Wizard/Artificer don't even need it
+// prepared — RAW). Cleric/Druid: must be prepared, same as casting it normally. Ritual Caster
+// feat: simplified to "any ritual spell you already know," since this app doesn't track a
+// separate ritual-book spell list distinct from a character's known spells.
+function canRitualCast(c, name){
+  if(!RITUAL_SPELLS.has(name)) return false;
+  const known=(c.spells||[]).find(s=>s.name===name);
+  if(!known) return false;
+  if(c.cls==='Cleric' || c.cls==='Druid') return !!known.prepared;
+  if(RITUAL_CASTERS.includes(c.cls)) return true;
+  return hasFeat(c,'Ritual Caster');
+}
 function preparedMax(c){ const l=Number(c.level)||1, m=mod(abil(c,c.spellAbility));
   if(['Wizard','Cleric','Druid'].includes(c.cls)) return Math.max(1, m+l);
   if(['Paladin','Artificer'].includes(c.cls)) return Math.max(1, m+Math.floor(l/2));
@@ -2657,13 +2680,17 @@ function featFreeCastSpell(c, name){
   if(hasFeat(c,'Magic Initiate') && (c.spells||[]).some(s=>s.name===name && (s.notes||'').includes('Magic Initiate'))) return true;
   return false;
 }
-function canCast(c, name, level){
+function canCast(c, name, level, opts){
   if(typeof level==='undefined'){ level=name; name=''; }   // back-compat: canCast(c, level)
   level=Number(level)||0;
+  opts=opts||{};
+  const ritual = !!(opts.ritual && canRitualCast(c,name));
   if(name && wishFreeName===name) return true;   // Wish-duplicated spell: no slot, no prep, no action cost
-  // "No slot needed" cases (Thousand Forms, feat-granted once/day spells) still need prep/
-  // action — checked below, not an early bypass like Wish's fully-free `free` above.
-  const noSlotNeeded = (name==='Alter Self' && isMoonDruid(c,14))
+  // "No slot needed" cases (Thousand Forms, feat-granted once/day spells, ritual casting) still
+  // need prep/action — checked below, not an early bypass like Wish's fully-free `free` above.
+  // Ritual casting takes 10 minutes instead of the normal action, so it skips the action-economy
+  // block entirely below, not just the slot check.
+  const noSlotNeeded = ritual || (name==='Alter Self' && isMoonDruid(c,14))
     || (featFreeCastSpell(c,name) && !(c.featFreeCastUsed&&c.featFreeCastUsed[name]));
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
   if(c.armor && c.armor!=='none' && !armorProficient(c,c.armor)){ flashBanner('Can’t cast spells — not proficient with worn armor'); return false; }
@@ -2675,9 +2702,11 @@ function canCast(c, name, level){
       if(me && me.x!=null && inNoCastZone(s, me.x, me.y)){ flashBanner('Magic is suppressed here — can\'t cast'); return false; }
     }
   }
-  if(level>0 && name && isPrepCaster(c) && !spellPrepared(c,name)){ flashBanner(name+' isn’t prepared today — 📋 Prepare it first'); return false; }
+  // Ritual casting: Wizard/Artificer don't need the spell prepared (RAW — spellbook-known is
+  // enough); Cleric/Druid still do, already enforced by canRitualCast requiring known.prepared.
+  if(level>0 && name && isPrepCaster(c) && !spellPrepared(c,name) && !(ritual && (c.cls==='Wizard'||c.cls==='Artificer'))){ flashBanner(name+' isn’t prepared today — 📋 Prepare it first'); return false; }
   const ct=spellCastTime(name);
-  if(c.battle){
+  if(!ritual && c.battle){
     const b=c.battle;
     if(ct==='reaction'){
       if(b.reaction){ flashBanner('Reaction already used this round'); return false; }
@@ -2696,22 +2725,23 @@ function canCast(c, name, level){
 }
 function castSpell(c, name, level, lightAt, spellOpts){
   level=Number(level)||0;
-  if(!canCast(c,name,level)) return false;
+  const ritual = !!(spellOpts && spellOpts.ritual && canRitualCast(c,name));
+  if(!canCast(c,name,level,{ritual})) return false;
   const free=(name && wishFreeName===name); if(free) wishFreeName=null;   // Wish duplication: consume the grant
   // Thousand Forms / feat-granted once/day spells: no spell slot expended, but the action/
   // bonus-action cost below still applies — a narrower bypass than Wish's `free` (which also
   // skips the action-economy spend).
   const featFree = !free && featFreeCastSpell(c,name) && !(c.featFreeCastUsed&&c.featFreeCastUsed[name]);
   if(featFree){ if(!c.featFreeCastUsed) c.featFreeCastUsed={}; c.featFreeCastUsed[name]=true; }
-  const freeSlot = free || featFree || (name==='Alter Self' && isMoonDruid(c,14));
+  const freeSlot = free || featFree || ritual || (name==='Alter Self' && isMoonDruid(c,14));
   const ct=spellCastTime(name);
   if(level>0 && !freeSlot){ if(!c.slots[level]) c.slots[level]={total:0,used:0}; c.slots[level].used=Math.min((spellSlots(c)[level]||0),(c.slots[level].used||0)+1); }   // spend the slot
-  if(c.battle && !free){
+  if(c.battle && !free && !ritual){
     if(ct==='reaction'){ c.battle.reaction=true; }
     else if(ct==='bonus'){ c.battle.bonus=true; c.battle.castBonusSpell=true; }
     else { spendAction(c); if(level>0) c.battle.castLeveledSpell=true; }
   }
-  Events.emit({type:'cast', by:c.name, name, level, castTime:ct});
+  Events.emit({type:'cast', by:c.name, name, level, castTime:ct, ritual});
   let tmpl=SPELL_EFFECTS[name]; sfx('cast'); castFx(name);
   // No effect template but the spell is concentration → still track it as a concentration
   // effect, so casting it drops any previous concentration (one spell at a time, PHB).
@@ -3496,6 +3526,10 @@ function castModal(c, name, baseLevel){
   // applied via applyHp right when the box is checked (not deferred), since RAW is explicit the
   // backlash lands "immediately after you cast it," and this modal's Cast button is that moment.
   const canOverchannel = m.dmg && isEvocationWizard(c,14) && baseLevel>=1 && baseLevel<=5;
+  // Summon-kind spells (e.g. Unseen Servant) route through openSummonSpellUI's own picker,
+  // which doesn't read this modal's checkbox — hide the toggle there rather than show one
+  // that silently does nothing, until that flow gets its own ritual wiring.
+  const canRitual = canRitualCast(c,name) && !(SPELL_HANDLERS[name]&&SPELL_HANDLERS[name].kind==='summon');
   const slots=spellSlots(c); let lvlOpts='';
   if(baseLevel>0){ for(let l=baseLevel;l<=9;l++){ const tot=slots[l]||0; if(tot){ const used=Math.min(tot,(c.slots[l]&&c.slots[l].used)||0), avail=tot-used; lvlOpts+=`<option value="${l}" ${avail<=0?'disabled':''}>Level ${l} — ${avail}/${tot} left</option>`; } } }
   const eff=SPELL_EFFECTS[name];
@@ -3530,12 +3564,14 @@ function castModal(c, name, baseLevel){
     ${(!m.attack&&!m.dmg&&!m.heal&&!m.save&&!eff&&!SPELL_LIGHTS[name])?`<div class="card" style="margin:0 0 10px;background:rgba(77,106,44,.08)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">📜 Narrative spell</div>
       <p class="muted" style="font-size:12.5px;margin:0">No rolls or stats to apply — casting spends the ${baseLevel>0?'slot & action':'action'} and adds it to your adventure log; you${net&&net.role==='player'?' and the DM':''} narrate what happens.</p></div>`:''}
     ${baseLevel>0 ? (lvlOpts?`<div class="addrow" style="align-items:center"><span class="muted" style="font-size:12px;flex:none">Cast using</span><select id="castLvl" style="flex:1">${lvlOpts}</select></div>`:`<p class="muted" style="font-size:12px;margin:0">No spell slots available — cast to track it anyway.</p>`) : `<p class="muted" style="font-size:12px;margin:0">Cantrip — no slot needed.</p>`}
+    ${canRitual?`<label class="pill" style="cursor:pointer;margin-top:8px;display:flex"><input type="checkbox" id="castRitual"> 🕯️ Cast as Ritual <span class="muted" style="font-size:11px">(no slot, no action — takes 10 minutes)</span></label>`:''}
     <button class="btn block" id="castGo" style="margin-top:12px">⚡ Cast${m.conc?' & concentrate':''}${eff?' (apply effect)':''}</button>
     <button class="btn ghost block" id="castClose" style="margin-top:10px">Close</button>
   </div></div>`;
   $('#castModal').onclick=e=>{ if(e.target.id==='castModal') $('#modalRoot').innerHTML=''; };
   $('#castClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
-  $('#castGo').onclick=()=>{ const lv=$('#castLvl'); const useLvl=lv?Number(lv.value):baseLevel; $('#modalRoot').innerHTML='';
+  $('#castGo').onclick=()=>{ const lv=$('#castLvl'); const useLvl=lv?Number(lv.value):baseLevel;
+    const rb=$('#castRitual'); const ritual=!!(rb&&rb.checked); $('#modalRoot').innerHTML='';
     // Mage Hand in battle → interact picker after spending the cast
     if(name==='Mage Hand'){
       const s=battleSession();
@@ -3560,7 +3596,7 @@ function castModal(c, name, baseLevel){
       openSummonSpellUI(c, name, useLvl);
       return;
     }
-    const ok=castSpell(c, name, useLvl); if(ok && QB && QB.active) qbLog('📜 '+c.name+' casts '+name); };
+    const ok=castSpell(c, name, useLvl, null, {ritual}); if(ok && QB && QB.active) qbLog('📜 '+c.name+' casts '+name+(ritual?' (ritual)':'')); };
   const manual=(id,make)=>{ const el=$('#'+id); if(el) el.addEventListener('change',()=>{ const v=Number(el.value); if(el.value!=='' && !isNaN(v)){ pushRoll(make(v)); el.value=''; } }); };
   manual('mAtk', v=>({label:name+' attack (manual)', total:v+atkB, detail:'d20 ('+v+') '+sgn(atkB), crit:v===20?'crit':v===1?'fumble':null, kind:'check'}));
   manual('mDmg', v=>({label:name+' damage (manual)', total:v, detail:'entered', kind:'dmg'}));
@@ -12113,7 +12149,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.202';
+const APP_VERSION='v120.203';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

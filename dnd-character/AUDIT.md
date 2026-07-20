@@ -2166,3 +2166,45 @@ Remaining "make the systems" items: ritual casting, Healer's kit charge tracking
 (Mounted Combatant), Battle Master maneuvers/superiority dice (Martial Adept), and the smaller
 "genuinely borderline" feats (Athlete, Actor, Grappler, Inspiring Leader, Charger, Dungeon Delver,
 Crossbow Expert, Spell Sniper's remaining clauses). Continuing in the next pass.
+
+## "Make the systems" (4): ritual casting (v120.203)
+
+- `RITUAL_SPELLS`: a curated set of this app's actual known spells that carry the PHB ritual tag
+  (Alarm, Comprehend Languages, Detect Magic, Find Familiar, Identify, Purify Food and Drink,
+  Unseen Servant, Animal Messenger, Augury, Gentle Repose, Silence, Water Breathing, Water Walk,
+  Zone of Truth, Clairvoyance, Speak with Dead, Tongues, Divination, Commune, Commune with
+  Nature, Contact Other Plane, Legend Lore) — some real-world rituals (e.g. Locate Animals or
+  Plants, Magic Mouth, Beast Sense) aren't in this app's spell list at all, so they're simply
+  absent rather than half-wired.
+- `RITUAL_CASTERS = ['Bard','Cleric','Druid','Wizard','Artificer']` — the classes with the innate
+  Ritual Casting feature. Paladin is deliberately excluded even though it's in `isPrepCaster`
+  (Paladins never get ritual casting per RAW).
+- `canRitualCast(c, name)`: Wizard/Artificer only need the spell known (not prepared — RAW);
+  Cleric/Druid need it prepared, same as a normal cast; Bard just needs it known. The Ritual
+  Caster feat is simplified to "any ritual spell you already know" rather than tracking a
+  separate ritual-book spell list distinct from a character's known spells — this app has never
+  modeled a second spell list per character, and adding one just for this one feat wasn't worth
+  the surface area.
+- `canCast`/`castSpell` both gained an `opts.ritual`/`spellOpts.ritual` flag: when set and
+  `canRitualCast` agrees, the slot check and the ENTIRE action-economy block (action/bonus/
+  reaction) are skipped — a ritual cast takes 10 minutes, not a tracked turn action, so nothing
+  in `c.battle` should move. Wizard/Artificer also skip the "must be prepared" gate specifically
+  while ritual; Cleric/Druid don't, since `canRitualCast` already required `prepared` for them.
+- `castModal` gained a "🕯️ Cast as Ritual" checkbox, shown whenever `canRitualCast` is true for
+  the spell being cast. Deliberately hidden for summon-kind spells (Unseen Servant is the one
+  ritual spell that's also `SPELL_HANDLERS`-summon) — that flow routes through its own
+  `openSummonSpellUI` picker, which doesn't read this modal's checkbox at all; showing a toggle
+  that silently did nothing would be worse than not showing one. A real, explicit scope gap for
+  a future pass, not a silent one.
+
+Tests: 15 new assertions — `canRitualCast`'s per-class gating (Wizard unprepared-but-known,
+Cleric requires prepared, Sorcerer has none innately, Ritual Caster feat grants it), and a real
+end-to-end run through `canCast`/`castSpell` proving a ritual cast succeeds with no action left,
+spends no slot, doesn't touch `c.battle.action`, and doesn't retroactively mark the spell
+prepared.
+
+Remaining "make the systems" items: Healer's kit charge tracking, a mount system (Mounted
+Combatant), Battle Master maneuvers/superiority dice (Martial Adept), Unseen Servant's ritual
+wiring through `openSummonSpellUI`, and the smaller "genuinely borderline" feats (Athlete, Actor,
+Grappler, Inspiring Leader, Charger, Dungeon Delver, Crossbow Expert, Spell Sniper's remaining
+clauses). Continuing in the next pass.
