@@ -2062,3 +2062,65 @@ Fey Touched/Magic Initiate's free-cast-once bypass through the real `canCast`/`c
 
 Playwright still wasn't available for a live click-through of the new Great Weapon Master/
 Sharpshooter checkbox in either modal — same honest caveat as the rider fix above.
+
+## "Make the systems" (1): damage-type parameter through applyHp (v120.201)
+
+Requested follow-up to the feat audit: several documented gaps traced back to the same root
+cause — `applyHp(c, delta)` had no damage-type parameter anywhere, ever, in this app's history.
+Fixed by threading `dtype` through the whole incoming-damage pipeline: `Engine.attack`'s own
+`ad.hurt(t,dmg)` call didn't forward `atk.dtype`/`atk.dt` at all (a real pre-existing gap, not
+just missing for these two feats — EVERY weapon attack against a PC lost its damage type before
+this fix); `qbHurt`, `sessionAdapter.hurt`, and `playerNetAdapter.hurt` now all accept and
+forward it; the DM→player `'apply'` network message now carries `dtype` too, and
+`playerOnData`'s handler forwards it into the receiving player's own `applyHp` call.
+
+- **Heavy Armor Master**: `-3` flat to bludgeoning/piercing/slashing damage while wearing heavy
+  armor (`armorDef(c.armor).dexCap===0` is this app's existing heavy-armor marker). "Nonmagical"
+  isn't tracked on incoming damage anywhere (the same magic-vs-nonmagical gap that's come up
+  repeatedly this session), so it applies to any b/p/s hit — documented, not silently narrowed.
+- **Fiendish Resilience** (The Fiend, Warlock — built two entries ago but left as "apply it
+  yourself" specifically because this parameter didn't exist): now genuinely halves incoming
+  damage of the chosen type, no manual bookkeeping needed.
+- Both gate on `dtype` being present at all, so flat manual damage-entry buttons and
+  environmental hazard damage (which never carried a type) are correctly unaffected.
+
+Tests: 18 new assertions, including a real end-to-end one through `Engine.attack` (not just a
+direct `applyHp` call) proving the weapon's damage type now actually survives the whole
+adapter → hurt → applyHp chain, which it never did before this fix.
+
+## "Make the systems" (2): Evasion and Uncanny Dodge (v120.201)
+
+Both were explicitly documented as "needs an interrupt system this app doesn't have" in the
+Hunter/Assassin subclass entries. Turned out that assessment was only half right:
+
+- **Evasion** (Rogue 7th; also a Ranger Hunter Superior Hunter's Defense pick) needed nothing
+  new at all — `Engine.castApply` is already the ONE shared save-resolution choke point every
+  mode (QB, player-net, DM-hosted) routes through for AoE/save spells. Added a single check
+  right where `dmg` is computed from `saved`: a Dex-save effect now deals 0 on a success (not
+  half) and half on a failure (not full) when the target has Evasion. `ad.checkSubject(t)`
+  returns `null` for a monster or for a DM-hosted mirror of a connected player (the DM can't see
+  that player's real feats) — `hasEvasion(null)` is a safe `false`, so this only actually fires
+  where the target's real character is known locally (QB's own PC, or a player's own device
+  resolving damage to itself) — a real, honest scope limit for the DM-hosted-connected-player
+  case, not a new one.
+- **Uncanny Dodge** (Rogue 5th; same Ranger pick) genuinely IS reactive in a way this app has no
+  live "pause and ask" mechanism for — so it's applied automatically instead: the first
+  qualifying hit each round is halved with no player choice, consuming the reaction (gated on
+  `c.battle` existing, so it only fires in real combat, not on out-of-battle damage entries). A
+  documented simplification (RAW lets you choose NOT to use it, e.g. to save it for a bigger hit
+  later the same round) rather than a missing mechanic — matches how Rage's own damage-halving
+  in this exact function is also unconditional/automatic.
+- `hasEvasion`/`hasUncannyDodge` both check the base Rogue class feature AND the matching
+  Ranger Hunter `hunterSuperiorDefense` pick from the same shared gate, rather than duplicating
+  the check per class.
+
+Tests: 27 new assertions — gating for both classes' sources, Evasion verified through the real
+`Engine.castApply` path (success/failure × Evasion/non-Evasion, 4 real combinations), and
+Uncanny Dodge's once-per-round behavior verified through the real `applyHp` path across a
+reaction reset.
+
+Remaining "make the systems" items not yet started: an armor-non-proficiency penalty system
+(Heavily/Lightly/Moderately Armored), ritual casting, Healer's kit charge tracking, a mount
+system (Mounted Combatant), Battle Master maneuvers/superiority dice (Martial Adept), and the
+smaller "genuinely borderline" feats (Athlete, Actor, Grappler, Inspiring Leader, Charger,
+Dungeon Delver, Crossbow Expert, Spell Sniper's remaining clauses). Continuing in the next pass.

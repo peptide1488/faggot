@@ -964,6 +964,13 @@ function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunte
 function isAssassin(c,lvl){ return !!(c && c.cls==='Rogue' && c.subclass==='Assassin' && (Number(c.level)||1)>=(lvl||3)); }
 function isDraconicSorcerer(c,lvl){ return !!(c && c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && (Number(c.level)||1)>=(lvl||1)); }
 function isFiendWarlock(c,lvl){ return !!(c && c.cls==='Warlock' && c.subclass==='The Fiend' && (Number(c.level)||1)>=(lvl||1)); }
+// Evasion (Rogue 7th; also Ranger Hunter's Superior Hunter's Defense option, 15th) and Uncanny
+// Dodge (Rogue 5th; same Ranger option) — both were left undone in the Hunter/Assassin passes,
+// documented as needing infra this app didn't have. Evasion turned out to need nothing new:
+// Engine.castApply is the one shared save-resolution choke point every mode already routes
+// through. Uncanny Dodge is applied automatically (see applyHp) rather than as a live prompt.
+function hasEvasion(c){ return !!(c && ((c.cls==='Rogue' && (Number(c.level)||1)>=7) || c.hunterSuperiorDefense==='Evasion')); }
+function hasUncannyDodge(c){ return !!(c && ((c.cls==='Rogue' && (Number(c.level)||1)>=5) || c.hunterSuperiorDefense==='Uncanny Dodge')); }
 function isEvocationWizard(c,lvl){ return !!(c && c.cls==='Wizard' && c.subclass==='Evocation' && (Number(c.level)||1)>=(lvl||2)); }
 // Overchannel (14th): max damage on a leveled spell; the SECOND and later uses before your next
 // long rest backlash you with escalating necrotic (2d12/level on the first repeat, +1d12/level
@@ -1428,7 +1435,7 @@ function openWarlockUI(c){
     ${isFiendWarlock(c,6)?`<button class="btn block" id="wlLuck" style="margin-bottom:8px;text-align:left"${c.darkOneLuckUsed?' disabled style="opacity:.5"':''}>🎲 Dark One's Own Luck<small style="display:block;opacity:.75">${c.darkOneLuckUsed?'Used — rest to recharge':'Add 1d10 to your last roll ('+(lastRoll?esc(lastRoll.label)+' = '+lastRoll.total:'no roll yet')+')'}</small></button>`:''}
     ${isFiendWarlock(c,10)?`<div class="field"><label>Fiendish Resilience — damage type${c.fiendishResilience?' (current: '+esc(c.fiendishResilience)+')':''}</label>
       <select id="wlResist"><option value="">— choose —</option>${DMG_TYPES.map(t=>`<option ${c.fiendishResilience===t?'selected':''}>${t}</option>`).join('')}</select>
-      <p class="muted" style="font-size:11px;margin:4px 0 0">Resistance isn't auto-applied to incoming damage — halve it yourself when you take a hit of this type.</p></div>`:''}
+      <p class="muted" style="font-size:11px;margin:4px 0 0">Halves any incoming damage of this type from a real attack roll (weapon/spell). Environmental/manual damage entries don't carry a type, so they aren't affected.</p></div>`:''}
     <button class="btn ghost block" id="wlClose" style="margin-top:8px">Close</button>
   </div></div>`;
   $('#wlModal').onclick=e=>{ if(e.target.id==='wlModal') $('#modalRoot').innerHTML=''; };
@@ -5080,7 +5087,7 @@ function hdPips(total, used){
   for(let i=1;i<=total;i++) h+=`<button class="pip ${i<=avail?'on':''}" data-hdpip="${i}" title="${i<=avail?'available':'spent'}"></button>`;
   return h;
 }
-function applyHp(c,delta){
+function applyHp(c,delta,dtype){
   // Wild Shape: damage/healing hits the beast's own HP pool, not yours (PHB) — a completely
   // separate branch rather than threading wildShape checks through every death-save/rage/
   // concentration line below, so none of that real-HP logic needs to know this exists.
@@ -5095,7 +5102,7 @@ function applyHp(c,delta){
         c.wildShape=null;
         logChange(c,'Beast form destroyed — you revert to '+c.name);
         flashBanner('💥 '+beastName+' form destroyed — you revert'+(overflow>0?' and take '+overflow+' overflow damage':''));
-        if(overflow>0){ applyHp(c,-overflow); return; }
+        if(overflow>0){ applyHp(c,-overflow,dtype); return; }
       }
       save(); render(); if(net&&net.role==='player') playerHello();
       return;
@@ -5111,10 +5118,32 @@ function applyHp(c,delta){
     let dmg=-delta; const wasAt0=c.hp.cur<=0;
     if(c.conditions && c.conditions['Asleep']){ delete c.conditions['Asleep']; logChange(c,'Woken by damage'); }   // damage wakes sleepers (PHB)
     const raged=isRaging(c)&&dmg>0; if(raged) dmg=Math.floor(dmg/2);   // Rage: resistance to b/p/s (halved)
+    // Heavy Armor Master: -3 flat to nonmagical bludgeoning/piercing/slashing damage while
+    // wearing heavy armor (dexCap===0 marks heavy armor in this app's ARMOR table). This app
+    // has no magical-vs-nonmagical tag on incoming damage anywhere, so — like every other
+    // "counts as magical" gap this session — it applies to any b/p/s hit, a documented
+    // simplification rather than a missing mechanic silently skipped.
+    let hamNote='';
+    if(dtype && dmg>0 && ['bludgeoning','piercing','slashing'].includes(dtype) && hasFeat(c,'Heavy Armor Master') && (armorDef(c.armor||'none').dexCap===0)){
+      const before2=dmg; dmg=Math.max(0,dmg-3); if(dmg<before2) hamNote=' (−3 Heavy Armor Master)';
+    }
+    // Fiendish Resilience (The Fiend 10th): resistance (half) to the chosen damage type.
+    let frNote='';
+    if(dtype && dmg>0 && c.fiendishResilience===dtype){ dmg=Math.floor(dmg/2); frNote=' (½ Fiendish Resilience)'; }
+    // Uncanny Dodge (Rogue 5th / Ranger Hunter's Superior Hunter's Defense): halve damage from
+    // an attack, once per round via your reaction. Applied automatically rather than as a live
+    // prompt — nothing in this app's damage pipeline pauses mid-resolution to ask, and a
+    // rational player essentially always wants it anyway (the same reasoning Rage's own halving
+    // above already relies on). Gated on `dtype` being present so it only fires for real
+    // attack/spell damage, not flat manual/environmental entries.
+    let udNote='';
+    if(dtype && dmg>0 && hasUncannyDodge(c) && c.battle && !c.battle.reaction){
+      dmg=Math.floor(dmg/2); c.battle.reaction=true; udNote=' (½ Uncanny Dodge)';
+    }
     concDmg=dmg;   // damage taken (after resistance) drives the concentration DC, even if temp HP absorbs it
     if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
     const before=c.hp.cur; c.hp.cur=Math.max(0,c.hp.cur-dmg);
-    logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+' damage → '+c.hp.cur+' HP');
+    logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+hamNote+frNote+udNote+' damage → '+c.hp.cur+' HP');
     if(raged) flashBanner('🪓 Rage — damage halved (physical)');
     // damage while at 0 HP = a failed death save; if it equals/exceeds your max HP you die outright (PHB massive damage)
     // Taking damage also ends a Stabilize (PHB) — back to rolling death saves.
@@ -6262,7 +6291,7 @@ function playerOnData(d){ if(!d) return;
       if(cur&&cur.id!==net.lastActiveId){ net.lastActiveId=cur.id; frameCameraOnActiveUnit(net.session,1.55); }
     }
     render();
-  } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
+  } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta, d.dtype); playerHello(); } }
   else if(d.t==='oachance'){ const c=playerChar(); if(c) playerOpportunityPrompt(c, d); }
   else if(d.t==='cond'){ const c=playerChar(); if(c){ if(d.on!==false && (mindlessRageBlocks(c,d.name)||auraOfDevotionBlocks(c,d.name))) return; if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
   else if(d.t==='hazard'){
@@ -10132,7 +10161,7 @@ const Engine = {
       if(sanctuary.blocked){ const ev={type:'attack', actorId, targetId, name:atk.name, hit:false, dmg:0, sanctuary};
         Events.emit(ev); return ev; } } }
     const r=Engine.hitResult(ad, actorId, targetId, atk, opts.face);
-    let dmg=0, mult=1; if(r.hit){ dmg=(opts.dmgTotal!=null)?opts.dmgTotal:Engine.rollDamage(atk, r.crit); mult=ad.damageMult?ad.damageMult(t, atk.dtype||atk.dt):1; dmg=Math.max(0,Math.round(dmg*mult)); if(opts.apply!==false) ad.hurt(t,dmg); }
+    let dmg=0, mult=1; if(r.hit){ dmg=(opts.dmgTotal!=null)?opts.dmgTotal:Engine.rollDamage(atk, r.crit); mult=ad.damageMult?ad.damageMult(t, atk.dtype||atk.dt):1; dmg=Math.max(0,Math.round(dmg*mult)); if(opts.apply!==false) ad.hurt(t,dmg,atk.dtype||atk.dt); }
     const ev={type:'attack', actorId, targetId, name:atk.name, from:a&&{x:a.x,y:a.y}, to:t&&{x:t.x,y:t.y}, ranged:(atk.tiles||1)>1, dtype:atk.dtype||atk.dt||'', d20:r.d20, total:r.total, ac:r.ac, cover:r.cover, hit:r.hit, crit:r.crit, dmg, mult, sanctuary, adv:r.adv, advWhy:r.advWhy};
     if(opts.sneak) ev.sneak=opts.sneak;
     // Holy Aura: reactive — a hostile attacker who HITS a warded creature rolls a Con save or is
@@ -10168,7 +10197,16 @@ const Engine = {
     if(sp.savedKnown!=null){ saved=!!sp.savedKnown; }   // DM adjudicated the save off-app (player rolled a real die)
     else if(sp.save){ const sb=ad.saveBonus?ad.saveBonus(t, sp.save):0; saveRoll=rnd(20)+sb; saved=saveRoll>=sp.dc; }
     let dmg=0, mult=1;
-    if(sp.dmgTotal){ dmg=saved?Math.floor(sp.dmgTotal/2):sp.dmgTotal; mult=ad.damageMult?ad.damageMult(t, sp.dtype):1; dmg=Math.max(0,Math.round(dmg*mult)); if(dmg) ad.hurt(t,dmg,sp.dtype); }
+    if(sp.dmgTotal){
+      // Evasion: a Dex-save half-damage effect deals no damage on a success, half on a failure
+      // (instead of the normal half/full). checkSubject returns null for a monster or a
+      // DM-hosted mirror of a connected player (the DM can't see that player's real feats) —
+      // hasEvasion(null) is a safe false, so this only ever fires where the real character is
+      // actually known locally (QB's own PC, or a player's own device).
+      const evasion = sp.save==='dex' && ad.checkSubject && hasEvasion(ad.checkSubject(t));
+      dmg = saved ? (evasion?0:Math.floor(sp.dmgTotal/2)) : (evasion?Math.floor(sp.dmgTotal/2):sp.dmgTotal);
+      mult=ad.damageMult?ad.damageMult(t, sp.dtype):1; dmg=Math.max(0,Math.round(dmg*mult)); if(dmg) ad.hurt(t,dmg,sp.dtype);
+    }
     if(sp.cond && !saved && ad.addCond) ad.addCond(t, sp.cond.c, sp.cond.rounds);
     const ev={type:'spell', actorId, targetId, name:sp.name, save:sp.save||null, dc:sp.dc, saveRoll, saved, dmg, mult, dtype:sp.dtype||'', cond:(sp.cond&&!saved)?sp.cond.c:null, at:t&&{x:t.x,y:t.y}};
     Events.emit(ev);
@@ -10204,7 +10242,7 @@ const sessionAdapter = {
   unit:id=>{ const s=net&&net.session; if(!s) return null; return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id||p.cid===id); },
   ac:u=>u.ac,
   hp:u=> u.hp!=null ? u.hp : u.hpCur,
-  hurt:(u,dmg)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } else { dmSend(u.id,{t:'apply',delta:-dmg}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },   // damage wakes sleepers
+  hurt:(u,dmg,dtype)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } else { dmSend(u.id,{t:'apply',delta:-dmg,dtype}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },   // damage wakes sleepers
   cover:(a,t)=> (a&&t&&net&&net.session) ? coverBetween(net.session, a.x,a.y, t.x,t.y) : 0,
   damageMult:(t,dtype)=> (t&&t.hp!=null) ? monsterDmgMult(t,dtype) : 1,   // monsters carry .hp
   // A monster's real stats live entirely in the DM's own session — always known. A connected
@@ -10243,7 +10281,7 @@ const playerNetAdapter = {
     return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id); },
   ac:u=>{ if(!u.me) return u.ac||10; const s=net&&net.session; const me=s&&s.players&&net.peer&&s.players.find(p=>p.id===net.peer.id); return computeAC(u.c,{ignoreEffects:!!(me&&s&&inAntimagicField(s,me.x,me.y))}); },
   hp:u=> u.me ? u.c.hp.cur : (u.hp!=null?u.hp:u.hpCur),
-  hurt:(u,dmg,dtype)=>{ if(u.me){ applyHp(u.c,-dmg); playerHello(); }
+  hurt:(u,dmg,dtype)=>{ if(u.me){ applyHp(u.c,-dmg,dtype); playerHello(); }
     else if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg);   // local echo; DM broadcast corrects it
       if(net.conn){ try{ net.conn.send({t:'attack',mon:u.id,who:(playerChar()||{}).name,hit:true,dmg,dtype:dtype||''}); }catch(e){} } } },
   // 'me' is always fully known locally (real c); a monster is fully known via the mirror
@@ -10270,7 +10308,7 @@ function qbReach(u){ if(u.side==='pc'){ return 1; } const a=parseMonsterAttacks(
 function qbAlive(u){ return qbHP(u)>0; }
 function qbUnitById(id){ return QB.players.find(p=>p.id===id)||QB.monsters.find(m=>m.id===id); }
 function qbLog(m,s){ s=s||QB; s.log=s.log||[]; s.log.unshift({m, t:Date.now()}); if(s.log.length>40) s.log.pop(); }
-function qbHurt(u, dmg){ if(u.side==='pc'){ applyHp(u.c, -dmg); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } }   // damage wakes sleepers (PHB)
+function qbHurt(u, dmg, dtype){ if(u.side==='pc'){ applyHp(u.c, -dmg, dtype); u.hpCur=u.c.hp.cur; } else { u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } }   // damage wakes sleepers (PHB)
 // adapter binding the unified Engine to Quick Battle's state
 const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
   enemiesOf:u=> u.side==='pc' ? QB.monsters.filter(isHostile)
@@ -12043,7 +12081,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.200';
+const APP_VERSION='v120.201';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

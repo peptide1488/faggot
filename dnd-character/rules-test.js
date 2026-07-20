@@ -2174,5 +2174,96 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('...and does not apply to an unrelated spell of the same level', featFreeCastSpell(magi,'Burning Hands')===false);
 }
 
+/* ---- "make the systems" follow-up (1): threading a damage-type parameter through applyHp,
+   which nothing in this app had ever done before — unblocks Heavy Armor Master and finally
+   completes Fiendish Resilience (The Fiend, Warlock) from an earlier entry, whose resistance
+   had been documented as "apply it yourself" purely because this parameter didn't exist. ---- */
+{
+  const ham=newCharacter('Ironwall'); ham.cls='Fighter'; ham.armor='plate'; ham.feats=[{name:'Heavy Armor Master'}]; ham.hp={max:50,cur:50,temp:0};
+  applyHp(ham,-10,'slashing');
+  T('Heavy Armor Master reduces b/p/s damage by a flat 3 while wearing heavy armor', ham.hp.cur===50-7);
+  const ham2=newCharacter('Lightfoot'); ham2.cls='Fighter'; ham2.armor='leather'; ham2.feats=[{name:'Heavy Armor Master'}]; ham2.hp={max:50,cur:50,temp:0};
+  applyHp(ham2,-10,'slashing');
+  T('...but not while wearing anything lighter than heavy armor', ham2.hp.cur===50-10);
+  const ham3=newCharacter('Sparky'); ham3.cls='Fighter'; ham3.armor='plate'; ham3.feats=[{name:'Heavy Armor Master'}]; ham3.hp={max:50,cur:50,temp:0};
+  applyHp(ham3,-10,'fire');
+  T('...and not against a damage type outside bludgeoning/piercing/slashing', ham3.hp.cur===50-10);
+
+  const wl2=newCharacter('Grim II'); wl2.cls='Warlock'; wl2.subclass='The Fiend'; wl2.level=10; wl2.fiendishResilience='cold'; wl2.hp={max:40,cur:40,temp:0};
+  applyHp(wl2,-10,'cold');
+  T('Fiendish Resilience halves damage of the chosen type', wl2.hp.cur===40-5);
+  applyHp(wl2,-10,'fire');
+  T('...but not a different damage type', wl2.hp.cur===35-10);
+
+  // Damage with no known type (manual entries, environmental hazards) is untouched by either —
+  // both checks are gated on `dtype` being present at all.
+  const ham4=newCharacter('Untyped'); ham4.cls='Fighter'; ham4.armor='plate'; ham4.feats=[{name:'Heavy Armor Master'}]; ham4.hp={max:50,cur:50,temp:0};
+  applyHp(ham4,-10);
+  T('with no dtype passed at all, no resistance applies (matches every existing untyped call site)', ham4.hp.cur===50-10);
+
+  // End-to-end: Engine.attack's own hurt() call now forwards atk.dtype/atk.dt, which it never
+  // did before — a monster's attack roll against a Heavy-Armor-Master PC should reflect the
+  // reduction, not just a direct applyHp() call.
+  const ham5=newCharacter('Shieldwall'); ham5.cls='Fighter'; ham5.armor='plate'; ham5.feats=[{name:'Heavy Armor Master'}]; ham5.hp={max:50,cur:50,temp:0};
+  setQB({battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[], players:[{id:'pc',side:'pc',x:0,y:0,c:ham5}], monsters:[{id:'m1',side:'mon',name:'Ogre',x:1,y:0,hp:30,max:30,ac:5,conds:[]}]});
+  { const orig=Math.random; Math.random=()=>0.99;   // guarantee the hit
+    Engine.attack(qbAdapter,'m1','pc',{name:'Club',toHit:99,dmg:'10',dtype:'bludgeoning',tiles:1});
+    Math.random=orig;
+  }
+  T('Engine.attack now forwards the weapon\'s damage type all the way to applyHp', ham5.hp.cur===50-7);
+  setQB(null);
+}
+
+/* ---- "make the systems" follow-up (2): Evasion and Uncanny Dodge — previously documented as
+   needing infra this app didn't have. Evasion needed nothing new (Engine.castApply is already
+   the one shared save-resolution choke point); Uncanny Dodge is applied automatically. ---- */
+{
+  const rg7=newCharacter('Evader'); rg7.cls='Rogue'; rg7.level=7;
+  T('hasEvasion gates on Rogue 7th+', hasEvasion(rg7)===true && hasEvasion(newCharacter('Novice Rogue'))===false);
+  const hunter15=newCharacter('Ranger'); hunter15.cls='Ranger'; hunter15.subclass='Hunter'; hunter15.hunterSuperiorDefense='Evasion';
+  T('hasEvasion also recognizes the Hunter\'s Superior Hunter\'s Defense pick', hasEvasion(hunter15)===true);
+  const hunter15b=newCharacter('Other Hunter'); hunter15b.cls='Ranger'; hunter15b.subclass='Hunter'; hunter15b.hunterSuperiorDefense='Uncanny Dodge';
+  T('...but not if a DIFFERENT Superior Hunter\'s Defense option was chosen', hasEvasion(hunter15b)===false);
+  T('hasUncannyDodge gates on Rogue 5th+ or the matching Hunter pick', hasUncannyDodge(newCharacter('x'))===false && hasUncannyDodge(hunter15b)===true);
+
+  // Evasion, through the real Engine.castApply path (QB): a Dex-save AoE spell against an
+  // Evasion rogue deals 0 on a success (not half) and half on a failure (not full).
+  const evRg=newCharacter('Nimble'); evRg.cls='Rogue'; evRg.level=7; evRg.hp={max:40,cur:40,temp:0}; evRg.abilities.dex=18;
+  setQB({battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[], players:[{id:'pc',side:'pc',x:0,y:0,c:evRg}], monsters:[]});
+  { const orig=Math.random; Math.random=()=>0.99;   // force the Dex save to succeed
+    Engine.castApply(qbAdapter,'m1','pc',{name:'Fireball',dc:8,save:'dex',dmgTotal:40,dtype:'fire'});
+    Math.random=orig;
+  }
+  T('Evasion takes zero damage on a successful Dex save (not the normal half)', evRg.hp.cur===40);
+  { const orig=Math.random; Math.random=()=>0.01;   // force the Dex save to fail
+    Engine.castApply(qbAdapter,'m1','pc',{name:'Fireball',dc:30,save:'dex',dmgTotal:40,dtype:'fire'});
+    Math.random=orig;
+  }
+  T('Evasion takes half damage on a failed Dex save (not the normal full)', evRg.hp.cur===40-20);
+  setQB(null);
+
+  // A non-Dex save (e.g. Con) or a non-Evasion target both get the normal half/full split.
+  const nonEvRg=newCharacter('Clumsy'); nonEvRg.cls='Fighter'; nonEvRg.hp={max:40,cur:40,temp:0};
+  setQB({battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[], players:[{id:'pc',side:'pc',x:0,y:0,c:nonEvRg}], monsters:[]});
+  { const orig=Math.random; Math.random=()=>0.99;
+    Engine.castApply(qbAdapter,'m1','pc',{name:'Fireball',dc:8,save:'dex',dmgTotal:40,dtype:'fire'});
+    Math.random=orig;
+  }
+  T('a non-Evasion target still takes the normal half damage on a successful save', nonEvRg.hp.cur===40-20);
+  setQB(null);
+
+  // Uncanny Dodge: automatic halving, once per round (gated on the reaction, which resets each
+  // of the Rogue's own turns like every other reaction in this app).
+  const ud=newCharacter('Quickstep'); ud.cls='Rogue'; ud.level=5; ud.hp={max:40,cur:40,temp:0};
+  ud.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  applyHp(ud,-10,'slashing');
+  T('Uncanny Dodge halves the first attack of the round automatically', ud.hp.cur===40-5 && ud.battle.reaction===true);
+  applyHp(ud,-10,'slashing');
+  T('...but only once — the reaction is already spent for a second hit the same round', ud.hp.cur===40-5-10);
+  ud.battle.reaction=false;   // next round
+  applyHp(ud,-10,'slashing');
+  T('...and it\'s available again once the reaction resets', ud.hp.cur===40-5-10-5);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
