@@ -5291,7 +5291,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -5309,6 +5309,20 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   // flow through the existing 'moncond' handler above unchanged — this is push-only, since
   // moving a monster's token needs the DM's authoritative map/tileClearFor check).
   else if(d.t==='shove'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo && tileClearFor(net.session,d.x,d.y)){ mo.x=d.x; mo.y=d.y; dmBroadcast(); render(); } }
+  // Echo Knight — an Echo Knight's echo (manifest/move/swap/dismiss all funnel through here)
+  // has to exist on the DM's OWN authoritative net.session.monsters, not just the player's
+  // local mirror, so DM-controlled monsters can actually see/target/attack it (Shadow Martyr's
+  // redirect below needs this) — every other echo mutation this session only ever touched the
+  // player's own local copy (fine for QB, silently invisible to a real DM otherwise, exactly
+  // the "wire it into DM-hosted too" gap flagged after Echo Knight first shipped).
+  else if(d.t==='echoSync'){ const cid=conn.peer;
+    let e=net.session.monsters.find(m=>m.echo && m.controllerId===cid);
+    if(!d.exists){ if(e) net.session.monsters=net.session.monsters.filter(m=>m!==e); }
+    else if(e){ e.x=d.x; e.y=d.y; e.ac=d.ac; e.hp=d.hp; e.max=d.max; }
+    else { net.session.monsters.push({id:'echo_'+cid+'_'+Date.now().toString(36), side:'mon', ally:true, echo:true, controllerId:cid,
+      base:'Echo', name:d.name||"Echo", x:d.x, y:d.y, hp:d.hp, max:d.max, ac:d.ac, atk:'', attacks:0, attacksLeft:0,
+      speed:30, moveLeft:30, reactionUsed:false, brain:'passive', conds:[], facing:'down'}); }
+    dmBroadcast(); render(); }
   // Stabilize targets ANOTHER connected player — the actor already rolled locally (see
   // maneuverStabilize) and only needs the DM to relay the result to the target's own device,
   // since that's the only device whose c.stable/death fields are real.
@@ -5397,7 +5411,7 @@ function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null}}); }catch(e){} }
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.hp.cur,hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ const wasActive=net.session&&net.session.battle&&net.session.battle.active; net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -5442,6 +5456,12 @@ function playerOnData(d){ if(!d) return;
     } else flashBanner((d.name?d.name+' — ':'')+'you resist it');
     render();
   } else if(d.t==='stabilized'){ const c=playerChar(); if(c){ c.stable=true; c.death={succ:0,fail:0}; save(); render(); playerHello(); flashBanner('🩹 You are stabilized'); } }
+  // Echo Knight — Reclaim Potential: the DM applied damage that destroyed our echo (its real
+  // hp.temp field only exists on our own device, same reason 'stabilized' above can't just be
+  // applied DM-side) — resolve it locally, same as every other "DM prompts, we roll/apply,
+  // then resync" round-trip this session established.
+  else if(d.t==='echoDestroyed'){ const c=playerChar(); if(c){ reclaimPotential(c, m=>logChange(c,m)); save(); render(); playerHello(); if((c.hp.temp||0)>0) flashBanner('🩸 Reclaim Potential — +'+c.hp.temp+' temporary HP'); } }
+  else if(d.t==='shadowMartyrTriggered'){ const c=playerChar(); if(c){ if(c.battle) c.battle.reaction=true; c.shadowMartyrUsed=true; c.shadowMartyrArmed=false; logChange(c,'👤 Shadow Martyr — the echo steps into an attack meant for you'); save(); render(); playerHello(); flashBanner('🛡 Shadow Martyr triggered — the echo takes the hit'); } }
   else if(d.t==='maneuverCheck'){
     // A DM-controlled monster attempts Shove/Grapple on this player — the DM can't roll our
     // side (same reason as 'hazard' above: it only ever syncs hp/ac/conds, never ability
@@ -7393,7 +7413,7 @@ function openAdjacentUseUI(c, s, me){
   // and player-net; the Use menu is the natural point where this matters (you can't act on an
   // echo you're too incapacitated to command anyway), a deliberate, documented simplification
   // over a fully real-time check.
-  if(mode && isIncapacitated(c)) dismissEcho(s, echoControllerId, log);
+  if(mode && isIncapacitated(c)){ const hadOne=dismissEcho(s, echoControllerId, log); if(hadOne && mode==='player' && net.conn) try{ net.conn.send({t:'echoSync', exists:false}); }catch(e){} }
   const echo = mode ? s.monsters.find(m=>m.hp>0 && m.echo && m.controllerId===echoControllerId) : null;
   const canManifestEcho = mode && isEchoKnight(c,3);
   if(!items.length && !foes.length && !grappled && !canHide && !allies.length && !servant && !canManifestEcho && !echo){
@@ -7575,18 +7595,26 @@ function openAdjacentUseUI(c, s, me){
       if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
       draw({kind:'manifestEchoPick'});
     }; }
+    // Echo Knight, player-net only: a real DM (unlike QB, which is entirely local) needs to
+    // know the echo exists at all — mutating `s` (the player's own local mirror) alone is
+    // invisible to the DM's authoritative net.session.monsters, so every mutation also sends
+    // an echoSync message the DM applies (see dmOnData) and rebroadcasts to everyone.
+    const sendEchoSync=(liveEcho)=>{ if(mode!=='player'||!net.conn) return;
+      try{ net.conn.send(liveEcho ? {t:'echoSync', exists:true, x:liveEcho.x, y:liveEcho.y, ac:liveEcho.ac, hp:liveEcho.hp, max:liveEcho.max, name:liveEcho.name} : {t:'echoSync', exists:false}); }catch(e){} };
     document.querySelectorAll('[data-echospot]').forEach(b=>b.onclick=()=>{
       if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
       const t=servantMoveTiles(ad, {x:me.x,y:me.y})[Number(b.dataset.echospot)];
       if(!t) return;
-      manifestEcho(s, c, t.x, t.y, echoControllerId, log);
+      const newEcho=manifestEcho(s, c, t.x, t.y, echoControllerId, log);
       if(c.battle) c.battle.bonus=true;
+      sendEchoSync(newEcho);
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
     });
     document.querySelectorAll('[data-echomove]').forEach(b=>b.onclick=()=>{
       const t=echoMoveTiles(ad, echo)[Number(b.dataset.echomove)];
       if(!t) return;
       echo.x=t.x; echo.y=t.y;
+      sendEchoSync(echo);
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
     });
     document.querySelectorAll('[data-echoint]').forEach(b=>b.onclick=()=>{
@@ -7613,12 +7641,15 @@ function openAdjacentUseUI(c, s, me){
       if(c.battle) c.battle.move=Math.max(0,(c.battle.move||0)-15);
       c.battle.bonus=true;
       log('🔀 '+c.name+' teleport-swaps with the echo');
+      sendEchoSync(echo);
+      if(mode==='player'&&net.conn) try{ net.conn.send({t:'move', x:realMe.x, y:realMe.y}); }catch(e){}
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
     }; }
     { const edm=$('#useEchoDismiss'); if(edm) edm.onclick=()=>{
       if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
       dismissEcho(s, echoControllerId, log);
       if(c.battle) c.battle.bonus=true;
+      sendEchoSync(null);
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
     }; }
     { const ui=$('#useIncarnation'); if(ui) ui.onclick=()=>draw({kind:'incarnationPick'}); }
@@ -8720,7 +8751,15 @@ function dmMonsterAttack(mo){
     $('#maClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
     { const ts=$('#maTgt'); if(ts) ts.onchange=()=>{ st.targetId=ts.value; st.phase='aim'; st.dmg=0; st.crit=false; draw(); }; }
     document.querySelectorAll('[data-ma]').forEach(b=>b.onclick=()=>{ st.atk=atks[Number(b.dataset.ma)]; st.phase='aim'; st.dmg=0; st.crit=false; st.maneuverSent=false; draw(); });
-    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing'); const res=Engine.hitResult(sessionAdapter, mo.id, st.targetId, {toHit:st.atk.hit||0, tiles:st.atk.tiles}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+    { const r=$('#maRoll'); if(r) r.onclick=()=>{ if(!commitAttack()) return; sfx('swing');
+      // Echo Knight — Shadow Martyr, DM-hosted counterpart to QB's own check in
+      // qbResolveAttack: st.targetId stays pointed at the real player (tgt()/rendering below
+      // still reads the player's name/AC for display — "an attack meant for X"), but the
+      // ACTUAL Engine roll/apply target is redirected to the echo when armed+in range.
+      st.echoRedirect = !dominated ? shadowMartyrRedirect(net.session, tgt()) : null;
+      const rollTargetId = st.echoRedirect ? st.echoRedirect.id : st.targetId;
+      if(st.echoRedirect) flashBanner('🛡 Shadow Martyr — the echo steps into the attack meant for '+tgt().name);
+      const res=Engine.hitResult(sessionAdapter, mo.id, rollTargetId, {toHit:st.atk.hit||0, tiles:st.atk.tiles}); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
     { const mm=$('#maManeuver'); if(mm) mm.onclick=()=>{ if(!commitAttack()) return; sfx('swing');
       const bonus=monsterCheckBonus(mo), d20=rnd(20); st.total=d20+bonus; st.maneuverSent=true;
       dmSend(t.id, {t:'maneuverCheck', kind:st.atk.maneuver, monTotal:st.total, mon:mo.id, monName:mo.name});
@@ -8744,9 +8783,11 @@ function dmMonsterAttack(mo){
     // apply through the Engine — the modal rolled interactively, so the pre-rolled d20 and
     // damage are passed in; the Engine mutates via the adapter and emits the event stream.
     const saveSp=savedKnown=>({name:st.atk.name, dc:st.atk.dc?st.atk.dc.n:10, save:st.atk.dc?String(st.atk.dc.ab).toLowerCase():null, savedKnown, dmgTotal:Math.abs(st.dmg), cond:st.atk.cond?{c:st.atk.cond,rounds:10}:null});
-    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ const ev=Engine.attack(sessionAdapter, mo.id, st.targetId, {name:st.atk.name, toHit:st.atk.hit||0, dmg:st.atk.dmg||'1d6', tiles:st.atk.tiles}, {face:st.d20, dmgTotal:Math.abs(st.dmg)});
+    { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ const rollTargetId = st.echoRedirect ? st.echoRedirect.id : st.targetId;
+      const ev=Engine.attack(sessionAdapter, mo.id, rollTargetId, {name:st.atk.name, toHit:st.atk.hit||0, dmg:st.atk.dmg||'1d6', tiles:st.atk.tiles}, {face:st.d20, dmgTotal:Math.abs(st.dmg)});
       if(ev.sanctuary&&ev.sanctuary.blocked) flashBanner('🛡️ '+tgt().name+"'s Sanctuary holds — "+mo.name+" can't bring itself to attack (Wis "+ev.sanctuary.roll+' vs DC '+ev.sanctuary.dc+')');
-      else if(ev.hit){ flashBanner(mo.name+' hits '+tgt().name+' for '+ev.dmg+(ev.holyAura&&ev.holyAura.blinded?' — Holy Aura blinds '+mo.name:'')); if(st.atk.cond){ const cu=sessionAdapter.unit(st.targetId); if(cu) sessionAdapter.addCond(cu, st.atk.cond, 10); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); } }
+      else if(ev.hit){ flashBanner(mo.name+' hits '+(st.echoRedirect?st.echoRedirect.name:tgt().name)+' for '+ev.dmg+(ev.holyAura&&ev.holyAura.blinded?' — Holy Aura blinds '+mo.name:'')); if(st.atk.cond){ const cu=sessionAdapter.unit(rollTargetId); if(cu) sessionAdapter.addCond(cu, st.atk.cond, 10); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); }
+        if(st.echoRedirect && st.echoRedirect.hp<=0) dmSend(st.echoRedirect.controllerId, {t:'echoDestroyed'}); }
       else flashBanner(mo.name+' misses '+tgt().name);
       $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const f=$('#maFull'); if(f) f.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(false)); flashBanner(tgt().name+' takes '+ev.dmg+(ev.cond?' — 🌀 '+ev.cond:'')); $('#modalRoot').innerHTML=''; useAtk(); }; }
@@ -9611,18 +9652,28 @@ function playBlastFx(from, to, aoeR, dtype, done){
 // resolves" doesn't exist anywhere else in this app (Uncanny Dodge etc. are flavor-text only,
 // see SUBCLASS_FEATURES/CLASS_FEATURES) — full mid-resolution prompting would mean rewriting
 // qbResolveAttack's monster-attack branch from synchronous to async. Simplified instead into a
-// player-controlled "arm/disarm" toggle (c.shadowMartyrArmed, set from the echo Use-menu
-// BEFORE the monster's turn): while armed, any attack about to hit the Knight is silently
-// redirected to the echo's square/AC instead, consuming the reaction + once-per-rest use and
-// disarming automatically — preserves real player agency over WHEN to spend it (save it for a
-// scary hit) without needing a live mid-roll interrupt UI.
+// player-controlled "arm/disarm" toggle (shadowMartyrArmed, set from the echo Use-menu BEFORE
+// the monster's turn): while armed, any attack about to hit the Knight is silently redirected
+// to the echo's square/AC instead. ONE function for every mode (QB and DM-hosted both call
+// this, matching every maneuverX function's shared-resolver-not-a-parallel-copy convention) —
+// `tgt` is either a QB player wrapper (`.c` holds the real character, always available locally)
+// or a DM-hosted net.session.players mirror entry (no `.c` — the DM never has a connected
+// player's real sheet, same reason checkSubject returns null for one elsewhere). When the real
+// character is available the reaction/once-per-rest bookkeeping happens right here; when it
+// isn't, only the DM's own mirror flag is cleared and a 'shadowMartyrTriggered' message tells
+// the player's own device to spend the reaction/use on the real character (see its
+// playerOnData handler) — the same "resolve locally, report back" shape every other DM-can't-
+// see-the-real-sheet interaction in this app already uses.
 function shadowMartyrRedirect(s, tgt){
-  if(!tgt || tgt.side!=='pc' || !tgt.c) return null;
-  const c=tgt.c;
-  if(!c.shadowMartyrArmed || !isEchoKnight(c,10) || c.battle.reaction || c.shadowMartyrUsed) return null;
-  const echo=(s.monsters||[]).find(m=>m.hp>0 && m.echo && m.controllerId==='pc');
+  if(!tgt) return null;
+  const c=tgt.c;   // present (QB) or absent (DM-hosted mirror-only)
+  if(!(c?c.shadowMartyrArmed:tgt.shadowMartyrArmed)) return null;
+  if(c && (!isEchoKnight(c,10) || c.battle.reaction || c.shadowMartyrUsed)) return null;
+  const controllerId = c ? 'pc' : tgt.id;
+  const echo=(s.monsters||[]).find(m=>m.hp>0 && m.echo && m.controllerId===controllerId);
   if(!echo || gridDist(echo.x,echo.y,tgt.x,tgt.y)>1) return null;   // RAW: echo must be within 5 ft of the target to intercept
-  c.battle.reaction=true; c.shadowMartyrUsed=true; c.shadowMartyrArmed=false;
+  if(c){ c.battle.reaction=true; c.shadowMartyrUsed=true; c.shadowMartyrArmed=false; }
+  else { tgt.shadowMartyrArmed=false; dmSend(tgt.id, {t:'shadowMartyrTriggered'}); }
   return echo;
 }
 // Echo Knight — Reclaim Potential (15th level): when the echo is DESTROYED (reduced to 0 HP —
@@ -10728,7 +10779,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.186';
+const APP_VERSION='v120.187';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

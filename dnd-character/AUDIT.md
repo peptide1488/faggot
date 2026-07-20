@@ -1211,3 +1211,42 @@ Martyr's arm/redirect/range-gate/one-use-per-rest logic, Reclaim Potential's tem
 "only if you have none" gate, and Legion of One's initiative-roll refill. Playwright wasn't
 available to spot-check live in a real browser this pass (the MCP server disconnected mid-
 session) — noting this honestly rather than claiming a check that didn't happen.
+
+## Echo Knight — DM-hosted wiring, and unifying Shadow Martyr (v120.187)
+
+Follow-up to the previous entry, which shipped Echo Knight for QB and player-net only. Two
+real gaps closed:
+
+**The echo now exists on the DM's own authoritative map.** Every echo mutation (manifest/move/
+teleport-swap/dismiss) previously only touched the connected player's own local mirror of
+`net.session` — invisible to the DM and every other player, since nothing broadcasts a player's
+local edits back to the DM automatically. New `echoSync` message (player → DM, sent from all
+four `openAdjacentUseUI` echo handlers) creates/updates/removes a real `net.session.monsters`
+entry for the echo, applied in `dmOnData` and rebroadcast — the same "player mutates locally
+for instant feedback, then a message makes the DM's copy (and everyone else's) match" shape
+used throughout this app. `shadowMartyrArmed` rides along on `playerHello()`'s existing payload
+(same slot as `sanctuaryDC`/`hiddenDC`) so the DM knows whether to check for a redirect at all.
+
+**Shadow Martyr was accidentally built as two parallel functions** (`shadowMartyrRedirect` for
+QB, `dmShadowMartyrRedirect` for DM-hosted) instead of one shared resolver — caught and fixed
+after being called out directly. Every other Echo Knight feature was already properly unified
+(Manifest Echo/Unleash Incarnation/Echo Avatar all live in `openAdjacentUseUI`, shared by QB and
+player-net's `mode` branching from day one); Shadow Martyr was the one exception, because its
+DM-hosted half needed a fundamentally different data source (a synced mirror field instead of
+the real character object) and that got modeled as a whole separate function instead of a
+branch inside one. Now a single `shadowMartyrRedirect(s, tgt)` handles both: `tgt.c` present
+means the real character is available locally (QB) and the reaction/once-per-rest bookkeeping
+happens right there; `tgt.c` absent means DM-hosted's mirror-only case, where only the DM's own
+copy of the flag clears and a `shadowMartyrTriggered` message tells the player's real device to
+spend the reaction/use on the real character. Both `qbResolveAttack` and `dmMonsterAttack`'s
+`#maRoll` handler now call the exact same function. Reclaim Potential's DM-hosted path was
+already correctly shaped this way from the start (one `reclaimPotential(c,log)` function, called
+directly in QB or triggered via an `echoDestroyed` round-trip for DM-hosted) — not a case that
+needed fixing, just confirms the pattern was already right there.
+
+Tests: `echoSync`'s create/update/remove all verified directly against `dmOnData` with a real
+`net.session` fixture, confirming the synced echo is genuinely monster-shaped
+(`side:'mon'`/`ally:true`) so the DM's own targeting/rendering code treats it like any other
+creature; `shadowMartyrRedirect` re-verified against a DM-hosted-shaped mirror entry (no `.c`
+field) covering not-armed/armed-in-range/disarms-after-triggering, alongside the pre-existing
+QB-shaped coverage — same function, both shapes.

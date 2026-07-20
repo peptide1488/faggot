@@ -1546,5 +1546,36 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('below 18th level, rolling initiative grants nothing back', notYet.echoIncarnationLeft===0);
 }
 
+/* ---- Echo Knight — DM-hosted wiring: the echo has to exist on the DM's OWN authoritative
+   net.session.monsters (not just a connected player's local mirror) so DM-controlled monsters
+   can see/target it, and Shadow Martyr needs a DM-side counterpart since the DM never has the
+   player's real character object to check c.shadowMartyrArmed on directly. ---- */
+{
+  setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:10,rows:10,tiles:{}}, monsters:[], players:[{id:'p1',cid:'c1',x:5,y:5}], order:[], turn:0}});
+  dmOnData({peer:'p1'}, {t:'echoSync', exists:true, x:6, y:5, ac:16, hp:1, max:1, name:"Hero's Echo"});
+  T('echoSync creates a real echo on the DM\'s own net.session.monsters', getNet().session.monsters.length===1 && getNet().session.monsters[0].echo===true);
+  T('the synced echo carries the connecting player\'s peer id as its controller', getNet().session.monsters[0].controllerId==='p1');
+  T('the synced echo is a real monster-shaped ally the DM\'s own combat/targeting code can see', getNet().session.monsters[0].side==='mon' && getNet().session.monsters[0].ally===true);
+
+  dmOnData({peer:'p1'}, {t:'echoSync', exists:true, x:7, y:5, ac:16, hp:1, max:1, name:"Hero's Echo"});
+  T('a second echoSync UPDATES the same entry rather than creating a duplicate', getNet().session.monsters.length===1 && getNet().session.monsters[0].x===7);
+
+  dmOnData({peer:'p1'}, {t:'echoSync', exists:false});
+  T('echoSync with exists:false removes the echo from the DM\'s mirror', getNet().session.monsters.length===0);
+
+  // shadowMartyrRedirect (the SAME function qbResolveAttack already calls, not a parallel
+  // DM-only copy) working off the player's SYNCED mirror fields (p.shadowMartyrArmed) since
+  // the DM never has their real character object — tgt.c being absent is what tells the
+  // shared function it's in the DM-hosted, mirror-only case.
+  const s=getNet().session;
+  const echo=manifestEcho(s, {name:'Hero'}, 6, 5, 'p1', ()=>{});
+  const p=s.players[0];
+  T('shadowMartyrRedirect on a DM-hosted mirror entry (no .c): not armed -> no redirect', shadowMartyrRedirect(s,p)===null);
+  p.shadowMartyrArmed=true;
+  T('shadowMartyrRedirect on a DM-hosted mirror entry: armed + echo within 5 ft -> redirects to the echo', shadowMartyrRedirect(s,p)===echo);
+  T('triggering it disarms the DM\'s own mirror copy of the flag', p.shadowMartyrArmed===false);
+  setNet(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
