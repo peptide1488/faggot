@@ -667,6 +667,13 @@ const SUBCLASS_FEATURES = {
     [13,'Impostor','After 3+ hours of study, unerringly mimic a person\'s speech and writing; advantage on Deception checks to maintain the act.'],
     [17,'Death Strike','On a hit against a Surprised creature, it makes a Con save (DC 8+Dex+prof) or takes double damage.'],
   ],
+  'Draconic Bloodline':[
+    [1,'Dragon Ancestor','Choose a dragon type — sets your damage type for Elemental Affinity.'],
+    [1,'Draconic Resilience','+1 max HP per sorcerer level; AC 13+Dex while unarmored.'],
+    [6,'Elemental Affinity','Add your Cha mod to one damage roll of a spell matching your ancestry\'s damage type; spend 1 sorcery point for 1 hour of resistance to it.'],
+    [14,'Dragon Wings','Bonus action: sprout wings, flying speed equal to your current speed.'],
+    [18,'Draconic Presence','Action, 5 sorcery points: 60 ft aura of awe (Charmed) or fear (Frightened) — Wisdom save.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -940,6 +947,12 @@ function monsterIsUndead(mo){ return ['skeleton','zombie','ghost'].includes(mo&&
 function monsterIsFiend(mo){ return mo&&mo.sprite==='demon'; }
 function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunter' && (Number(c.level)||1)>=(lvl||3)); }
 function isAssassin(c,lvl){ return !!(c && c.cls==='Rogue' && c.subclass==='Assassin' && (Number(c.level)||1)>=(lvl||3)); }
+function isDraconicSorcerer(c,lvl){ return !!(c && c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && (Number(c.level)||1)>=(lvl||1)); }
+// Dragon Ancestor's type→damage-type table (PHB) — Draconic Bloodline's own ancestry choice,
+// a SEPARATE field from Dragonborn's racial c.dragon (a race trait, not a sorcerer subclass
+// choice — a character could theoretically be both a Dragonborn AND a Draconic Bloodline
+// sorcerer with two independently-chosen dragon types, so these can't share one field).
+const DRACONIC_ANCESTRY_DAMAGE = {Black:'acid', Blue:'lightning', Brass:'fire', Bronze:'lightning', Copper:'acid', Gold:'fire', Green:'poison', Red:'fire', Silver:'cold', White:'cold'};
 // Assassinate's first clause ("hasn't taken a turn in the combat yet") is derivable for free
 // from initiative order — no new tracking needed. The auto-crit/Death Strike clauses need an
 // actual "surprised" flag (this app has no ambush/surprise-round system at all), toggled
@@ -1057,6 +1070,7 @@ function battleCard(c){
       ${c.cls==='Druid' && (Number(c.level)||1)>=2?`<button class="btn sm" id="wildShapeBtn" style="flex:1;${c.wildShape?'background:var(--accent2);border-color:var(--accent2)':''}">🐾 ${c.wildShape?c.wildShape.name:'Wild Shape'}</button>`:''}
       ${c.cls==='Monk' && (Number(c.level)||1)>=2?`<button class="btn sm" id="kiBtn" style="flex:1">🥋 Ki (${c.kiLeft==null?kiMax(c):c.kiLeft})</button>`:''}
       ${c.cls==='Paladin'?`<button class="btn sm" id="palBtn" style="flex:1">✝️ Paladin</button>`:''}
+      ${isDraconicSorcerer(c,14)?`<button class="btn sm" id="sorcBtn" style="flex:1">🐉 Draconic</button>`:''}
     </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
     <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">Battle log</div>
@@ -1329,6 +1343,57 @@ function openLayOnHandsTarget(c, me){
     flashBanner('🖐 Cured!');
     $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
   };
+}
+// Draconic Bloodline — Dragon Wings (14th) and Draconic Presence (18th). One small modal,
+// same shape as openKiUI/openPaladinUI (self-contained, reads battleSession() for the AoE).
+function openSorcererUI(c){
+  const wingsOn=(c.effects||[]).some(e=>e.name==='Dragon Wings');
+  const s=battleSession();
+  const me=s ? ((typeof QB!=='undefined'&&QB&&QB.active) ? s.players[0] : (s.players||[]).find(p=>p.id===net.peer.id)) : null;
+  $('#modalRoot').innerHTML=`<div class="modal" id="sorcModal"><div class="sheet"><div class="grip"></div>
+    <h2>🐉 Draconic Bloodline</h2>
+    ${isDraconicSorcerer(c,14)?`<button class="btn block" id="sorcWings" style="margin-bottom:8px;text-align:left">🐉 ${wingsOn?'Dismiss Dragon Wings':'Sprout Dragon Wings'}<small style="display:block;opacity:.75">Bonus action — flying speed equal to your current speed</small></button>`:''}
+    ${isDraconicSorcerer(c,18)?`<button class="btn block" id="sorcPresence" style="margin-bottom:8px;text-align:left"${sorcCur(c)<5?' disabled style="opacity:.5"':''}>🐉 Draconic Presence — 5 sp<small style="display:block;opacity:.75">${sorcCur(c)<5?'Need 5 sorcery points':'Action — awe (Charmed) or fear (Frightened) aura, 60 ft, Wis save'}</small></button>`:''}
+    <button class="btn ghost block" id="sorcClose">Close</button>
+  </div></div>`;
+  $('#sorcModal').onclick=e=>{ if(e.target.id==='sorcModal') $('#modalRoot').innerHTML=''; };
+  $('#sorcClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  { const sw=$('#sorcWings'); if(sw) sw.onclick=()=>{
+    if(wingsOn){ c.effects=(c.effects||[]).filter(e=>e.name!=='Dragon Wings'); logChange(c,'🐉 Dismisses Dragon Wings'); flashBanner('Dragon Wings dismissed'); }
+    else { if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; } if(c.battle) c.battle.bonus=true;
+      addEffect(c,'Dragon Wings',{rounds:null, note:'Flying speed equal to your current speed.'});
+      logChange(c,'🐉 Sprouts Dragon Wings'); flashBanner('🐉 Dragon Wings — you can fly'); }
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  }; }
+  { const sp=$('#sorcPresence'); if(sp) sp.onclick=()=>{
+    if(sorcCur(c)<5){ flashBanner('Need 5 sorcery points'); return; }
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    $('#modalRoot').innerHTML=`<div class="modal" id="sorcPresModal"><div class="sheet"><div class="grip"></div>
+      <h2>🐉 Draconic Presence</h2>
+      <button class="btn block" id="sorcAwe" style="margin-bottom:8px;text-align:left">😍 Awe — Charmed</button>
+      <button class="btn block" id="sorcFear" style="margin-bottom:8px;text-align:left">😱 Fear — Frightened</button>
+      <button class="btn ghost block" id="sorcPresCancel">Cancel</button>
+    </div></div>`;
+    $('#sorcPresModal').onclick=e=>{ if(e.target.id==='sorcPresModal') $('#modalRoot').innerHTML=''; };
+    $('#sorcPresCancel').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+    const go=(cond)=>{
+      if(c.battle) spendAction(c);
+      c.sorcPts=sorcCur(c)-5;
+      const dc=8+profBonus(c)+mod(abil(c,c.spellAbility));
+      const ad = (typeof QB!=='undefined'&&QB&&QB.active) ? qbAdapter : (net&&net.role==='player') ? playerNetAdapter : null;
+      let n=0;
+      if(s && me && ad){
+        (s.monsters||[]).filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=12).forEach(mo=>{
+          const roll=rnd(20)+(ad.saveBonus?ad.saveBonus(mo,'wis'):0);
+          if(roll<dc){ n++; ad.addCond(mo,cond,10); logChange(c,'🐉 Draconic Presence — '+mo.name+' is '+cond+' (Wis '+roll+' vs DC '+dc+')'); }
+        });
+      }
+      flashBanner('🐉 Draconic Presence ('+cond+') — '+n+' creature'+(n===1?'':'s')+' affected');
+      $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+    };
+    $('#sorcAwe').onclick=()=>go('Charmed');
+    $('#sorcFear').onclick=()=>go('Frightened');
+  }; }
 }
 function openMove(c){
   if(!c.battle) return; const b=c.battle;
@@ -1895,8 +1960,18 @@ function pendingChoiceSpecs(c){
     if((Number(c.level)||1)>=11 && !c.hunterMultiattack) specs.push({t:'pick', key:'hunterMultiattack', options:['Volley','Whirlwind Attack'], label:'Multiattack'});
     if((Number(c.level)||1)>=15 && !c.hunterSuperiorDefense) specs.push({t:'pick', key:'hunterSuperiorDefense', options:['Evasion','Stand Against the Tide','Uncanny Dodge'], label:"Superior Hunter's Defense"});
   }
+  // Metamagic (base Sorcerer, 3rd/10th/17th): 2 known at 3rd, +1 at 10th, +1 at 17th —
+  // repeatable, same shape as Favored Enemy/Terrain above.
+  if(c.cls==='Sorcerer'){
+    const mmOwed=(((Number(c.level)||1)>=3?2:0)+((Number(c.level)||1)>=10?1:0)+((Number(c.level)||1)>=17?1:0))-(c.metamagic||[]).length;
+    for(let i=0;i<mmOwed;i++) specs.push({t:'pick', key:'metamagic', multi:true, options:METAMAGIC_OPTIONS, label:'Metamagic'});
+  }
+  // Dragon Ancestor (Draconic Bloodline, 1st level): one-shot ancestry choice, drives Elemental
+  // Affinity's damage type via DRACONIC_ANCESTRY_DAMAGE.
+  if(c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && !c.sorcererDragon) specs.push({t:'pick', key:'sorcererDragon', options:Object.keys(DRACONIC_ANCESTRY_DAMAGE), label:'Dragon Ancestor'});
   return specs;
 }
+const METAMAGIC_OPTIONS=['Careful Spell','Distant Spell','Empowered Spell','Extended Spell','Heightened Spell','Quickened Spell','Subtle Spell','Twinned Spell'];
 const FAVORED_ENEMY_TYPES=['Aberrations','Beasts','Celestials','Constructs','Dragons','Elementals','Fey','Fiends','Giants','Monstrosities','Oozes','Plants','Undead'];
 const FAVORED_TERRAIN_TYPES=['Arctic','Coast','Desert','Forest','Grassland','Mountain','Swamp'];
 function resolveChoices(c){
@@ -2177,6 +2252,7 @@ function computeAC(c,opts){
   // Barbarian's version still allows a shield; Monk's explicitly doesn't (PHB).
   if(a.key==='none' && c.cls==='Barbarian') base = 10 + mod(abil(c,'dex')) + mod(abil(c,'con'));
   if(a.key==='none' && !c.shield && c.cls==='Monk') base = 10 + mod(abil(c,'dex')) + mod(abil(c,'wis'));
+  if(a.key==='none' && isDraconicSorcerer(c,1)) base = 13 + mod(abil(c,'dex'));        // Draconic Resilience: 13 + DEX while unarmored
   if(a.key==='none' && hasFx('Mage Armor')) base = 13 + mod(abil(c,'dex'));           // Mage Armor: 13 + DEX while unarmored
   if(c.fightingStyle==='Defense' && a.key!=='none') base += 1;                        // Defense style: +1 AC while wearing armor
   let ac = base + (c.shield?2:0) + (ignoreFx?0:effBonus(c,'ac')) + gearBonus(c,'ac');
@@ -3205,6 +3281,11 @@ function castModal(c, name, baseLevel){
   if(m.heal && baseLevel>0 && isLifeCleric(c,1)) m.heal+='+'+(2+baseLevel);
   // Supreme Healing (17th): every die in the healing notation is maximized, not rolled.
   if(m.heal && isLifeCleric(c,17)) m.heal=String(maxNotation(m.heal));
+  // Elemental Affinity (Draconic Bloodline 6th): +Cha mod to one damage roll of a spell that
+  // deals damage matching your draconic ancestry. The 1-sorcery-point resistance option isn't
+  // built here — apply it via the Effects tab's own "+ Add" custom-effect entry, the same
+  // manual-application pattern already used for anything this app has no dedicated toggle for.
+  if(m.dmg && isDraconicSorcerer(c,6) && m.dtype===DRACONIC_ANCESTRY_DAMAGE[c.sorcererDragon]){ const cm=mod(abil(c,'cha')); if(cm) m.dmg+=sgn(cm); }
   const slots=spellSlots(c); let lvlOpts='';
   if(baseLevel>0){ for(let l=baseLevel;l<=9;l++){ const tot=slots[l]||0; if(tot){ const used=Math.min(tot,(c.slots[l]&&c.slots[l].used)||0), avail=tot-used; lvlOpts+=`<option value="${l}" ${avail<=0?'disabled':''}>Level ${l} — ${avail}/${tot} left</option>`; } } }
   const eff=SPELL_EFFECTS[name];
@@ -4249,6 +4330,10 @@ function levelUp(){
     if(hpGain==null) hpGain=Math.max(1,avg+con);
     c.hp.max+=hpGain; c.hp.cur+=hpGain;
     if(needsSub){ const s=$('#luSub'); if(s) c.subclass=s.value; }
+    // Draconic Resilience (1st level): +1 max HP this level AND every level after — checked
+    // after subclass assignment above, since a Sorcerer can pick Draconic Bloodline on this
+    // exact level-up (1st level) and still needs the bonus to apply immediately.
+    if(isDraconicSorcerer(c,1)){ c.hp.max+=1; c.hp.cur+=1; }
     let asiNote='';
     if(isAsi){
       if(asiMode==='asi'){
@@ -4750,6 +4835,7 @@ function renderCombat(c){
   { const wsb=$('#wildShapeBtn'); if(wsb) wsb.addEventListener('click',()=>openWildShapeUI(c)); }
   { const kib=$('#kiBtn'); if(kib) kib.addEventListener('click',()=>openKiUI(c)); }
   { const pab=$('#palBtn'); if(pab) pab.addEventListener('click',()=>openPaladinUI(c)); }
+  { const sob=$('#sorcBtn'); if(sob) sob.addEventListener('click',()=>openSorcererUI(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }   // tap to spend/reset (cycles for multi-action)
     else if(k==='bonus'||k==='reaction') b[k]=!b[k];
@@ -11707,7 +11793,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.195';
+const APP_VERSION='v120.196';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

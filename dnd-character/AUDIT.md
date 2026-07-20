@@ -1750,3 +1750,47 @@ round-advance sequence (including the round-2 cutoff), and Reliable Talent's pro
 gate and level gate, verified through the real `rollSkillCheck` path with a stubbed d20.
 
 Playwright wasn't available to spot-check this live either (server still disconnected).
+
+## Draconic Bloodline — tenth subclass, and Metamagic's real choice infra (v120.196)
+
+Tenth entry in `SUBCLASS_FEATURES`. Font of Magic's sorcery points (both directions of Flexible
+Casting) were ALREADY real — the only pre-existing gap this time was **Metamagic**, base
+Sorcerer's 3rd-level feature, flavor-text-only before this pass.
+
+- **Metamagic**: real choice tracking via the same `{t:'pick', multi:true}` infra Favored
+  Enemy/Terrain established — 2 options at 3rd, +1 at 10th, +1 at 17th, stored as `c.metamagic`.
+  Deliberately scoped to CHOICE tracking only, not full mechanical effects for all 8 options:
+  several (Twinned Spell needs a second-target picker on an otherwise single-target spell cast,
+  Quickened Spell needs a real action-economy override, Subtle Spell needs to bypass a no-verbal/
+  no-somatic restriction this app doesn't model at all) would each be their own bounded feature
+  on the scale of a full subclass pass. Distant/Extended/Careful/Empowered/Heightened are lower-
+  effort candidates for a focused follow-up. Flagging this honestly rather than half-building a
+  subset and calling Metamagic "done."
+- **Dragon Ancestor (1st)**: a one-shot pick (also via `{t:'pick'}`), stored as `c.sorcererDragon`
+  — a SEPARATE field from Dragonborn's racial `c.dragon`, since the two are independent choices
+  a character could have both of. Drives `DRACONIC_ANCESTRY_DAMAGE`'s type→damage-type table.
+- **Draconic Resilience (1st)**: `computeAC` gained another Unarmored-Defense-shaped branch (13 +
+  Dex, no shield restriction unlike Monk's) right next to Mage Armor's identical formula. The
+  +1-max-HP-per-level half is applied at the exact point `levelUp()` already increments `hp.max`
+  for the level — but placed AFTER subclass assignment in that same function, since a Sorcerer
+  can pick Draconic Bloodline on their very first level-up and still needs the bonus that same
+  transaction (checking `isDraconicSorcerer` before the subclass write would read the stale
+  pre-choice value).
+- **Elemental Affinity (6th)**: `castModal` gained another notation-bump branch (same shape as
+  Disciple of Life's healing bonus) — `+Cha mod` on `m.dmg` when the spell's parsed damage type
+  matches the ancestry's. The 1-sorcery-point resistance option isn't wired to a dedicated
+  button — apply it via the Effects tab's existing "+ Add" custom-effect entry, the same manual-
+  application fallback this app already uses for anything without a purpose-built toggle.
+- **Dragon Wings (14th)** and **Draconic Presence (18th)**: a new small `openSorcererUI` modal
+  (same shape as `openKiUI`/`openPaladinUI`). Wings just toggles a tracked effect (no separate
+  flying-vs-ground-speed distinction exists anywhere in this app to hook a real speed change
+  into — narrative/tracked only). Draconic Presence reuses Turn the Unholy's exact AoE-save
+  pattern (60 ft, Wisdom save vs spell DC, `ad.addCond`), offering a real Awe-vs-Fear choice
+  through two buttons rather than a native `confirm()` dialog, matching this app's own
+  never-use-native-dialogs convention.
+
+Tests: 10 new assertions — `isDraconicSorcerer` gating, the ancestry damage-type table, Draconic
+Resilience's AC verified through the real `computeAC` path (on and off armor), and Metamagic/
+Dragon Ancestor's owed-count shrinking as picks are made.
+
+Playwright wasn't available to spot-check this live either (server still disconnected).

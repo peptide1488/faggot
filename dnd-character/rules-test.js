@@ -38,6 +38,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPRITE_MANIFEST=SPRITE_MANIFEST;globalThis.SPRITE_ZOOM=SPRITE_ZOOM;globalThis.spriteReady=spriteReady;'+
   'globalThis.DECOR_MANIFEST=DECOR_MANIFEST;globalThis.decorReady=decorReady;globalThis.decorTokenHTML=decorTokenHTML;globalThis.DECOR_MAX_W=DECOR_MAX_W;globalThis.DECOR_MAX_H=DECOR_MAX_H;'+
   'globalThis.SPELL_HANDLERS=SPELL_HANDLERS;globalThis.SUMMON_CATALOG=SUMMON_CATALOG;globalThis.summonCatalogEntry=summonCatalogEntry;'+
+  'globalThis.DRACONIC_ANCESTRY_DAMAGE=DRACONIC_ANCESTRY_DAMAGE;'+
   'globalThis.spawnSummon=spawnSummon;globalThis.dismissSummonsForSpell=dismissSummonsForSpell;globalThis.nearbySpawnTiles=nearbySpawnTiles;globalThis.isConcentration=isConcentration;'+
   'globalThis.mapGridHTML=mapGridHTML;globalThis.setIsoView=v=>{isoView=v;};'+
   'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;'+
@@ -1952,6 +1953,32 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const belowLevel=rollSkillCheck(rk10,'stealth','dex',{});
   Math.random=orig;
   T('Reliable Talent does not apply below 11th level', belowLevel.d20===1);
+}
+
+/* ---- Draconic Bloodline: Metamagic/Dragon Ancestor choice infra, Draconic Resilience's AC,
+   Elemental Affinity's damage-type table ---- */
+{
+  const sc=newCharacter('Wyrmtongue'); sc.cls='Sorcerer'; sc.level=17; sc.subclass='Draconic Bloodline'; sc.abilities={str:8,dex:14,con:14,int:10,wis:10,cha:18};
+  T('isDraconicSorcerer gates on class+subclass+level', isDraconicSorcerer(sc,1)===true && isDraconicSorcerer(sc,20)===false);
+  const notSc=newCharacter('Wildling'); notSc.cls='Sorcerer'; notSc.level=20; notSc.subclass='Wild Magic';
+  T('a Wild Magic sorcerer (even level 20) is never Draconic Bloodline', isDraconicSorcerer(notSc,1)===false);
+
+  T('DRACONIC_ANCESTRY_DAMAGE maps all 10 dragon types', Object.keys(DRACONIC_ANCESTRY_DAMAGE).length===10 && DRACONIC_ANCESTRY_DAMAGE.Red==='fire' && DRACONIC_ANCESTRY_DAMAGE.Silver==='cold' && DRACONIC_ANCESTRY_DAMAGE.Green==='poison');
+
+  // Draconic Resilience: 13 + Dex AC while unarmored, via the real computeAC path.
+  T('Draconic Resilience gives 13 + Dex AC while unarmored', computeAC(sc)===13+mod(abil(sc,'dex')));
+  sc.armor='leather';
+  T('Draconic Resilience does not apply once armor is worn', computeAC(sc)!==13+mod(abil(sc,'dex')));
+  sc.armor='none';
+
+  // Metamagic (3rd/10th/17th) and Dragon Ancestor (1st) — both use the shared {t:'pick'} infra.
+  const specs=pendingChoiceSpecs(sc);
+  T('a fresh 17th-level sorcerer owes 4 Metamagic picks (2 at 3rd, +1 at 10th, +1 at 17th)', specs.filter(s=>s.t==='pick'&&s.key==='metamagic').length===4);
+  T('a fresh Draconic Bloodline sorcerer owes a Dragon Ancestor pick', specs.some(s=>s.t==='pick'&&s.key==='sorcererDragon'));
+  sc.sorcererDragon='Red';
+  T('once chosen, Dragon Ancestor is no longer owed', !pendingChoiceSpecs(sc).some(s=>s.t==='pick'&&s.key==='sorcererDragon'));
+  sc.metamagic=['Twinned Spell','Quickened Spell'];
+  T('owed Metamagic count shrinks as picks are made', pendingChoiceSpecs(sc).filter(s=>s.t==='pick'&&s.key==='metamagic').length===2);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
