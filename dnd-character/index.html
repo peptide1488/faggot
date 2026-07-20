@@ -1783,6 +1783,79 @@ function openSpellTarget(c, name, level){
   draw();
 }
 function critNotation(n){ const p=parseDice(n); let s=p.terms.map(t=>(t.n*2)+'d'+t.sides).join('+'); if(p.flat) s+=(p.flat>0?'+':'')+p.flat; return s||n; }
+// Shared checkbox/select markup for whatever attackRiderOptions() returned — used by both
+// attackFlow (player-net) and openCombatRollModal (QB) so the rider picker looks and behaves
+// identically in both modes, not just the underlying math.
+function riderChecksHTML(riders){
+  let h='';
+  if(riders.sneak) h+=`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afSneak"> ${riders.sneak.label} <span class="muted" style="font-size:11px">(once/turn; needs advantage or an adjacent ally)</span></label>`;
+  if(riders.smite) h+=`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚡ Divine Smite</span><select id="afSmite" style="flex:1"><option value="">— no smite —</option>${riders.smite.levels.map(l=>`<option value="${l}">L${l} slot — +${Math.min(5,1+l)}d8 radiant</option>`).join('')}</select></div>`;
+  if(riders.divineStrike) h+=`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afDivStrike"> ${riders.divineStrike.label} <span class="muted" style="font-size:11px">(once/turn)</span></label>`;
+  if(riders.colossus) h+=`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afColossus"> ${riders.colossus.label} <span class="muted" style="font-size:11px">(once/turn — target below max HP)</span></label>`;
+  if(riders.hurl) h+=`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afHurl"> ${riders.hurl.label} <span class="muted" style="font-size:11px">(once/long rest)</span></label>`;
+  return h;
+}
+// Class riders on weapon hits — Sneak Attack, Divine Smite, Divine Strike, Colossus Slayer,
+// Hurl Through Hell, and Death Strike (automatic). Pure and side-effect-free: tells the UI what
+// options to offer for this attacker/weapon/target, nothing more. Paired with
+// applyAttackRiders() below. THE single shared source for this logic — before this, the exact
+// same rider math lived only inline inside attackFlow's rollDmg, which player-net's attackFlow
+// called but Quick Battle's openCombatRollModal never did, so every one of these features only
+// ever worked in player-net mode (flagged in the 12-subclass pass's closing AUDIT.md note, fixed
+// here by extracting the logic once and wiring BOTH attackFlow and openCombatRollModal to it).
+function attackRiderOptions(c, atk, targetMo){
+  const out={};
+  if(!atk.spell){
+    const wref=weaponByName(String(atk.name||'').replace(/\s*\((off-hand|opportunity)\)$/,''));
+    const sneakDice=Math.ceil((Number(c.level)||1)/2);
+    if(c.cls==='Rogue' && (!wref || wref.type==='ranged' || /finesse/.test(wref.props||'')) && !(c.battle&&c.battle.sneakUsed))
+      out.sneak={dice:sneakDice, die:6, label:'🗡️ Sneak Attack +'+sneakDice+'d6'};
+    if(c.cls==='Paladin' && (Number(c.level)||1)>=2 && (!wref || wref.type==='melee')){
+      const lvls=[1,2,3,4,5].filter(l=>{ const t=spellSlots(c)[l]||0; return t-Math.min(t,(c.slots[l]&&c.slots[l].used)||0)>0; });
+      if(lvls.length) out.smite={levels:lvls};
+    }
+  }
+  if(isLifeCleric(c,8) && !atk.spell && !(c.battle&&c.battle.divineStrikeUsed)){
+    const dice=(Number(c.level)||1)>=14?2:1;
+    out.divineStrike={dice, die:8, label:'✝️ Divine Strike +'+dice+'d8 radiant'};
+  }
+  if(c.cls==='Ranger' && c.hunterPrey==='Colossus Slayer' && !atk.spell && !(c.battle&&c.battle.colossusSlayerUsed) && targetMo && targetMo.hp>0 && targetMo.hp<targetMo.max)
+    out.colossus={dice:1, die:8, label:'🏹 Colossus Slayer +1d8'};
+  if(isFiendWarlock(c,14) && !c.hurlThroughHellUsed && targetMo)
+    out.hurl={label:'😈 Hurl Through Hell — 10d10 psychic unless a fiend'};
+  return out;
+}
+// Rolls the riders the player chose and mutates c's resource fields exactly like the single
+// old inline copy did. `choices`={sneak,smiteLevel,divineStrike,colossus,hurl} (all optional).
+// Returns {total, detail, doubled} — `total` is extra damage to ADD to the base roll; Death
+// Strike is reported via `doubled` instead of folded into `total`, since it doubles the FULL
+// final sum (base + every other rider), which only the caller (after adding `total` to its own
+// base roll) is in a position to do.
+function applyAttackRiders(c, atk, targetMo, choices, isCrit, targetSurprised, log){
+  choices=choices||{}; let total=0; const parts=[];
+  if(choices.sneak && !(c.battle&&c.battle.sneakUsed)){ const dice=Math.ceil((Number(c.level)||1)/2); const r=rollNotation((isCrit?dice*2:dice)+'d6');
+    if(r){ total+=r.total; parts.push('sneak '+r.detail); if(c.battle) c.battle.sneakUsed=true; log('🗡️ Sneak Attack +'+r.total); } }
+  if(choices.smiteLevel){ const l=Number(choices.smiteLevel), dice=Math.min(5,1+l)*(isCrit?2:1); const r=rollNotation(dice+'d8');
+    if(r){ total+=r.total; parts.push('smite '+r.detail); if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1); log('⚡ Divine Smite (L'+l+' slot) +'+r.total); } }
+  if(choices.divineStrike && !(c.battle&&c.battle.divineStrikeUsed)){ const dice=((Number(c.level)||1)>=14?2:1)*(isCrit?2:1); const r=rollNotation(dice+'d8');
+    if(r){ total+=r.total; parts.push('divine strike '+r.detail); if(c.battle) c.battle.divineStrikeUsed=true; log('✝️ Divine Strike +'+r.total); } }
+  if(choices.colossus && !(c.battle&&c.battle.colossusSlayerUsed)){ const dice=isCrit?2:1; const r=rollNotation(dice+'d8');
+    if(r){ total+=r.total; parts.push('colossus slayer '+r.detail); if(c.battle) c.battle.colossusSlayerUsed=true; log('🏹 Colossus Slayer +'+r.total); } }
+  if(choices.hurl){
+    c.hurlThroughHellUsed=true;
+    const isFiendTarget=targetMo && monsterIsFiend(targetMo);
+    log('😈 Hurl Through Hell — the target vanishes until the end of your next turn');
+    if(!isFiendTarget){ const r=rollNotation('10d10')||{total:0,detail:''}; total+=r.total; parts.push('Hurl Through Hell '+r.detail); log('😈 Hurl Through Hell +'+r.total+' psychic'); }
+    else parts.push('Hurl Through Hell (fiend — immune to the psychic damage)');
+  }
+  let doubled=false;
+  if(targetSurprised && isAssassin(c,17)){
+    const dc=8+mod(abil(c,'dex'))+profBonus(c), save=rnd(20)+(targetMo?monsterSaveBonus(targetMo):0);
+    if(save<dc){ doubled=true; parts.push('Death Strike DOUBLED (Con '+save+' vs DC '+dc+')'); log('💀 Death Strike — '+atk.name+' damage doubled'); }
+    else parts.push('Death Strike resisted (Con '+save+' vs DC '+dc+')');
+  }
+  return {total, detail:parts.length?(' · '+parts.join(' · ')):'', doubled};
+}
 function attackFlow(c, atk){
   // The Attack action lets you make (extraAttacks+1) attacks. Starting a fresh
   // attack sequence costs one action; mid-sequence attacks are free. If you're out
@@ -1800,24 +1873,14 @@ function attackFlow(c, atk){
   const toHit=Number(atk.toHit)||0;
   const saveOnly = (atk.toHit==null && atk.save);   // save-based spell: no to-hit, target rolls a save
   const st={phase: saveOnly?'dmg':'tohit', d20:0, total:0, crit:false, hit:saveOnly?true:null, dmgTotal:null, twoH:false, mode:rollMode};
-  // Class riders on weapon hits (PHB): Rogue Sneak Attack (once/turn, finesse or ranged
-  // weapon, needs advantage or an adjacent ally) and Paladin Divine Smite (burn a slot,
-  // melee hit, 2d8 radiant + 1d8/extra slot level, max 5d8; dice double on a crit).
-  const wref=(!atk.spell)?weaponByName(String(atk.name||'').replace(/\s*\((off-hand|opportunity)\)$/,'')):null;
-  const sneakDice=Math.ceil((Number(c.level)||1)/2);
-  const canSneak=(c.cls==='Rogue') && !atk.spell && (!wref || wref.type==='ranged' || /finesse/.test(wref.props||''));
-  const smiteLvls=(c.cls==='Paladin' && (Number(c.level)||1)>=2 && !atk.spell && (!wref || wref.type==='melee'))
-    ? [1,2,3,4,5].filter(l=>{ const t=spellSlots(c)[l]||0; return t-Math.min(t,(c.slots[l]&&c.slots[l].used)||0)>0; }) : [];
-  const divineStrikeDice=(Number(c.level)||1)>=14?2:1;
-  const canDivineStrike=isLifeCleric(c,8) && !atk.spell;
-  // Colossus Slayer (Hunter's Prey, once/turn): +1d8 if the target is below its HP max. Real
-  // target HP isn't on net.targetMon (only {id,name,ac}) — looked up from the synced session.
+  // Real target lookup: net.targetMon only carries {id,name,ac}; the actual monster object
+  // (needed for Colossus Slayer's below-max-HP check, Hurl Through Hell's fiend check, Death
+  // Strike's save bonus) lives in the synced session.
   const targetMo = (net&&net.session&&net.targetMon) ? net.session.monsters.find(m=>m.id===net.targetMon.id) : null;
-  const canColossusSlayer = c.cls==='Ranger' && c.hunterPrey==='Colossus Slayer' && !atk.spell && targetMo && targetMo.hp>0 && targetMo.hp<targetMo.max;
-  // Hurl Through Hell (The Fiend 14th): once/long rest, on a hit. The "vanishes until the end
-  // of your next turn" half is flavor/log only — this app has no "removed from play, returns
-  // later" token state to hook it into; the 10d10-unless-fiend damage is the real, testable part.
-  const canHurlThroughHell = isFiendWarlock(c,14) && !c.hurlThroughHellUsed && targetMo;
+  // Class riders on weapon hits — see attackRiderOptions/applyAttackRiders above for the shared
+  // logic (also used by Quick Battle's openCombatRollModal, so every rider works the same way
+  // in both modes).
+  const riders = attackRiderOptions(c, atk, targetMo);
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
     if(c.battle && atk.offhand){
@@ -1872,35 +1935,14 @@ function attackFlow(c, atk){
     let total, detail;
     if(manual!=null){ total=manual; detail='entered'+(st.crit?' (crit)':''); }
     else { const r=rollNotation(notation)||{total:0,detail:''}; total=r.total; detail=r.detail; }
-    // riders: Sneak Attack / Divine Smite chosen in the damage step
-    { const sk=document.getElementById('afSneak');
-      if(sk && sk.checked && !(c.battle&&c.battle.sneakUsed)){ const r=rollNotation((st.crit?sneakDice*2:sneakDice)+'d6');
-        if(r){ total+=r.total; detail+=' · sneak '+r.detail; if(c.battle){ c.battle.sneakUsed=true; } logChange(c,'🗡️ Sneak Attack +'+r.total); } }
-      const sm=document.getElementById('afSmite');
-      if(sm && sm.value){ const l=Number(sm.value), dice=Math.min(5,1+l)*(st.crit?2:1); const r=rollNotation(dice+'d8');
-        if(r){ total+=r.total; detail+=' · smite '+r.detail; if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1); logChange(c,'⚡ Divine Smite (L'+l+' slot) +'+r.total); } }
-      const ds=document.getElementById('afDivStrike');
-      if(ds && ds.checked && !(c.battle&&c.battle.divineStrikeUsed)){ const dice=st.crit?divineStrikeDice*2:divineStrikeDice; const r=rollNotation(dice+'d8');
-        if(r){ total+=r.total; detail+=' · divine strike '+r.detail; if(c.battle){ c.battle.divineStrikeUsed=true; } logChange(c,'✝️ Divine Strike +'+r.total); } }
-      const cs=document.getElementById('afColossus');
-      if(cs && cs.checked && !(c.battle&&c.battle.colossusSlayerUsed)){ const dice=st.crit?2:1; const r=rollNotation(dice+'d8');
-        if(r){ total+=r.total; detail+=' · colossus slayer '+r.detail; if(c.battle){ c.battle.colossusSlayerUsed=true; } logChange(c,'🏹 Colossus Slayer +'+r.total); } }
-      const hth=document.getElementById('afHurl');
-      if(hth && hth.checked){
-        c.hurlThroughHellUsed=true;
-        const isFiendTarget = targetMo && monsterIsFiend(targetMo);
-        logChange(c,'😈 Hurl Through Hell — the target vanishes until the end of your next turn');
-        if(!isFiendTarget){ const r=rollNotation('10d10')||{total:0,detail:''}; total+=r.total; detail+=' · Hurl Through Hell '+r.detail; logChange(c,'😈 Hurl Through Hell +'+r.total+' psychic'); }
-        else detail+=' · Hurl Through Hell (fiend — immune to the psychic damage)';
-      }
-      // Death Strike (Assassin 17th): automatic on any hit against a surprised creature — not a
-      // player choice, so no checkbox; rolls the Con save itself and doubles the FULL total
-      // (every other rider included) on a failure.
-      if(st.targetSurprised && isAssassin(c,17)){
-        const dc=8+mod(abil(c,'dex'))+profBonus(c), save=rnd(20)+(net&&net.session&&net.targetMon?monsterSaveBonus(net.session.monsters.find(m=>m.id===net.targetMon.id)):0);
-        if(save<dc){ total*=2; detail+=' · Death Strike DOUBLED (Con '+save+' vs DC '+dc+')'; logChange(c,'💀 Death Strike — '+atk.name+' damage doubled'); }
-        else detail+=' · Death Strike resisted (Con '+save+' vs DC '+dc+')';
-      } }
+    // riders: chosen in the damage step, shared logic via applyAttackRiders (attackRiderOptions'
+    // pair) so QB's openCombatRollModal gets byte-identical behavior from the same function.
+    { const sk=document.getElementById('afSneak'), sm=document.getElementById('afSmite'), ds=document.getElementById('afDivStrike'), cs=document.getElementById('afColossus'), hth=document.getElementById('afHurl');
+      const choices={sneak: sk&&sk.checked, smiteLevel: sm&&sm.value, divineStrike: ds&&ds.checked, colossus: cs&&cs.checked, hurl: hth&&hth.checked};
+      const rr=applyAttackRiders(c, atk, targetMo, choices, st.crit, st.targetSurprised, m=>logChange(c,m));
+      total+=rr.total; detail+=rr.detail;
+      if(rr.doubled) total*=2;
+    }
     st.dmgTotal=total; st.phase='done'; sfx(atk.heal?'heal':'damage'); attackFx(atk.heal?'heal':(st.crit?'crit':'hit'));
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg', notation});
     if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total, dtype:atk.dt||atk.dtype||''}); }catch(e){} }
@@ -1924,11 +1966,7 @@ function attackFlow(c, atk){
         ${saveOnly?`<p style="text-align:center;margin:0 0 8px">🛡️ Target makes a <b>${(atk.save.ab||'').toUpperCase()} save vs your DC ${8+profBonus(c)+mod(abil(c,c.spellAbility))}</b></p>`:''}
         ${(st.crit&&!st.targetAC)?'<p style="text-align:center;color:var(--accent2);margin:0 0 8px"><b>💥 Critical hit — damage dice doubled!</b></p>':''}
         ${atk.vers?`<label class="pill" style="cursor:pointer;margin-bottom:8px"><input type="checkbox" id="af2h" ${st.twoH?'checked':''}> Two-handed (${esc(atk.vers)})</label>`:''}
-        ${(canSneak && st.hit!==false && !(c.battle&&c.battle.sneakUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afSneak"> 🗡️ Sneak Attack +${sneakDice}d6 <span class="muted" style="font-size:11px">(once/turn; needs advantage or an adjacent ally)</span></label>`:''}
-        ${smiteLvls.length?`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚡ Divine Smite</span><select id="afSmite" style="flex:1"><option value="">— no smite —</option>${smiteLvls.map(l=>`<option value="${l}">L${l} slot — +${Math.min(5,1+l)}d8 radiant</option>`).join('')}</select></div>`:''}
-        ${(canDivineStrike && st.hit!==false && !(c.battle&&c.battle.divineStrikeUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afDivStrike"> ✝️ Divine Strike +${divineStrikeDice}d8 radiant <span class="muted" style="font-size:11px">(once/turn)</span></label>`:''}
-        ${(canColossusSlayer && st.hit!==false && !(c.battle&&c.battle.colossusSlayerUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afColossus"> 🏹 Colossus Slayer +1d8 <span class="muted" style="font-size:11px">(once/turn — target below max HP)</span></label>`:''}
-        ${(canHurlThroughHell && st.hit!==false)?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afHurl"> 😈 Hurl Through Hell <span class="muted" style="font-size:11px">(once/long rest — 10d10 psychic unless a fiend)</span></label>`:''}
+        ${st.hit!==false?riderChecksHTML(riders):''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
         ${st.mode==='manual'
           ? `<div class="addrow"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn" id="afDmgUse">Use</button></div>`
@@ -10528,6 +10566,7 @@ function openCombatRollModal(opts){
           ${opts.adv?`<span class="pill">${opts.adv>0?'⬆ ADV':'⬇ DIS'}</span>`:''}</div></div>
         ${canLucky?`<button class="btn ghost block" id="crLucky">🍀 Lucky re-roll (${luckPointsLeft(pc)} left)</button>`:''}
         ${canHalfLucky?`<button class="btn ghost block" id="crHalfLucky">↻ Halfling Lucky (nat 1)</button>`:''}
+        ${(st.hit&&opts.riders)?riderChecksHTML(opts.riders):''}
         ${st.hit?`<button class="btn block" id="crRollDmg">🎲 Roll damage${st.crit?' (doubled!)':''}</button>`
           :`<button class="btn block" id="crDone">Continue</button>`}`;
     } else if(st.phase==='rollingDmg'){
@@ -10594,6 +10633,17 @@ function openCombatRollModal(opts){
     const parsed=parseDice(notation);
     const rolls=[]; let total=parsed.flat||0;
     (parsed.terms||[]).forEach(t=>{ for(let i=0;i<t.n;i++){ const r=rnd(t.sides); rolls.push(r); total+=r*t.sign; } });
+    // Class riders (Sneak Attack, Divine Smite, Divine Strike, Colossus Slayer, Hurl Through
+    // Hell, Death Strike) — same applyAttackRiders() attackFlow uses, read from the checkboxes
+    // riderChecksHTML rendered in the hitResult phase. This is the QB half of the fix for the
+    // "these features only ever worked in player-net mode" gap.
+    if(opts.riders && opts.riderChar){
+      const sk=document.getElementById('afSneak'), sm=document.getElementById('afSmite'), ds=document.getElementById('afDivStrike'), cs=document.getElementById('afColossus'), hth=document.getElementById('afHurl');
+      const choices={sneak: sk&&sk.checked, smiteLevel: sm&&sm.value, divineStrike: ds&&ds.checked, colossus: cs&&cs.checked, hurl: hth&&hth.checked};
+      const rr=applyAttackRiders(opts.riderChar, opts.riderAtk, opts.riderTarget, choices, st.crit, opts.riderTargetSurprised, opts.riderLog||(()=>{}));
+      total+=rr.total;
+      if(rr.doubled) total*=2;
+    }
     st.dmgRolls=rolls; st.dmgTotal=total; st.phase='rollingDmg'; draw();
   }
   function finishOut(dmgTotal){
@@ -10780,6 +10830,11 @@ function qbResolveAttack(att, tgt, atk, done){
     toHit: atk.toHit||0, ac: pre.ac, adv: useAdv, advWhy: useWhy,
     dmg: atk.dmg||'1d6', dtype: atk.dtype||atk.dt||'', tiles: atk.tiles||1, kind,
     autoCrit: !!cx.autoCrit,
+    // Class riders — same attackRiderOptions()/applyAttackRiders() attackFlow uses, so Sneak
+    // Attack/Divine Smite/Divine Strike/Colossus Slayer/Hurl Through Hell/Death Strike all work
+    // in Quick Battle too, not just player-net.
+    riders: att.c ? attackRiderOptions(att.c, atk, tgt) : null,
+    riderChar: att.c, riderAtk: atk, riderTarget: tgt, riderTargetSurprised: !!tgt.surprised, riderLog: qbLog,
     from:{x:att.x,y:att.y}, to:{x:tgt.x,y:tgt.y},
     onCommit:(meta)=>{
       // FX already played in finishOut → playCombatShotFx; only apply rules + log here
@@ -11912,7 +11967,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.198';
+const APP_VERSION='v120.199';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

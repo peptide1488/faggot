@@ -2024,5 +2024,79 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('overchannelBacklashDice keeps escalating', overchannelBacklashDice(wz)===5);
 }
 
+/* ---- attackRiderOptions/applyAttackRiders: the shared rider logic extracted out of attackFlow
+   so Quick Battle's openCombatRollModal could finally get the same Sneak Attack/Divine Smite/
+   Divine Strike/Colossus Slayer/Hurl Through Hell/Death Strike support player-net already had
+   (the cross-cutting gap flagged at the end of the 12-subclass pass). Being pure functions now
+   (not inline in a UI closure) means this rider math is finally directly unit-testable at all —
+   it never was before this refactor. ---- */
+{
+  // Sneak Attack: eligible for a Rogue with a finesse weapon, not with a non-finesse one.
+  const rg=newCharacter('Shiv'); rg.cls='Rogue'; rg.level=9; rg.abilities.dex=18;
+  rg.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  const rapier={name:'Rapier', toHit:7, dmg:'1d8+4', dt:'piercing', tiles:1, melee:true};
+  const greataxe={name:'Greataxe', toHit:7, dmg:'1d12+4', dt:'slashing', tiles:1, melee:true};
+  T('attackRiderOptions offers Sneak Attack for a Rogue with a finesse weapon', !!attackRiderOptions(rg, rapier, null).sneak);
+  T('Sneak Attack die count matches the PHB progression (ceil(level/2))', attackRiderOptions(rg, rapier, null).sneak.dice===5);
+  T('attackRiderOptions withholds Sneak Attack for a non-finesse, non-ranged weapon', !attackRiderOptions(rg, greataxe, null).sneak);
+  rg.battle.sneakUsed=true;
+  T('attackRiderOptions withholds Sneak Attack once already used this turn', !attackRiderOptions(rg, rapier, null).sneak);
+  rg.battle.sneakUsed=false;
+
+  { const orig=Math.random; Math.random=()=>0.5;   // deterministic dice
+    const rr=applyAttackRiders(rg, rapier, null, {sneak:true}, false, false, ()=>{});
+    Math.random=orig;
+    T('applyAttackRiders rolls Sneak Attack damage and marks it spent', rr.total>0 && rg.battle.sneakUsed===true);
+  }
+
+  // Divine Smite: eligible for a Paladin with an available slot on a melee hit; consumes the slot.
+  const pd=newCharacter('Sir Bors'); pd.cls='Paladin'; pd.level=5; pd.slots={1:{total:4,used:0},2:{total:2,used:0}};
+  const opts=attackRiderOptions(pd, rapier, null);
+  T('attackRiderOptions offers Divine Smite with every available slot level', opts.smite && opts.smite.levels.join(',')==='1,2');
+  { const orig=Math.random; Math.random=()=>0.5;
+    const rr=applyAttackRiders(pd, rapier, null, {smiteLevel:2}, false, false, ()=>{});
+    Math.random=orig;
+    T('applyAttackRiders rolls Divine Smite damage and spends the chosen slot', rr.total>0 && pd.slots[2].used===1 && pd.slots[1].used===0);
+  }
+
+  // Divine Strike: Life Domain 8th+, doubles dice on a crit (2 dice at 14th+, so 4 on a crit).
+  const lc=newCharacter('Cleric'); lc.cls='Cleric'; lc.subclass='Life'; lc.level=14;
+  T('attackRiderOptions offers Divine Strike for an 8th+ Life cleric', !!attackRiderOptions(lc, rapier, null).divineStrike);
+  { const orig=Math.random; Math.random=()=>0.99;   // max the d8s
+    const rr=applyAttackRiders(lc, rapier, null, {divineStrike:true}, true, false, ()=>{});   // isCrit=true
+    Math.random=orig;
+    T('Divine Strike dice double on a crit (2 dice at 14th, doubled to 4 on a crit)', rr.total===4*8);
+  }
+
+  // Colossus Slayer: gated on the target being below its own max HP.
+  const rgHunt=newCharacter('Tracker'); rgHunt.cls='Ranger'; rgHunt.subclass='Hunter'; rgHunt.level=5; rgHunt.hunterPrey='Colossus Slayer';
+  const hurtMo={hp:5, max:20}, healthyMo={hp:20, max:20};
+  T('attackRiderOptions offers Colossus Slayer only when the target is below max HP', !!attackRiderOptions(rgHunt, rapier, hurtMo).colossus && !attackRiderOptions(rgHunt, rapier, healthyMo).colossus);
+
+  // Hurl Through Hell: fiends take no psychic damage from it, everything else does.
+  const wl=newCharacter('Grim'); wl.cls='Warlock'; wl.subclass='The Fiend'; wl.level=14;
+  const imp={hp:10,max:10,sprite:'demon'}, goblin={hp:10,max:10,sprite:'goblin'};
+  T('attackRiderOptions offers Hurl Through Hell once/long rest for a 14th+ Fiend warlock', !!attackRiderOptions(wl, rapier, goblin).hurl);
+  { const orig=Math.random; Math.random=()=>0.99;
+    const rrFiend=applyAttackRiders(wl, rapier, imp, {hurl:true}, false, false, ()=>{});
+    Math.random=orig;
+    T('Hurl Through Hell deals no psychic damage to a fiend target', rrFiend.total===0 && wl.hurlThroughHellUsed===true);
+  }
+  wl.hurlThroughHellUsed=false;
+  { const orig=Math.random; Math.random=()=>0.99;
+    const rrOther=applyAttackRiders(wl, rapier, goblin, {hurl:true}, false, false, ()=>{});
+    Math.random=orig;
+    T('Hurl Through Hell deals real psychic damage to a non-fiend target', rrOther.total>0);
+  }
+
+  // Death Strike: automatic (no checkbox), doubles the FULL total on a failed save.
+  const asn=newCharacter('Nightblade'); asn.cls='Rogue'; asn.subclass='Assassin'; asn.level=17; asn.abilities.dex=18;
+  { const orig=Math.random; Math.random=()=>0.5;
+    const rr=applyAttackRiders(asn, rapier, goblin, {sneak:true}, false, true, ()=>{});   // targetSurprised=true
+    Math.random=orig;
+    T('Death Strike doubles when the Con save fails (low roll vs a real DC)', rr.doubled===true);
+  }
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

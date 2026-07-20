@@ -1911,3 +1911,59 @@ any subclass: GitHub Pages had been building from `claude/elegant-bohr-zx67jk`, 
 sat 13+ commits behind `iso3d-engine` for the entire back half of this session — every push from
 here forward should go to both branches (or Pages' configured source should be repointed at
 `iso3d-engine` directly) to avoid repeating that gap.
+
+## Follow-up: Quick Battle's attack modal gets the rider system it never had (v120.199)
+
+Requested explicitly as a fix to the gap flagged in the 12-subclass pass's closing note: Sneak
+Attack, Divine Smite, Divine Strike, Colossus Slayer, and Hurl Through Hell only ever applied in
+player-net mode (via `attackFlow`), because Quick Battle's own attack UI (`openCombatRollModal`,
+driven by `qbResolveAttack`) had no equivalent rider logic at all — a completely separate
+implementation with none of it. Fixed by extracting the rider math into two shared, pure
+functions and wiring BOTH modals to them, rather than porting a second copy of the same logic
+into `openCombatRollModal` (which would have just created the exact kind of duplication this app
+has been trying to eliminate all session):
+
+- **`attackRiderOptions(c, atk, targetMo)`** — pure, no rolling: given the attacking character,
+  the attack (weapon or spell), and the real target monster object, returns which riders are
+  currently available and their shape (`sneak`/`divineStrike`/`colossus`/`hurl` are `{dice, die,
+  label}`-shaped booleans-with-metadata; `smite` is `{levels:[...]}` since it's a slot-level
+  choice, not a plain checkbox). This is the exact same eligibility logic that used to live only
+  inline inside `attackFlow`'s local `canSneak`/`smiteLvls`/`canDivineStrike`/
+  `canColossusSlayer`/`canHurlThroughHell` variables — moved out, unchanged in behavior (verified
+  via new direct tests, something that was literally impossible before this refactor since the
+  logic lived inside a UI closure).
+- **`applyAttackRiders(c, atk, targetMo, choices, isCrit, targetSurprised, log)`** — rolls
+  whichever riders the player chose, mutates the character's resource fields (`sneakUsed`, spell
+  slots, `divineStrikeUsed`, `colossusSlayerUsed`, `hurlThroughHellUsed`) exactly as the old
+  inline code did, and includes Death Strike's automatic (no-checkbox) Con-save-or-double check.
+  Returns `{total, detail, doubled}` — `doubled` is reported separately rather than folded into
+  `total`, since Death Strike doubles the FULL sum (base damage + every other rider), which only
+  the caller (after adding `total` to its own base roll) can correctly apply.
+- **`riderChecksHTML(riders)`** — the checkbox/select markup, also shared, so the picker looks
+  and behaves identically in both modals instead of two copies of the same HTML template.
+- **`attackFlow` was refactored** (not left alone) to call these two functions instead of its own
+  inline copy — the only way to actually eliminate the duplication rather than create a third
+  copy. Re-verified via the full existing test suite (no behavior change) plus the large new
+  battery of direct rider tests below.
+- **`openCombatRollModal` gained the missing half**: a `riderChecksHTML(opts.riders)` block in
+  the `hitResult` phase (the same "after you know you hit, before you roll damage" moment
+  `attackFlow`'s picker already used), and `doDmgRoll()` now calls `applyAttackRiders` with the
+  chosen checkbox state, exactly mirroring `attackFlow`'s own `rollDmg`. `qbResolveAttack`'s
+  PC-attacking branch computes `attackRiderOptions(att.c, atk, tgt)` directly — simpler than
+  player-net's version, since QB already has the real target monster object in hand and doesn't
+  need the `net.targetMon`-to-`net.session.monsters` indirection `attackFlow` requires.
+
+Being pure functions now (previously the logic only existed inline inside a UI event-handler
+closure, `Function.prototype`-invisible to any test harness) means this rider math is finally
+directly unit-tested at all, for the first time this session — 15 new assertions covering every
+rider's eligibility gating (finesse-weapon requirement, available-slot-level enumeration,
+crit-doubling, below-max-HP gating, fiend-immunity, and Death Strike's automatic doubling),
+independent of which modal happens to be driving them.
+
+Playwright still wasn't available for a live click-through smoke test of the actual QB modal
+(server still disconnected all session) — the wiring changes to `qbResolveAttack`/
+`openCombatRollModal` are mechanical (passing options through, reading the same
+`document.getElementById` checkbox pattern `attackFlow` already used successfully) and the
+underlying math is now directly tested, but a real end-to-end "open Quick Battle, attack with a
+Rogue, tick the Sneak Attack box, see the number" pass is still owed once a browser is available
+again — noting this honestly rather than claiming full verification.
