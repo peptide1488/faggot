@@ -1895,5 +1895,32 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- Hunter: Favored Enemy/Natural Explorer's real pick-choice infra (base Ranger, all
+   flavor-text-only before this pass), Hunter's Prey/Defensive Tactics/Multiattack/Superior
+   Hunter's Defense choices, Colossus Slayer's below-max-HP gate ---- */
+{
+  const rg=newCharacter('Strider'); rg.cls='Ranger'; rg.level=14; rg.subclass='Hunter'; rg.abilities={str:12,dex:16,con:14,int:10,wis:14,cha:10};
+  T('isHunter gates on class+subclass+level', isHunter(rg,3)===true && isHunter(rg,20)===false);
+  const notRg=newCharacter('Beastmaster'); notRg.cls='Ranger'; notRg.level=20; notRg.subclass='Beast Master';
+  T('a Beast Master (even level 20) is never a Hunter', isHunter(notRg,3)===false);
+
+  // Favored Enemy/Terrain: repeatable picks owed at 1st/6th/14th and 1st/6th/10th respectively —
+  // a level-14 ranger with none chosen yet owes all three of each.
+  const specs=pendingChoiceSpecs(rg);
+  T('a fresh 14th-level ranger owes 3 Favored Enemy picks', specs.filter(s=>s.t==='pick'&&s.key==='favoredEnemies').length===3);
+  T('a fresh 14th-level ranger owes 3 Favored Terrain picks (1st/6th/10th, not 14th)', specs.filter(s=>s.t==='pick'&&s.key==='favoredTerrains').length===3);
+  rg.favoredEnemies=['Undead'];
+  T('once one Favored Enemy is chosen, only 2 more are owed', pendingChoiceSpecs(rg).filter(s=>s.t==='pick'&&s.key==='favoredEnemies').length===2);
+  T('Favored Enemy grants advantage on Survival checks', skillCheckAdvantage(rg,'survival','wis').adv===1);
+  const noFe=newCharacter('Novice Ranger'); noFe.cls='Ranger'; noFe.level=1;
+  T('no advantage on Survival without a chosen Favored Enemy', skillCheckAdvantage(noFe,'survival','wis').adv===0);
+
+  // Hunter's four subclass choices — one-shot, gated by level, stored as a plain string.
+  T("a 14th-level Hunter owes Hunter's Prey/Defensive Tactics/Multiattack but not Superior Hunter's Defense (15th)",
+    specs.some(s=>s.t==='pick'&&s.key==='hunterPrey') && specs.some(s=>s.t==='pick'&&s.key==='hunterDefense') && specs.some(s=>s.t==='pick'&&s.key==='hunterMultiattack') && !specs.some(s=>s.t==='pick'&&s.key==='hunterSuperiorDefense'));
+  rg.hunterPrey='Colossus Slayer';
+  T('once chosen, Hunter\'s Prey is no longer owed', !pendingChoiceSpecs(rg).some(s=>s.t==='pick'&&s.key==='hunterPrey'));
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

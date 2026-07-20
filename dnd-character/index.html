@@ -654,6 +654,12 @@ const SUBCLASS_FEATURES = {
     [15,'Purity of Spirit','You are always under the effect of Protection from Evil and Good.'],
     [20,'Holy Nimbus','Action: bright light 30 ft; enemies starting their turn in it take 10 radiant; advantage on saves vs fiend/undead spells. 1 minute, once per long rest.'],
   ],
+  'Hunter':[
+    [3,"Hunter's Prey",'Choose one: Colossus Slayer (once/turn +1d8 vs a foe below max HP), Giant Killer (reaction attack a Large+ foe that hits or misses you), or Horde Breaker (once/turn, an extra attack against a second foe within 5 ft of your target).'],
+    [7,'Defensive Tactics','Choose one: Escape the Horde, Multiattack Defense, or Steel Will.'],
+    [11,'Multiattack','Choose one: Volley (ranged attack against every foe within 10 ft of a point) or Whirlwind Attack (melee attack against every adjacent foe).'],
+    [15,"Superior Hunter's Defense",'Choose one: Evasion, Stand Against the Tide, or Uncanny Dodge.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -925,6 +931,7 @@ function paladinCDMax(c){ return 1; }
 // minimal-footprint approach BEAST_SHAPES took for Wild Shape's missing content.
 function monsterIsUndead(mo){ return ['skeleton','zombie','ghost'].includes(mo&&mo.sprite); }
 function monsterIsFiend(mo){ return mo&&mo.sprite==='demon'; }
+function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunter' && (Number(c.level)||1)>=(lvl||3)); }
 // Bardic Inspiration's own resource pool (the base Bard class feature, never mechanized in
 // this app before now — CLASS_FEATURES only ever had flavor text for it) — built here because
 // College of Lore's Cutting Words/Peerless Skill both spend a use of it directly for an
@@ -974,7 +981,7 @@ function setEquipped(c, idx, on){
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 // THE per-turn resource reset, shared by every mode (solo battle, quick battle,
 // net play). Add new per-turn flags HERE and nowhere else.
-function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
+function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, colossusSlayerUsed:false, hordeBreakerUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
 function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); }
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c));
   if(isEchoKnight(c,18) && (c.echoIncarnationLeft||0)<=0) c.echoIncarnationLeft=1;   // Legion of One (18th)
@@ -1674,6 +1681,10 @@ function attackFlow(c, atk){
     ? [1,2,3,4,5].filter(l=>{ const t=spellSlots(c)[l]||0; return t-Math.min(t,(c.slots[l]&&c.slots[l].used)||0)>0; }) : [];
   const divineStrikeDice=(Number(c.level)||1)>=14?2:1;
   const canDivineStrike=isLifeCleric(c,8) && !atk.spell;
+  // Colossus Slayer (Hunter's Prey, once/turn): +1d8 if the target is below its HP max. Real
+  // target HP isn't on net.targetMon (only {id,name,ac}) — looked up from the synced session.
+  const targetMo = (net&&net.session&&net.targetMon) ? net.session.monsters.find(m=>m.id===net.targetMon.id) : null;
+  const canColossusSlayer = c.cls==='Ranger' && c.hunterPrey==='Colossus Slayer' && !atk.spell && targetMo && targetMo.hp>0 && targetMo.hp<targetMo.max;
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
     if(c.battle && atk.offhand){
@@ -1731,7 +1742,10 @@ function attackFlow(c, atk){
         if(r){ total+=r.total; detail+=' · smite '+r.detail; if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1); logChange(c,'⚡ Divine Smite (L'+l+' slot) +'+r.total); } }
       const ds=document.getElementById('afDivStrike');
       if(ds && ds.checked && !(c.battle&&c.battle.divineStrikeUsed)){ const dice=st.crit?divineStrikeDice*2:divineStrikeDice; const r=rollNotation(dice+'d8');
-        if(r){ total+=r.total; detail+=' · divine strike '+r.detail; if(c.battle){ c.battle.divineStrikeUsed=true; } logChange(c,'✝️ Divine Strike +'+r.total); } } }
+        if(r){ total+=r.total; detail+=' · divine strike '+r.detail; if(c.battle){ c.battle.divineStrikeUsed=true; } logChange(c,'✝️ Divine Strike +'+r.total); } }
+      const cs=document.getElementById('afColossus');
+      if(cs && cs.checked && !(c.battle&&c.battle.colossusSlayerUsed)){ const dice=st.crit?2:1; const r=rollNotation(dice+'d8');
+        if(r){ total+=r.total; detail+=' · colossus slayer '+r.detail; if(c.battle){ c.battle.colossusSlayerUsed=true; } logChange(c,'🏹 Colossus Slayer +'+r.total); } } }
     st.dmgTotal=total; st.phase='done'; sfx(atk.heal?'heal':'damage'); attackFx(atk.heal?'heal':(st.crit?'crit':'hit'));
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg', notation});
     if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total, dtype:atk.dt||atk.dtype||''}); }catch(e){} }
@@ -1758,6 +1772,7 @@ function attackFlow(c, atk){
         ${(canSneak && st.hit!==false && !(c.battle&&c.battle.sneakUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afSneak"> 🗡️ Sneak Attack +${sneakDice}d6 <span class="muted" style="font-size:11px">(once/turn; needs advantage or an adjacent ally)</span></label>`:''}
         ${smiteLvls.length?`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚡ Divine Smite</span><select id="afSmite" style="flex:1"><option value="">— no smite —</option>${smiteLvls.map(l=>`<option value="${l}">L${l} slot — +${Math.min(5,1+l)}d8 radiant</option>`).join('')}</select></div>`:''}
         ${(canDivineStrike && st.hit!==false && !(c.battle&&c.battle.divineStrikeUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afDivStrike"> ✝️ Divine Strike +${divineStrikeDice}d8 radiant <span class="muted" style="font-size:11px">(once/turn)</span></label>`:''}
+        ${(canColossusSlayer && st.hit!==false && !(c.battle&&c.battle.colossusSlayerUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afColossus"> 🏹 Colossus Slayer +1d8 <span class="muted" style="font-size:11px">(once/turn — target below max HP)</span></label>`:''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
         ${st.mode==='manual'
           ? `<div class="addrow"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn" id="afDmgUse">Use</button></div>`
@@ -1834,8 +1849,27 @@ function pendingChoiceSpecs(c){
   // grant. Reuses the exact same {t:'skill',n} choice shape Half-Elf/Variant Human already use
   // — no new choice-picker UI needed, just another spec pushed into the same queue.
   if(c.cls==='Bard' && c.subclass==='College of Lore' && (Number(c.level)||1)>=3 && !c.loreBonusProfsChosen) specs.push({t:'skill',n:3,label:'College of Lore · three skill proficiencies',_loreBonus:1});
+  // Favored Enemy (1st/6th/14th) and Natural Explorer (1st/6th/10th): repeatable picks, one
+  // spec pushed per still-owed pick so leveling up multiple levels at once (or a freshly
+  // imported high-level character) is offered all of them, not just one.
+  if(c.cls==='Ranger'){
+    const feOwed=[1,6,14].filter(l=>(Number(c.level)||1)>=l).length-(c.favoredEnemies||[]).length;
+    for(let i=0;i<feOwed;i++) specs.push({t:'pick', key:'favoredEnemies', multi:true, options:FAVORED_ENEMY_TYPES, label:'Favored Enemy'});
+    const ftOwed=[1,6,10].filter(l=>(Number(c.level)||1)>=l).length-(c.favoredTerrains||[]).length;
+    for(let i=0;i<ftOwed;i++) specs.push({t:'pick', key:'favoredTerrains', multi:true, options:FAVORED_TERRAIN_TYPES, label:'Favored Terrain'});
+  }
+  // Hunter's four subclass picks (3rd/7th/11th/15th) — each is a one-time choice, unlike
+  // Favored Enemy/Terrain above.
+  if(c.cls==='Ranger' && c.subclass==='Hunter'){
+    if((Number(c.level)||1)>=3 && !c.hunterPrey) specs.push({t:'pick', key:'hunterPrey', options:['Colossus Slayer','Giant Killer','Horde Breaker'], label:"Hunter's Prey"});
+    if((Number(c.level)||1)>=7 && !c.hunterDefense) specs.push({t:'pick', key:'hunterDefense', options:['Escape the Horde','Multiattack Defense','Steel Will'], label:'Defensive Tactics'});
+    if((Number(c.level)||1)>=11 && !c.hunterMultiattack) specs.push({t:'pick', key:'hunterMultiattack', options:['Volley','Whirlwind Attack'], label:'Multiattack'});
+    if((Number(c.level)||1)>=15 && !c.hunterSuperiorDefense) specs.push({t:'pick', key:'hunterSuperiorDefense', options:['Evasion','Stand Against the Tide','Uncanny Dodge'], label:"Superior Hunter's Defense"});
+  }
   return specs;
 }
+const FAVORED_ENEMY_TYPES=['Aberrations','Beasts','Celestials','Constructs','Dragons','Elementals','Fey','Fiends','Giants','Monstrosities','Oozes','Plants','Undead'];
+const FAVORED_TERRAIN_TYPES=['Arctic','Coast','Desert','Forest','Grassland','Mountain','Swamp'];
 function resolveChoices(c){
   const specs=pendingChoiceSpecs(c);
   if(!specs.length) return false;
@@ -2035,6 +2069,11 @@ function choiceControl(sp, i, c){
     return `<div class="field">${lab('Choose '+sp.n+' '+lvlLabel(sp.lvl).toLowerCase()+' spell'+(sp.n>1?'s':''))}<div class="cklist">${list.map(s=>`<label class="listrow" style="cursor:pointer;padding:5px 0;align-items:flex-start"><input type="checkbox" class="chk" data-csp="${i}" value="${esc(s.n)}|${s.l}"> <span style="flex:none">${SCHOOL_ICON[s.s]}</span> <span class="nm" style="margin-left:6px">${esc(s.n)}${SPELL_DESC[s.n]?`<small>${esc(SPELL_DESC[s.n])}</small>`:''}</span></label>`).join('')}</div></div>`; }
   if(sp.t==='ancestry') return `<div class="field">${lab('Draconic ancestry (breath weapon & resistance)')}<select id="csp_${i}_anc">${DRAGON_ANCESTRY.map(a=>`<option>${a}</option>`).join('')}</select></div>`;
   if(sp.t==='fightingStyle') return `<div class="field">${lab('Fighting Style')}<select id="csp_${i}_fs">${(FIGHTING_STYLES[sp.cls]||[]).map(f=>`<option>${f}</option>`).join('')}</select></div>`;
+  // Generic single-dropdown choice — Ranger Favored Enemy/Favored Terrain (repeatable across
+  // levels, `multi:true`, stored as an array) and Hunter's four subclass picks (one-shot,
+  // stored as a plain string) all share this one shape rather than a bespoke render/resolve
+  // pair each.
+  if(sp.t==='pick') return `<div class="field">${lab(sp.label)}<select id="csp_${i}_pick">${sp.options.map(o=>`<option>${esc(o)}</option>`).join('')}</select></div>`;
   return '';
 }
 function applyChoices(specs, c){
@@ -2051,6 +2090,7 @@ function applyChoices(specs, c){
     else if(sp.t==='spellChoice'){ document.querySelectorAll('[data-csp="'+i+'"]:checked').forEach(el=>{ const [n,l]=el.value.split('|'); if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())) c.spells.push({name:n,level:Number(l),prepared:false,notes:''}); }); c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); }
     else if(sp.t==='ancestry'){ const el=document.getElementById('csp_'+i+'_anc'); if(el) c.dragon=el.value; }
     else if(sp.t==='fightingStyle'){ const el=document.getElementById('csp_'+i+'_fs'); if(el) c.fightingStyle=el.value; }
+    else if(sp.t==='pick'){ const el=document.getElementById('csp_'+i+'_pick'); if(el){ if(sp.multi){ if(!c[sp.key]) c[sp.key]=[]; c[sp.key].push(el.value); } else c[sp.key]=el.value; } }
   });
   return true;
 }
@@ -6571,6 +6611,12 @@ function rollSkillCheck(c, skillKey, abilKey, opts){
 function skillCheckAdvantage(c, skillKey, abilKey, targetId){
   let adv=0; const why=[];
   if(abilKey==='str' && isRaging(c)){ adv++; why.push('raging (advantage on Strength checks)'); }
+  // Favored Enemy (Ranger 1st): advantage on Survival checks to track a favored enemy. This app
+  // doesn't tag monsters with a creature type the ranger could match against a specific chosen
+  // enemy (Natural Explorer has the identical gap for terrain), so this applies whenever any
+  // favored enemy is chosen at all — a documented simplification, not conditional on the
+  // specific target's type.
+  if(skillKey==='survival' && (c.favoredEnemies||[]).length){ adv++; why.push('tracking a favored enemy'); }
   if(skillKey==='insight' && targetId!=null && (c.effects||[]).some(e=>e.name==='Detect Thoughts' && e.targetId===targetId)){
     adv++; why.push('reading their surface thoughts (Detect Thoughts)');
   }
@@ -7945,6 +7991,8 @@ function openAdjacentUseUI(c, s, me){
       if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
       if(intimidateTargets.length) body+=`<button class="btn block" data-use="intimidate" style="margin-bottom:8px;text-align:left">😱 Intimidating Presence<small style="display:block;opacity:.75">Action — frighten a foe within 30 ft (Wis save)</small></button>`;
       if(preserveLifeTargets.length && (c.channelDivinityLeft||0)>0) body+=`<button class="btn block" id="usePreserveLife" style="margin-bottom:8px;text-align:left">✝️ Channel Divinity: Preserve Life<small style="display:block;opacity:.75">Action — distribute ${preserveLifePool(c)} HP among creatures within 30 ft, ½ max HP cap each (${c.channelDivinityLeft} use${c.channelDivinityLeft===1?'':'s'} left)</small></button>`;
+      if(isHunter(c,11) && c.hunterMultiattack==='Whirlwind Attack' && foes.length) body+=`<button class="btn block" id="useWhirlwind" style="margin-bottom:8px;text-align:left">🏹 Whirlwind Attack<small style="display:block;opacity:.75">Action — one melee attack against every adjacent foe (${foes.length} in reach)</small></button>`;
+      if(isHunter(c,11) && c.hunterMultiattack==='Volley'){ const rangedAtk=qbPcAttacks(c).find(a=>!a.melee); if(rangedAtk){ const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk.tiles||1)); if(near.length) body+=`<button class="btn block" id="useVolley" style="margin-bottom:8px;text-align:left">🏹 Volley<small style="display:block;opacity:.75">Action — ranged attack against every foe within 10 ft of a target foe (pick one)</small></button>`; } }
       if(mode && isLoreBard(c,3)) body+=`<button class="btn ${c.cuttingWordsArmed?'':'ghost'} block" id="useCuttingWords" style="margin-bottom:8px;text-align:left"${(c.bardicInspLeft||0)<=0?' disabled style="opacity:.5"':''}>🎵 ${c.cuttingWordsArmed?'Cutting Words — ARMED (tap to cancel)':'Ready Cutting Words'}<small style="display:block;opacity:.75">${(c.bardicInspLeft||0)<=0?'No Bardic Inspiration left — rest to recharge':'Reaction — reduce a monster attack roll within 60 ft ('+(c.bardicInspLeft||0)+' use'+((c.bardicInspLeft||0)===1?'':'s')+' left)'}</small></button>`;
       if(mode && isLoreBard(c,14) && (c.bardicInspLeft||0)>0) body+=`<button class="btn block" id="usePeerlessSkill" style="margin-bottom:8px;text-align:left">🎵 Peerless Skill<small style="display:block;opacity:.75">Add a Bardic Inspiration die to your next ability check (${c.bardicInspLeft} use${c.bardicInspLeft===1?'':'s'} left)</small></button>`;
       body+=items.map((it,i)=>{
@@ -8071,6 +8119,24 @@ function openAdjacentUseUI(c, s, me){
       if(c.cls==='Monk' && (Number(c.level)||1)>=2) body+=`<button class="btn block" data-usea="flurry" style="margin-bottom:8px;text-align:left"${(c.battle&&c.battle.bonus)||(c.kiLeft||0)<=0?' disabled style="opacity:.5"':''}>🥋 Flurry of Blows — 1 ki<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':(c.kiLeft||0)<=0?'No ki left':'Bonus action — two unarmed strikes'}</small></button>`;
       if(isOpenHandMonk(c,17)) body+=`<button class="btn block" data-usea="quiveringpalm" style="margin-bottom:8px;text-align:left"${(c.kiLeft||0)<3?' disabled style="opacity:.5"':''}>🥋 Quivering Palm — 3 ki<small style="display:block;opacity:.75">${(c.kiLeft||0)<3?'Needs 3 ki':'Unarmed strike; set vibrations on a hit'}</small></button>`;
       if(isOpenHandMonk(c,17) && mo.quiveringPalmBy) body+=`<button class="btn block" data-usea="quiveringtrigger" style="margin-bottom:8px;text-align:left">💀 Trigger Quivering Palm<small style="display:block;opacity:.75">Action — force its Constitution save</small></button>`;
+      if(isHunter(c,3) && c.hunterPrey==='Giant Killer') body+=`<button class="btn block" data-usea="giantkiller" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.reaction?' disabled style="opacity:.5"':''}>🏹 Giant Killer<small style="display:block;opacity:.75">${c.battle&&c.battle.reaction?'Reaction already used':'Reaction — attack back after it hits or misses you (Large+ only, size unchecked)'}</small></button>`;
+      if(isHunter(c,3) && c.hunterPrey==='Horde Breaker' && !(c.battle&&c.battle.hordeBreakerUsed)){
+        const second=foes.filter(m=>m!==mo && gridDist(mo.x,mo.y,m.x,m.y)<=1);
+        if(second.length) body+=`<button class="btn block" data-usea="hordebreaker" style="margin-bottom:8px;text-align:left">🏹 Horde Breaker<small style="display:block;opacity:.75">One more attack against a creature within 5 ft of ${esc(mo.name)} — once/turn</small></button>`;
+      }
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='volleyPick'){
+      const rangedAtk=qbPcAttacks(c).find(a=>!a.melee);
+      const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk?rangedAtk.tiles||1:12));
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Volley — pick a foe; every foe within 10 ft of it (including it) takes a separate attack roll.</p>`;
+      body+=near.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · (${mo.x},${mo.y})</small></div><button class="btn sm" data-volleytgt="${i}">Center here</button></div>`).join('');
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='hordeBreakerPick'){
+      const mo=pick.mo, second=foes.filter(m=>m!==mo && gridDist(mo.x,mo.y,m.x,m.y)<=1);
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Horde Breaker — attack a creature within 5 ft of ${esc(mo.name)}:</p>`;
+      body+=second.map((m,i)=>`<div class="spell"><div class="nm"><b>${esc(m.name)}</b><small>AC ${m.ac} · (${m.x},${m.y})</small></div><button class="btn sm" data-hbtgt="${i}">Attack</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='study'){
@@ -8110,7 +8176,7 @@ function openAdjacentUseUI(c, s, me){
       if(!res || !res.ok || res.atkTotal==null){ afterManeuver(); return; }   // no roll happened (e.g. blocked by range/no action) — nothing to show
       draw({kind:'maneuverResult', label, res});
     };
-    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='confirmRoll'?pick.backTo:pick&&(pick.kind==='study'||pick.kind==='flurryTechnique')?{kind:'foe',mo:pick.mo}:null); }
+    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='confirmRoll'?pick.backTo:pick&&(pick.kind==='study'||pick.kind==='flurryTechnique'||pick.kind==='hordeBreakerPick')?{kind:'foe',mo:pick.mo}:null); }
     { const upl=$('#usePreserveLife'); if(upl) upl.onclick=()=>{
       if((c.channelDivinityLeft||0)<=0){ flashBanner('No Channel Divinity uses left — rest to recharge'); return; }
       if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
@@ -8128,6 +8194,41 @@ function openAdjacentUseUI(c, s, me){
       draw(pick);
     });
     { const upld=$('#usePreserveLifeDone'); if(upld) upld.onclick=afterManeuver; }
+    { const uw=$('#useWhirlwind'); if(uw) uw.onclick=()=>{
+      if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+      if(c.battle) spendAction(c);
+      const atk=qbPcAttacks(c).find(a=>a.melee)||{name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true};
+      let hits=0;
+      foes.forEach(mo=>{ const ev=Engine.attack(ad, me.id, mo.id, {name:'Whirlwind Attack ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:1}); if(ev.hit) hits++; log('🏹 Whirlwind — '+(ev.hit?'hits '+mo.name+' for '+ev.dmg:'misses '+mo.name)); });
+      flashBanner('🏹 Whirlwind Attack — hit '+hits+'/'+foes.length);
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello();
+    }; }
+    { const uv=$('#useVolley'); if(uv) uv.onclick=()=>draw({kind:'volleyPick'}); }
+    document.querySelectorAll('[data-volleytgt]').forEach(b=>b.onclick=()=>{
+      const rangedAtk=qbPcAttacks(c).find(a=>!a.melee); if(!rangedAtk) return;
+      const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk.tiles||1));
+      const ctr=near[Number(b.dataset.volleytgt)]; if(!ctr) return;
+      if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+      if(c.battle) spendAction(c);
+      const group=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && inBlast(ctr.x,ctr.y,mo.x,mo.y,2));
+      let hits=0;
+      group.forEach(mo=>{ const ev=Engine.attack(ad, me.id, mo.id, {name:'Volley ('+rangedAtk.name+')', toHit:rangedAtk.toHit, dmg:rangedAtk.dmg, dtype:rangedAtk.dt, tiles:rangedAtk.tiles}); if(ev.hit) hits++; log('🏹 Volley — '+(ev.hit?'hits '+mo.name+' for '+ev.dmg:'misses '+mo.name)); });
+      flashBanner('🏹 Volley — hit '+hits+'/'+group.length);
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello();
+    });
+    document.querySelectorAll('[data-hbtgt]').forEach(b=>b.onclick=()=>{
+      const mo0=pick.mo, second=foes.filter(m=>m!==mo0 && gridDist(mo0.x,mo0.y,m.x,m.y)<=1);
+      const mo=second[Number(b.dataset.hbtgt)]; if(!mo) return;
+      const atk=qbPcAttacks(c).find(a=>a.melee||(a.tiles||1)>1)||{name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true};
+      draw({kind:'confirmRoll', desc:'Horde Breaker — '+esc(mo.name)+' with '+esc(atk.name)+'.', skillLabel:atk.name, backTo:{kind:'hordeBreakerPick',mo:mo0}, run:()=>{
+        if(c.battle && c.battle.hordeBreakerUsed){ flashBanner('Horde Breaker already used this turn'); return null; }
+        if(c.battle) c.battle.hordeBreakerUsed=true;
+        const ev=Engine.attack(ad, me.id, mo.id, {name:'Horde Breaker ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:atk.tiles||1});
+        if(ev.hit) flashBanner('🏹 Horde Breaker hits '+mo.name+' for '+ev.dmg); else flashBanner('🏹 Horde Breaker misses '+mo.name);
+        log('🏹 '+c.name+' unleashes Horde Breaker at '+mo.name+' — '+(ev.hit?'hit for '+ev.dmg:'miss'));
+        return null;
+      }});
+    });
     { const ok=$('#useManeuverOk'); if(ok) ok.onclick=afterManeuver; }
     // Every maneuver used to roll the instant you tapped it — one click, no visible "this is
     // the moment of the roll" beat. Now every skill-based Use action routes through a confirm
@@ -8339,6 +8440,18 @@ function openAdjacentUseUI(c, s, me){
         else if(actId==='quiveringtrigger'){
           draw({kind:'confirmRoll', desc:'Trigger Quivering Palm on '+esc(mo.name)+' — forces a Constitution save.', skillLabel:'Quivering Palm', backTo:pick, run:()=>{ quiveringPalmTrigger(ad, c, mo, log); return null; }});
         }
+        else if(actId==='giantkiller'){
+          const atk=qbPcAttacks(c).find(a=>a.melee)||{name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true};
+          draw({kind:'confirmRoll', desc:'Giant Killer — '+esc(mo.name)+' with '+esc(atk.name)+'. Reaction.', skillLabel:atk.name, backTo:pick, run:()=>{
+            if(c.battle && c.battle.reaction){ flashBanner('Reaction already used'); return null; }
+            if(c.battle) c.battle.reaction=true;
+            const ev=Engine.attack(ad, me.id, mo.id, {name:'Giant Killer ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:1});
+            if(ev.hit) flashBanner('🏹 Giant Killer hits '+mo.name+' for '+ev.dmg); else flashBanner('🏹 Giant Killer misses '+mo.name);
+            log('🏹 '+c.name+' strikes back with Giant Killer at '+mo.name+' — '+(ev.hit?'hit for '+ev.dmg:'miss'));
+            return null;
+          }});
+        }
+        else if(actId==='hordebreaker') draw({kind:'hordeBreakerPick', mo});
         return;
       }
       if(pick&&pick.kind==='flurryTechnique'){
@@ -11533,7 +11646,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.193';
+const APP_VERSION='v120.194';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
