@@ -516,6 +516,7 @@ function attackAdvantage(aC, tC, melee, opts){
   if(T('Guided')){ adv++; why.push('target guided (Guiding Bolt)'); }
   if(A('True Strike')){ adv++; why.push('true strike'); }
   // Lighting: attacker in darkness without vision → disadvantage; target unseen in dark → adv for attacker if they can see (simplified)
+  if(opts&&opts.armorDisadvantage){ adv--; why.push('not proficient with worn armor'); }
   if(opts&&opts.attackerVision!=null){
     if(opts.attackerVision===0){ adv--; why.push('fighting in darkness'); }
   }
@@ -2379,20 +2380,41 @@ function applyFeat(c, name, then){
 // AC from armor (5e armor table). dexCap: how much DEX adds. base = armor AC.
 const ARMOR = [
   {key:'none',       name:'Unarmored',       base:10, dexCap:99},
-  {key:'padded',     name:'Padded',          base:11, dexCap:99},
-  {key:'leather',    name:'Leather',         base:11, dexCap:99},
-  {key:'studded',    name:'Studded Leather', base:12, dexCap:99},
-  {key:'hide',       name:'Hide',            base:12, dexCap:2},
-  {key:'chainshirt', name:'Chain Shirt',     base:13, dexCap:2},
-  {key:'scale',      name:'Scale Mail',      base:14, dexCap:2},
-  {key:'breastplate',name:'Breastplate',     base:14, dexCap:2},
-  {key:'halfplate',  name:'Half Plate',      base:15, dexCap:2},
-  {key:'ringmail',   name:'Ring Mail',       base:14, dexCap:0},
-  {key:'chainmail',  name:'Chain Mail',      base:16, dexCap:0},
-  {key:'splint',     name:'Splint',          base:17, dexCap:0},
-  {key:'plate',      name:'Plate',           base:18, dexCap:0}
+  {key:'padded',     name:'Padded',          base:11, dexCap:99, cat:'light'},
+  {key:'leather',    name:'Leather',         base:11, dexCap:99, cat:'light'},
+  {key:'studded',    name:'Studded Leather', base:12, dexCap:99, cat:'light'},
+  {key:'hide',       name:'Hide',            base:12, dexCap:2,  cat:'medium'},
+  {key:'chainshirt', name:'Chain Shirt',     base:13, dexCap:2,  cat:'medium'},
+  {key:'scale',      name:'Scale Mail',      base:14, dexCap:2,  cat:'medium'},
+  {key:'breastplate',name:'Breastplate',     base:14, dexCap:2,  cat:'medium'},
+  {key:'halfplate',  name:'Half Plate',      base:15, dexCap:2,  cat:'medium'},
+  {key:'ringmail',   name:'Ring Mail',       base:14, dexCap:0,  cat:'heavy'},
+  {key:'chainmail',  name:'Chain Mail',      base:16, dexCap:0,  cat:'heavy'},
+  {key:'splint',     name:'Splint',          base:17, dexCap:0,  cat:'heavy'},
+  {key:'plate',      name:'Plate',           base:18, dexCap:0,  cat:'heavy'}
 ];
 function armorDef(key){ return ARMOR.find(a=>a.key===key)||ARMOR[0]; }
+// Base armor-category proficiencies by class (PHB). Shields are tracked separately
+// (c.shield boolean) and not gated by this — this app has never modeled shield
+// non-proficiency, and PHB shield proficiency almost always travels with medium/heavy
+// armor proficiency anyway, so it's not a meaningfully distinct gap to close here.
+const ARMOR_PROF = {
+  Barbarian:['light','medium'], Bard:['light'], Cleric:['light','medium'],
+  Druid:['light','medium'], Fighter:['light','medium','heavy'], Monk:[],
+  Paladin:['light','medium','heavy'], Ranger:['light','medium'], Rogue:['light'],
+  Sorcerer:[], Warlock:['light'], Wizard:[], Artificer:['light','medium']
+};
+// Lightly/Moderately/Heavily Armored each grant proficiency with exactly one armor
+// category on top of whatever the class already grants (PHB feat text).
+function armorProficient(c, armorKey){
+  const a=armorDef(armorKey);
+  if(!a.cat) return true;   // unarmored — always fine
+  if((ARMOR_PROF[c.cls]||[]).includes(a.cat)) return true;
+  if(a.cat==='light' && hasFeat(c,'Lightly Armored')) return true;
+  if(a.cat==='medium' && hasFeat(c,'Moderately Armored')) return true;
+  if(a.cat==='heavy' && hasFeat(c,'Heavily Armored')) return true;
+  return false;
+}
 // opts.ignoreEffects (Antimagic Field): skip every active-spell-effect contribution (Mage
 // Armor's base swap, Barkskin's floor, effBonus's flat +ac) — everything mundane (armor worn,
 // Dex, Defense style, equipment) still applies, matching real RAW (mundane gear/skill isn't
@@ -2644,6 +2666,7 @@ function canCast(c, name, level){
   const noSlotNeeded = (name==='Alter Self' && isMoonDruid(c,14))
     || (featFreeCastSpell(c,name) && !(c.featFreeCastUsed&&c.featFreeCastUsed[name]));
   if(isRaging(c)){ flashBanner('Can’t cast spells while raging'); return false; }
+  if(c.armor && c.armor!=='none' && !armorProficient(c,c.armor)){ flashBanner('Can’t cast spells — not proficient with worn armor'); return false; }
   // Silence/Antimagic Field: can't cast while standing in an active no-cast zone.
   { const s=battleSession();
     if(s && s.hazards && s.hazards.length){
@@ -6963,6 +6986,10 @@ function rollSkillCheck(c, skillKey, abilKey, opts){
 function skillCheckAdvantage(c, skillKey, abilKey, targetId){
   let adv=0; const why=[];
   if(abilKey==='str' && isRaging(c)){ adv++; why.push('raging (advantage on Strength checks)'); }
+  // Armor non-proficiency (PHB): disadvantage on Str/Dex ability checks.
+  if((abilKey==='str'||abilKey==='dex') && c.armor && c.armor!=='none' && !armorProficient(c,c.armor)){
+    adv--; why.push('not proficient with worn armor');
+  }
   // Favored Enemy (Ranger 1st): advantage on Survival checks to track a favored enemy. This app
   // doesn't tag monsters with a creature type the ranger could match against a specific chosen
   // enemy (Natural Explorer has the identical gap for terrain), so this applies whenever any
@@ -10140,7 +10167,12 @@ const Engine = {
     const ac=(t?ad.ac(t):(atk.targetAC||10)) + cover;
     const dist=(a&&t&&a.x!=null&&t.x!=null)?gridDist(a.x,a.y,t.x,t.y):null;
     const melee=dist!=null?dist<=1:!((atk.tiles||1)>1);
-    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a)});
+    // Armor non-proficiency (PHB): disadvantage on Str/Dex attack rolls. Only computable when
+    // the actor's real character is reachable (checkSubject returns null for a monster or a
+    // DM-hosted mirror of a connected player — same known limitation as Evasion above).
+    const armorSubj=ad.checkSubject&&ad.checkSubject(a);
+    const armorDis=!!(armorSubj && armorSubj.armor && armorSubj.armor!=='none' && !armorProficient(armorSubj, armorSubj.armor));
+    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis});
     const r=Engine.roll(atk.toHit, ac, face, cx.adv);
     if(cx.autoCrit && r.hit) r.crit=true;
     return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why}, r);
@@ -12081,7 +12113,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.201';
+const APP_VERSION='v120.202';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

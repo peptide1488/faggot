@@ -26,7 +26,7 @@ require('./iso-renderer.js');   // mapGridHTML calls IsoRenderer.stageSize/tileS
 // consts inside eval stay block-scoped — re-export the data tables the tests assert on
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
-  'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.TERRAIN=TERRAIN;'+
+  'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
@@ -2263,6 +2263,52 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   ud.battle.reaction=false;   // next round
   applyHp(ud,-10,'slashing');
   T('...and it\'s available again once the reaction resets', ud.hp.cur===40-5-10-5);
+}
+
+/* ---- "make the systems" (3): armor-proficiency penalties (PHB) — disadvantage on Str/Dex
+   attack rolls and ability checks, and no spellcasting, while wearing armor you're not
+   proficient with. Hooked into Engine.hitResult (the one shared combat resolver every mode
+   funnels through — same choke point Evasion used), skillCheckAdvantage, and canCast. ---- */
+{
+  const heavyC=newCharacter('Plated Wizard'); heavyC.cls='Wizard'; heavyC.level=5; heavyC.armor='plate';
+  T('armorProficient: Wizard has no heavy armor proficiency', armorProficient(heavyC,'plate')===false);
+  T('armorProficient: Wizard IS proficient unarmored', armorProficient(heavyC,'none')===true);
+  const fighterC=newCharacter('Knight'); fighterC.cls='Fighter'; fighterC.armor='plate';
+  T('armorProficient: Fighter has heavy armor proficiency by class', armorProficient(fighterC,'plate')===true);
+  const rogueMed=newCharacter('Sneak'); rogueMed.cls='Rogue'; rogueMed.armor='chainshirt';
+  T('armorProficient: Rogue is not proficient with medium armor', armorProficient(rogueMed,'chainshirt')===false);
+  rogueMed.feats=[{name:'Moderately Armored'}];
+  T('armorProficient: Moderately Armored grants medium armor proficiency', armorProficient(rogueMed,'chainshirt')===true);
+  T('armorProficient: Moderately Armored does not also grant heavy armor proficiency', armorProficient(rogueMed,'plate')===false);
+
+  T('attackAdvantage: armorDisadvantage opt imposes disadvantage', attackAdvantage(new Set(),new Set(),true,{armorDisadvantage:true}).adv===-1);
+  T('attackAdvantage: armorDisadvantage false = no penalty', attackAdvantage(new Set(),new Set(),true,{armorDisadvantage:false}).adv===0);
+
+  T('skillCheckAdvantage: Str check disadvantage while wearing non-proficient armor', skillCheckAdvantage(heavyC,'athletics','str').adv===-1);
+  T('skillCheckAdvantage: non-Str/Dex ability check unaffected by armor', skillCheckAdvantage(heavyC,'arcana','int').adv===0);
+  const unarmored=newCharacter('Free'); unarmored.cls='Wizard'; unarmored.armor='none';
+  T('skillCheckAdvantage: unarmored casters get no armor penalty', skillCheckAdvantage(unarmored,'acrobatics','dex').adv===0);
+
+  heavyC.slots={0:{used:0}}; heavyC.battle=null;
+  T('canCast: blocked casting while wearing non-proficient armor', canCast(heavyC,'Fire Bolt',0)===false);
+  heavyC.armor='none';
+  T('canCast: unarmored casting is unaffected', canCast(heavyC,'Fire Bolt',0)===true);
+
+  // End-to-end through Engine.attack (qbAdapter) — proves the penalty rides the whole
+  // ad.unit → checkSubject → attackAdvantage chain, not just the pure helpers in isolation.
+  const brute=newCharacter('Clumsy Brute'); brute.cls='Wizard'; brute.level=3; brute.armor='chainmail';
+  brute.abilities={str:16,dex:10,con:12,int:14,wis:10,cha:10};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:1,y:0,hp:7,max:7,ac:15,attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:brute.name,c:brute,x:0,y:0,hpCur:brute.hp.cur,hpMax:brute.hp.max}] });
+  let ev=Engine.attack(qbAdapter,'pc','m1',{name:'Longsword',toHit:5,dmg:'1d8',dtype:'slashing',tiles:1});
+  T('Engine.attack: armor non-proficiency imposes disadvantage on the real roll', ev.adv===-1);
+  T('Engine.attack: the disadvantage reason is surfaced for the UI', (ev.advWhy||[]).some(w=>/armor/i.test(w)));
+  brute.armor='none';
+  getQB().monsters[0].hp=7;   // first attack may have dropped it to 0 — reset before the follow-up check
+  ev=Engine.attack(qbAdapter,'pc','m1',{name:'Longsword',toHit:5,dmg:'1d8',dtype:'slashing',tiles:1});
+  T('Engine.attack: no armor penalty once unarmored', ev.adv===0);
+  setQB(null);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

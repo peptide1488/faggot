@@ -2124,3 +2124,45 @@ Remaining "make the systems" items not yet started: an armor-non-proficiency pen
 system (Mounted Combatant), Battle Master maneuvers/superiority dice (Martial Adept), and the
 smaller "genuinely borderline" feats (Athlete, Actor, Grappler, Inspiring Leader, Charger,
 Dungeon Delver, Crossbow Expert, Spell Sniper's remaining clauses). Continuing in the next pass.
+
+## "Make the systems" (3): armor-proficiency penalties (v120.202)
+
+No armor-category-proficiency data existed anywhere in this codebase before this pass — `c.armor`
+only ever fed AC math (`computeAC`/`armorDef`). PHB rule: wearing armor you're not proficient with
+gives disadvantage on Strength/Dexterity attack rolls and ability checks, and you can't cast
+spells at all.
+
+- `ARMOR` entries each gained a `cat` field (`'light'|'medium'|'heavy'`, absent for Unarmored).
+- New `ARMOR_PROF` table: base per-class armor-category proficiencies (PHB) — e.g. Fighter/Paladin
+  get all three, Wizard/Sorcerer/Monk get none, Rogue/Bard/Warlock get light only. Shields are
+  deliberately NOT gated here — this app has never modeled shield non-proficiency, and PHB shield
+  proficiency almost always travels with medium/heavy armor proficiency anyway, so it wasn't worth
+  a second axis.
+- `armorProficient(c, armorKey)`: class table first, then Lightly/Moderately/Heavily Armored each
+  add exactly the one category they grant (Heavily Armored's real PHB prerequisite is medium
+  proficiency, but the feat itself only grants heavy — it does NOT also backfill medium).
+- Hooked into three places, matching how the app already threads similar penalties/bonuses:
+  - **Attack rolls** — `attackAdvantage` gained an `opts.armorDisadvantage` flag. `Engine.hitResult`
+    (the one shared to-hit resolver every mode's `Engine.attack` funnels through) computes it via
+    `ad.checkSubject(a)` — same idiom Evasion uses, so it's a real, honest `false` for a monster
+    attacker or a DM-hosted mirror of a connected player (the DM can't see that player's real
+    armor field either), not a new scope gap.
+  - **Str/Dex ability checks** — `skillCheckAdvantage` docks `adv` by 1 when `abilKey` is `str` or
+    `dex` and the character's worn armor fails `armorProficient`. This only reaches the
+    mechanically-tracked skill checks that already route advantage through this function (same
+    boundary as Favored Enemy/Rage's existing entries here) — free-form saves/ability checks
+    rolled through the generic `rollCheck` button (user picks adv/dis manually) are untouched by
+    design, consistent with how no other passive advantage source hooks that path either.
+  - **Spellcasting** — `canCast` returns false with a banner the moment armor is worn and
+    non-proficient, right next to the existing Raging/Silence early-outs.
+
+Tests: 19 new assertions — `armorProficient` gating (class-based and each of the three feats,
+including that Moderately Armored doesn't leak into heavy), `attackAdvantage`'s new opt in
+isolation, `skillCheckAdvantage`'s Str/Dex-only scoping, `canCast`'s block/unblock, and a real
+end-to-end run through `Engine.attack` (qbAdapter) proving the penalty actually reaches the live
+roll and its reason string, not just the pure helper.
+
+Remaining "make the systems" items: ritual casting, Healer's kit charge tracking, a mount system
+(Mounted Combatant), Battle Master maneuvers/superiority dice (Martial Adept), and the smaller
+"genuinely borderline" feats (Athlete, Actor, Grappler, Inspiring Leader, Charger, Dungeon Delver,
+Crossbow Expert, Spell Sniper's remaining clauses). Continuing in the next pass.
