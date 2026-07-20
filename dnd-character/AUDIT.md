@@ -1250,3 +1250,46 @@ Tests: `echoSync`'s create/update/remove all verified directly against `dmOnData
 creature; `shadowMartyrRedirect` re-verified against a DM-hosted-shaped mirror entry (no `.c`
 field) covering not-armed/armed-in-range/disarms-after-triggering, alongside the pre-existing
 QB-shaped coverage — same function, both shapes.
+
+## Path of the Berserker — second subclass with real mechanics (v120.188)
+
+Second entry in `SUBCLASS_FEATURES`, part of a planned pass giving one iconic subclass per
+class real mechanics (Echo Knight/Fighter already done). All four 2014 PHB Berserker features,
+confirmed via web search before building (this app's baseline is 2014 5e, not the 2024
+revision, which changes Frenzy substantially):
+
+- **Frenzy (3rd)**: a real CHOICE made when you rage, not automatic — `toggleRage(c, frenzy)`
+  gained an optional param (every existing call site across QB and player-net — `#rageBtn`/
+  `#rageBtn2`/`#pbRage`, already shared with zero mode-specific code since Rage never touches
+  anything but the caster's own `c` — stays byte-identical by not passing it). A new
+  `rageButtonClick(c)` is what the 3 buttons actually call now: for an eligible Berserker
+  starting a fresh rage it shows a real "Rage" vs. "Rage + Frenzy" choice; everyone else (or
+  ending a rage) is still the original single tap. While frenzied, a "🩸 Frenzy Attack" option
+  appears in the Use menu's foe list (bonus-action melee attack, reusing `Engine.attack` the
+  same way Unleash Incarnation does); ending a frenzied rage costs exactly 1 level of
+  exhaustion.
+- **Mindless Rage (6th)**: immunity to Charmed/Frightened while raging, entering a rage
+  suspends (not cures) an existing one. New `mindlessRageBlocks(c,cond)` is checked at the two
+  real PC-condition-application choke points: `qbAdapter.addCond`'s PC branch (QB, and DM-
+  hosted monsters attacking the QB solo PC) and player-net's own `'cond'` message handler
+  (DM-hosted monsters attacking a *connected* player, since that condition actually lands on
+  the player's own device, not the DM's mirror) — both modes covered from the start this time,
+  not bolted on after the fact like Shadow Martyr was.
+- **Intimidating Presence (10th)**: the first maneuver in this app with a REAL fixed-DC save
+  (8+prof+Cha) checked against the target's own Wisdom save bonus via `ad.saveBonus` — the same
+  adapter method Sanctuary/Holy Aura already use for this exact shape — rather than an opposed
+  check like Taunt/Shove. Also the first maneuver with a 30 ft (6-tile) range instead of
+  adjacency-only, needing its own target list (`intimidateTargets`) separate from the existing
+  5-ft `foes` list. A successful save marks the target immune for the rest of the encounter — a
+  documented approximation of the real 24-hour window, since battles in this app don't span
+  real hours.
+- **Retaliation (14th)**: a "🩸 Retaliation" foe-menu option once armed at 14th, spending the
+  reaction for a melee attack — implemented as a player-triggered option rather than an
+  automatic post-damage prompt (this app has no "you just took damage, react now?" interrupt
+  system at all — see Shadow Martyr's own doc note on why building one is a bigger lift than
+  this pass), a documented simplification of RAW's precise "when you take damage" trigger.
+
+Tests: 20 new assertions — Frenzy's exhaustion cost and the no-arg-callers-unaffected guarantee,
+Mindless Rage blocking Charmed/Frightened but not unrelated conditions (both standalone and
+wired through the real `qbAdapter.addCond` path), Intimidating Presence's pass/fail/already-
+immune states and its 30-ft reach.

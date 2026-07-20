@@ -1577,5 +1577,65 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setNet(null);
 }
 
+/* ---- Path of the Berserker: Frenzy, Mindless Rage, Intimidating Presence, Retaliation ---- */
+{
+  const bk=newCharacter('Grug'); bk.cls='Barbarian'; bk.level=6; bk.subclass='Path of the Berserker'; bk.abilities={str:16,dex:10,con:14,int:8,wis:10,cha:12};
+  T('isBerserker gates on class+subclass+level', isBerserker(bk,3)===true && isBerserker(bk,10)===false);
+  const notBk=newCharacter('Other'); notBk.cls='Barbarian'; notBk.level=20; notBk.subclass='Path of the Totem Warrior';
+  T('a Totem Warrior (even level 20) is never a Berserker', isBerserker(notBk,3)===false);
+
+  // Frenzy
+  T('toggleRage with no frenzy arg leaves c.frenzied falsy (existing callers stay unaffected)', (()=>{ toggleRage(bk); const r=!bk.frenzied; toggleRage(bk); return r; })());
+  toggleRage(bk, true);
+  T('choosing Frenzy when raging sets c.frenzied', bk.frenzied===true && isRaging(bk)===true);
+  T('exhaustion is 0 while the frenzy is still active', (bk.exhaustion||0)===0);
+  toggleRage(bk);   // end the rage
+  T('ending a frenzied rage costs exactly 1 level of exhaustion', bk.exhaustion===1);
+  T('c.frenzied clears once the rage (and its frenzy) end', bk.frenzied===false);
+
+  // Mindless Rage (6th+) — bk is level 6, eligible
+  toggleRage(bk, false);
+  T('mindlessRageBlocks blocks Charmed/Frightened while raging at 6th+', mindlessRageBlocks(bk,'Charmed')===true && mindlessRageBlocks(bk,'Frightened')===true);
+  T('mindlessRageBlocks does not block unrelated conditions', mindlessRageBlocks(bk,'Poisoned')===false);
+  toggleRage(bk);   // end rage
+  T('mindlessRageBlocks is false once the rage ends', mindlessRageBlocks(bk,'Charmed')===false);
+  const lowBk=newCharacter('Lowbie'); lowBk.cls='Barbarian'; lowBk.level=3; lowBk.subclass='Path of the Berserker';
+  toggleRage(lowBk);
+  T('Mindless Rage does not apply below 6th level even while raging', mindlessRageBlocks(lowBk,'Frightened')===false);
+  toggleRage(lowBk);
+
+  // Mindless Rage wired into the real qbAdapter.addCond PC path
+  setQB({battle:{round:1}, map:{cols:5,rows:5,tiles:{}}, hazards:[], players:[{side:'pc', x:0, y:0, c:bk}], monsters:[]});
+  toggleRage(bk, false);
+  qbAdapter.addCond({side:'pc', c:bk}, 'Frightened', 3);
+  T('qbAdapter.addCond is blocked by Mindless Rage while raging', !(bk.conditions&&bk.conditions.Frightened));
+  qbAdapter.addCond({side:'pc', c:bk}, 'Poisoned', 3);
+  T('qbAdapter.addCond still allows unrelated conditions while raging', bk.conditions&&bk.conditions.Poisoned===true);
+  toggleRage(bk);
+  setQB(null);
+
+  // Intimidating Presence (10th level)
+  const intBk=newCharacter('Intimidator'); intBk.cls='Barbarian'; intBk.level=10; intBk.subclass='Path of the Berserker'; intBk.abilities={str:16,dex:10,con:14,int:8,wis:10,cha:16};
+  intBk.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({battle:{round:1}, map:{cols:10,rows:10,tiles:{}}, hazards:[], players:[{side:'pc', x:0, y:0, c:intBk}],
+    monsters:[{id:'m1', side:'mon', base:'Goblin', name:'Goblin', x:5, y:0, hp:7, max:7, ac:15, conds:[]}]});
+  const pc=getQB().players[0], mo=getQB().monsters[0];
+  const orig=Math.random; Math.random=()=>0.01;   // force a low roll -> fails its Wisdom save
+  const r1=maneuverIntimidate(qbAdapter, pc, mo, ()=>{});
+  Math.random=orig;
+  T('Intimidating Presence reaches 30 ft (6 tiles) — far beyond every other adjacency-only maneuver', r1.ok===true);
+  T('a failed Wisdom save imposes Frightened', mo.conds.some(x=>x.name==='Frightened'));
+  T('Intimidating Presence spends the action', intBk.battle.action===true || intBk.battle.actionsUsed>0);
+
+  mo.conds=[]; intBk.battle.actionsUsed=0; intBk.battle.action=false;
+  Math.random=()=>0.99;   // force a high roll -> succeeds its save
+  const r2=maneuverIntimidate(qbAdapter, pc, mo, ()=>{});
+  Math.random=orig;
+  T('a successful save leaves the target unaffected and marks it immune', !mo.conds.some(x=>x.name==='Frightened') && mo.intimidateImmune===true && r2.success===false);
+  const r3=maneuverIntimidate(qbAdapter, pc, mo, ()=>{});
+  T('an already-immune target cannot be intimidated again this encounter', r3.ok===false);
+  setQB(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

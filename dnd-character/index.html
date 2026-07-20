@@ -613,6 +613,12 @@ const SUBCLASS_FEATURES = {
     [15,'Reclaim Potential','When your echo is destroyed, gain 2d6 + Constitution modifier temporary HP if you have none.'],
     [18,'Legion of One','Manifest Echo can maintain two echoes at once (a third destroys the two oldest). Regain one Unleash Incarnation use when you roll initiative with none left.'],
   ],
+  'Path of the Berserker':[
+    [3,'Frenzy','While raging, you can choose to frenzy: make a bonus-action melee attack on every turn of the rage. When the rage ends, you suffer one level of exhaustion.'],
+    [6,'Mindless Rage','You can’t be charmed or frightened while raging. If you already are when you enter your rage, the effect is suspended for the rage’s duration.'],
+    [10,'Intimidating Presence','Action: frighten one creature within 30 ft (Wisdom save, DC 8+prof+Cha) until the end of your next turn; extend it each turn while in range. A successful save makes that creature immune to this for 24 hours.'],
+    [14,'Retaliation','Reaction: when a creature within 5 ft damages you, make a melee attack against it.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -837,6 +843,12 @@ function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
    (Action Surge, special monster stat blocks, the c.extraActions override) ---- */
 function hasActionSurge(c){ return c && c.cls==='Fighter' && (Number(c.level)||1)>=2; }
 function isEchoKnight(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Echo Knight' && (Number(c.level)||1)>=(lvl||3)); }
+function isBerserker(c,lvl){ return !!(c && c.cls==='Barbarian' && c.subclass==='Path of the Berserker' && (Number(c.level)||1)>=(lvl||3)); }
+// Mindless Rage (6th level): can't be Charmed/Frightened while raging. Checked at every
+// PC-condition-application choke point (qbAdapter.addCond's PC branch, and player-net's own
+// 'cond' message handler for DM-hosted — a monster's own fear/charm attack sets this via
+// exactly those two paths in QB vs. DM-hosted, so this needed both, not just one).
+function mindlessRageBlocks(c, cond){ return !!(c && isRaging(c) && isBerserker(c,6) && (cond==='Charmed'||cond==='Frightened')); }
 // Shared "Uses = CON mod (min 1)" formula — both Unleash Incarnation and Reclaim Potential use
 // the exact same real-RAW resource-pool size, tracked as two independent counters.
 function echoResourceMax(c){ return Math.max(1, mod(abil(c,'con'))); }
@@ -935,14 +947,44 @@ function battleCard(c){
 }
 function isRaging(c){ return (c.effects||[]).some(e=>e.name==='Rage'); }
 function rageDamage(c){ const l=Number(c.level)||1; return l>=16?4:l>=9?3:2; }
-function toggleRage(c){
-  if(isRaging(c)){ c.effects=(c.effects||[]).filter(e=>e.name!=='Rage'); logChange(c,'Rage ended'); save(); render(); return; }
+// Path of the Berserker — Frenzy (3rd level): a CHOICE made when you rage (not automatic —
+// real optimizers sometimes skip it to avoid exhaustion stacking), so toggleRage takes an
+// optional param instead of a separate function; every existing call site (#rageBtn/#rageBtn2/
+// #pbRage — already shared across QB and player-net, Rage has no adapter dependency at all
+// since it only ever touches the caster's own c) stays byte-identical by simply not passing it.
+function toggleRage(c, frenzy){
+  if(isRaging(c)){
+    c.effects=(c.effects||[]).filter(e=>e.name!=='Rage');
+    if(c.frenzied){ c.frenzied=false; c.exhaustion=Math.min(6,(c.exhaustion||0)+1); logChange(c,'Rage ended — Frenzy costs you 1 level of exhaustion'); }
+    else logChange(c,'Rage ended');
+    save(); render(); return;
+  }
   // Rage is a bonus action (PHB) — in battle it needs and spends your bonus action.
   if(c.battle){ if(c.battle.bonus){ flashBanner('Bonus action already used — Rage is a bonus action'); return; } c.battle.bonus=true; }
   // can't concentrate while raging — drop any concentration spell
   if(c.concentration&&c.concentration.active){ c.effects=(c.effects||[]).filter(e=>!e.conc); c.concentration={active:false,spell:''}; }
+  // Mindless Rage (6th): entering a rage suspends an existing Charmed/Frightened for its
+  // duration (PHB is explicit this is a SUSPENSION, not a cure — nothing here prevents the
+  // condition from re-applying once the rage ends, matching the real wording).
+  if(isBerserker(c,6) && c.conditions){ delete c.conditions.Charmed; delete c.conditions.Frightened; }
   addEffect(c,'Rage',{rounds:10, note:'1 minute · Half damage from b/p/s · +'+rageDamage(c)+' melee (STR) damage · advantage on STR · can’t cast/concentrate.'});
-  sfx('damage'); logChange(c,'🪓 RAGE! +'+rageDamage(c)+' melee damage, ½ physical damage, no spells'); save(); render(); flashBanner('🪓 RAGE!');
+  c.frenzied=!!(frenzy && isBerserker(c,3));
+  sfx('damage'); logChange(c,'🪓 RAGE!'+(c.frenzied?' (Frenzy)':'')+' +'+rageDamage(c)+' melee damage, ½ physical damage, no spells'); save(); render(); flashBanner('🪓 RAGE!'+(c.frenzied?' Frenzy — bonus-action attack every turn, exhaustion when it ends':''));
+}
+// The Rage button's actual click target — every one of the 3 UI buttons calls this instead of
+// toggleRage directly, so an eligible Berserker starting a fresh rage gets asked about Frenzy
+// (a real choice with a real cost) while ending a rage / a non-Berserker's rage stays a single
+// tap, unchanged.
+function rageButtonClick(c){
+  if(isRaging(c) || !isBerserker(c,3)){ toggleRage(c); return; }
+  $('#modalRoot').innerHTML=`<div class="modal" id="frenzyModal"><div class="sheet"><div class="grip"></div>
+    <h2>🪓 Rage</h2>
+    <button class="btn block" id="frenzyYes" style="margin-bottom:8px;text-align:left">🩸 Rage + Frenzy<small style="display:block;opacity:.75">Bonus-action melee attack every turn — 1 level of exhaustion when the rage ends</small></button>
+    <button class="btn ghost block" id="frenzyNo" style="text-align:left">Rage (no Frenzy)</button>
+  </div></div>`;
+  $('#frenzyModal').onclick=e=>{ if(e.target.id==='frenzyModal') $('#modalRoot').innerHTML=''; };
+  $('#frenzyYes').onclick=()=>{ $('#modalRoot').innerHTML=''; toggleRage(c,true); };
+  $('#frenzyNo').onclick=()=>{ $('#modalRoot').innerHTML=''; toggleRage(c,false); };
 }
 function openMove(c){
   if(!c.battle) return; const b=c.battle;
@@ -4251,11 +4293,11 @@ function renderCombat(c){
   { const qa=$('#bqAttack'); if(qa) qa.addEventListener('click',()=>openAttack(c)); }
   { const qs=$('#bqSpells'); if(qs) qs.addEventListener('click',()=>openQuickSpells(c)); }
   { const mb=$('#moveBtn'); if(mb) mb.addEventListener('click',()=>openMove(c)); }
-  { const rb=$('#rageBtn'); if(rb) rb.addEventListener('click',()=>toggleRage(c)); }
+  { const rb=$('#rageBtn'); if(rb) rb.addEventListener('click',()=>rageButtonClick(c)); }
   { const bd=$('#bDmg'); if(bd) bd.addEventListener('click',()=>applyHp(c,-Math.abs(Number($('#bAmt').value)||0))); }
   { const bh=$('#bHeal'); if(bh) bh.addEventListener('click',()=>applyHp(c,Math.abs(Number($('#bAmt').value)||0))); }
   { const bds=$('#bDeath'); if(bds) bds.addEventListener('click',()=>rollDeathSave(c)); }
-  { const rb2=$('#rageBtn2'); if(rb2) rb2.addEventListener('click',()=>toggleRage(c)); }
+  { const rb2=$('#rageBtn2'); if(rb2) rb2.addEventListener('click',()=>rageButtonClick(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }   // tap to spend/reset (cycles for multi-action)
     else if(k==='bonus'||k==='reaction') b[k]=!b[k];
@@ -5431,7 +5473,7 @@ function playerOnData(d){ if(!d) return;
     render();
   } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta); playerHello(); } }
   else if(d.t==='oachance'){ const c=playerChar(); if(c) playerOpportunityPrompt(c, d); }
-  else if(d.t==='cond'){ const c=playerChar(); if(c){ if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
+  else if(d.t==='cond'){ const c=playerChar(); if(c){ if(d.on!==false && mindlessRageBlocks(c,d.name)) return; if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
   else if(d.t==='hazard'){
     // DM-hosted hazard check (gas cloud OR Grease/Web terrain) — the DM device can't roll
     // our save (it only ever syncs hp/ac/conds, never ability scores), so it asks us to
@@ -6563,7 +6605,7 @@ function renderPlayerBattle(c){
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
   { const us=$('#pbUse'); if(us) us.onclick=()=>openAdjacentUseUI(c, net.session, Object.assign({}, me, {me:true, c, id:'me'})); }
-  { const rg=$('#pbRage'); if(rg) rg.onclick=()=>toggleRage(c); }
+  { const rg=$('#pbRage'); if(rg) rg.onclick=()=>rageButtonClick(c); }
   { const et=$('#pbEndTurn'); if(et) et.onclick=()=>{ if(timeStopExtraTurn(c)) return; if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} } net.moveMode=false; flashBanner('Turn ended'); }; }
   { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
   { const hh=$('#pbHeal'); if(hh) hh.onclick=()=>applyHp(c,Math.abs(Number($('#pbAmt').value)||0)); }
@@ -7390,6 +7432,9 @@ function openAdjacentUseUI(c, s, me){
   const ad = mode==='qb' ? qbAdapter : mode==='player' ? playerNetAdapter : null;
   const log = mode==='qb' ? qbLog : mode==='player' ? (m=>logChange(c,m)) : ()=>{};
   const foes=mode ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=1) : [];
+  // Path of the Berserker — Intimidating Presence reaches 30 ft (6 tiles), unlike every other
+  // maneuver here which is adjacency-only — a separate wider-range list, not folded into foes.
+  const intimidateTargets = mode && isBerserker(c,10) ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=6 && !mo.intimidateImmune) : [];
   const grappled=!!mode && !!(c.conditions&&c.conditions.Grappled);
   const canHide=!!mode && !(c.conditions&&c.conditions.Hidden); // maneuverHide itself checks cover/darkness and bails with a banner if ineligible
   // Stabilize only ever makes sense against ANOTHER party member at 0 HP — Quick Battle has
@@ -7430,6 +7475,7 @@ function openAdjacentUseUI(c, s, me){
       if(servant) body+=`<button class="btn block" data-use="servant" style="margin-bottom:8px;text-align:left">👻 Command Servant<small style="display:block;opacity:.75">Move it up to 15 ft / interact with an object — bonus action</small></button>`;
       if(canManifestEcho) body+=`<button class="btn block" id="useManifestEcho" style="margin-bottom:8px;text-align:left">👤 Manifest Echo<small style="display:block;opacity:.75">${echo?'Replaces your current echo — ':''}Bonus action, within 15 ft</small></button>`;
       if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
+      if(intimidateTargets.length) body+=`<button class="btn block" data-use="intimidate" style="margin-bottom:8px;text-align:left">😱 Intimidating Presence<small style="display:block;opacity:.75">Action — frighten a foe within 30 ft (Wis save)</small></button>`;
       body+=items.map((it,i)=>{
         const st=it.obj.state||it.def.default;
         return `<div class="spell"><div class="nm"><b>${esc(it.def.name)}</b><small>${st} · (${it.x},${it.y})</small></div>
@@ -7489,6 +7535,12 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn sm" data-inctgt="${i}">Attack</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='intimidatePick'){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Intimidating Presence — pick a target within 30 ft. Action.</p>`;
+      body+=intimidateTargets.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>(${mo.x},${mo.y}) · ${gridDist(me.x,me.y,mo.x,mo.y)*5} ft</small></div>
+        <button class="btn sm" data-intimtgt="${i}">Frighten</button></div>`).join('');
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='servant'){
       // A direct reposition within 15 ft (3 tiles), blocked by tileClearFor — simplified from
       // RAW pathfinding, matching how a one-word mental command isn't really "movement" in the
@@ -7526,6 +7578,8 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn block" data-usea="grapple" style="margin-bottom:8px;text-align:left">🤼 Grapple<small style="display:block;opacity:.75">Grappled: speed 0 until it escapes</small></button>
         <button class="btn block" data-usea="taunt" style="margin-bottom:8px;text-align:left">😠 Taunt<small style="display:block;opacity:.75">Intimidation vs Insight — success: Frightened of you</small></button>
         <button class="btn block" data-study="1" style="margin-bottom:8px;text-align:left">📖 Recall Knowledge<small style="display:block;opacity:.75">Arcana/History/Nature/Religion vs DC 10+CR — uses your action</small></button>`;
+      if(c.frenzied && isRaging(c)) body+=`<button class="btn block" data-usea="frenzy" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.bonus?' disabled style="opacity:.5"':''}>🩸 Frenzy Attack<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':'A melee attack as your bonus action'}</small></button>`;
+      if(isBerserker(c,14)) body+=`<button class="btn block" data-usea="retaliate" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.reaction?' disabled style="opacity:.5"':''}>🩸 Retaliation<small style="display:block;opacity:.75">${c.battle&&c.battle.reaction?'Reaction already used':'Reaction — a melee attack against this adjacent foe'}</small></button>`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='study'){
@@ -7585,7 +7639,7 @@ function openAdjacentUseUI(c, s, me){
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
       draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]}
-        : kind==='servant' ? {kind:'servant'} : kind==='echo' ? {kind:'echo'} : Object.assign({kind:'obj'}, items[Number(idx)]));
+        : kind==='servant' ? {kind:'servant'} : kind==='echo' ? {kind:'echo'} : kind==='intimidate' ? {kind:'intimidatePick'} : Object.assign({kind:'obj'}, items[Number(idx)]));
     });
     // Commanding the servant spends the BONUS action resource, independent of the shared
     // Action-based afterManeuver flow every other Use-menu item runs through.
@@ -7694,6 +7748,11 @@ function openAdjacentUseUI(c, s, me){
         return null;
       }});
     });
+    document.querySelectorAll('[data-intimtgt]').forEach(b=>b.onclick=()=>{
+      const mo=intimidateTargets[Number(b.dataset.intimtgt)];
+      if(!mo) return;
+      draw({kind:'confirmRoll', desc:'Intimidating Presence — frighten '+esc(mo.name)+'. DC 8+prof+Cha vs its Wisdom save.', skillLabel:'Intimidation', backTo:{kind:'intimidatePick'}, run:()=>{ maneuverIntimidate(ad, me, mo, log); return null; }});
+    });
     document.querySelectorAll('[data-servmove]').forEach(b=>b.onclick=()=>{
       if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
       const t=servantMoveTiles(ad, servant)[Number(b.dataset.servmove)];
@@ -7725,6 +7784,28 @@ function openAdjacentUseUI(c, s, me){
         else if(actId==='shove-push') draw({kind:'confirmRoll', desc:'Shove '+esc(mo.name)+' — push 5 ft. Athletics vs Athletics/Acrobatics. Uses one of your attacks.', skillLabel:'Athletics', backTo:pick, run:()=>({label:'Shove ('+mo.name+') — push 5 ft', res:maneuverShove(ad, me, mo, 'push', log)})});
         else if(actId==='grapple') draw({kind:'confirmRoll', desc:'Grapple '+esc(mo.name)+'. Athletics vs Athletics/Acrobatics. Uses one of your attacks.', skillLabel:'Athletics', backTo:pick, run:()=>({label:'Grapple ('+mo.name+')', res:maneuverGrapple(ad, me, mo, log)})});
         else if(actId==='taunt') draw({kind:'confirmRoll', desc:'Taunt '+esc(mo.name)+'. Intimidation vs Insight. Uses one of your attacks.', skillLabel:'Intimidation', backTo:pick, run:()=>({label:'Taunt ('+mo.name+')', res:maneuverTaunt(ad, me, mo, log)})});
+        else if(actId==='frenzy'){
+          const atk=qbPcAttacks(c).find(a=>a.melee)||{name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true};
+          draw({kind:'confirmRoll', desc:'Frenzy attack — '+esc(mo.name)+' with '+esc(atk.name)+'. Bonus action.', skillLabel:atk.name, backTo:pick, run:()=>{
+            if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return null; }
+            if(c.battle) c.battle.bonus=true;
+            const ev=Engine.attack(ad, me.id, mo.id, {name:'Frenzy Attack ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:1});
+            if(ev.hit) flashBanner('🩸 Frenzy attack hits '+mo.name+' for '+ev.dmg); else flashBanner('🩸 Frenzy attack misses '+mo.name);
+            log('🩸 '+c.name+' unleashes a Frenzy attack at '+mo.name+' — '+(ev.hit?'hit for '+ev.dmg:'miss'));
+            return null;
+          }});
+        }
+        else if(actId==='retaliate'){
+          const atk=qbPcAttacks(c).find(a=>a.melee)||{name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true};
+          draw({kind:'confirmRoll', desc:'Retaliation — '+esc(mo.name)+' with '+esc(atk.name)+'. Reaction.', skillLabel:atk.name, backTo:pick, run:()=>{
+            if(c.battle && c.battle.reaction){ flashBanner('Reaction already used'); return null; }
+            if(c.battle) c.battle.reaction=true;
+            const ev=Engine.attack(ad, me.id, mo.id, {name:'Retaliation ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:1});
+            if(ev.hit) flashBanner('🩸 Retaliation hits '+mo.name+' for '+ev.dmg); else flashBanner('🩸 Retaliation misses '+mo.name);
+            log('🩸 '+c.name+' retaliates against '+mo.name+' — '+(ev.hit?'hit for '+ev.dmg:'miss'));
+            return null;
+          }});
+        }
         return;
       }
       if(c.battle&&!hasAction(c)){ flashBanner('No Action left this turn'); return; }
@@ -9187,7 +9268,7 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
   saveBonus(u,ab){ return abilCheckBonus(this.checkSubject(u), ab); },
   addCond:(u,cond,rounds)=>{ if(u.echo) return;   // an Echo Knight's echo is immune to all conditions (RAW)
     if(u.side==='mon'){ u.conds=u.conds||[]; if(!u.conds.some(x=>x.name===cond)) u.conds.push({name:cond,rounds}); }
-    else { if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } },
+    else { if(mindlessRageBlocks(u.c,cond)) return; if(!u.c.conditions) u.c.conditions={}; u.c.conditions[cond]=true; } },
   sanctuaryDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Sanctuary')||{}).dc||null : null,
   holyAuraDC:u=> u.side==='pc' ? ((u.c.effects||[]).find(e=>e.name==='Holy Aura')||{}).dc||null : null,
   allMonsters:()=> QB.monsters,
@@ -10152,6 +10233,28 @@ function maneuverTaunt(ad, pcUnit, mo, log){
   sfx('hit');
   return Object.assign({ok:true, success:true}, rollInfo);
 }
+// Path of the Berserker — Intimidating Presence (10th level): action, DC 8+prof+Cha, targets a
+// creature within 30 ft (6 tiles — wider than every other maneuver's adjacency-only range).
+// A fixed-DC save against the TARGET's own Wisdom save bonus, not an opposed check like Taunt
+// — ad.saveBonus is the exact same adapter method Sanctuary/Holy Aura already use for this
+// shape. Success marks the target immune for the rest of THIS encounter — a documented
+// approximation of the real 24-hour window (battles in this app don't span real hours).
+function maneuverIntimidate(ad, pcUnit, mo, log){
+  const c=ad.checkSubject(pcUnit);
+  if(!hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
+  if(gridDist(pcUnit.x,pcUnit.y,mo.x,mo.y)>6){ flashBanner('Too far — Intimidating Presence reaches 30 ft'); return {ok:false}; }
+  if(mo.intimidateImmune){ flashBanner(mo.name+' already resisted this — immune for now'); return {ok:false}; }
+  spendAction(c);
+  const dc=8+profBonus(c)+mod(abil(c,'cha'));
+  const roll=rnd(20)+(ad.saveBonus?ad.saveBonus(mo,'wis'):0);
+  const name=ad.name(pcUnit), moName=ad.name(mo);
+  if(roll>=dc){ mo.intimidateImmune=true; log('😱 '+name+' tries to intimidate '+moName+' (DC '+dc+', rolled '+roll+') — resists, immune for now'); flashBanner(moName+' resists — immune to this for 24 hours'); return {ok:true, success:false, dc, roll}; }
+  ad.addCond(mo,'Frightened',2);
+  log('😱 '+name+' intimidates '+moName+' (DC '+dc+', rolled '+roll+') — Frightened');
+  flashBanner(moName+' is Frightened!');
+  sfx('hit');
+  return {ok:true, success:true, dc, roll};
+}
 // Escape a grapple as your action — the escaper rolls the better of Athletics/Acrobatics,
 // contested by the grappler's Athletics (PHB); a tie favors the grappler (still grappled),
 // which opposedCheck already gives us for free by rolling the grappler as the "attacker".
@@ -10779,7 +10882,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.187';
+const APP_VERSION='v120.188';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
