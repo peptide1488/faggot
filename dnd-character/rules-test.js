@@ -1755,5 +1755,95 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('below 14th level, Alter Self with no slots left is blocked like any other spell', canCast(md13,'Alter Self',2)===false);
 }
 
+/* ---- Way of the Open Hand: Martial Arts/Ki/Unarmored Defense (base Monk, mechanized here
+   since no earlier subclass needed them) plus Open Hand Technique/Flurry of Blows/Quivering
+   Palm ---- */
+{
+  T('martialArtsDie follows the PHB progression (1d4 below 5th)', martialArtsDie(newCharacter('Novice'))===4);
+  const mk11=newCharacter('Adept'); mk11.level=11;
+  T('martialArtsDie reaches 1d8 at 11th, 1d10 at 17th', martialArtsDie(mk11)===8 && martialArtsDie(Object.assign(newCharacter('x'),{level:17}))===10);
+
+  const mk=newCharacter('Fist of Spring'); mk.cls='Monk'; mk.level=6; mk.subclass='Open Hand'; mk.abilities={str:10,dex:16,con:14,int:10,wis:16,cha:10}; mk.armor='none';
+  T('isOpenHandMonk gates on class+subclass+level', isOpenHandMonk(mk,3)===true && isOpenHandMonk(mk,17)===false);
+  const notMk=newCharacter('Shadow'); notMk.cls='Monk'; notMk.level=20; notMk.subclass='Shadow';
+  T('a Way of Shadow monk (even level 20) is never an Open Hand monk', isOpenHandMonk(notMk,3)===false);
+
+  T('kiMax equals monk level', kiMax(mk)===6);
+  T('kiDC is 8 + prof + Wis mod', kiDC(mk)===8+profBonus(mk)+mod(abil(mk,'wis')));
+
+  // Martial Arts: uses whichever of Str/Dex is better, and the scaling die — not the flat
+  // 1+mod every other class's unarmed strike fallback uses.
+  const ma=martialArtsUnarmedAtk(mk);
+  T('martialArtsUnarmedAtk uses Dex over Str when Dex is better', ma.toHit===mod(abil(mk,'dex'))+profBonus(mk));
+  T('martialArtsUnarmedAtk deals the scaling martial arts die, not a flat 1+mod', ma.dmg==='1d6'+sgn(mod(abil(mk,'dex'))));
+
+  // Unarmored Defense — Barbarian (Con, shield OK) and Monk (Wis, no shield) were both
+  // completely unimplemented before this pass (flavor text only in CLASS_FEATURES).
+  T('Monk Unarmored Defense is 10 + Dex + Wis while unarmored', computeAC(mk)===10+mod(abil(mk,'dex'))+mod(abil(mk,'wis')));
+  mk.shield=true;
+  T('a shield breaks Monk Unarmored Defense (PHB — unlike Barbarian\'s)', computeAC(mk)===10+Math.min(mod(abil(mk,'dex')),99)+2);
+  mk.shield=false;
+  const bk2=newCharacter('Ragebringer'); bk2.cls='Barbarian'; bk2.armor='none'; bk2.shield=true; bk2.abilities.con=16;
+  T('Barbarian Unarmored Defense still applies with a shield equipped', computeAC(bk2)===10+mod(abil(bk2,'dex'))+mod(abil(bk2,'con'))+2);
+
+  // Unarmored Movement (2nd–18th, unarmored/no shield only)
+  const mk2=newCharacter('Novice Monk'); mk2.cls='Monk'; mk2.level=2; mk2.armor='none';
+  T('unarmoredMoveBonus is +10 at 2nd-5th level', unarmoredMoveBonus(mk2)===10);
+  T('unarmoredMoveBonus is +15 at 6th (mk is 6th level)', unarmoredMoveBonus(mk)===15);
+  const mk18=newCharacter('Master'); mk18.cls='Monk'; mk18.level=18; mk18.armor='none';
+  T('unarmoredMoveBonus reaches +30 at 18th', unarmoredMoveBonus(mk18)===30);
+  mk18.armor='leather';
+  T('unarmoredMoveBonus is 0 the moment you wear armor', unarmoredMoveBonus(mk18)===0);
+
+  // Flurry of Blows + Open Hand Technique, against a real QB fixture (goblin AC 5 so a
+  // stubbed high roll guarantees hits).
+  mk.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:1,y:0,hp:30,max:30,ac:5,attacksLeft:1,conds:[]}],
+    players:[{id:'pc',side:'pc',name:mk.name,c:mk,x:0,y:0,hpCur:mk.hp.cur,hpMax:mk.hp.max}] });
+  const pcU=getQB().players[0], moU=getQB().monsters[0];
+  mk.kiLeft=kiMax(mk);
+  { const orig=Math.random; Math.random=()=>0.2;   // d20=5: not a nat-1 (still hits goblin AC 5), but low enough to fail its Dex save vs DC 14
+    const res=flurryOfBlows(qbAdapter, pcU, moU, 'prone', ()=>{});
+    Math.random=orig;
+    T('flurryOfBlows spends 1 ki and the bonus action', mk.kiLeft===kiMax(mk)-1 && mk.battle.bonus===true);
+    T('flurryOfBlows makes two attacks and reports a hit', res.ok===true && res.anyHit===true);
+    T('Open Hand Technique (prone) knocks a failed-save target Prone', moU.conds.some(x=>x.name==='Prone'));
+  }
+  T('flurryOfBlows refuses a second use once the bonus action is already spent', flurryOfBlows(qbAdapter, pcU, moU, null, ()=>{}).ok===false);
+
+  // Open Hand Technique — push and no-reactions branches, tested directly (deterministic rolls).
+  moU.conds=[];
+  { const orig=Math.random; Math.random=()=>0.01;   // force the Str save to fail
+    openHandTechnique(qbAdapter, pcU, moU, 'push', ()=>{});
+    Math.random=orig;
+    T('Open Hand Technique (push) moves a failed-save target away', moU.x>1);
+  }
+  moU.reactionUsed=false;
+  openHandTechnique(qbAdapter, pcU, moU, 'noreact', ()=>{});
+  T('Open Hand Technique (no reactions) reuses the existing "No Reactions" idiom (mo.reactionUsed)', moU.reactionUsed===true);
+
+  // Quivering Palm (17th)
+  const mk17=newCharacter('Grandmaster'); mk17.cls='Monk'; mk17.level=17; mk17.subclass='Open Hand'; mk17.abilities={str:10,dex:18,con:14,int:10,wis:18,cha:10}; mk17.armor='none';
+  mk17.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  mk17.kiLeft=kiMax(mk17);
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Bugbear',name:'Bugbear',x:1,y:0,hp:200,max:200,ac:5,attacksLeft:1,conds:[]}],
+    players:[{id:'pc',side:'pc',name:mk17.name,c:mk17,x:0,y:0,hpCur:mk17.hp.cur,hpMax:mk17.hp.max}] });
+  const pcU2=getQB().players[0], moU2=getQB().monsters[0];
+  { const orig=Math.random; Math.random=()=>0.99;   // force the strike to hit
+    quiveringPalmStrike(qbAdapter, pcU2, moU2, ()=>{});
+    Math.random=orig;
+  }
+  T('quiveringPalmStrike spends 3 ki only once it actually hits', mk17.kiLeft===kiMax(mk17)-3);
+  T('quiveringPalmStrike marks the target for a later trigger', moU2.quiveringPalmBy==='pc');
+  { const orig=Math.random; Math.random=()=>0.01;   // force the Con save to fail
+    const res=quiveringPalmTrigger(qbAdapter, mk17, moU2, ()=>{});
+    Math.random=orig;
+    T('quiveringPalmTrigger drops the target to 0 HP on a failed Con save', res.killed===true && moU2.hp===0);
+  }
+  setQB(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

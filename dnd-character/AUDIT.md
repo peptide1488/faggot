@@ -1474,3 +1474,79 @@ overflow-carries-to-real-HP sequence, and Thousand Forms' slot-free bypass contr
 
 Playwright wasn't available to spot-check this live in a real browser either (server still
 disconnected) — same honest caveat as every subclass since Echo Knight.
+
+## Deploy pipeline fix: GitHub Pages was building from the wrong branch (v120.191 → live)
+
+Separately from any subclass work: the live GitHub Pages site had been showing v120.179 for the
+entire back half of this session, reported each time as an assumed caching/propagation delay.
+That diagnosis was wrong. `git merge-base` between `iso3d-engine` (where every push this session
+landed) and `claude/elegant-bohr-zx67jk` (the branch Pages actually builds from) showed the two
+had NOT diverged at all — `elegant-bohr-zx67jk` was sitting exactly at the point `iso3d-engine`
+branched off from it, 13 commits behind, every one of them touching only `dnd-character/*`. None
+of this session's dnd-character work had ever reached the branch Pages deploys. Fixed with a
+plain fast-forward push (`iso3d-engine` → `claude/elegant-bohr-zx67jk`, zero conflicts possible
+since the target had no unique commits of its own), confirmed via the GitHub API that the branch
+now points at the same commit as `iso3d-engine`. Flagging this so future sessions push to (or at
+least also verify against) `claude/elegant-bohr-zx67jk`, not just `iso3d-engine`, when checking
+whether something actually went live.
+
+## Way of the Open Hand — sixth subclass, and Martial Arts/Ki/Unarmored Defense (v120.192)
+
+Sixth entry in `SUBCLASS_FEATURES`. Like Wild Shape before it, this pass hit ANOTHER base-class
+gap bigger than the subclass itself: **Martial Arts, Ki (Flurry of Blows/Patient Defense/Step of
+the Wind), and Unarmored Movement** were all flavor-text-only in `CLASS_FEATURES`, and — a
+separate, real pre-existing bug found while investigating — **Unarmored Defense** (Barbarian's
+Con version AND Monk's Wis version, both 1st-level base-class features) had never been implemented
+either, meaning every Barbarian and Monk in this app has been walking around with an AC that's
+just `10 + Dex` this whole time, missing their signature bonus. All fixed together in `computeAC`.
+Verified real 2014 PHB text via WebFetch before building.
+
+- **Unarmored Defense**: `10 + Dex + Con` for Barbarians (a shield is explicitly still allowed
+  per RAW), `10 + Dex + Wis` for Monks (no shield, RAW is explicit this one breaks it) — both new
+  branches at the top of `computeAC`, so every existing screen that calls it picked the fix up
+  for free, the same centralization Wild Shape's AC override relied on last time.
+- **Martial Arts**: `martialArtsDie(c)` (1d4→1d6→1d8→1d10 by level) and `martialArtsUnarmedAtk(c)`
+  (uses whichever of Str/Dex is better) replace the flat "1 + Str mod" unarmed strike fallback —
+  shared between `qbPcAttacks` and `playerAttackMenu` (both pre-existing separate weapon-listing
+  functions, same duplication `wildShapeAttacks` had to bridge for Wild Shape) so a Monk sees the
+  same scaling attack option in either mode.
+- **Ki**: `kiMax(c)` (= monk level) and `kiDC(c)` (8+prof+Wis, shared by every ki-spending
+  feature — base Stunning Strike still isn't built, but Open Hand's own features all key off this
+  same DC) refill on short or long rest. **Patient Defense** and **Step of the Wind** live in a
+  new `openKiUI` modal reachable from a battleCard quick-menu button (mirrors how Wild Shape got
+  its own button) — Patient Defense applies a real `Dodge` condition via `addEffect` (a NEW
+  disadvantage-on-attackers check added to `attackAdvantage`, since nothing in this app tracked
+  Dodge at all before now); Step of the Wind is banner/log-only (documented — Dash/Disengage/jump
+  distance have no mechanical hooks anywhere in this app to attach a real bonus to, the same
+  honest-simplification bar as Peerless Skill).
+- **Open Hand Technique (3rd)**: offered on a Flurry of Blows hit via a new `flurryTechnique`
+  Use-menu picker (choose Prone/Push/Deny-Reactions *before* rolling, since the app has no
+  "decide after you already know you hit" flow anywhere — a pragmatic, not RAW-breaking,
+  simplification: the choice itself carries no new information either way). Prone uses a Dex
+  save, Push a Str save (PHB is explicit these differ) against the monk's ki DC; "deny reactions"
+  reuses the exact `mo.reactionUsed=true` idiom Shocking Grasp's own "No Reactions" condition
+  already established elsewhere in this file, rather than inventing a new tracked condition.
+- **Wholeness of Body (6th)**: action, no ki, regain 3×level HP, gated on a `wholenessUsed` flag
+  reset only on long rest — lives in the same `openKiUI` modal.
+- **Tranquility (11th)**: re-applied automatically at the end of every long rest, granting the
+  real **Sanctuary** effect by name (not a separately-named "Tranquility" effect) so every
+  existing Sanctuary-aware check (`sanctuaryDC`, the attacker-save gate, `dmOpportunityAttack`'s
+  block) recognizes it for free — same non-enforcement of "ends when you attack/cast" this app's
+  own Sanctuary spell already has (no such hook exists anywhere in this codebase), a pre-existing
+  simplification, not a new gap.
+- **Quivering Palm (17th)**: `quiveringPalmStrike` (3 ki spent only on an actual hit, marks
+  `mo.quiveringPalmBy`) and `quiveringPalmTrigger` (Con save vs the same ki DC — fail drops the
+  target to exactly 0 HP via `ad.hurt(mo, mo.hp)`, success deals 10d10 necrotic) as two separate
+  foe-menu options. RAW's "within your next `level` days" window is approximated as "until you
+  trigger it or set a new one" — this app has no multi-day out-of-combat clock, the same
+  approximation Intimidating Presence's 24-hour window already uses for its own duration.
+
+Tests: 26 new assertions — `martialArtsDie`'s progression, `kiDC`/`kiMax`, `martialArtsUnarmedAtk`
+choosing the better ability score, both Unarmored Defense formulas (including the shield-breaks-
+Monk-but-not-Barbarian distinction) via real `computeAC` calls, `unarmoredMoveBonus`'s level
+breakpoints and armor gating, `flurryOfBlows` against a real QB fixture (ki/bonus-action spend,
+two real attack rolls, second-use lockout), `openHandTechnique`'s prone/push/no-reactions branches
+each verified via a real save roll, and `quiveringPalmStrike`/`quiveringPalmTrigger`'s hit-gated
+ki spend and kill-vs-damage branches.
+
+Playwright wasn't available to spot-check this live either (server still disconnected).

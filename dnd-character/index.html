@@ -512,6 +512,7 @@ function attackAdvantage(aC, tC, melee, opts){
   ['Restrained','Blinded','Paralyzed','Stunned','Unconscious','Petrified'].forEach(cn=>{ if(T(cn)){ adv++; why.push('target '+cn.toLowerCase()); } });
   if(T('Prone')){ adv+=melee?1:-1; why.push('target prone'+(melee?'':' (ranged)')); }
   if(T('Faerie Fire')){ adv++; why.push('target outlined by faerie fire'); }
+  if(T('Dodge')){ adv--; why.push('target is dodging'); }   // Dodge action / Patient Defense — attack rolls against them have disadvantage
   if(T('Guided')){ adv++; why.push('target guided (Guiding Bolt)'); }
   if(A('True Strike')){ adv++; why.push('true strike'); }
   // Lighting: attacker in darkness without vision → disadvantage; target unseen in dark → adv for attacker if they can see (simplified)
@@ -638,6 +639,12 @@ const SUBCLASS_FEATURES = {
     [6,'Primal Strike','Your attacks in beast form count as magical for overcoming resistance and immunity to nonmagical attacks.'],
     [10,'Elemental Wild Shape','Expend two uses of Wild Shape at once to transform into an air, earth, fire, or water elemental.'],
     [14,'Thousand Forms','Cast Alter Self at will, without expending a spell slot.'],
+  ],
+  'Open Hand':[
+    [3,'Open Hand Technique','When you hit with a Flurry of Blows attack, impose one: Dex save or Prone; Str save or pushed 15 ft; or it can\'t take reactions until the end of your next turn.'],
+    [6,'Wholeness of Body','Action: regain HP equal to three times your monk level. Once per long rest.'],
+    [11,'Tranquility','At the end of a long rest, gain the effect of Sanctuary (DC = your ki save DC) until your next long rest.'],
+    [17,'Quivering Palm','Spend 3 ki on an unarmed strike hit to set imperceptible vibrations; later, spend your action to force a Con save — fail and it drops to 0 HP, succeed and it takes 10d10 necrotic.'],
   ],
 };
 const RACE_TRAITS = {
@@ -884,6 +891,14 @@ function moonMaxCR(c){ const l=Number(c.level)||1; return l>=6 ? Math.floor(l/3)
 // Forms' higher CR cap, Combat Wild Shape's bonus action + in-form healing, and Elemental Wild
 // Shape's named exception), confirmed against the 2014 PHB text before building this.
 function wildShapeMax(c){ return 2; }
+// Martial Arts (Monk 1st): the scaling unarmed-strike die (was flavor-text-only in
+// CLASS_FEATURES before this pass, like every other base-class prerequisite this session).
+function martialArtsDie(c){ const l=Number(c.level)||1; return l>=17?10:l>=11?8:l>=5?6:4; }
+function isOpenHandMonk(c,lvl){ return !!(c && c.cls==='Monk' && c.subclass==='Open Hand' && (Number(c.level)||1)>=(lvl||3)); }
+// Ki save DC (8 + prof + WIS mod) — every ki-spending feature (base Stunning Strike, Open
+// Hand Technique, Tranquility, Quivering Palm) shares this one DC.
+function kiDC(c){ return 8+profBonus(c)+mod(abil(c,'wis')); }
+function kiMax(c){ return Number(c.level)||1; }
 // Bardic Inspiration's own resource pool (the base Bard class feature, never mechanized in
 // this app before now — CLASS_FEATURES only ever had flavor text for it) — built here because
 // College of Lore's Cutting Words/Peerless Skill both spend a use of it directly for an
@@ -986,6 +1001,7 @@ function battleCard(c){
       ${(isCaster(c)||c.spells.length)?`<button class="btn sm" id="bqSpells" style="flex:1">✨ Spells</button>`:''}
       ${c.cls==='Barbarian'?`<button class="btn sm" id="rageBtn" style="flex:1;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging':'Rage'}</button>`:''}
       ${c.cls==='Druid' && (Number(c.level)||1)>=2?`<button class="btn sm" id="wildShapeBtn" style="flex:1;${c.wildShape?'background:var(--accent2);border-color:var(--accent2)':''}">🐾 ${c.wildShape?c.wildShape.name:'Wild Shape'}</button>`:''}
+      ${c.cls==='Monk' && (Number(c.level)||1)>=2?`<button class="btn sm" id="kiBtn" style="flex:1">🥋 Ki (${c.kiLeft==null?kiMax(c):c.kiLeft})</button>`:''}
     </div>
     <button class="btn block" id="nextTurn" style="margin-top:10px">▶ Next turn (reset action, attacks &amp; move)</button>
     <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">Battle log</div>
@@ -1100,6 +1116,52 @@ function openWildShapeUI(c){
   };
   document.querySelectorAll('[data-wsbeast]').forEach(btn=>btn.onclick=()=>{ const b=beasts[Number(btn.dataset.wsbeast)]; if(b) doTransform(b,1); });
   document.querySelectorAll('[data-wselem]').forEach(btn=>btn.onclick=()=>{ const b=ELEMENTAL_SHAPES[Number(btn.dataset.wselem)]; if(b) doTransform(b,2); });
+}
+// Ki (Monk 2nd): Patient Defense and Step of the Wind (both self-only, no target needed —
+// Flurry of Blows lives in the Use-menu's foe list instead, since it needs a target and (Open
+// Hand) an on-hit technique choice) plus Wholeness of Body (6th, no ki cost, once/long rest).
+function openKiUI(c){
+  if(c.kiLeft==null) c.kiLeft=kiMax(c);
+  const canWholeness = (Number(c.level)||1)>=6 && !c.wholenessUsed;
+  $('#modalRoot').innerHTML=`<div class="modal" id="kiModal"><div class="sheet"><div class="grip"></div>
+    <h2>🥋 Ki</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">${c.kiLeft} ki point${c.kiLeft===1?'':'s'} left. Flurry of Blows is offered against an adjacent foe via 🖐 Use.</p>
+    <button class="btn block" id="kiPatient" style="margin-bottom:8px;text-align:left"${(c.kiLeft||0)<=0?' disabled style="opacity:.5"':''}>🛡 Patient Defense — 1 ki<small style="display:block;opacity:.75">Bonus action: Dodge until the start of your next turn</small></button>
+    <button class="btn block" id="kiStep" style="margin-bottom:8px;text-align:left"${(c.kiLeft||0)<=0?' disabled style="opacity:.5"':''}>💨 Step of the Wind — 1 ki<small style="display:block;opacity:.75">Bonus action: Disengage or Dash, jump distance doubled this turn</small></button>
+    ${canWholeness?`<button class="btn block" id="kiWholeness" style="margin-bottom:8px;text-align:left">🕉 Wholeness of Body<small style="display:block;opacity:.75">Action, no ki: regain ${3*(Number(c.level)||1)} HP — once per long rest</small></button>`:''}
+    <button class="btn ghost block" id="kiClose">Close</button>
+  </div></div>`;
+  $('#kiModal').onclick=e=>{ if(e.target.id==='kiModal') $('#modalRoot').innerHTML=''; };
+  $('#kiClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
+  { const kp=$('#kiPatient'); if(kp) kp.onclick=()=>{
+    if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+    if((c.kiLeft||0)<=0){ flashBanner('No ki points left'); return; }
+    if(c.battle) c.battle.bonus=true;
+    c.kiLeft--;
+    addEffect(c,'Dodge',{rounds:1, cond:'Dodge', note:'Attack rolls against you have disadvantage.'});
+    logChange(c,'🛡 Patient Defense — Dodging until your next turn');
+    flashBanner('🛡 Patient Defense — attacks against you have disadvantage');
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  }; }
+  { const ks=$('#kiStep'); if(ks) ks.onclick=()=>{
+    if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+    if((c.kiLeft||0)<=0){ flashBanner('No ki points left'); return; }
+    if(c.battle) c.battle.bonus=true;
+    c.kiLeft--;
+    logChange(c,'💨 Step of the Wind — Disengage/Dash, jump distance doubled this turn');
+    flashBanner('💨 Step of the Wind — free Disengage or Dash, double jump distance');
+    $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();
+  }; }
+  { const kw=$('#kiWholeness'); if(kw) kw.onclick=()=>{
+    if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+    if(c.battle) spendAction(c);
+    c.wholenessUsed=true;
+    const heal=3*(Number(c.level)||1);
+    applyHp(c, heal);
+    logChange(c,'🕉 Wholeness of Body — regains '+heal+' HP');
+    flashBanner('🕉 Wholeness of Body — +'+heal+' HP');
+    $('#modalRoot').innerHTML=''; save(); render();
+  }; }
 }
 function openMove(c){
   if(!c.battle) return; const b=c.battle;
@@ -1882,6 +1944,12 @@ function computeAC(c,opts){
   const a=armorDef(c.armor||'none');
   const hasFx=n=>!ignoreFx && (c.effects||[]).some(e=>e.name===n);
   let base = a.base + Math.min(mod(abil(c,'dex')), a.dexCap);
+  // Unarmored Defense (Barbarian 1st, Monk 1st) — was flavor-text-only in CLASS_FEATURES
+  // before this pass; a real base-class feature every Barbarian/Monk needs regardless of
+  // subclass, same as Bardic Inspiration/Channel Divinity/Wild Shape were for earlier classes.
+  // Barbarian's version still allows a shield; Monk's explicitly doesn't (PHB).
+  if(a.key==='none' && c.cls==='Barbarian') base = 10 + mod(abil(c,'dex')) + mod(abil(c,'con'));
+  if(a.key==='none' && !c.shield && c.cls==='Monk') base = 10 + mod(abil(c,'dex')) + mod(abil(c,'wis'));
   if(a.key==='none' && hasFx('Mage Armor')) base = 13 + mod(abil(c,'dex'));           // Mage Armor: 13 + DEX while unarmored
   if(c.fightingStyle==='Defense' && a.key!=='none') base += 1;                        // Defense style: +1 AC while wearing armor
   let ac = base + (c.shield?2:0) + (ignoreFx?0:effBonus(c,'ac')) + gearBonus(c,'ac');
@@ -2006,7 +2074,11 @@ const SPELL_EFFECTS = {
 };
 function effBonus(c, key){ let n=0; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods[key]) n+=e.mods[key]; }); return n; }
 function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods.speedMul) m*=e.mods.speedMul; }); return m; }
-function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
+// Unarmored Movement (Monk 2nd): +10 ft at 2nd, scaling to +30 ft at 18th — only while
+// unarmored (armor OR shield breaks it, same as Unarmored Defense).
+function unarmoredMoveBonus(c){ if(!(c && c.cls==='Monk' && (c.armor||'none')==='none' && !c.shield)) return 0; const l=Number(c.level)||1;
+  return l>=18?30:l>=14?25:l>=10?20:l>=6?15:l>=2?10:0; }
+function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+unarmoredMoveBonus(c)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
 function modSummary(mods){ if(!mods) return ''; const parts=[];
   if(mods.ac) parts.push(sgn(mods.ac)+' AC');
   if(mods.speed) parts.push(sgn(mods.speed)+' ft');
@@ -3591,6 +3663,7 @@ function spendHitDie(c){
   if(isLoreBard(c) && (Number(c.level)||1)>=5) c.bardicInspLeft=bardicInspMax(c);   // Font of Inspiration (5th): short rest too
   if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: short or long rest
   if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: short or long rest
+  if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: short or long rest
   logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
@@ -4446,6 +4519,7 @@ function renderCombat(c){
   { const bds=$('#bDeath'); if(bds) bds.addEventListener('click',()=>rollDeathSave(c)); }
   { const rb2=$('#rageBtn2'); if(rb2) rb2.addEventListener('click',()=>rageButtonClick(c)); }
   { const wsb=$('#wildShapeBtn'); if(wsb) wsb.addEventListener('click',()=>openWildShapeUI(c)); }
+  { const kib=$('#kiBtn'); if(kib) kib.addEventListener('click',()=>openKiUI(c)); }
   app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }   // tap to spend/reset (cycles for multi-action)
     else if(k==='bonus'||k==='reaction') b[k]=!b[k];
@@ -4734,6 +4808,14 @@ function renderSpells(c){
     if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
     if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
     if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: long rest too
+    if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: long rest too
+    if(c.cls==='Monk' && (Number(c.level)||1)>=6) c.wholenessUsed=false;   // Wholeness of Body: long rest only
+    // Tranquility (11th): grants the real Sanctuary EFFECT (same name, same dc field every
+    // existing Sanctuary check already reads — sanctuaryDC, dmOpportunityAttack's block, etc.
+    // all recognize it for free) rather than a parallel Tranquility-named effect. Like this
+    // app's own Sanctuary SPELL, it doesn't auto-end when you attack/cast (no such hook exists
+    // anywhere in this codebase yet) — a pre-existing simplification, not a new gap.
+    if(isOpenHandMonk(c,11)) addEffect(c,'Sanctuary',{rounds:null, dc:kiDC(c), note:'Tranquility — lasts until your next long rest.'});
     logChange(c, 'Long rest — HP, slots & hit dice restored');
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
@@ -6676,6 +6758,7 @@ function playerAttackMenu(c){
   if(canOffhand(c)){ const seen=new Set(); offhandWeapons(c).forEach(w=>{ if(seen.has(w.n))return; seen.add(w.n); const oa=offhandAtk(c,w);
     actions.push({label:w.n+' — off-hand', sub:'bonus action · '+oa.dmg+' '+(w.dt||''), tiles:weaponRangeTiles(c,w), atk:oa}); }); }
   if(hasNaturalWeapons(c)) actions.push({label:'Claws (Alter Self)', sub:'melee · 1d6 slashing', tiles:1, atk:{name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing'}});
+  if(c.cls==='Monk'){ const ma=martialArtsUnarmedAtk(c); actions.push({label:ma.name, sub:'melee · '+ma.dmg+' '+ma.dt, tiles:1, atk:ma}); }
   }
   // (spells & cantrips are cast via the ✨ Spells button → map targeting)
   if(!actions.length){ flashBanner('No weapons — use ✨ Spells to cast'); return; }
@@ -7798,6 +7881,15 @@ function openAdjacentUseUI(c, s, me){
           <div class="muted" style="font-size:12px">${esc(r.atkSkill)} ${r.atkTotal} vs ${esc(r.defSkill)} ${r.defTotal} — ${r.success?'SUCCESS':'FAILED'}</div>
         </div>
         <button class="btn block" id="useManeuverOk">Continue</button>`;
+    } else if(pick.kind==='flurryTechnique'){
+      const mo=pick.mo;
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Open Hand Technique — if either strike hits <b>${esc(mo.name)}</b>, impose one effect (your choice):</p>
+        <button class="btn block" data-usea="prone" style="margin-bottom:8px;text-align:left">🤸 Knock Prone<small style="display:block;opacity:.75">Dex save vs your ki DC</small></button>
+        <button class="btn block" data-usea="push" style="margin-bottom:8px;text-align:left">🤜 Push 15 ft<small style="display:block;opacity:.75">Str save vs your ki DC</small></button>
+        <button class="btn block" data-usea="noreact" style="margin-bottom:8px;text-align:left">🚫 Deny Reactions<small style="display:block;opacity:.75">No save — can't react until end of your next turn</small></button>
+        <button class="btn ghost block" data-usea="none" style="margin-bottom:8px;text-align:left">Just attack, no effect</button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='foe'){
       const mo=pick.mo;
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(mo.name)}</b> at (${mo.x},${mo.y}) — Athletics vs Athletics/Acrobatics. Uses one of your attacks.</p>
@@ -7808,6 +7900,9 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn block" data-study="1" style="margin-bottom:8px;text-align:left">📖 Recall Knowledge<small style="display:block;opacity:.75">Arcana/History/Nature/Religion vs DC 10+CR — uses your action</small></button>`;
       if(c.frenzied && isRaging(c)) body+=`<button class="btn block" data-usea="frenzy" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.bonus?' disabled style="opacity:.5"':''}>🩸 Frenzy Attack<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':'A melee attack as your bonus action'}</small></button>`;
       if(isBerserker(c,14)) body+=`<button class="btn block" data-usea="retaliate" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.reaction?' disabled style="opacity:.5"':''}>🩸 Retaliation<small style="display:block;opacity:.75">${c.battle&&c.battle.reaction?'Reaction already used':'Reaction — a melee attack against this adjacent foe'}</small></button>`;
+      if(c.cls==='Monk' && (Number(c.level)||1)>=2) body+=`<button class="btn block" data-usea="flurry" style="margin-bottom:8px;text-align:left"${(c.battle&&c.battle.bonus)||(c.kiLeft||0)<=0?' disabled style="opacity:.5"':''}>🥋 Flurry of Blows — 1 ki<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':(c.kiLeft||0)<=0?'No ki left':'Bonus action — two unarmed strikes'}</small></button>`;
+      if(isOpenHandMonk(c,17)) body+=`<button class="btn block" data-usea="quiveringpalm" style="margin-bottom:8px;text-align:left"${(c.kiLeft||0)<3?' disabled style="opacity:.5"':''}>🥋 Quivering Palm — 3 ki<small style="display:block;opacity:.75">${(c.kiLeft||0)<3?'Needs 3 ki':'Unarmed strike; set vibrations on a hit'}</small></button>`;
+      if(isOpenHandMonk(c,17) && mo.quiveringPalmBy) body+=`<button class="btn block" data-usea="quiveringtrigger" style="margin-bottom:8px;text-align:left">💀 Trigger Quivering Palm<small style="display:block;opacity:.75">Action — force its Constitution save</small></button>`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='study'){
@@ -7847,7 +7942,7 @@ function openAdjacentUseUI(c, s, me){
       if(!res || !res.ok || res.atkTotal==null){ afterManeuver(); return; }   // no roll happened (e.g. blocked by range/no action) — nothing to show
       draw({kind:'maneuverResult', label, res});
     };
-    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='confirmRoll'?pick.backTo:pick&&pick.kind==='study'?{kind:'foe',mo:pick.mo}:null); }
+    { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='confirmRoll'?pick.backTo:pick&&(pick.kind==='study'||pick.kind==='flurryTechnique')?{kind:'foe',mo:pick.mo}:null); }
     { const upl=$('#usePreserveLife'); if(upl) upl.onclick=()=>{
       if((c.channelDivinityLeft||0)<=0){ flashBanner('No Channel Divinity uses left — rest to recharge'); return; }
       if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
@@ -8066,6 +8161,21 @@ function openAdjacentUseUI(c, s, me){
             return null;
           }});
         }
+        else if(actId==='flurry'){
+          if(isOpenHandMonk(c,3)) draw({kind:'flurryTechnique', mo});
+          else draw({kind:'confirmRoll', desc:'Flurry of Blows — two unarmed strikes on '+esc(mo.name)+'. Bonus action, 1 ki.', skillLabel:'Unarmed Strike', backTo:pick, run:()=>{ flurryOfBlows(ad, me, mo, null, log); return null; }});
+        }
+        else if(actId==='quiveringpalm'){
+          draw({kind:'confirmRoll', desc:'Quivering Palm — an unarmed strike on '+esc(mo.name)+'. 3 ki spent only on a hit.', skillLabel:'Unarmed Strike', backTo:pick, run:()=>{ quiveringPalmStrike(ad, me, mo, log); return null; }});
+        }
+        else if(actId==='quiveringtrigger'){
+          draw({kind:'confirmRoll', desc:'Trigger Quivering Palm on '+esc(mo.name)+' — forces a Constitution save.', skillLabel:'Quivering Palm', backTo:pick, run:()=>{ quiveringPalmTrigger(ad, c, mo, log); return null; }});
+        }
+        return;
+      }
+      if(pick&&pick.kind==='flurryTechnique'){
+        const mo=pick.mo;
+        draw({kind:'confirmRoll', desc:'Flurry of Blows on '+esc(mo.name)+' — '+(actId==='prone'?'a hit forces a Dex save or Prone.':actId==='push'?'a hit forces a Str save or a 15 ft push.':actId==='noreact'?'a hit denies its next reaction.':'no Open Hand effect.')+' Bonus action, 1 ki.', skillLabel:'Unarmed Strike', backTo:{kind:'foe',mo}, run:()=>{ flurryOfBlows(ad, me, mo, actId==='none'?null:actId, log); return null; }});
         return;
       }
       if(c.battle&&!hasAction(c)){ flashBanner('No Action left this turn'); return; }
@@ -9553,10 +9663,15 @@ function qbPcAttacks(c){ if(c.wildShape) return wildShapeAttacks(c); const out=[
   // Alter Self's "natural weapons" option (PHB): unarmed strikes deal 1d6 and count as
   // magical — a real damage bump over the flat 1+STR fallback below, not just cosmetic.
   if(hasNaturalWeapons(c)) out.push({name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing', tiles:1, melee:true});
+  if(c.cls==='Monk') out.push(martialArtsUnarmedAtk(c));
   if(!out.length) out.push({name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
   return out;
 }
 function hasNaturalWeapons(c){ return !!(c&&(c.effects||[]).some(e=>e.name==='Alter Self')); }
+// Martial Arts (Monk 1st): DEX (if better) instead of STR, and the scaling martial arts die
+// instead of a flat 1+mod — shared by qbPcAttacks and playerAttackMenu so both list the exact
+// same option, same as wildShapeAttacks is shared for Wild Shape.
+function martialArtsUnarmedAtk(c){ const m=Math.max(mod(abil(c,'str')),mod(abil(c,'dex'))); return {name:'Unarmed Strike', toHit:m+profBonus(c), dmg:'1d'+martialArtsDie(c)+sgn(m), dt:'bludgeoning', tiles:1, melee:true}; }
 function qbInRange(att, tgt, atk){ if(!inBlast(att.x,att.y,tgt.x,tgt.y,atk.tiles||1)) return false; if((atk.tiles||1)>1) return losClear(QB,att.x,att.y,tgt.x,tgt.y); return true; }
 function qbEnemiesAlive(){ return QB.monsters.some(isHostile); }   // allies / dominated don't keep the fight going
 const DOMINATE_SPELLS=new Set(['Dominate Beast','Dominate Person','Dominate Monster']);
@@ -10479,6 +10594,79 @@ function maneuverShove(ad, pcUnit, mo, mode, log){
   sfx('hit');
   return Object.assign({ok:true, success:true}, rollInfo);
 }
+// Open Hand Technique (3rd): on a Flurry of Blows hit, impose ONE chosen effect. Each has its
+// own save ability (PHB is explicit these differ: Dex for prone, Str for the push; "can't take
+// reactions" has no save at all) against the monk's ki save DC. The "no reactions" option reuses
+// the exact idiom Shocking Grasp's own "No Reactions" condition already established elsewhere
+// in this file (`mo.reactionUsed=true` directly denies its NEXT reaction — same shape, not a
+// new mechanism) rather than inventing a separate tracked condition.
+function openHandTechnique(ad, pcUnit, mo, technique, log){
+  const c=ad.checkSubject(pcUnit), dc=kiDC(c), name=ad.name(pcUnit), moName=ad.name(mo);
+  if(technique==='prone'){
+    const roll=rnd(20)+(ad.saveBonus?ad.saveBonus(mo,'dex'):0);
+    if(roll<dc){ ad.addCond(mo,'Prone'); log('🥋 Open Hand Technique — '+moName+' fails a Dex save (DC '+dc+', rolled '+roll+') and is knocked Prone'); flashBanner(moName+' is knocked Prone!'); }
+    else { log('🥋 Open Hand Technique — '+moName+' resists (Dex '+roll+' vs DC '+dc+')'); flashBanner(moName+' resists the push'); }
+  } else if(technique==='push'){
+    const roll=rnd(20)+(ad.saveBonus?ad.saveBonus(mo,'str'):0);
+    if(roll<dc){
+      const dx=Math.sign(mo.x-pcUnit.x)||0, dy=Math.sign(mo.y-pcUnit.y)||0;
+      for(let i=0;i<3;i++){ const nx=mo.x+dx, ny=mo.y+dy; if(!tileClearFor({map:ad.map()},nx,ny)) break; ad.moveUnit(mo,nx,ny); }
+      log('🥋 Open Hand Technique — '+moName+' fails a Str save (DC '+dc+', rolled '+roll+') and is pushed back'); flashBanner(moName+' is pushed away!');
+    } else { log('🥋 Open Hand Technique — '+moName+' resists (Str '+roll+' vs DC '+dc+')'); flashBanner(moName+' resists the push'); }
+  } else if(technique==='noreact'){
+    mo.reactionUsed=true;
+    log('🥋 Open Hand Technique — '+moName+" can't take reactions until the end of your next turn");
+    flashBanner(moName+" can't take reactions!");
+  }
+}
+function flurryOfBlows(ad, pcUnit, mo, technique, log){
+  const c=ad.checkSubject(pcUnit);
+  if(gridDist(pcUnit.x,pcUnit.y,mo.x,mo.y)>1){ flashBanner('Too far — must be adjacent'); return {ok:false}; }
+  if(c.battle && c.battle.bonus){ flashBanner('Bonus action already used'); return {ok:false}; }
+  if(c.kiLeft==null) c.kiLeft=kiMax(c);
+  if((c.kiLeft||0)<=0){ flashBanner('No ki points left — rest to recharge'); return {ok:false}; }
+  if(c.battle) c.battle.bonus=true;
+  c.kiLeft--;
+  const atk=martialArtsUnarmedAtk(c), name=ad.name(pcUnit), moName=ad.name(mo);
+  let anyHit=false;
+  for(let i=0;i<2;i++){
+    const ev=Engine.attack(ad, pcUnit.id, mo.id, {name:'Flurry of Blows', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:1});
+    if(ev.hit){ anyHit=true; log('🥋 '+name+' Flurry of Blows hits '+moName+' for '+ev.dmg); }
+    else log('🥋 '+name+' Flurry of Blows misses '+moName);
+  }
+  if(anyHit && technique && isOpenHandMonk(c,3)) openHandTechnique(ad, pcUnit, mo, technique, log);
+  flashBanner(anyHit?'🥋 Flurry of Blows connects!':'🥋 Flurry of Blows — both attacks miss');
+  return {ok:true, anyHit};
+}
+// Quivering Palm (17th): 3 ki on an unarmed-strike hit starts the vibrations (tracked as
+// `mo.quiveringPalmBy` — this app has no multi-day out-of-combat clock, so "within your next
+// `level` days" is approximated as "until you end it or start a new one," matching how
+// Intimidating Presence's 24-hour window is already approximated as encounter-length).
+function quiveringPalmStrike(ad, pcUnit, mo, log){
+  const c=ad.checkSubject(pcUnit);
+  if(gridDist(pcUnit.x,pcUnit.y,mo.x,mo.y)>1){ flashBanner('Too far — must be adjacent'); return {ok:false}; }
+  if(c.kiLeft==null) c.kiLeft=kiMax(c);
+  if((c.kiLeft||0)<3){ flashBanner('Needs 3 ki points'); return {ok:false}; }
+  const atk=martialArtsUnarmedAtk(c), name=ad.name(pcUnit), moName=ad.name(mo);
+  const ev=Engine.attack(ad, pcUnit.id, mo.id, {name:'Quivering Palm ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:1});
+  if(!ev.hit){ flashBanner('Quivering Palm — the strike misses, no ki spent'); log('🥋 '+name+' attempts Quivering Palm on '+moName+' — misses'); return {ok:true, hit:false}; }
+  c.kiLeft-=3;
+  mo.quiveringPalmBy=pcUnit.id;
+  log('🥋 '+name+' hits '+moName+' for '+ev.dmg+' — Quivering Palm set, can be triggered any time before a long rest');
+  flashBanner('🥋 Quivering Palm set on '+moName);
+  return {ok:true, hit:true};
+}
+function quiveringPalmTrigger(ad, c, mo, log){
+  const dc=kiDC(c);
+  const roll=rnd(20)+(ad.saveBonus?ad.saveBonus(mo,'con'):0);
+  mo.quiveringPalmBy=null;
+  if(roll<dc){ ad.hurt(mo, mo.hp?mo.hp:9999); log('🥋 Quivering Palm triggered — '+ad.name(mo)+' fails a Con save (DC '+dc+') and drops to 0 HP'); flashBanner('💀 Quivering Palm — '+ad.name(mo)+' drops to 0 HP'); return {ok:true, killed:true}; }
+  const r=rollNotation('10d10')||{total:0,detail:''};
+  ad.hurt(mo, r.total);
+  log('🥋 Quivering Palm triggered — '+ad.name(mo)+' saves (Con '+roll+' vs DC '+dc+') and takes '+r.total+' necrotic ('+r.detail+')');
+  flashBanner('🥋 Quivering Palm — '+r.total+' necrotic damage');
+  return {ok:true, killed:false, dmg:r.total};
+}
 // Grapple (PHB): Athletics vs Athletics/Acrobatics; success applies Grappled (speed 0 —
 // already handled generically by speedBlocked()). Tracks who grappled whom (mo.grappledBy)
 // so Escape Grapple knows which side to contest against — this project doesn't otherwise
@@ -11177,7 +11365,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.191';
+const APP_VERSION='v120.192';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
