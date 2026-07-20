@@ -1337,3 +1337,68 @@ progression, Bonus Proficiencies' one-shot choice-spec gating, and `cuttingWords
 against BOTH candidate shapes (QB's `.c`-bearing wrapper and DM-hosted's `.c`-less mirror entry)
 covering not-armed, range-gating, and the actual roll-reduction/resource-spend/disarm sequence
 for each.
+
+## Life Domain — fourth subclass, and Channel Divinity's resource pool (v120.190)
+
+Fourth entry in `SUBCLASS_FEATURES`. Like Bardic Inspiration before it, **Channel Divinity**
+itself (Cleric, 2nd level) had only ever been flavor text in `CLASS_FEATURES` — mechanized here
+because Preserve Life spends a use of it: `channelDivinityMax(c)` is the real PHB progression (1
+use, 2 at 6th, 3 at 18th), refilling on short OR long rest (`spendHitDie` and the `#restBtn`
+long-rest handler both reset `c.channelDivinityLeft`, matching every other per-rest resource
+pool this session).
+
+Verified real 2014 PHB mechanics via WebFetch (`dnd5e.wikidot.com/cleric:life`) before building,
+including a targeted follow-up fetch after the first search result blurred Disciple of Life and
+Blessed Healer together — they're genuinely different triggers/beneficiaries (target vs. caster).
+
+This app's healing has never had an auto-apply-to-target pipeline the way `Engine.attack` exists
+for damage — every healing spell shows a rolled dice notation (`m.heal`, from
+`parseSpellMechanics`) in `castModal` and is applied manually via the existing Heal button. Four
+of the five Life Domain features hook into that same notation/rider surface rather than inventing
+new plumbing:
+
+- **Disciple of Life (1st)**: a 1st-level-or-higher healing spell's target gets `+2 + spell
+  level` extra HP, baked directly into `m.heal`'s notation string in `castModal` — the exact same
+  technique the app already used for Cure Wounds' "+ spell mod" (line ~2794); this reuses the
+  spell's base level, not a live-upcast level, since the modal doesn't re-render when the cast-at
+  slot dropdown changes (same limitation that existing spell-mod bonus already has).
+- **Channel Divinity: Preserve Life (2nd)**: the first *real* HP-distribution feature in this
+  app (Lay on Hands, structurally identical, has only ever been flavor text) — a new Use-menu
+  action, gated `isLifeCleric(c,2)` and a `channelDivinityLeft` use. Opens a picker of targets
+  within 30 ft (self always; other connected party members too in player-net — Quick Battle is
+  solo, so self is the only real target there, the same limitation Stabilize already documents).
+  Each tap gives a target the maximum the rules allow rather than an arbitrary typed amount — no
+  numeric-input UI exists anywhere else in this app's Use menu, so this stays consistent with
+  every other one-tap maneuver instead of adding the first free-text amount field. The capping
+  math is its own pure, tested function, `preserveLifeAmount(pool, hpMax, healedSoFar)`. Healing
+  a DIFFERENT connected player needs a network round-trip — the caster's device can't mutate
+  another player's real character — and reuses the **existing generic `'apply'` message**
+  (already used for DM-driven HP deltas) rather than inventing a new one: the DM relays
+  `{t:'apply', delta}` to the target's device, which applies it and resyncs via `playerHello()`,
+  identical to how Stabilize's `'stabilize'`→`'stabilized'` round-trip already works.
+- **Blessed Healer (6th)**: shown as its own info card in `castModal` (not merged into `m.heal`,
+  since that number is the *target's* healing, not the caster's) telling the player they also
+  regain `2 + spell level` HP if the spell healed someone else — applied manually via the Heal
+  button like everything else in this feature. This app's healing modal has no target-tracking at
+  all (see above), so the "someone else" condition can't be mechanically enforced; documented as
+  a real, honest simplification rather than silently building fake enforcement.
+- **Divine Strike (8th)**: a new once-per-turn `afDivStrike` checkbox in `attackFlow`'s damage
+  step, the exact same rider slot Sneak Attack/Divine Smite already occupy — 1d8 radiant (2d8 at
+  14th) on a weapon hit, resets every turn via `freshTurnState`'s new `divineStrikeUsed` flag.
+- **Supreme Healing (17th)**: every die in a healing spell's notation is maximized instead of
+  rolled. New pure helper `maxNotation(notation)` (mirrors `rollNotation`'s dice-parsing but sums
+  each die's max face instead of rolling) replaces `m.heal` with its already-maximized flat total
+  in `castModal` — the auto-roll button then just returns that fixed number, and manual entry
+  still works exactly as before.
+
+Tests: 12 new assertions — `isLifeCleric` gating, `channelDivinityMax`'s 1/2/3-use progression,
+`preserveLifePool`'s 5×level math, `preserveLifeAmount`'s three caps (pool remaining, half max
+HP, already-given-this-casting), and `maxNotation` against both a dice+flat notation and a bare
+flat number. Disciple of Life/Blessed Healer/Divine Strike/Supreme Healing themselves are baked
+into `castModal`/`attackFlow` — UI-embedded like the pre-existing Sneak Attack/Divine Smite
+riders, which this app has never unit-tested either (no DOM-inspectable harness for those modals);
+only the pure helpers extracted for them are covered here, consistent with that existing boundary.
+
+Playwright wasn't available to spot-check any of this live in a real browser this pass (the MCP
+server disconnected mid-session, same as every subclass since Echo Knight) — noting this honestly
+rather than claiming a check that didn't happen.

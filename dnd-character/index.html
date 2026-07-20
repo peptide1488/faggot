@@ -625,6 +625,13 @@ const SUBCLASS_FEATURES = {
     [6,'Additional Magical Secrets','Learn two spells of your choice from any class.'],
     [14,'Peerless Skill','Expend a Bardic Inspiration use to add a rolled die to one of your own ability checks.'],
   ],
+  'Life':[
+    [1,'Disciple of Life','Whenever you cast a 1st-level-or-higher spell that restores hit points, its target regains extra HP equal to 2 + the spell\'s level.'],
+    [2,'Channel Divinity: Preserve Life','Action: distribute HP equal to 5 × your cleric level among creatures within 30 ft (yourself included), up to half a creature\'s HP maximum each.'],
+    [6,'Blessed Healer','When you cast a spell that restores hit points to someone else, you also regain HP equal to 2 + the spell\'s level.'],
+    [8,'Divine Strike','Once per turn, one weapon hit deals an extra 1d8 radiant damage (2d8 at 14th level).'],
+    [17,'Supreme Healing','Instead of rolling any dice for a spell you cast to restore hit points, use the highest number possible for each die.'],
+  ],
 };
 const RACE_TRAITS = {
 Dwarf:[['Darkvision','See 60 ft in dim light.'],['Dwarven Resilience','Advantage vs poison; poison resistance.'],['Stonecunning','Expertise on stonework History.'],['Speed 25','Not reduced by heavy armor.']],
@@ -851,6 +858,15 @@ function hasActionSurge(c){ return c && c.cls==='Fighter' && (Number(c.level)||1
 function isEchoKnight(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Echo Knight' && (Number(c.level)||1)>=(lvl||3)); }
 function isBerserker(c,lvl){ return !!(c && c.cls==='Barbarian' && c.subclass==='Path of the Berserker' && (Number(c.level)||1)>=(lvl||3)); }
 function isLoreBard(c,lvl){ return !!(c && c.cls==='Bard' && c.subclass==='College of Lore' && (Number(c.level)||1)>=(lvl||3)); }
+function isLifeCleric(c,lvl){ return !!(c && c.cls==='Cleric' && c.subclass==='Life' && (Number(c.level)||1)>=(lvl||1)); }
+// Channel Divinity's own resource pool — like Bardic Inspiration, a BASE class feature
+// (Cleric, 2nd level) that had only ever been flavor text before this — 1 use, 2 at 6th,
+// 3 at 18th (PHB), refills on short OR long rest.
+function channelDivinityMax(c){ const l=Number(c.level)||1; return l>=18?3:l>=6?2:1; }
+function preserveLifePool(c){ return 5*(Number(c.level)||1); }
+// How much of the pool a single tap gives one target: capped at half its max HP (minus
+// whatever it's already been given this same casting) and at whatever's left in the pool.
+function preserveLifeAmount(pool, hpMax, healedSoFar){ return Math.max(0, Math.min(pool, Math.floor(hpMax/2)-(healedSoFar||0))); }
 // Bardic Inspiration's own resource pool (the base Bard class feature, never mechanized in
 // this app before now — CLASS_FEATURES only ever had flavor text for it) — built here because
 // College of Lore's Cutting Words/Peerless Skill both spend a use of it directly for an
@@ -894,7 +910,7 @@ function setEquipped(c, idx, on){
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 // THE per-turn resource reset, shared by every mode (solo battle, quick battle,
 // net play). Add new per-turn flags HERE and nowhere else.
-function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
+function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
 function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); }
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c));
   if(isEchoKnight(c,18) && (c.echoIncarnationLeft||0)<=0) c.echoIncarnationLeft=1;   // Legion of One (18th)
@@ -1364,6 +1380,8 @@ function attackFlow(c, atk){
   const canSneak=(c.cls==='Rogue') && !atk.spell && (!wref || wref.type==='ranged' || /finesse/.test(wref.props||''));
   const smiteLvls=(c.cls==='Paladin' && (Number(c.level)||1)>=2 && !atk.spell && (!wref || wref.type==='melee'))
     ? [1,2,3,4,5].filter(l=>{ const t=spellSlots(c)[l]||0; return t-Math.min(t,(c.slots[l]&&c.slots[l].used)||0)>0; }) : [];
+  const divineStrikeDice=(Number(c.level)||1)>=14?2:1;
+  const canDivineStrike=isLifeCleric(c,8) && !atk.spell;
   const close=()=>{ $('#modalRoot').innerHTML=''; };
   function rollToHit(face){
     if(c.battle && atk.offhand){
@@ -1418,7 +1436,10 @@ function attackFlow(c, atk){
         if(r){ total+=r.total; detail+=' · sneak '+r.detail; if(c.battle){ c.battle.sneakUsed=true; } logChange(c,'🗡️ Sneak Attack +'+r.total); } }
       const sm=document.getElementById('afSmite');
       if(sm && sm.value){ const l=Number(sm.value), dice=Math.min(5,1+l)*(st.crit?2:1); const r=rollNotation(dice+'d8');
-        if(r){ total+=r.total; detail+=' · smite '+r.detail; if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1); logChange(c,'⚡ Divine Smite (L'+l+' slot) +'+r.total); } } }
+        if(r){ total+=r.total; detail+=' · smite '+r.detail; if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1); logChange(c,'⚡ Divine Smite (L'+l+' slot) +'+r.total); } }
+      const ds=document.getElementById('afDivStrike');
+      if(ds && ds.checked && !(c.battle&&c.battle.divineStrikeUsed)){ const dice=st.crit?divineStrikeDice*2:divineStrikeDice; const r=rollNotation(dice+'d8');
+        if(r){ total+=r.total; detail+=' · divine strike '+r.detail; if(c.battle){ c.battle.divineStrikeUsed=true; } logChange(c,'✝️ Divine Strike +'+r.total); } } }
     st.dmgTotal=total; st.phase='done'; sfx(atk.heal?'heal':'damage'); attackFx(atk.heal?'heal':(st.crit?'crit':'hit'));
     pushRoll({label:atk.name+' damage'+(st.crit?' (CRIT)':''), total, detail, kind:'dmg', notation});
     if(net&&net.role==='player'&&net.targetMon&&net.conn){ try{ net.conn.send({t:'attack', mon:net.targetMon.id, who:c.name, hit:true, dmg:total, dtype:atk.dt||atk.dtype||''}); }catch(e){} }
@@ -1444,6 +1465,7 @@ function attackFlow(c, atk){
         ${atk.vers?`<label class="pill" style="cursor:pointer;margin-bottom:8px"><input type="checkbox" id="af2h" ${st.twoH?'checked':''}> Two-handed (${esc(atk.vers)})</label>`:''}
         ${(canSneak && st.hit!==false && !(c.battle&&c.battle.sneakUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afSneak"> 🗡️ Sneak Attack +${sneakDice}d6 <span class="muted" style="font-size:11px">(once/turn; needs advantage or an adjacent ally)</span></label>`:''}
         ${smiteLvls.length?`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚡ Divine Smite</span><select id="afSmite" style="flex:1"><option value="">— no smite —</option>${smiteLvls.map(l=>`<option value="${l}">L${l} slot — +${Math.min(5,1+l)}d8 radiant</option>`).join('')}</select></div>`:''}
+        ${(canDivineStrike && st.hit!==false && !(c.battle&&c.battle.divineStrikeUsed))?`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afDivStrike"> ✝️ Divine Strike +${divineStrikeDice}d8 radiant <span class="muted" style="font-size:11px">(once/turn)</span></label>`:''}
         <p class="muted" style="font-size:13px">Damage: <b>${esc((st.twoH&&atk.vers)?atk.vers:atk.dmg)} ${esc(atk.dt||'')}</b>${st.crit?' ×2 dice':''}</p>
         ${st.mode==='manual'
           ? `<div class="addrow"><input id="afDmgMan" type="number" placeholder="enter total"><button class="btn" id="afDmgUse">Use</button></div>`
@@ -2787,6 +2809,13 @@ function castModal(c, name, baseLevel){
   const dc=8+profBonus(c)+mod(abil(c,c.spellAbility)), atkB=profBonus(c)+mod(abil(c,c.spellAbility));
   // healing spells that add your spellcasting modifier (e.g. Cure Wounds "1d8 + spell mod")
   if(m.heal && /\bmod\b/i.test(SPELL_DESC[name]||'')){ const sm=mod(abil(c,c.spellAbility)); if(sm) m.heal+=sgn(sm); }
+  // Disciple of Life (Life Domain, 1st): a 1st-level-or-higher healing spell heals its target
+  // for an extra 2 + the spell's level. Baked into the shown/rolled notation the same way the
+  // existing spell-mod bonus above already is (this app doesn't re-render on slot-level change,
+  // so — like that bonus — this uses the spell's base level, not a live-upcast level).
+  if(m.heal && baseLevel>0 && isLifeCleric(c,1)) m.heal+='+'+(2+baseLevel);
+  // Supreme Healing (17th): every die in the healing notation is maximized, not rolled.
+  if(m.heal && isLifeCleric(c,17)) m.heal=String(maxNotation(m.heal));
   const slots=spellSlots(c); let lvlOpts='';
   if(baseLevel>0){ for(let l=baseLevel;l<=9;l++){ const tot=slots[l]||0; if(tot){ const used=Math.min(tot,(c.slots[l]&&c.slots[l].used)||0), avail=tot-used; lvlOpts+=`<option value="${l}" ${avail<=0?'disabled':''}>Level ${l} — ${avail}/${tot} left</option>`; } } }
   const eff=SPELL_EFFECTS[name];
@@ -2810,6 +2839,8 @@ function castModal(c, name, baseLevel){
       <p class="muted" style="font-size:11.5px;margin:6px 0 0">Targets that fail are affected; check the description for half-damage-on-success.</p></div>`:(m.attack?`<p class="muted" style="font-size:11.5px;margin:0 0 10px">No save — you make the attack roll above; on a hit, deal the damage.</p>`:'')}
     ${eff?`<div class="card" style="margin:0 0 10px;background:rgba(77,106,44,.10)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">✨ Applied to you on cast</div>
       <div class="nm"><b>${esc(name)}</b><small>${[modSummary(eff.mods), fmtDuration(eff.rounds), eff.conc?'concentration':''].filter(Boolean).join(' · ')||'tracked'}</small></div></div>`:''}
+    ${(m.heal && baseLevel>0 && isLifeCleric(c,6))?`<div class="card" style="margin:0 0 10px;background:rgba(77,106,44,.10)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">✝️ Blessed Healer</div>
+      <p class="muted" style="font-size:12.5px;margin:0">If this heals someone other than you, you also regain <b>${2+baseLevel} HP</b> — apply it to yourself with the Heal button.</p></div>`:''}
     ${SPELL_LIGHTS[name]&&!SPELL_LIGHTS[name].grantDarkvision?`<div class="card" style="margin:0 0 10px;background:rgba(212,178,42,.12)"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">💡 Map light</div>
       <p class="muted" style="font-size:12.5px;margin:0">${SPELL_LIGHTS[name].dark
         ? 'Creates magical darkness ('+(SPELL_LIGHTS[name].dark*5)+' ft). Blocks darkvision.'
@@ -3110,6 +3141,11 @@ function rollCheck(label, bonus, mode){
   const btxt = bonus? (bonus>0?' +'+bonus:' −'+Math.abs(bonus)) : '';
   const detail = `d20${mode==='adv'?' adv':mode==='dis'?' dis':''} ${dropped!=null?`(<s>${dropped}</s> ${kept})`:`(${kept})`}${btxt}`;
   pushRoll({label, total, detail, crit, kind:'check', bonus});
+}
+function maxNotation(notation){   // Supreme Healing (Life Domain 17th): every healing die is maximized instead of rolled
+  const {terms,flat}=parseDice(notation);
+  let total=flat; terms.forEach(t=>{ total+=t.n*t.sides*t.sign; });
+  return total;
 }
 function rollDmg(label, notation){
   const res=rollNotation(notation); if(!res) return;
@@ -3463,6 +3499,7 @@ function spendHitDie(c){
   if(isEchoKnight(c,7)) c.echoAvatarUsed=false;      // Echo Avatar: short or long rest
   if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;   // Shadow Martyr: short or long rest
   if(isLoreBard(c) && (Number(c.level)||1)>=5) c.bardicInspLeft=bardicInspMax(c);   // Font of Inspiration (5th): short rest too
+  if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: short or long rest
   logChange(c, 'Short rest: spent a Hit Die, +'+res.total+' HP');
   save();
   pushRoll({label:'Hit die heal', total:res.total, detail:res.detail, kind:'dmg', notation:note});
@@ -4578,6 +4615,7 @@ function renderSpells(c){
     if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;
     if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
     if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
+    if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
     logChange(c, 'Long rest — HP, slots & hit dice restored');
     save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
@@ -5389,6 +5427,11 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   // maneuverStabilize) and only needs the DM to relay the result to the target's own device,
   // since that's the only device whose c.stable/death fields are real.
   else if(d.t==='stabilize'){ dmSend(d.targetId,{t:'stabilized'}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' stabilizes an ally'); }
+  // Channel Divinity: Preserve Life healing ANOTHER connected player — same "can't mutate
+  // another player's real character from here" reason as Stabilize above; relayed through the
+  // existing generic 'apply' message (already used for DM-driven HP deltas) so the target's own
+  // device applies it and resyncs itself via playerHello().
+  else if(d.t==='preserveLifeApply'){ dmSend(d.targetId,{t:'apply', delta:d.amount}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' channels Preserve Life for '+d.amount+' HP'); }
   // A DM-controlled monster's Shove/Grapple against a connected player (see dmMonsterAttack) —
   // the targeted player's own device rolled its real Athletics/Acrobatics and applied the
   // effect to itself already (conditions sync back via the normal hello/moncond-style resync,
@@ -7456,6 +7499,12 @@ function openAdjacentUseUI(c, s, me){
   // Path of the Berserker — Intimidating Presence reaches 30 ft (6 tiles), unlike every other
   // maneuver here which is adjacency-only — a separate wider-range list, not folded into foes.
   const intimidateTargets = mode && isBerserker(c,10) ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=6 && !mo.intimidateImmune) : [];
+  // Channel Divinity: Preserve Life (Life Domain 2nd) — self + any connected party members
+  // within 30 ft (6 tiles). Quick Battle is solo (no second party member — same limitation
+  // Stabilize above already documents), so self is the only real target there.
+  if(mode && isLifeCleric(c,2) && c.channelDivinityLeft==null) c.channelDivinityLeft=channelDivinityMax(c);
+  const preserveLifeTargets = (mode && isLifeCleric(c,2)) ? [{self:true, id:'me', name:c.name, hpCur:c.hp.cur, hpMax:c.hp.max}]
+    .concat(mode==='player' ? (s.players||[]).filter(p=>p.id!==net.peer.id && gridDist(me.x,me.y,p.x,p.y)<=6).map(p=>({self:false, id:p.id, name:p.name, hpCur:p.hpCur, hpMax:p.hpMax})) : []) : [];
   const grappled=!!mode && !!(c.conditions&&c.conditions.Grappled);
   const canHide=!!mode && !(c.conditions&&c.conditions.Hidden); // maneuverHide itself checks cover/darkness and bails with a banner if ineligible
   // Stabilize only ever makes sense against ANOTHER party member at 0 HP — Quick Battle has
@@ -7497,6 +7546,7 @@ function openAdjacentUseUI(c, s, me){
       if(canManifestEcho) body+=`<button class="btn block" id="useManifestEcho" style="margin-bottom:8px;text-align:left">👤 Manifest Echo<small style="display:block;opacity:.75">${echo?'Replaces your current echo — ':''}Bonus action, within 15 ft</small></button>`;
       if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
       if(intimidateTargets.length) body+=`<button class="btn block" data-use="intimidate" style="margin-bottom:8px;text-align:left">😱 Intimidating Presence<small style="display:block;opacity:.75">Action — frighten a foe within 30 ft (Wis save)</small></button>`;
+      if(preserveLifeTargets.length && (c.channelDivinityLeft||0)>0) body+=`<button class="btn block" id="usePreserveLife" style="margin-bottom:8px;text-align:left">✝️ Channel Divinity: Preserve Life<small style="display:block;opacity:.75">Action — distribute ${preserveLifePool(c)} HP among creatures within 30 ft, ½ max HP cap each (${c.channelDivinityLeft} use${c.channelDivinityLeft===1?'':'s'} left)</small></button>`;
       if(mode && isLoreBard(c,3)) body+=`<button class="btn ${c.cuttingWordsArmed?'':'ghost'} block" id="useCuttingWords" style="margin-bottom:8px;text-align:left"${(c.bardicInspLeft||0)<=0?' disabled style="opacity:.5"':''}>🎵 ${c.cuttingWordsArmed?'Cutting Words — ARMED (tap to cancel)':'Ready Cutting Words'}<small style="display:block;opacity:.75">${(c.bardicInspLeft||0)<=0?'No Bardic Inspiration left — rest to recharge':'Reaction — reduce a monster attack roll within 60 ft ('+(c.bardicInspLeft||0)+' use'+((c.bardicInspLeft||0)===1?'':'s')+' left)'}</small></button>`;
       if(mode && isLoreBard(c,14) && (c.bardicInspLeft||0)>0) body+=`<button class="btn block" id="usePeerlessSkill" style="margin-bottom:8px;text-align:left">🎵 Peerless Skill<small style="display:block;opacity:.75">Add a Bardic Inspiration die to your next ability check (${c.bardicInspLeft} use${c.bardicInspLeft===1?'':'s'} left)</small></button>`;
       body+=items.map((it,i)=>{
@@ -7564,6 +7614,14 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn sm" data-intimtgt="${i}">Frighten</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='preserveLifePick'){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Preserve Life — <b>${pick.pool} HP</b> left to distribute. Tap a target to give it the max allowed (½ its max HP).</p>`;
+      body+=preserveLifeTargets.map((t,i)=>{
+        const amt=preserveLifeAmount(pick.pool, t.hpMax, pick.healed[i]);
+        return `<div class="spell"><div class="nm"><b>${esc(t.name)}</b><small>${t.hpCur+pick.healed[i]}/${t.hpMax} HP</small></div>
+          <button class="btn sm" data-pltgt="${i}" ${amt<=0?'disabled style="opacity:.5"':''}>+${amt} HP</button></div>`;
+      }).join('');
+      body+=`<button class="btn block" id="usePreserveLifeDone" style="margin-top:8px">Done</button>`;
     } else if(pick.kind==='servant'){
       // A direct reposition within 15 ft (3 tiles), blocked by tileClearFor — simplified from
       // RAW pathfinding, matching how a one-word mental command isn't really "movement" in the
@@ -7643,6 +7701,23 @@ function openAdjacentUseUI(c, s, me){
       draw({kind:'maneuverResult', label, res});
     };
     { const bk=$('#useBack'); if(bk) bk.onclick=()=>draw(pick&&pick.kind==='confirmRoll'?pick.backTo:pick&&pick.kind==='study'?{kind:'foe',mo:pick.mo}:null); }
+    { const upl=$('#usePreserveLife'); if(upl) upl.onclick=()=>{
+      if((c.channelDivinityLeft||0)<=0){ flashBanner('No Channel Divinity uses left — rest to recharge'); return; }
+      if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
+      if(c.battle) spendAction(c);
+      c.channelDivinityLeft--;
+      draw({kind:'preserveLifePick', pool:preserveLifePool(c), healed:preserveLifeTargets.map(()=>0)});
+    }; }
+    document.querySelectorAll('[data-pltgt]').forEach(b=>b.onclick=()=>{
+      const i=Number(b.dataset.pltgt), t=preserveLifeTargets[i]; if(!t) return;
+      const amt=preserveLifeAmount(pick.pool, t.hpMax, pick.healed[i]);
+      if(amt<=0) return;
+      pick.pool-=amt; pick.healed[i]+=amt;
+      if(t.self){ applyHp(c, amt); log('✝️ '+c.name+' channels Preserve Life — heals '+amt+' HP'); }
+      else { if(net.conn) try{ net.conn.send({t:'preserveLifeApply', targetId:t.id, amount:amt}); }catch(e){} log('✝️ '+c.name+' channels Preserve Life — sends '+amt+' HP to '+t.name); }
+      draw(pick);
+    });
+    { const upld=$('#usePreserveLifeDone'); if(upld) upld.onclick=afterManeuver; }
     { const ok=$('#useManeuverOk'); if(ok) ok.onclick=afterManeuver; }
     // Every maneuver used to roll the instant you tapped it — one click, no visible "this is
     // the moment of the roll" beat. Now every skill-based Use action routes through a confirm
@@ -10951,7 +11026,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.189';
+const APP_VERSION='v120.190';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

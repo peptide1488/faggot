@@ -1683,5 +1683,33 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setNet(null);
 }
 
+/* ---- Life Domain: Channel Divinity resource, Disciple of Life/Blessed Healer/Divine Strike/
+   Supreme Healing (baked into castModal's dice notation & rider checkboxes — UI-embedded like
+   Sneak Attack/Divine Smite, so only the pure helpers extracted for them are unit-tested here),
+   Preserve Life's pool math ---- */
+{
+  const lc=newCharacter('Shepherd'); lc.cls='Cleric'; lc.level=6; lc.subclass='Life';
+  T('isLifeCleric gates on class+subclass+level', isLifeCleric(lc,1)===true && isLifeCleric(lc,17)===false);
+  const notLc=newCharacter('Other'); notLc.cls='Cleric'; notLc.level=20; notLc.subclass='Knowledge';
+  T('a Knowledge cleric (even level 20) is never a Life cleric', isLifeCleric(notLc,1)===false);
+
+  T('channelDivinityMax is 1 use below 6th', channelDivinityMax(newCharacter('Lowbie'))===1);
+  T('channelDivinityMax is 2 uses at 6th', channelDivinityMax(lc)===2);
+  const lc18=newCharacter('Elder'); lc18.level=18;
+  T('channelDivinityMax is 3 uses at 18th', channelDivinityMax(lc18)===3);
+
+  T('preserveLifePool is 5 x cleric level', preserveLifePool(lc)===30);
+
+  // preserveLifeAmount: capped by the pool remaining, by half the target's max HP, and by
+  // whatever that target's already been given this same casting.
+  T('preserveLifeAmount caps at half the target\'s max HP', preserveLifeAmount(100, 20, 0)===10);
+  T('preserveLifeAmount caps at the pool remaining if smaller', preserveLifeAmount(4, 20, 0)===4);
+  T('preserveLifeAmount subtracts HP already given this casting', preserveLifeAmount(100, 20, 6)===4);
+  T('preserveLifeAmount never goes negative once a target is already at its half-max cap', preserveLifeAmount(100, 20, 10)===0);
+
+  T('maxNotation sums the maximum of every die (Supreme Healing)', maxNotation('3d8+5')===29);
+  T('maxNotation handles a flat number with no dice', maxNotation('23')===23);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
