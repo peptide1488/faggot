@@ -514,10 +514,18 @@ function attackAdvantage(aC, tC, melee, opts){
   if(T('Faerie Fire')){ adv++; why.push('target outlined by faerie fire'); }
   if(T('Dodge')){ adv--; why.push('target is dodging'); }   // Dodge action / Patient Defense — attack rolls against them have disadvantage
   if(T('Guided')){ adv++; why.push('target guided (Guiding Bolt)'); }
+  // Distracting Strike (Battle Master maneuver): target is Distracted — the next attack against
+  // it has advantage. This app's conditions are duration-based (not "consumed on first use"),
+  // same simplification every other timed condition here already gets — grants advantage for
+  // the condition's whole duration rather than exactly one attack.
+  if(T('Distracting Strike')){ adv++; why.push('target distracted (Distracting Strike)'); }
   if(A('True Strike')){ adv++; why.push('true strike'); }
   // Lighting: attacker in darkness without vision → disadvantage; target unseen in dark → adv for attacker if they can see (simplified)
   if(opts&&opts.armorDisadvantage){ adv--; why.push('not proficient with worn armor'); }
   if(opts&&opts.grapplerAdv){ adv++; why.push('you have grappled the target (Grappler)'); }
+  // Goading Attack (Battle Master maneuver): the goaded creature has disadvantage on attacks
+  // against anyone OTHER than whoever goaded it.
+  if(opts&&opts.goadedDisadv){ adv--; why.push('goaded — must focus the one who goaded you'); }
   if(opts&&opts.attackerVision!=null){
     if(opts.attackerVision===0){ adv--; why.push('fighting in darkness'); }
   }
@@ -927,6 +935,45 @@ function isEchoKnight(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='
 function isBerserker(c,lvl){ return !!(c && c.cls==='Barbarian' && c.subclass==='Path of the Berserker' && (Number(c.level)||1)>=(lvl||3)); }
 function isLoreBard(c,lvl){ return !!(c && c.cls==='Bard' && c.subclass==='College of Lore' && (Number(c.level)||1)>=(lvl||3)); }
 function isLifeCleric(c,lvl){ return !!(c && c.cls==='Cleric' && c.subclass==='Life' && (Number(c.level)||1)>=(lvl||1)); }
+// Battle Master (Fighter 3rd) / Martial Adept (feat): superiority dice pool. Die size scales
+// with Battle Master level (d8→d10 at 10th→d12 at 18th); Martial Adept's own die is always a
+// flat d6 (PHB) and is additive on top of Battle Master's own pool if a character somehow has
+// both (RAW is silent on stacking two sources of the same resource, but nothing forbids it —
+// same "additive, not exclusive" reading this app already gives Channel Divinity/Ki-adjacent
+// stacking elsewhere). Curated maneuver list (v1): Trip/Menacing/Goading/Distracting/Pushing —
+// all uniformly "on a hit, expend a die" riders (Precision Attack is a PRE-roll to-hit modifier,
+// a structurally different mechanic from every other rider in this system, and Disarming Attack
+// needs a dropped-weapon model this app doesn't have — both deferred, not built partially).
+function isBattleMaster(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Battle Master' && (Number(c.level)||1)>=(lvl||3)); }
+function superiorityDieSize(c){ const l=Number(c.level)||1; return isBattleMaster(c) ? (l>=18?12:l>=10?10:8) : 6; }
+function superiorityDiceMax(c){
+  let n=0;
+  if(isBattleMaster(c)){ const l=Number(c.level)||1; n+=l>=15?6:l>=7?5:4; }
+  if(hasFeat(c,'Martial Adept')) n+=1;
+  return n;
+}
+// Pushing Attack (Str save, pushed 15 ft) and Precision Attack (a PRE-roll to-hit modifier,
+// not a post-hit rider at all) both need context this function doesn't have — Pushing needs
+// the attacker's own grid position to compute a push direction, which applyAttackRiders was
+// never given (unlike maneuverShove, which runs from a full adapter+unit call site). Deferred
+// alongside Disarming Attack (no dropped-weapon model) rather than half-built against a
+// signature that can't support them; the other four don't need positional math at all.
+const MANEUVERS = {
+  trip:      {label:'Trip Attack',       cond:'Prone',      log:'🦶 Trip Attack'},
+  menacing:  {label:'Menacing Attack',   cond:'Frightened', log:'😨 Menacing Attack'},
+  goading:   {label:'Goading Attack',    cond:'Goaded',     log:'🎯 Goading Attack'},
+  distracting:{label:'Distracting Strike', cond:'Distracting Strike', save:false, log:'👉 Distracting Strike'},
+};
+// A monster's condition/goaded state isn't this device's to mutate authoritatively in
+// player-net (the DM's copy is real) — same "local echo, then tell the DM" pattern
+// playerNetAdapter's own hurt/moveUnit/addCond already use for exactly this reason, reused
+// here directly since applyAttackRiders has no adapter object to call through.
+function applyManeuverCond(targetMo, cond, rounds){
+  if(!targetMo || targetMo.hp==null) return;
+  targetMo.conds=targetMo.conds||[];
+  if(!targetMo.conds.some(x=>x.name===cond)) targetMo.conds.push({name:cond, rounds:rounds||10});
+  if(net && net.role==='player' && net.conn){ try{ net.conn.send({t:'moncond', mon:targetMo.id, cond, rounds:rounds||10}); }catch(e){} }
+}
 // Channel Divinity's own resource pool — like Bardic Inspiration, a BASE class feature
 // (Cleric, 2nd level) that had only ever been flavor text before this — 1 use, 2 at 6th,
 // 3 at 18th (PHB), refills on short OR long rest.
@@ -1819,6 +1866,7 @@ function riderChecksHTML(riders){
   if(riders.divineStrike) h+=`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afDivStrike"> ${riders.divineStrike.label} <span class="muted" style="font-size:11px">(once/turn)</span></label>`;
   if(riders.colossus) h+=`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afColossus"> ${riders.colossus.label} <span class="muted" style="font-size:11px">(once/turn — target below max HP)</span></label>`;
   if(riders.hurl) h+=`<label class="pill" style="cursor:pointer;margin-bottom:8px;display:flex"><input type="checkbox" id="afHurl"> ${riders.hurl.label} <span class="muted" style="font-size:11px">(once/long rest)</span></label>`;
+  if(riders.maneuver) h+=`<div class="addrow" style="margin:0 0 8px;align-items:center"><span class="muted" style="font-size:12px;flex:none">⚔️ Maneuver</span><select id="afManeuver" style="flex:1"><option value="">— no maneuver —</option>${Object.entries(riders.maneuver.options).map(([k,m])=>`<option value="${k}">${m.label} — +1d${riders.maneuver.die}</option>`).join('')}</select></div>`;
   return h;
 }
 // Class riders on weapon hits — Sneak Attack, Divine Smite, Divine Strike, Colossus Slayer,
@@ -1849,6 +1897,8 @@ function attackRiderOptions(c, atk, targetMo){
     out.colossus={dice:1, die:8, label:'🏹 Colossus Slayer +1d8'};
   if(isFiendWarlock(c,14) && !c.hurlThroughHellUsed && targetMo)
     out.hurl={label:'😈 Hurl Through Hell — 10d10 psychic unless a fiend'};
+  if(!atk.spell && (isBattleMaster(c)||hasFeat(c,'Martial Adept')) && (c.superiorityDiceLeft!=null?c.superiorityDiceLeft:superiorityDiceMax(c))>0)
+    out.maneuver={die:superiorityDieSize(c), options:MANEUVERS};
   return out;
 }
 // Rolls the riders the player chose and mutates c's resource fields exactly like the single
@@ -1867,6 +1917,32 @@ function applyAttackRiders(c, atk, targetMo, choices, isCrit, targetSurprised, l
     if(r){ total+=r.total; parts.push('divine strike '+r.detail); if(c.battle) c.battle.divineStrikeUsed=true; log('✝️ Divine Strike +'+r.total); } }
   if(choices.colossus && !(c.battle&&c.battle.colossusSlayerUsed)){ const dice=isCrit?2:1; const r=rollNotation(dice+'d8');
     if(r){ total+=r.total; parts.push('colossus slayer '+r.detail); if(c.battle) c.battle.colossusSlayerUsed=true; log('🏹 Colossus Slayer +'+r.total); } }
+  if(choices.maneuver && MANEUVERS[choices.maneuver]){
+    const left=(c.superiorityDiceLeft!=null?c.superiorityDiceLeft:superiorityDiceMax(c));
+    if(left>0){
+      const man=MANEUVERS[choices.maneuver], die=superiorityDieSize(c);
+      const r=rollNotation('1d'+die);
+      c.superiorityDiceLeft=left-1;
+      if(r){ total+=r.total; parts.push(man.label+' '+r.detail); }
+      if(man.save===false){
+        // Distracting Strike (PHB): no save — automatic. Next ally attack on this target has
+        // advantage before the end of your next turn.
+        applyManeuverCond(targetMo, man.cond, 10);
+        log(man.log+' +'+(r?r.total:0)+' — next ally attack on this target has advantage');
+      } else {
+        // Trip/Menacing/Goading (PHB): Str-or-Dex save (attacker's choice — this app auto-picks
+        // whichever the attacker is better at, same "no extra UI toggle" simplification Death
+        // Strike's own DC calc above already uses) or the maneuver's condition applies.
+        const dc=8+profBonus(c)+Math.max(mod(abil(c,'str')),mod(abil(c,'dex')));
+        const save=targetMo?rnd(20)+monsterSaveBonus(targetMo):20;
+        if(save<dc){
+          applyManeuverCond(targetMo, man.cond, 10);
+          if(man.cond==='Goaded' && targetMo) targetMo.goadedBy=c.name;
+          log(man.log+' +'+(r?r.total:0)+' — save '+save+' vs DC '+dc+' — '+man.cond+'!');
+        } else log(man.log+' +'+(r?r.total:0)+' — save '+save+' vs DC '+dc+' — resisted');
+      }
+    }
+  }
   if(choices.hurl){
     c.hurlThroughHellUsed=true;
     const isFiendTarget=targetMo && monsterIsFiend(targetMo);
@@ -1981,8 +2057,8 @@ function attackFlow(c, atk){
     if(st.powerAttack){ total+=10; detail+=' · power attack +10'; }
     // riders: chosen in the damage step, shared logic via applyAttackRiders (attackRiderOptions'
     // pair) so QB's openCombatRollModal gets byte-identical behavior from the same function.
-    { const sk=document.getElementById('afSneak'), sm=document.getElementById('afSmite'), ds=document.getElementById('afDivStrike'), cs=document.getElementById('afColossus'), hth=document.getElementById('afHurl');
-      const choices={sneak: sk&&sk.checked, smiteLevel: sm&&sm.value, divineStrike: ds&&ds.checked, colossus: cs&&cs.checked, hurl: hth&&hth.checked};
+    { const sk=document.getElementById('afSneak'), sm=document.getElementById('afSmite'), ds=document.getElementById('afDivStrike'), cs=document.getElementById('afColossus'), hth=document.getElementById('afHurl'), mv=document.getElementById('afManeuver');
+      const choices={sneak: sk&&sk.checked, smiteLevel: sm&&sm.value, divineStrike: ds&&ds.checked, colossus: cs&&cs.checked, hurl: hth&&hth.checked, maneuver: mv&&mv.value};
       const rr=applyAttackRiders(c, atk, targetMo, choices, st.crit, st.targetSurprised, m=>logChange(c,m));
       total+=rr.total; detail+=rr.detail;
       if(rr.doubled) total*=2;
@@ -4250,6 +4326,7 @@ function spendHitDie(c){
   if(hasFeat(c,'Inspiring Leader')) c.inspiringLeaderUsed=false;   // short or long rest
   if(isLoreBard(c) && (Number(c.level)||1)>=5) c.bardicInspLeft=bardicInspMax(c);   // Font of Inspiration (5th): short rest too
   if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: short or long rest
+  if(superiorityDiceMax(c)) c.superiorityDiceLeft=superiorityDiceMax(c);   // Battle Master/Martial Adept: short or long rest
   if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: short or long rest
   if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: short or long rest
   if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: short or long rest
@@ -5436,6 +5513,7 @@ function renderSpells(c){
     if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
     if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
     if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
+    if(superiorityDiceMax(c)) c.superiorityDiceLeft=superiorityDiceMax(c);   // Battle Master/Martial Adept: long rest too
     if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: long rest too
     if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: long rest too
     if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: long rest too
@@ -10329,7 +10407,11 @@ const Engine = {
     // stores the grappler's own display name (see maneuverGrapple's own comment on why a
     // name, not an id, is the only identifier meaningful across every adapter).
     const grapplerAdv=!!(armorSubj && t && t.grappledBy && hasFeat(armorSubj,'Grappler') && t.grappledBy===ad.name(a));
-    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv});
+    // Goading Attack (Battle Master maneuver): a.goadedBy stores the goader's own display name
+    // (same "name, not id" convention grappledBy already established) — disadvantage whenever
+    // the goaded creature (the ATTACKER here) targets anyone other than whoever goaded it.
+    const goadedDisadv=!!(a && a.goadedBy && t && a.goadedBy!==ad.name(t));
+    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv, goadedDisadv});
     const r=Engine.roll(atk.toHit, ac, face, cx.adv);
     if(cx.autoCrit && r.hit) r.crit=true;
     return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why}, r);
@@ -10939,8 +11021,8 @@ function openCombatRollModal(opts){
     // riderChecksHTML rendered in the hitResult phase. This is the QB half of the fix for the
     // "these features only ever worked in player-net mode" gap.
     if(opts.riders && opts.riderChar){
-      const sk=document.getElementById('afSneak'), sm=document.getElementById('afSmite'), ds=document.getElementById('afDivStrike'), cs=document.getElementById('afColossus'), hth=document.getElementById('afHurl');
-      const choices={sneak: sk&&sk.checked, smiteLevel: sm&&sm.value, divineStrike: ds&&ds.checked, colossus: cs&&cs.checked, hurl: hth&&hth.checked};
+      const sk=document.getElementById('afSneak'), sm=document.getElementById('afSmite'), ds=document.getElementById('afDivStrike'), cs=document.getElementById('afColossus'), hth=document.getElementById('afHurl'), mv=document.getElementById('afManeuver');
+      const choices={sneak: sk&&sk.checked, smiteLevel: sm&&sm.value, divineStrike: ds&&ds.checked, colossus: cs&&cs.checked, hurl: hth&&hth.checked, maneuver: mv&&mv.value};
       const rr=applyAttackRiders(opts.riderChar, opts.riderAtk, opts.riderTarget, choices, st.crit, opts.riderTargetSurprised, opts.riderLog||(()=>{}));
       total+=rr.total;
       if(rr.doubled) total*=2;
@@ -12293,7 +12375,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.205';
+const APP_VERSION='v120.206';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

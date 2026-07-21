@@ -2327,3 +2327,64 @@ map for just that assertion rather than mis-asserting a 1-tile result as correct
 Remaining "make the systems" backlog: Battle Master maneuvers/superiority dice (Martial Adept),
 then the mount system (Mounted Combatant — needs its own scoping pass first, biggest remaining
 item). Both queued next per `VISION.md`'s roadmap.
+
+## "Make the systems" (7): Battle Master maneuvers / Martial Adept (v120.206)
+
+Superiority dice + maneuvers, delivered entirely through the existing attack-rider pipeline
+(`attackRiderOptions`/`applyAttackRiders`, the same v120.199 system Sneak Attack/Divine Smite/
+Divine Strike/Colossus Slayer/Hurl Through Hell already share) — no new modal, no new UI
+surface beyond one more `<select>` alongside the existing smite-level dropdown.
+
+- **Superiority dice pool**: `superiorityDiceMax(c)` — Battle Master (4 at 3rd, 5 at 7th, 6 at
+  15th) + Martial Adept (flat +1), additive if a character somehow has both. `superiorityDieSize(c)`
+  — d8 at 3rd scaling to d10 (10th) / d12 (18th) for Battle Master, always d6 for Martial Adept
+  alone. `c.superiorityDiceLeft` resets on short OR long rest (`spendHitDie`/`#restBtn`), same
+  `channelDivinityLeft`/`kiLeft` convention.
+- **Curated v1 maneuver list — 4 of 6, by design**: Trip Attack (Str-or-Dex save or Prone),
+  Menacing Attack (save or Frightened), Goading Attack (save or disadvantage on the target's own
+  attacks against anyone but the goader), Distracting Strike (no save — next ally attack on the
+  target has advantage). All four are uniformly "on a hit, roll the die, add to damage, maybe
+  apply a condition" — the exact shape every existing rider already has.
+  - **Precision Attack deliberately excluded**: PHB has it modify the TO-HIT roll itself, before
+    the outcome is known — a structurally different mechanic from every other rider here (all of
+    which resolve strictly after a confirmed hit). Building it would mean a second delivery
+    system, not a 5th option on this one.
+  - **Pushing Attack deliberately excluded**: needs the attacker's own grid position to compute
+    a push direction, which `applyAttackRiders` was never given (unlike `maneuverShove`, which
+    runs from a full adapter+unit call site with real coordinates). Threading position through
+    would touch both call sites' signatures for one maneuver.
+  - **Disarming Attack deliberately excluded**: this app has no dropped-weapon model, same gap
+    that already blocked it in the original feat audit.
+  - All three noted here, not half-built.
+- **Goading Attack's disadvantage** is the one piece that needed new plumbing beyond "roll a die,
+  add damage, maybe add a condition": `targetMo.goadedBy` (same "store the display name, not an
+  id" convention `grappledBy` already established) is checked in `Engine.hitResult` itself — a
+  new `goadedDisadv` opt alongside `grapplerAdv`/`armorDisadvantage` — so a goaded creature gets
+  disadvantage on ITS OWN later attacks against anyone but the goader, correctly regardless of
+  which mode (QB/DM-hosted/player-net) that later attack happens in.
+- **Condition sync in player-net**: `applyManeuverCond` mutates the target's `.conds` locally
+  (correct/authoritative in QB and DM-hosted) and additionally sends the existing `'moncond'`
+  message when the caller is a connected player (`net.role==='player'`) — the same message
+  `playerNetAdapter.addCond` already sends for Shove/Grapple-sourced conditions, so the DM
+  receives and rebroadcasts it through the handler that already exists, no new message type.
+- Save DC uses `8 + proficiency + max(Str mod, Dex mod)` — PHB lets the maneuver-user choose Str
+  or Dex; this app auto-picks whichever is higher rather than adding a UI toggle, the same
+  simplification Death Strike's own DC calc already uses one screen over.
+- **Known-known maneuvers not tracked**: PHB restricts Battle Masters/Martial Adepts to
+  maneuvers they've specifically learned (3 at 3rd, +2 at 7th/10th/15th for Battle Master; 2 for
+  the feat). This app doesn't gate the curated 4 behind a "known maneuvers" pick list — anyone
+  eligible (subclass or feat) can use any of the 4 as long as they have a die to spend. A
+  deliberate simplification (avoids building an entire new level-up choice-picker for a 4-item
+  curated list) rather than an oversight — flagged plainly, not silently narrower than it looks.
+
+Tests: 26 new assertions — dice pool math (both progressions, stacking), rider eligibility
+(weapon-only, dice-gated), Trip Attack's damage+Prone landing together end-to-end, Distracting
+Strike's no-save guarantee, Goading Attack's disadvantage proven through the REAL
+`Engine.hitResult(qbAdapter,...)` call (not just the pure `attackAdvantage` helper), and the
+rest-reset convention. One test-authoring bug caught by its own failing assertion (actor/target
+arguments swapped in the Goading Attack disadvantage check) — fixed before landing, not a
+production bug, but exactly the kind of mistake this suite exists to catch.
+
+Remaining "make the systems" backlog: the mount system (Mounted Combatant) — the last major
+item, needs its own scoping pass before starting per `VISION.md`'s roadmap (it touches unit
+movement/rendering across all three modes, comparable in scope to Echo Knight).

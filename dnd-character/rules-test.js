@@ -2478,5 +2478,68 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('spendHitDie (short rest): inspiringLeaderUsed resets for a character who has the feat', leader.inspiringLeaderUsed===false);
 }
 
+/* ---- "make the systems" (7): Battle Master maneuvers / Martial Adept ---- */
+{
+  T('superiorityDiceMax: Martial Adept alone grants 1', superiorityDiceMax({cls:'Wizard', feats:[{name:'Martial Adept'}]})===1);
+  T('superiorityDiceMax: no feat/subclass = 0', superiorityDiceMax({cls:'Fighter', subclass:'Champion', level:5})===0);
+  T('superiorityDiceMax: Battle Master 3rd = 4 dice', superiorityDiceMax({cls:'Fighter', subclass:'Battle Master', level:3})===4);
+  T('superiorityDiceMax: Battle Master 7th = 5 dice', superiorityDiceMax({cls:'Fighter', subclass:'Battle Master', level:7})===5);
+  T('superiorityDiceMax: Battle Master 15th = 6 dice', superiorityDiceMax({cls:'Fighter', subclass:'Battle Master', level:15})===6);
+  T('superiorityDiceMax: Battle Master + Martial Adept stack additively', superiorityDiceMax({cls:'Fighter', subclass:'Battle Master', level:3, feats:[{name:'Martial Adept'}]})===5);
+  T('superiorityDieSize: Martial Adept is always d6', superiorityDieSize({cls:'Wizard', level:1})===6);
+  T('superiorityDieSize: Battle Master d8 at 3rd', superiorityDieSize({cls:'Fighter', subclass:'Battle Master', level:3})===8);
+  T('superiorityDieSize: Battle Master d10 at 10th', superiorityDieSize({cls:'Fighter', subclass:'Battle Master', level:10})===10);
+  T('superiorityDieSize: Battle Master d12 at 18th', superiorityDieSize({cls:'Fighter', subclass:'Battle Master', level:18})===12);
+
+  const bm=newCharacter('Duelist'); bm.cls='Fighter'; bm.subclass='Battle Master'; bm.level=3;
+  bm.abilities={str:16,dex:10,con:14,int:10,wis:10,cha:10};
+  bm.superiorityDiceLeft=4;
+  T('attackRiderOptions: no maneuver rider without any dice left', !attackRiderOptions(Object.assign({},bm,{superiorityDiceLeft:0}), {name:'Longsword'}, null).maneuver);
+  const opts=attackRiderOptions(bm, {name:'Longsword'}, null);
+  T('attackRiderOptions: maneuver rider offered with dice available', !!opts.maneuver);
+  T('attackRiderOptions: maneuver rider lists all 4 curated maneuvers', Object.keys(opts.maneuver.options).length===4);
+  T('attackRiderOptions: no maneuver rider for a spell attack (weapon-only)', !attackRiderOptions(bm, {name:'Fire Bolt', spell:true}, null).maneuver);
+
+  // Trip Attack: forced low save (rigged monsterSaveBonus via a 0-CR mob) — proves damage AND
+  // the Prone condition both land, and the die pool decrements.
+  const foe1={id:'f1', side:'mon', base:'Commoner', name:'Foe', hp:20, max:20, x:0,y:0, conds:[]};
+  const origRandom=Math.random;
+  Math.random=()=>0.01; // low roll: weak save AND small damage die, doesn't matter which lands first
+  const before=bm.superiorityDiceLeft;
+  const res1=applyAttackRiders(bm, {name:'Longsword'}, foe1, {maneuver:'trip'}, false, false, ()=>{});
+  Math.random=origRandom;
+  T('applyAttackRiders (maneuver): Trip Attack adds real damage', res1.total>0);
+  T('applyAttackRiders (maneuver): superiority die pool decrements by one', bm.superiorityDiceLeft===before-1);
+  T('applyAttackRiders (maneuver): a failed save actually applies Prone', foe1.conds.some(x=>x.name==='Prone'));
+
+  // Distracting Strike: no save at all — always applies its condition.
+  const foe2={id:'f2', side:'mon', base:'Commoner', name:'Foe2', hp:20, max:20, x:0,y:0, conds:[]};
+  bm.superiorityDiceLeft=4;
+  applyAttackRiders(bm, {name:'Longsword'}, foe2, {maneuver:'distracting'}, false, false, ()=>{});
+  T('applyAttackRiders (maneuver): Distracting Strike applies its condition unconditionally (no save)', foe2.conds.some(x=>x.name==='Distracting Strike'));
+  T('attackAdvantage: Distracting Strike grants advantage against the distracted target', attackAdvantage(new Set(), new Set(['Distracting Strike']), true, {}).adv===1);
+
+  // Goading Attack success → target.goadedBy is set to the maneuver-user's name, and
+  // Engine.hitResult's own goadedDisadv wiring imposes disadvantage when that goaded creature
+  // later attacks anyone else — proven end-to-end through qbAdapter, not just the pure helper.
+  const foe3={id:'f3', side:'mon', base:'Commoner', name:'Goadee', hp:20, max:20, x:1,y:0, attacksLeft:1};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:5,rows:5,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[foe3, {id:'bystander', side:'mon', base:'Commoner', name:'Bystander', hp:10, max:10, x:2,y:0}],
+    players:[{id:'pc', side:'pc', name:bm.name, c:bm, x:0,y:0, hpCur:bm.hp.cur, hpMax:bm.hp.max}] });
+  Math.random=()=>0.01;
+  applyAttackRiders(bm, {name:'Longsword'}, foe3, {maneuver:'goading'}, false, false, ()=>{});
+  Math.random=origRandom;
+  T('applyAttackRiders (maneuver): Goading Attack success sets goadedBy to the attacker\'s name', foe3.goadedBy===bm.name);
+  const pcTarget=getQB().players[0];
+  T('Engine.hitResult: the goaded creature has disadvantage attacking someone who is NOT the goader', Engine.hitResult(qbAdapter, 'f3', 'bystander', {toHit:5, dmg:'1d6'}).adv===-1);
+  foe3.goadedBy=bm.name; // re-set (may have been consumed by dice-roll randomness above)
+  setQB(null);
+
+  // Rest resets, same convention every other once/rest resource here already follows.
+  bm.superiorityDiceLeft=0; bm.hitDice={total:'3d10',used:0}; bm.hp={max:30,cur:20,temp:0};
+  spendHitDie(bm);
+  T('spendHitDie (short rest): superiorityDiceLeft refills', bm.superiorityDiceLeft===superiorityDiceMax(bm));
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
