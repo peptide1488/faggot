@@ -213,6 +213,17 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
   T('Grapple spends one of the attacker\'s attacks', sc.battle.attacksLeft===0);
   T('Grappled target has speed zeroed (existing speedBlocked, reused for free)', speedBlocked(mo)===true);
 
+  // Grappler feat: advantage on attacks vs a creature you've grappled — wired into
+  // Engine.hitResult (the one shared resolver), same spot armor-proficiency disadvantage
+  // lives, so it applies uniformly across QB/DM-hosted/player-net.
+  T('No Grappler feat: no advantage vs the grappled target', Engine.hitResult(qbAdapter, pc.id, mo.id, {toHit:5, dmg:'1d6'}).adv===0);
+  sc.feats=[{name:'Grappler'}];
+  T('Grappler feat: advantage vs the target THIS character grappled', Engine.hitResult(qbAdapter, pc.id, mo.id, {toHit:5, dmg:'1d6'}).adv===1);
+  const otherMo={id:'m2', side:'mon', base:'Goblin', name:'Bystander', x:3, y:3, hp:7, max:7, ac:12, attacksLeft:1};
+  getQB().monsters.push(otherMo);
+  T('Grappler feat: no advantage vs a DIFFERENT creature this character has NOT grappled', Engine.hitResult(qbAdapter, pc.id, otherMo.id, {toHit:5, dmg:'1d6'}).adv===0);
+  sc.feats=[];
+
   resetTurn();
   maneuverEscape(qbAdapter, mo, false, qbLog);
   T('Escape Grapple success (attacker rolls high) clears Grappled', !mo.conds.some(x=>x.name==='Grappled'));
@@ -226,6 +237,20 @@ T('Observant +5 passive Perception', passiveScore(ob,'perception','wis')===15);
   Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
   maneuverShove(qbAdapter, pc, mo, 'push', qbLog);
   T('Shove (push) success moves the target one tile further away', mo.x===4 && mo.y===2);
+
+  // Charger: the shove option is 10 ft (2 tiles), not the normal 5, and spends the BONUS
+  // action (skipBudget=true) rather than qbSpendAttackBudget's Action/attack economy — a
+  // real bug caught before shipping: without skipBudget, this would fail outright once the
+  // action was already spent on Dash (attacksLeft still full → qbSpendAttackBudget demands
+  // a fresh action that no longer exists).
+  getQB().map.cols=9; // the shared 5-wide test map only has 1 tile of room east of x=3 — widen
+                       // it just for this assertion so a genuine 2-tile push has somewhere to go
+  mo.conds=[]; mo.x=3; mo.y=2; sc.battle.action=true; sc.battle.actionsUsed=sc.battle.actionsMax; sc.battle.bonus=false;
+  Math.random=(()=>{ const seq=[0.99,0.01,0.01]; let i=0; return ()=>seq[i++ % seq.length]; })();
+  const chargeRes=maneuverShove(qbAdapter, pc, mo, 'push', qbLog, 2, true);
+  T('Charger shove succeeds even with the Action already spent (bonus action only, skipBudget)', chargeRes.ok===true && chargeRes.success===true);
+  T('Charger shove pushes 10 ft (2 tiles), not the normal 5', mo.x===5 && mo.y===2);
+  getQB().map.cols=5;
 
   resetTurn(); mo.x=3; mo.y=2; // back adjacent — the push test above moved it away
   Math.random=(()=>{ const seq=[0.01,0.99,0.99]; let i=0; return ()=>seq[i++ % seq.length]; })();
@@ -2312,6 +2337,42 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
 
   T('attackAdvantage: armorDisadvantage opt imposes disadvantage', attackAdvantage(new Set(),new Set(),true,{armorDisadvantage:true}).adv===-1);
   T('attackAdvantage: armorDisadvantage false = no penalty', attackAdvantage(new Set(),new Set(),true,{armorDisadvantage:false}).adv===0);
+  T('attackAdvantage: grapplerAdv opt imposes advantage', attackAdvantage(new Set(),new Set(),true,{grapplerAdv:true}).adv===1);
+  T('attackAdvantage: grapplerAdv false = no bonus', attackAdvantage(new Set(),new Set(),true,{grapplerAdv:false}).adv===0);
+
+  // Charger: freshTurnState's dashed flag starts false each turn and resetTurnState clears it
+  // (a stale true from last turn would let Charger fire without actually Dashing this turn).
+  const chgc=newCharacter('Runner'); chgc.cls='Fighter'; chgc.level=1; chgc.abilities={str:14,dex:10,con:10,int:10,wis:10,cha:10};
+  T('freshTurnState: dashed starts false', freshTurnState(chgc).dashed===false);
+  chgc.battle=freshTurnState(chgc); chgc.battle.dashed=true;
+  resetTurnState(chgc);
+  T('resetTurnState: dashed clears on a fresh turn', chgc.battle.dashed===false);
+
+  // Crossbow Expert: (a) "no disadvantage firing in melee" has nothing to hook — confirmed
+  // by inspection this app never modeled that disadvantage anywhere (Engine.hitResult,
+  // attackAdvantage, attackFlow all searched) — deferred per the Grappler/Dungeon-Delver
+  // "no model to hook" precedent, noted honestly in AUDIT rather than built against a
+  // mechanic that isn't there. (b) the bonus-action hand-crossbow shot IS built — reuses the
+  // existing offhand bonus-action gate two-weapon fighting already has, so no new UI needed.
+  const xbow=newCharacter('Sniper'); xbow.cls='Ranger'; xbow.level=1; xbow.abilities={str:10,dex:16,con:10,int:10,wis:10,cha:10};
+  xbow.items=[{name:'Hand Crossbow',kind:'weapon',qty:1,equipped:true}];
+  T('qbPcAttacks: no Crossbow Expert bonus shot without the feat', !qbPcAttacks(xbow).some(a=>/Crossbow Expert/.test(a.name)));
+  xbow.feats=[{name:'Crossbow Expert'}];
+  const xbAtks=qbPcAttacks(xbow);
+  const bonusShot=xbAtks.find(a=>/Crossbow Expert/.test(a.name));
+  T('qbPcAttacks: Crossbow Expert bonus shot appears once the feat is present', !!bonusShot);
+  T('Crossbow Expert bonus shot is flagged offhand (reuses the existing bonus-action gate)', bonusShot&&bonusShot.offhand===true);
+  T('qbPcAttacks: the normal Hand Crossbow attack is STILL listed alongside the bonus one', xbAtks.filter(a=>a.name==='Hand Crossbow').length===1);
+
+  // Actor: advantage on Deception/Performance (impersonation) — same "no specific-target
+  // tracking" simplification Favored Enemy/Natural Explorer already use, applied whenever
+  // the skill is Deception or Performance at all.
+  const actor=newCharacter('Mimic'); actor.cls='Bard'; actor.level=1; actor.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:14};
+  T('skillCheckAdvantage: no Actor feat = no bonus on Deception', skillCheckAdvantage(actor,'deception','cha').adv===0);
+  actor.feats=[{name:'Actor'}];
+  T('skillCheckAdvantage: Actor grants advantage on Deception', skillCheckAdvantage(actor,'deception','cha').adv===1);
+  T('skillCheckAdvantage: Actor grants advantage on Performance too', skillCheckAdvantage(actor,'performance','cha').adv===1);
+  T('skillCheckAdvantage: Actor does NOT affect unrelated skills', skillCheckAdvantage(actor,'stealth','dex').adv===0);
 
   T('skillCheckAdvantage: Str check disadvantage while wearing non-proficient armor', skillCheckAdvantage(heavyC,'athletics','str').adv===-1);
   T('skillCheckAdvantage: non-Str/Dex ability check unaffected by armor', skillCheckAdvantage(heavyC,'arcana','int').adv===0);
@@ -2380,6 +2441,41 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const cleric2=newCharacter('Unprepped'); cleric2.cls='Cleric'; cleric2.level=3;
   cleric2.spells=[{name:'Augury',level:2,prepared:false}]; cleric2.slots={2:{total:1,used:0}};
   T('canCast: Cleric ritual attempt on an unprepared ritual spell still fails', canCast(cleric2,'Augury',2,{ritual:true})===false);
+
+  // v120.203 gap closed: Unseen Servant is ritual-tagged AND summon-kind — openSummonSpellUI
+  // now threads {ritual} through to castSpell the same way the normal castModal path does
+  // (see index.html's openSummonSpellUI/castModal), instead of silently dropping it. Testing
+  // the underlying castSpell/canRitualCast call it now makes, same convention as the rest of
+  // this ritual block (no DOM harness exists for any modal in this suite).
+  wiz.spells.push({name:'Unseen Servant',level:1,prepared:false});
+  T('canRitualCast: Unseen Servant (summon-kind) is ritual-tagged and available to a Wizard', canRitualCast(wiz,'Unseen Servant')===true);
+  wiz.battle.action=false; wiz.battle.actionsUsed=0;
+  const usedBefore2=wiz.slots[1].used;
+  const okSummon=castSpell(wiz,'Unseen Servant',1,null,{ritual:true});
+  T('castSpell: Unseen Servant ritual cast succeeds (the exact call openSummonSpellUI now makes)', okSummon===true);
+  T('castSpell: Unseen Servant ritual cast spends no spell slot', wiz.slots[1].used===usedBefore2);
+  T('castSpell: Unseen Servant ritual cast does not spend the action', wiz.battle.action===false);
+}
+
+/* ---- "make the systems" (5): Healer feat heal action + Inspiring Leader ---- */
+{
+  T('inspiringLeaderAmount: level + CHA mod', inspiringLeaderAmount({level:5, abilities:{cha:16}})===5+3);
+  T('inspiringLeaderAmount: floors at 0, never negative', inspiringLeaderAmount({level:1, abilities:{cha:6}})===0);
+
+  // healerFeatSpent lives on the TARGET and resets unconditionally on any rest (the PHB
+  // restriction is "can't use on the same creature again", a property of who got healed —
+  // not of who has the feat), same convention echoAvatarUsed/shadowMartyrUsed already use.
+  const target=newCharacter('Target'); target.cls='Fighter'; target.level=3;
+  target.healerFeatSpent=true;
+  target.hitDice={total:'3d10',used:0}; target.hp={max:20,cur:10,temp:0}; target.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10};
+  spendHitDie(target);
+  T('spendHitDie (short rest): healerFeatSpent resets even for a character without the Healer feat', target.healerFeatSpent===false);
+
+  const leader=newCharacter('Leader'); leader.cls='Bard'; leader.level=4; leader.feats=[{name:'Inspiring Leader'}];
+  leader.inspiringLeaderUsed=true;
+  leader.hitDice={total:'4d8',used:0}; leader.hp={max:20,cur:10,temp:0}; leader.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10};
+  spendHitDie(leader);
+  T('spendHitDie (short rest): inspiringLeaderUsed resets for a character who has the feat', leader.inspiringLeaderUsed===false);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

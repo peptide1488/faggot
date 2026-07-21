@@ -2244,3 +2244,86 @@ Remaining "make the systems" items: the Healer feat's bigger heal action (above)
 ritual wiring through `openSummonSpellUI`, and the smaller "genuinely borderline" feats (Athlete,
 Actor, Grappler, Inspiring Leader, Charger, Dungeon Delver, Crossbow Expert, Spell Sniper's
 remaining clauses). Continuing in the next pass.
+
+## "Make the systems" (6): small-feat batch — 8 feats built, 1 deferred (v120.205)
+
+One batch, one version bump, following on directly from v120.203/v120.204's backlog.
+
+- **Unseen Servant ritual wiring** (closes the v120.203 gap). `openSummonSpellUI` now takes a
+  4th `ritual` param and threads it into both its `castSpell` call sites (out-of-combat and
+  in-battle placement); `castModal`'s own ritual checkbox is no longer hidden for summon-kind
+  spells (`canRitual` dropped the `kind==='summon'` exclusion) and its click handler passes the
+  checkbox state through instead of dropping it on the floor. No slot, no action, exactly like
+  every other ritual-tagged spell already got in v120.203.
+- **Healer feat's second action** — "restore 1d6+4 + the creature's hit dice" to a conscious,
+  injured ally, once per rest **per target** (PHB: the restriction belongs to the creature
+  healed, not the healer). `c.healerFeatSpent` lives on the target, resets unconditionally on
+  ANY rest (short via `spendHitDie`, long via `#restBtn`) regardless of whether that character
+  has the feat themselves — same convention `echoAvatarUsed`/`shadowMartyrUsed` already use, no
+  `ensureFields` entry needed since `!!c.foo` already defaults false. Eligibility
+  (`healerHealTargets`) mirrors Preserve Life's shape but excludes self (PHB: "another
+  creature") and requires `!p.healerFeatSpent` — that flag now rides along on `playerHello`'s
+  mirror payload (and the DM's own `Object.assign` receiver) so the healer's own device can see
+  it without a round-trip. Net relay reuses the existing generic `'apply'`/`healApply` message,
+  tagged with `healerFeat:true` so the TARGET's own device (the only one that can legally set
+  its own flag) flips `healerFeatSpent` when it lands.
+- **Inspiring Leader** — level + CHA mod temp HP (`inspiringLeaderAmount`, floored at 0) to up
+  to 6 creatures within 30 ft including self, once per rest (`c.inspiringLeaderUsed`, same
+  target-is-the-healer reset convention as above but conditional on having the feat). Reuses
+  Preserve Life's self+nearby-allies target shape exactly. Not gated behind the Action/bonus
+  action — PHB frames it as a 10-minute activity, same treatment this app already gives other
+  narrative-time abilities. Temp HP relay is its own message pair (`tempHpApply`/
+  `tempHpApplied`) rather than reusing `healApply`, since temp HP takes the higher value
+  instead of adding — the existing `'apply'` message is a straight delta, wrong semantics here.
+- **Grappler** — advantage on attacks vs. a creature you've grappled. Grapple state already
+  existed (`mo.grappledBy`, storing the grappler's own display name — a v120-something-earlier
+  addition for Escape Grapple). Hooked into `Engine.hitResult` (the one shared resolver, same
+  spot armor-proficiency disadvantage lives) via a new `grapplerAdv` opt on `attackAdvantage`,
+  gated on `hasFeat` + `t.grappledBy===ad.name(a)` — applies uniformly across QB/DM-hosted/
+  player-net since it's the one shared function, not a QB-only special case.
+- **Charger** — after Dashing, a bonus-action melee attack (+5 damage) or 10-ft shove. New
+  `dashed` flag in `freshTurnState`/`resetTurnState` only, set by both branches of the existing
+  `k==='dash'` handler (normal Dash and Cunning Action Dash). The shove option needed
+  `maneuverShove` to grow a `tiles` param (Charger pushes 10 ft/2 tiles, not the normal 5)
+  **and** a `skipBudget` param — caught live: `maneuverShove` unconditionally spends the
+  Action-based attack budget via `qbSpendAttackBudget`, which would have wrongly failed
+  Charger's shove outright (the Action is already gone from Dashing) or double-spent it.
+  `skipBudget:true` lets Charger's own caller (which already flags `c.battle.bonus=true`
+  itself) bypass that gate cleanly instead. Attack option reuses `Engine.attack` directly
+  (no action-economy side effects there to worry about).
+- **Crossbow Expert** — two clauses, one built, one honestly deferred. (a) "No disadvantage
+  firing a ranged weapon in melee": searched `Engine.hitResult`, `attackAdvantage`, and
+  `attackFlow` — this app has never modeled that disadvantage anywhere, so there's nothing to
+  waive. Noted, not built against a mechanic that doesn't exist (same "no model to hook"
+  outcome the plan flagged as possible for Grappler, just for a different underlying reason).
+  (b) The bonus-action hand-crossbow shot after the Attack action **is** built:
+  `qbPcAttacks` now appends a second, `offhand:true`-flagged entry whenever the character owns
+  a Hand Crossbow and has the feat — reuses the exact same bonus-action gate two-weapon
+  fighting's off-hand attack already has, so it needed zero new UI plumbing.
+- **Actor** — advantage on Deception/Performance checks to impersonate someone. This app
+  doesn't track "is this specific check an impersonation attempt" any more than Favored
+  Enemy/Natural Explorer track "the specific chosen enemy type" — same documented
+  simplification: advantage whenever the skill is Deception or Performance at all, in
+  `skillCheckAdvantage` (the same shared resolver Favored Enemy/armor-proficiency live in).
+- **Athlete** — two clauses, one built, one honestly deferred, and the ratio is the OPPOSITE of
+  what the plan guessed. (a) Standing from prone for 5 ft instead of half speed: this app has
+  never modeled standing-from-prone as a costed action anywhere (Prone is just a toggled
+  condition) — nothing to reduce, so nothing built. (b) Climbing at full speed: **is** modeled —
+  the character-sheet's freeform `openMove` tool has a `Climb (×2)` movement-type option — so
+  Athlete now zeroes that multiplier there (`hasFeat(c,'Athlete')`). Scope note: the grid-based
+  QB/DM/player-net movement system computes cost from map terrain difficulty, not a distinct
+  "climbing" terrain type, so this fix only applies to the freeform tool — not a duplicated
+  mechanic to unify against, since climbing-as-a-cost only ever existed in the one place.
+- **Dungeon Delver — deferred, not built.** Advantage detecting traps needs traps to exist as
+  detectable map objects first; this app doesn't model traps at all. Genuinely nothing to hook,
+  not a scope-cutting call — matches the plan's own prediction exactly.
+
+Tests: 28 new assertions across `rules-test.js`. Notably: the Charger shove test caught the
+`skipBudget` bug described above (it would have failed the "succeeds even with the Action
+already spent" assertion outright without the fix) and a self-inflicted test-setup bug (the
+shared 5×5 QB test map had no room for a genuine 2-tile push near its center — widened the
+map for just that assertion rather than mis-asserting a 1-tile result as correct).
+
+Remaining "make the systems" backlog: Battle Master maneuvers/superiority dice (Martial Adept),
+then the mount system (Mounted Combatant — needs its own scoping pass first, biggest remaining
+item). Both queued next per `VISION.md`'s roadmap.

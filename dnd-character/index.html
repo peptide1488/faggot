@@ -517,6 +517,7 @@ function attackAdvantage(aC, tC, melee, opts){
   if(A('True Strike')){ adv++; why.push('true strike'); }
   // Lighting: attacker in darkness without vision → disadvantage; target unseen in dark → adv for attacker if they can see (simplified)
   if(opts&&opts.armorDisadvantage){ adv--; why.push('not proficient with worn armor'); }
+  if(opts&&opts.grapplerAdv){ adv++; why.push('you have grappled the target (Grappler)'); }
   if(opts&&opts.attackerVision!=null){
     if(opts.attackerVision===0){ adv--; why.push('fighting in darkness'); }
   }
@@ -934,6 +935,9 @@ function preserveLifePool(c){ return 5*(Number(c.level)||1); }
 // How much of the pool a single tap gives one target: capped at half its max HP (minus
 // whatever it's already been given this same casting) and at whatever's left in the pool.
 function preserveLifeAmount(pool, hpMax, healedSoFar){ return Math.max(0, Math.min(pool, Math.floor(hpMax/2)-(healedSoFar||0))); }
+// Inspiring Leader (feat): level + CHA mod temp HP, floored at 0 (a heavily negative CHA
+// character still just grants nothing, not negative temp HP).
+function inspiringLeaderAmount(c){ return Math.max(0, (Number(c.level)||1) + mod(abil(c,'cha'))); }
 function isMoonDruid(c,lvl){ return !!(c && c.cls==='Druid' && c.subclass==='Circle of the Moon' && (Number(c.level)||1)>=(lvl||2)); }
 // Circle Forms (2nd/6th): Circle of the Moon overrides Wild Shape's normal CR cap (not its
 // fly/swim-by-level restriction, which this app doesn't separately model anyway — BEAST_SHAPES
@@ -1045,7 +1049,7 @@ function setEquipped(c, idx, on){
 /* ---- battle mode: initiative, rounds, action tracking ---- */
 // THE per-turn resource reset, shared by every mode (solo battle, quick battle,
 // net play). Add new per-turn flags HERE and nowhere else.
-function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, colossusSlayerUsed:false, hordeBreakerUsed:false, castBonusSpell:false, castLeveledSpell:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
+function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, colossusSlayerUsed:false, hordeBreakerUsed:false, castBonusSpell:false, castLeveledSpell:false, dashed:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
 function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); }
 function startBattle(c){ const ini=rnd(20)+initiative(c); c.battle=Object.assign({round:1, init:ini}, freshTurnState(c));
   if(isEchoKnight(c,18) && (c.echoIncarnationLeft||0)<=0) c.echoIncarnationLeft=1;   // Legion of One (18th)
@@ -1469,8 +1473,15 @@ function openMove(c){
     <button class="btn block" id="mvGo" style="margin-top:10px">Move</button>
     <button class="btn ghost block" id="mvClose" style="margin-top:8px">Close</button>
   </div></div>`;
-  const doMove=(dist)=>{ if(!(dist>0)) return; const type=$('#mvType').value, mult=/×2/.test(type)?2:1, cost=dist*mult;
-    b.move=Math.max(0,b.move-cost); b.moveUsed=(b.moveUsed||0)+dist; logChange(c,'🥾 Moved '+dist+' ft ('+type.replace(' (×2)','')+')'+(mult>1?' = '+cost+' ft used':'')); save(); $('#modalRoot').innerHTML=''; render(); };
+  const doMove=(dist)=>{ if(!(dist>0)) return; const type=$('#mvType').value;
+    // Athlete (feat, PHB): climbing no longer costs extra movement — the ONLY place this app
+    // models climbing as its own ×2-cost movement type (the grid-based QB/DM/player-net move
+    // system computes cost from map terrain difficulty, not a distinct "climb" terrain type,
+    // so there's nothing to unify against there — see AUDIT for the honest scope note on the
+    // feat's OTHER clause, standing from prone, which has no costed action anywhere to hook).
+    const athleteClimb = type==='Climb (×2)' && hasFeat(c,'Athlete');
+    const mult=(/×2/.test(type) && !athleteClimb)?2:1, cost=dist*mult;
+    b.move=Math.max(0,b.move-cost); b.moveUsed=(b.moveUsed||0)+dist; logChange(c,'🥾 Moved '+dist+' ft ('+type.replace(' (×2)','')+')'+(mult>1?' = '+cost+' ft used':(athleteClimb?' — Athlete, full speed':''))); save(); $('#modalRoot').innerHTML=''; render(); };
   $('#mvGo').onclick=()=>doMove(Number($('#mvDist').value));
   document.querySelectorAll('#mvModal [data-mvq]').forEach(q=>q.addEventListener('click',()=>doMove(Number(q.dataset.mvq))));
   $('#mvClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
@@ -3155,7 +3166,7 @@ function pruneDeadSummons(s){
  * Conjure / summon cast flow: pick template → place on map → spawn.
  * Out of battle: just track the concentration effect.
  */
-function openSummonSpellUI(c, name, level){
+function openSummonSpellUI(c, name, level, ritual){
   level=Number(level)||0;
   const cat=summonCatalogEntry(name);
   if(!cat){ flashBanner(name+' — no summon data yet'); castModal(c,name,level); return; }
@@ -3163,8 +3174,8 @@ function openSummonSpellUI(c, name, level){
   const me=s&&((s.players||[]).find(p=>p.c===c||p.cid===c.id)||(s.players&&s.players[0]));
   // Out of combat / no map
   if(!s||!me||!s.map||!(QB&&!QB.over||(net&&net.session&&net.session.battle&&net.session.battle.active))){
-    if(!canCast(c,name,level)) return;
-    if(!castSpell(c,name,level)) return;
+    if(!canCast(c,name,level,{ritual})) return;
+    if(!castSpell(c,name,level,null,{ritual})) return;
     flashBanner(name+' — no battle map; effect tracked (summon appears in Quick Battle)');
     return;
   }
@@ -3207,7 +3218,7 @@ function openSummonSpellUI(c, name, level){
     document.querySelectorAll('#spModal [data-cell]').forEach(el=>el.onclick=()=>{
       const [x,y]=el.dataset.cell.split(',').map(Number);
       if(!summonPlaceOk(s, me, cat, x, y)){ flashBanner('Can’t place there'); return; }
-      if(!castSpell(c,name,level)) return;
+      if(!castSpell(c,name,level,null,{ritual})) return;
       // One summon of this spell at a time — dismiss previous
       dismissSummonsForSpell(s, c, name);
       // Pack summons (Conjure Animals): a 5th-level+ slot conjures twice as many (PHB).
@@ -3531,10 +3542,11 @@ function castModal(c, name, baseLevel){
   // applied via applyHp right when the box is checked (not deferred), since RAW is explicit the
   // backlash lands "immediately after you cast it," and this modal's Cast button is that moment.
   const canOverchannel = m.dmg && isEvocationWizard(c,14) && baseLevel>=1 && baseLevel<=5;
-  // Summon-kind spells (e.g. Unseen Servant) route through openSummonSpellUI's own picker,
-  // which doesn't read this modal's checkbox — hide the toggle there rather than show one
-  // that silently does nothing, until that flow gets its own ritual wiring.
-  const canRitual = canRitualCast(c,name) && !(SPELL_HANDLERS[name]&&SPELL_HANDLERS[name].kind==='summon');
+  // Summon-kind spells (e.g. Unseen Servant) route through openSummonSpellUI's own picker —
+  // this modal's checkbox state is threaded through to it (see castGo below) rather than
+  // hidden, so a ritual-tagged summon spell gets the same no-slot/no-action cast it would
+  // through the normal path.
+  const canRitual = canRitualCast(c,name);
   const slots=spellSlots(c); let lvlOpts='';
   if(baseLevel>0){ for(let l=baseLevel;l<=9;l++){ const tot=slots[l]||0; if(tot){ const used=Math.min(tot,(c.slots[l]&&c.slots[l].used)||0), avail=tot-used; lvlOpts+=`<option value="${l}" ${avail<=0?'disabled':''}>Level ${l} — ${avail}/${tot} left</option>`; } } }
   const eff=SPELL_EFFECTS[name];
@@ -3598,7 +3610,7 @@ function castModal(c, name, baseLevel){
       }
     }
     if(SPELL_HANDLERS[name]&&SPELL_HANDLERS[name].kind==='summon'){
-      openSummonSpellUI(c, name, useLvl);
+      openSummonSpellUI(c, name, useLvl, ritual);
       return;
     }
     const ok=castSpell(c, name, useLvl, null, {ritual}); if(ok && QB && QB.active) qbLog('📜 '+c.name+' casts '+name+(ritual?' (ritual)':'')); };
@@ -4231,6 +4243,11 @@ function spendHitDie(c){
   c.actionSurgeUsed=false;   // Action Surge recharges on a short rest
   if(isEchoKnight(c,7)) c.echoAvatarUsed=false;      // Echo Avatar: short or long rest
   if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;   // Shadow Martyr: short or long rest
+  // Healer feat's heal action: the "can't use on the same creature again" restriction (PHB)
+  // is a property of the TARGET, not the healer — reset unconditionally regardless of
+  // whether this character has the feat themselves.
+  c.healerFeatSpent=false;
+  if(hasFeat(c,'Inspiring Leader')) c.inspiringLeaderUsed=false;   // short or long rest
   if(isLoreBard(c) && (Number(c.level)||1)>=5) c.bardicInspLeft=bardicInspMax(c);   // Font of Inspiration (5th): short rest too
   if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: short or long rest
   if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: short or long rest
@@ -5115,8 +5132,8 @@ function renderCombat(c){
       // whenever the bonus action is still free, falling back to the normal action otherwise
       // (a player can still use their action to Dash even with Cunning Action available).
       const cunning=c.cls==='Rogue' && (Number(c.level)||1)>=2 && !(b.bonus);
-      if(cunning){ b.bonus=true; b.move+=effSpeed(c); logChange(c,'🏃 Dash (Cunning Action, bonus action) — +'+effSpeed(c)+' ft movement'); }
-      else { if(!hasAction(c)){ flashBanner('No action left to Dash this turn'); return; } spendAction(c); b.move+=effSpeed(c); logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
+      if(cunning){ b.bonus=true; b.move+=effSpeed(c); b.dashed=true; logChange(c,'🏃 Dash (Cunning Action, bonus action) — +'+effSpeed(c)+' ft movement'); }
+      else { if(!hasAction(c)){ flashBanner('No action left to Dash this turn'); return; } spendAction(c); b.move+=effSpeed(c); b.dashed=true; logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
     }
     save(); render(); }));
   $('#addAtk').addEventListener('click',()=>{
@@ -5414,6 +5431,8 @@ function renderSpells(c){
     if(isEchoKnight(c,3)){ c.echoIncarnationLeft=echoResourceMax(c); }   // Unleash Incarnation: long rest only
     if(isEchoKnight(c,7)) c.echoAvatarUsed=false;
     if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;
+    c.healerFeatSpent=false;   // same target-side restriction as the short-rest reset above
+    if(hasFeat(c,'Inspiring Leader')) c.inspiringLeaderUsed=false;
     if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
     if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
     if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
@@ -6208,7 +6227,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -6253,6 +6272,14 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   // caster's device can't mutate another player's real HP directly). Reuses the existing
   // generic 'apply' message the same way Stabilize's own relay does.
   else if(d.t==='healApply'){ dmSend(d.targetId,{t:'apply', delta:d.amount}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' heals an ally for '+d.amount+' HP'+(d.from?' ('+d.from+')':'')); }
+  // Healer feat's heal action — same generic 'apply' relay as healApply above, just tagged so
+  // the target's own device also flips its once-per-rest healerFeatSpent flag (that flag has
+  // to live on the TARGET, so only the target's own device can actually set it — see
+  // playerOnData's 'apply' handler).
+  else if(d.t==='healerHeal'){ dmSend(d.targetId,{t:'apply', delta:d.amount, healerFeat:true}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' uses Healer on an ally for '+d.amount+' HP'); }
+  // Inspiring Leader temp HP — its own relay (not 'apply') since temp HP takes the HIGHER
+  // value rather than adding, same distinction c.hp.temp gets everywhere else in this app.
+  else if(d.t==='tempHpApply'){ dmSend(d.targetId,{t:'tempHpApplied', amount:d.amount}); const who=net.session.players.find(p=>p.id===conn.peer); flashBanner((who?who.name:'A player')+' grants temp HP to an ally'); }
   // A DM-controlled monster's Shove/Grapple against a connected player (see dmMonsterAttack) —
   // the targeted player's own device rolled its real Athletics/Acrobatics and applied the
   // effect to itself already (conditions sync back via the normal hello/moncond-style resync,
@@ -6337,7 +6364,7 @@ function clientId(){ let id=localStorage.getItem('grimoire.cid'); if(!id){ id='c
 function playerChar(){ return net&&DB.find(x=>x.id===net.charId); }
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.wildShape?c.wildShape.hpCur:c.hp.cur,hpMax:c.wildShape?c.wildShape.hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed,wildShapeName:c.wildShape?c.wildShape.name:null}}); }catch(e){} }
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.wildShape?c.wildShape.hpCur:c.hp.cur,hpMax:c.wildShape?c.wildShape.hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed,wildShapeName:c.wildShape?c.wildShape.name:null,healerFeatSpent:!!c.healerFeatSpent}}); }catch(e){} }
 function playerOnData(d){ if(!d) return;
   if(d.t==='session'){ const wasActive=net.session&&net.session.battle&&net.session.battle.active; net.session=d.session; const c=playerChar();
     if(c){ if(d.session.battle.active && !c.battle){ startBattle(c); }
@@ -6355,7 +6382,8 @@ function playerOnData(d){ if(!d) return;
       if(cur&&cur.id!==net.lastActiveId){ net.lastActiveId=cur.id; frameCameraOnActiveUnit(net.session,1.55); }
     }
     render();
-  } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta, d.dtype); playerHello(); } }
+  } else if(d.t==='apply'){ const c=playerChar(); if(c){ applyHp(c, d.delta, d.dtype); if(d.healerFeat) c.healerFeatSpent=true; playerHello(); } }
+  else if(d.t==='tempHpApplied'){ const c=playerChar(); if(c){ c.hp.temp=Math.max(c.hp.temp||0, d.amount); save(); render(); playerHello(); flashBanner('🎺 +'+d.amount+' temp HP'); } }
   else if(d.t==='oachance'){ const c=playerChar(); if(c) playerOpportunityPrompt(c, d); }
   else if(d.t==='cond'){ const c=playerChar(); if(c){ if(d.on!==false && (mindlessRageBlocks(c,d.name)||auraOfDevotionBlocks(c,d.name))) return; if(!c.conditions) c.conditions={}; if(d.on===false) delete c.conditions[d.name]; else c.conditions[d.name]=true; logChange(c,(d.on===false?'Recovered from ':'Afflicted: ')+d.name); save(); render(); playerHello(); flashBanner('🌀 '+d.name); } }
   else if(d.t==='hazard'){
@@ -7040,6 +7068,12 @@ function skillCheckAdvantage(c, skillKey, abilKey, targetId){
   if(skillKey==='insight' && targetId!=null && (c.effects||[]).some(e=>e.name==='Detect Thoughts' && e.targetId===targetId)){
     adv++; why.push('reading their surface thoughts (Detect Thoughts)');
   }
+  // Actor (feat): advantage on Deception/Performance checks to impersonate someone. This app
+  // doesn't track "is this specific check an impersonation attempt" (same gap Favored Enemy/
+  // Natural Explorer already have for "the specific chosen enemy/terrain type" above) —
+  // applies whenever the skill is Deception or Performance at all, the same documented
+  // simplification style already established for those two.
+  if((skillKey==='deception'||skillKey==='performance') && hasFeat(c,'Actor')){ adv++; why.push('Actor — impersonation'); }
   return {adv, why};
 }
 // Flat additive bonuses to a skill check from active effects (distinct from advantage).
@@ -8377,6 +8411,23 @@ function openAdjacentUseUI(c, s, me){
   // mirror payload specifically so this filter can tell "needs stabilizing" apart from
   // "already stable" or "already dead" without a round-trip.
   const allies = mode==='player' ? (s.players||[]).filter(p=>p.id!==net.peer.id && needsStabilizing(p) && gridDist(me.x,me.y,p.x,p.y)<=1) : [];
+  // Healer feat's SECOND action (PHB): "restore 1d6+4 + the creature's hit dice" to a
+  // CONSCIOUS, injured creature within reach — once per rest PER TARGET (the restriction is
+  // on the creature healed, not the healer — see spendHitDie/#restBtn resetting
+  // c.healerFeatSpent unconditionally, and playerHello's mirror payload carrying it so this
+  // filter can see it). "Another creature" (PHB), not self, unlike Preserve Life below.
+  const healerHealTargets = (mode==='player' && hasFeat(c,'Healer'))
+    ? (s.players||[]).filter(p=>p.id!==net.peer.id && (p.hpCur||0)>0 && p.hpCur<p.hpMax && !p.healerFeatSpent && gridDist(me.x,me.y,p.x,p.y)<=1)
+    : [];
+  // Inspiring Leader (feat): a 10-minute activity, not simulated as costing the Action/turn
+  // (same treatment this app gives other narrative-time activities) — up to 6 creatures
+  // within 30 ft INCLUDING self (PHB), once per rest. Same self+nearby-ally shape as
+  // Preserve Life below, different gating (a feat, not Channel Divinity).
+  const inspiringLeaderTargets = (mode && hasFeat(c,'Inspiring Leader') && !c.inspiringLeaderUsed)
+    ? [{self:true, id:'me', name:c.name}]
+      .concat(mode==='player' ? (s.players||[]).filter(p=>p.id!==net.peer.id && gridDist(me.x,me.y,p.x,p.y)<=6).map(p=>({self:false, id:p.id, name:p.name})) : [])
+      .slice(0,6)
+    : [];
   // A live Unseen Servant is never adjacency-gated (it can be anywhere on the map) and costs
   // a BONUS action, not the Action every other Use-menu item spends — checked independently
   // inside its own handler rather than folded into the shared afterManeuver bookkeeping.
@@ -8412,6 +8463,8 @@ function openAdjacentUseUI(c, s, me){
       if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
       if(intimidateTargets.length) body+=`<button class="btn block" data-use="intimidate" style="margin-bottom:8px;text-align:left">😱 Intimidating Presence<small style="display:block;opacity:.75">Action — frighten a foe within 30 ft (Wis save)</small></button>`;
       if(preserveLifeTargets.length && (c.channelDivinityLeft||0)>0) body+=`<button class="btn block" id="usePreserveLife" style="margin-bottom:8px;text-align:left">✝️ Channel Divinity: Preserve Life<small style="display:block;opacity:.75">Action — distribute ${preserveLifePool(c)} HP among creatures within 30 ft, ½ max HP cap each (${c.channelDivinityLeft} use${c.channelDivinityLeft===1?'':'s'} left)</small></button>`;
+      if(inspiringLeaderTargets.length) body+=`<button class="btn block" id="useInspiringLeader" style="margin-bottom:8px;text-align:left">🎺 Inspiring Leader<small style="display:block;opacity:.75">10 min — ${inspiringLeaderAmount(c)} temp HP to ${inspiringLeaderTargets.length} ${inspiringLeaderTargets.length===1?'creature':'creatures'} within 30 ft</small></button>`;
+      if(mode && hasFeat(c,'Charger') && c.battle.dashed && !c.battle.bonus && foes.length) body+=`<button class="btn block" data-use="charger" style="margin-bottom:8px;text-align:left">🏃 Charger<small style="display:block;opacity:.75">Bonus action — melee attack (+5 damage) or shove (10 ft)</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Whirlwind Attack' && foes.length) body+=`<button class="btn block" id="useWhirlwind" style="margin-bottom:8px;text-align:left">🏹 Whirlwind Attack<small style="display:block;opacity:.75">Action — one melee attack against every adjacent foe (${foes.length} in reach)</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Volley'){ const rangedAtk=qbPcAttacks(c).find(a=>!a.melee); if(rangedAtk){ const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk.tiles||1)); if(near.length) body+=`<button class="btn block" id="useVolley" style="margin-bottom:8px;text-align:left">🏹 Volley<small style="display:block;opacity:.75">Action — ranged attack against every foe within 10 ft of a target foe (pick one)</small></button>`; } }
       if(mode && isLoreBard(c,3)) body+=`<button class="btn ${c.cuttingWordsArmed?'':'ghost'} block" id="useCuttingWords" style="margin-bottom:8px;text-align:left"${(c.bardicInspLeft||0)<=0?' disabled style="opacity:.5"':''}>🎵 ${c.cuttingWordsArmed?'Cutting Words — ARMED (tap to cancel)':'Ready Cutting Words'}<small style="display:block;opacity:.75">${(c.bardicInspLeft||0)<=0?'No Bardic Inspiration left — rest to recharge':'Reaction — reduce a monster attack roll within 60 ft ('+(c.bardicInspLeft||0)+' use'+((c.bardicInspLeft||0)===1?'':'s')+' left)'}</small></button>`;
@@ -8426,6 +8479,8 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn sm" data-use="foe:${i}">Use</button></div>`).join('');
       body+=allies.map((al,i)=>`<div class="spell"><div class="nm"><b>${esc(al.name)}</b><small>Down — Stabilize · (${al.x},${al.y})</small></div>
         <button class="btn sm" data-use="ally:${i}">Use</button></div>`).join('');
+      body+=healerHealTargets.map((t,i)=>`<div class="spell"><div class="nm"><b>${esc(t.name)}</b><small>Healer feat · ${t.hpCur}/${t.hpMax} HP</small></div>
+        <button class="btn sm" data-use="heal:${i}">Use</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useClose" style="margin-top:10px">Cancel</button>`;
     } else if(pick.kind==='ally'){
       const al=pick.al;
@@ -8492,6 +8547,18 @@ function openAdjacentUseUI(c, s, me){
           <button class="btn sm" data-pltgt="${i}" ${amt<=0?'disabled style="opacity:.5"':''}>+${amt} HP</button></div>`;
       }).join('');
       body+=`<button class="btn block" id="usePreserveLifeDone" style="margin-top:8px">Done</button>`;
+    } else if(pick.kind==='healTarget'){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(pick.t.name)}</b> — ${pick.t.hpCur}/${pick.t.hpMax} HP. Uses your action.</p>
+        <button class="btn block" id="useHealerHeal">💉 Heal (1d6+4 + hit dice)</button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='chargerPick'){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Charger — pick a foe, then choose the attack or the shove.</p>`;
+      body+=foes.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · (${mo.x},${mo.y})</small></div>
+        <button class="btn ghost sm" data-chargeratk="${i}">⚔ +5 dmg</button>
+        <button class="btn ghost sm" data-chargershove="${i}">🤜 Shove 10ft</button></div>`).join('');
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='servant'){
       // A direct reposition within 15 ft (3 tiles), blocked by tileClearFor — simplified from
       // RAW pathfinding, matching how a one-word mental command isn't really "movement" in the
@@ -8618,6 +8685,46 @@ function openAdjacentUseUI(c, s, me){
       draw(pick);
     });
     { const upld=$('#usePreserveLifeDone'); if(upld) upld.onclick=afterManeuver; }
+    { const uhh=$('#useHealerHeal'); if(uhh) uhh.onclick=()=>{
+      if(!hasAction(c)){ flashBanner('No action left'); return; }
+      const t=pick.t; if(!t) return;
+      spendAction(c);
+      const r=rollNotation('1d6+4');
+      const heal=r.total+Math.max(1,Number(t.level)||1);
+      log('💉 '+c.name+' tends to '+t.name+' — '+heal+' HP');
+      if(net.conn) try{ net.conn.send({t:'healerHeal', targetId:t.id, amount:heal}); }catch(e){}
+      flashBanner(t.name+' healed for '+heal+' HP');
+      afterManeuver();
+    }; }
+    { const uil=$('#useInspiringLeader'); if(uil) uil.onclick=()=>{
+      if(c.inspiringLeaderUsed){ flashBanner('Already used — rest to recharge'); return; }
+      c.inspiringLeaderUsed=true;
+      const amt=inspiringLeaderAmount(c);
+      inspiringLeaderTargets.forEach(t=>{
+        if(t.self){ c.hp.temp=Math.max(c.hp.temp||0, amt); }
+        else if(net.conn) try{ net.conn.send({t:'tempHpApply', targetId:t.id, amount:amt}); }catch(e){}
+      });
+      log('🎺 '+c.name+' rallies the party — +'+amt+' temp HP each');
+      flashBanner('🎺 Inspiring Leader — +'+amt+' temp HP to '+inspiringLeaderTargets.length+' '+(inspiringLeaderTargets.length===1?'creature':'creatures'));
+      afterManeuver();
+    }; }
+    document.querySelectorAll('[data-chargeratk]').forEach(b=>b.onclick=()=>{
+      if(c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      const mo=foes[Number(b.dataset.chargeratk)]; if(!mo) return;
+      c.battle.bonus=true;
+      const atk=qbPcAttacks(c).find(a=>a.melee)||{name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true};
+      const ev=Engine.attack(ad, me.id, mo.id, {name:'Charger ('+atk.name+')', toHit:atk.toHit, dmg:atk.dmg+'+5', dtype:atk.dt, tiles:1});
+      log('🏃 Charger — '+(ev.hit?'hits '+mo.name+' for '+ev.dmg+' (+5 dmg)':'misses '+mo.name));
+      flashBanner(ev.hit?'🏃 Charger hits '+mo.name+' for '+ev.dmg:'🏃 Charger misses '+mo.name);
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello();
+    });
+    document.querySelectorAll('[data-chargershove]').forEach(b=>b.onclick=()=>{
+      if(c.battle.bonus){ flashBanner('Bonus action already used'); return; }
+      const mo=foes[Number(b.dataset.chargershove)]; if(!mo) return;
+      c.battle.bonus=true;
+      maneuverShove(ad, me, mo, 'push', log, 2, true);   // Charger: 10 ft, bonus action not the Action
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello();
+    });
     { const uw=$('#useWhirlwind'); if(uw) uw.onclick=()=>{
       if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
       if(c.battle) spendAction(c);
@@ -8684,6 +8791,8 @@ function openAdjacentUseUI(c, s, me){
     document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
       const [kind,idx]=b.dataset.use.split(':');
       draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]}
+        : kind==='heal' ? {kind:'healTarget', t:healerHealTargets[Number(idx)]}
+        : kind==='charger' ? {kind:'chargerPick'}
         : kind==='servant' ? {kind:'servant'} : kind==='echo' ? {kind:'echo'} : kind==='intimidate' ? {kind:'intimidatePick'} : Object.assign({kind:'obj'}, items[Number(idx)]));
     });
     // Commanding the servant spends the BONUS action resource, independent of the shared
@@ -10216,7 +10325,11 @@ const Engine = {
     // DM-hosted mirror of a connected player — same known limitation as Evasion above).
     const armorSubj=ad.checkSubject&&ad.checkSubject(a);
     const armorDis=!!(armorSubj && armorSubj.armor && armorSubj.armor!=='none' && !armorProficient(armorSubj, armorSubj.armor));
-    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis});
+    // Grappler feat: advantage on attacks vs a creature YOU'VE grappled (PHB) — grappledBy
+    // stores the grappler's own display name (see maneuverGrapple's own comment on why a
+    // name, not an id, is the only identifier meaningful across every adapter).
+    const grapplerAdv=!!(armorSubj && t && t.grappledBy && hasFeat(armorSubj,'Grappler') && t.grappledBy===ad.name(a));
+    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv});
     const r=Engine.roll(atk.toHit, ac, face, cx.adv);
     if(cx.autoCrit && r.hit) r.crit=true;
     return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why}, r);
@@ -10412,7 +10525,11 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
 function wildShapeAttacks(c){ if(!c.wildShape) return []; return parseMonsterAttacks(c.wildShape.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d4', dt:'', tiles:a.tiles||1, melee:(a.tiles||1)<=2})); }
 function qbPcAttacks(c){ if(c.wildShape) return wildShapeAttacks(c); const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w,it);
-    out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}); });
+    out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'});
+    // Crossbow Expert (PHB): once you've made the Attack action, a bonus-action extra shot
+    // with a hand crossbow you're holding — same bonus-action gate (atk.offhand) two-weapon
+    // fighting's off-hand attack already uses, so it needs no new UI plumbing at all.
+    if(it.name==='Hand Crossbow' && hasFeat(c,'Crossbow Expert')) out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:'')+' (Crossbow Expert)', toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:false, offhand:true}); });
   (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0; out.push({name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:'', tiles:1, melee:true}); });
   // Alter Self's "natural weapons" option (PHB): unarmed strikes deal 1d6 and count as
   // magical — a real damage bump over the flat 1+STR fallback below, not just cosmetic.
@@ -11359,10 +11476,18 @@ function servantMoveTiles(ad, servant){
 // attack" framing. Simplification: no size-category restriction (monsters in this project
 // carry no size data — see AUDIT.md-style note in the skills-in-combat plan) and a push
 // into an obstacle just stops at the last clear tile rather than dealing damage.
-function maneuverShove(ad, pcUnit, mo, mode, log){
+// `tiles` (default 1 = 5 ft, the normal Shove action's push distance) — Charger's shove
+// option is the same opposed-check push, just 10 ft (2 tiles), so this takes a distance
+// instead of a second near-duplicate function. `skipBudget`: Charger's shove spends the
+// BONUS action (handled by its own caller before this runs), not the normal Action/attack
+// economy qbSpendAttackBudget gates every other Shove call through — without this, a
+// character who already spent their action on Dash would fail qbSpendAttackBudget's own
+// "no action left" check even though Charger doesn't need one.
+function maneuverShove(ad, pcUnit, mo, mode, log, tiles, skipBudget){
+  tiles=Math.max(1, Number(tiles)||1);
   const c=ad.checkSubject(pcUnit);
   if(gridDist(pcUnit.x,pcUnit.y,mo.x,mo.y)>1){ flashBanner('Too far to shove — must be adjacent'); return {ok:false}; }
-  if(!qbSpendAttackBudget(c)) return {ok:false};
+  if(!skipBudget && !qbSpendAttackBudget(c)) return {ok:false};
   if(c.conditions&&c.conditions.Hidden){ delete c.conditions.Hidden; c.hiddenDC=null; } // a maneuver reveals you like any attack
   const name=ad.name(pcUnit), moName=ad.name(mo);
   const res=opposedCheck(c,'athletics','str', ad.checkSubject(mo), [['athletics','str'],['acrobatics','dex']]);
@@ -11375,8 +11500,9 @@ function maneuverShove(ad, pcUnit, mo, mode, log){
     flashBanner(moName+' is knocked Prone!');
   } else {
     const dx=Math.sign(mo.x-pcUnit.x), dy=Math.sign(mo.y-pcUnit.y);
-    const nx=mo.x+dx, ny=mo.y+dy;
-    if(tileClearFor({map:ad.map()},nx,ny)){ ad.moveUnit(mo,nx,ny); log('🤼 '+name+' shoves '+moName+' '+detail+' — pushed back 5 ft'); }
+    let moved=0, cx=mo.x, cy=mo.y;
+    for(let i=0;i<tiles;i++){ const nx=cx+dx, ny=cy+dy; if(!tileClearFor({map:ad.map()},nx,ny)) break; cx=nx; cy=ny; moved++; }
+    if(moved>0){ ad.moveUnit(mo,cx,cy); log('🤼 '+name+' shoves '+moName+' '+detail+' — pushed back '+(moved*5)+' ft'); }
     else log('🤼 '+name+' shoves '+moName+' '+detail+' — pushed, but there\'s nowhere to go');
     flashBanner(moName+' is pushed back!');
   }
@@ -12167,7 +12293,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.204';
+const APP_VERSION='v120.205';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
