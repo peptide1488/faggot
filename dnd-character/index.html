@@ -925,17 +925,17 @@ function offhandAtk(c,w){ const b=offhandDmgBonus(c,w); return {name:w.n+(w._it&
 const CONC_SPELLS=new Set(['true strike','bane','bless','detect magic','divine favor','entangle','faerie fire','fog cloud','hex',"hunter's mark",'protection from evil and good',"tasha's hideous laughter",'witch bolt','heroism','shield of faith','silent image','expeditious retreat','alter self','barkskin','blur','calm emotions','cloud of daggers','crown of madness','darkness','detect thoughts','enhance ability','enlarge/reduce','flaming sphere','gust of wind','heat metal','hold person','invisibility','levitate','locate object','magic weapon','moonbeam','pass without trace','ray of enfeeblement','silence','spider climb','spike growth','suggestion','web','beacon of hope','bestow curse','call lightning','clairvoyance','conjure animals','fear','fly','gaseous form','haste','hypnotic pattern','major image','protection from energy','sleet storm','slow','spirit guardians','stinking cloud','vampiric touch','wind wall','arcane eye','banishment','compulsion','confusion','conjure woodland beings','control water','dominate beast','greater invisibility','locate creature','phantasmal killer','polymorph','stoneskin','wall of fire','animate objects','cloudkill','conjure elemental','dispel evil and good','dominate person','hold monster','insect plague','mislead','modify memory','scrying','telekinesis','tree stride','wall of force','wall of stone','eyebite','find the path','globe of invulnerability','sunbeam','wall of ice','conjure celestial','delayed blast fireball','reverse gravity','antimagic field','dominate monster','earthquake','holy aura','maze','gate','storm of vengeance']);
 function isConcentration(name){ return CONC_SPELLS.has((name||'').toLowerCase()); }
 // Extra attacks from class/level (number ON TOP of the first attack).
-function extraAttacks(c){ const l=Number(c.level)||1; const cls=c.cls;
+function extraAttacks(c){ const l=myLevel(c); const cls=c.cls;
   if(cls==='Fighter') return l>=20?3:l>=11?2:l>=5?1:0;
   if(['Barbarian','Paladin','Ranger','Monk'].includes(cls)) return l>=5?1:0;
   return 0; }
 /* ---- action economy: most creatures get 1 action/turn, but some get more
    (Action Surge, special monster stat blocks, the c.extraActions override) ---- */
-function hasActionSurge(c){ return c && c.cls==='Fighter' && (Number(c.level)||1)>=2; }
-function isEchoKnight(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Echo Knight' && (Number(c.level)||1)>=(lvl||3)); }
-function isBerserker(c,lvl){ return !!(c && c.cls==='Barbarian' && c.subclass==='Path of the Berserker' && (Number(c.level)||1)>=(lvl||3)); }
-function isLoreBard(c,lvl){ return !!(c && c.cls==='Bard' && c.subclass==='College of Lore' && (Number(c.level)||1)>=(lvl||3)); }
-function isLifeCleric(c,lvl){ return !!(c && c.cls==='Cleric' && c.subclass==='Life' && (Number(c.level)||1)>=(lvl||1)); }
+function hasActionSurge(c){ return c && c.cls==='Fighter' && myLevel(c)>=2; }
+function isEchoKnight(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Echo Knight' && myLevel(c)>=(lvl||3)); }
+function isBerserker(c,lvl){ return !!(c && c.cls==='Barbarian' && c.subclass==='Path of the Berserker' && myLevel(c)>=(lvl||3)); }
+function isLoreBard(c,lvl){ return !!(c && c.cls==='Bard' && c.subclass==='College of Lore' && myLevel(c)>=(lvl||3)); }
+function isLifeCleric(c,lvl){ return !!(c && c.cls==='Cleric' && c.subclass==='Life' && myLevel(c)>=(lvl||1)); }
 // Battle Master (Fighter 3rd) / Martial Adept (feat): superiority dice pool. Die size scales
 // with Battle Master level (d8→d10 at 10th→d12 at 18th); Martial Adept's own die is always a
 // flat d6 (PHB) and is additive on top of Battle Master's own pool if a character somehow has
@@ -945,11 +945,11 @@ function isLifeCleric(c,lvl){ return !!(c && c.cls==='Cleric' && c.subclass==='L
 // all uniformly "on a hit, expend a die" riders (Precision Attack is a PRE-roll to-hit modifier,
 // a structurally different mechanic from every other rider in this system, and Disarming Attack
 // needs a dropped-weapon model this app doesn't have — both deferred, not built partially).
-function isBattleMaster(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Battle Master' && (Number(c.level)||1)>=(lvl||3)); }
-function superiorityDieSize(c){ const l=Number(c.level)||1; return isBattleMaster(c) ? (l>=18?12:l>=10?10:8) : 6; }
+function isBattleMaster(c,lvl){ return !!(c && c.cls==='Fighter' && c.subclass==='Battle Master' && myLevel(c)>=(lvl||3)); }
+function superiorityDieSize(c){ const l=myLevel(c); return isBattleMaster(c) ? (l>=18?12:l>=10?10:8) : 6; }
 function superiorityDiceMax(c){
   let n=0;
-  if(isBattleMaster(c)){ const l=Number(c.level)||1; n+=l>=15?6:l>=7?5:4; }
+  if(isBattleMaster(c)){ const l=myLevel(c); n+=l>=15?6:l>=7?5:4; }
   if(hasFeat(c,'Martial Adept')) n+=1;
   return n;
 }
@@ -978,19 +978,19 @@ function applyManeuverCond(targetMo, cond, rounds){
 // Channel Divinity's own resource pool — like Bardic Inspiration, a BASE class feature
 // (Cleric, 2nd level) that had only ever been flavor text before this — 1 use, 2 at 6th,
 // 3 at 18th (PHB), refills on short OR long rest.
-function channelDivinityMax(c){ const l=Number(c.level)||1; return l>=18?3:l>=6?2:1; }
-function preserveLifePool(c){ return 5*(Number(c.level)||1); }
+function channelDivinityMax(c){ const l=myLevel(c); return l>=18?3:l>=6?2:1; }
+function preserveLifePool(c){ return 5*myLevel(c); }
 // How much of the pool a single tap gives one target: capped at half its max HP (minus
 // whatever it's already been given this same casting) and at whatever's left in the pool.
 function preserveLifeAmount(pool, hpMax, healedSoFar){ return Math.max(0, Math.min(pool, Math.floor(hpMax/2)-(healedSoFar||0))); }
 // Inspiring Leader (feat): level + CHA mod temp HP, floored at 0 (a heavily negative CHA
 // character still just grants nothing, not negative temp HP).
 function inspiringLeaderAmount(c){ return Math.max(0, (Number(c.level)||1) + mod(abil(c,'cha'))); }
-function isMoonDruid(c,lvl){ return !!(c && c.cls==='Druid' && c.subclass==='Circle of the Moon' && (Number(c.level)||1)>=(lvl||2)); }
+function isMoonDruid(c,lvl){ return !!(c && c.cls==='Druid' && c.subclass==='Circle of the Moon' && myLevel(c)>=(lvl||2)); }
 // Circle Forms (2nd/6th): Circle of the Moon overrides Wild Shape's normal CR cap (not its
 // fly/swim-by-level restriction, which this app doesn't separately model anyway — BEAST_SHAPES
 // is curated small enough that isn't a real gap in practice).
-function moonMaxCR(c){ const l=Number(c.level)||1; return l>=6 ? Math.floor(l/3) : 1; }
+function moonMaxCR(c){ const l=myLevel(c); return l>=6 ? Math.floor(l/3) : 1; }
 // Wild Shape (base Druid, 2nd level): a flat 2 uses per short/long rest — Circle of the Moon
 // does NOT grant extra uses (a common misconception; its advantage is entirely in Circle
 // Forms' higher CR cap, Combat Wild Shape's bonus action + in-form healing, and Elemental Wild
@@ -998,17 +998,17 @@ function moonMaxCR(c){ const l=Number(c.level)||1; return l>=6 ? Math.floor(l/3)
 function wildShapeMax(c){ return 2; }
 // Martial Arts (Monk 1st): the scaling unarmed-strike die (was flavor-text-only in
 // CLASS_FEATURES before this pass, like every other base-class prerequisite this session).
-function martialArtsDie(c){ const l=Number(c.level)||1; return l>=17?10:l>=11?8:l>=5?6:4; }
-function isOpenHandMonk(c,lvl){ return !!(c && c.cls==='Monk' && c.subclass==='Open Hand' && (Number(c.level)||1)>=(lvl||3)); }
+function martialArtsDie(c){ const l=myLevel(c); return l>=17?10:l>=11?8:l>=5?6:4; }
+function isOpenHandMonk(c,lvl){ return !!(c && c.cls==='Monk' && c.subclass==='Open Hand' && myLevel(c)>=(lvl||3)); }
 // Ki save DC (8 + prof + WIS mod) — every ki-spending feature (base Stunning Strike, Open
 // Hand Technique, Tranquility, Quivering Palm) shares this one DC.
 function kiDC(c){ return 8+profBonus(c)+mod(abil(c,'wis')); }
-function kiMax(c){ return Number(c.level)||1; }
-function isDevotionPaladin(c,lvl){ return !!(c && c.cls==='Paladin' && c.subclass==='Devotion' && (Number(c.level)||1)>=(lvl||3)); }
+function kiMax(c){ return myLevel(c); }
+function isDevotionPaladin(c,lvl){ return !!(c && c.cls==='Paladin' && c.subclass==='Devotion' && myLevel(c)>=(lvl||3)); }
 // Divine Sense (1st) and Lay on Hands (1st) were both flavor-text-only base Paladin features
 // before this pass (Divine Smite was already real — see attackFlow's afSmite rider).
 function divineSenseMax(c){ return Math.max(1, 1+mod(abil(c,'cha'))); }   // long rest only (PHB)
-function layOnHandsMax(c){ return 5*(Number(c.level)||1); }               // long rest only (PHB)
+function layOnHandsMax(c){ return 5*myLevel(c); }               // long rest only (PHB)
 // Channel Divinity (base Paladin, 3rd level): unlike Cleric's, this never grows past 1 use from
 // the base class — refills on short or long rest. A distinct field (paladinCDLeft) from
 // Cleric's channelDivinityLeft since the two classes' progressions differ.
@@ -1018,18 +1018,18 @@ function paladinCDMax(c){ return 1; }
 // minimal-footprint approach BEAST_SHAPES took for Wild Shape's missing content.
 function monsterIsUndead(mo){ return ['skeleton','zombie','ghost'].includes(mo&&mo.sprite); }
 function monsterIsFiend(mo){ return mo&&mo.sprite==='demon'; }
-function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunter' && (Number(c.level)||1)>=(lvl||3)); }
-function isAssassin(c,lvl){ return !!(c && c.cls==='Rogue' && c.subclass==='Assassin' && (Number(c.level)||1)>=(lvl||3)); }
-function isDraconicSorcerer(c,lvl){ return !!(c && c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && (Number(c.level)||1)>=(lvl||1)); }
-function isFiendWarlock(c,lvl){ return !!(c && c.cls==='Warlock' && c.subclass==='The Fiend' && (Number(c.level)||1)>=(lvl||1)); }
+function isHunter(c,lvl){ return !!(c && c.cls==='Ranger' && c.subclass==='Hunter' && myLevel(c)>=(lvl||3)); }
+function isAssassin(c,lvl){ return !!(c && c.cls==='Rogue' && c.subclass==='Assassin' && myLevel(c)>=(lvl||3)); }
+function isDraconicSorcerer(c,lvl){ return !!(c && c.cls==='Sorcerer' && c.subclass==='Draconic Bloodline' && myLevel(c)>=(lvl||1)); }
+function isFiendWarlock(c,lvl){ return !!(c && c.cls==='Warlock' && c.subclass==='The Fiend' && myLevel(c)>=(lvl||1)); }
 // Evasion (Rogue 7th; also Ranger Hunter's Superior Hunter's Defense option, 15th) and Uncanny
 // Dodge (Rogue 5th; same Ranger option) — both were left undone in the Hunter/Assassin passes,
 // documented as needing infra this app didn't have. Evasion turned out to need nothing new:
 // Engine.castApply is the one shared save-resolution choke point every mode already routes
 // through. Uncanny Dodge is applied automatically (see applyHp) rather than as a live prompt.
-function hasEvasion(c){ return !!(c && ((c.cls==='Rogue' && (Number(c.level)||1)>=7) || c.hunterSuperiorDefense==='Evasion')); }
-function hasUncannyDodge(c){ return !!(c && ((c.cls==='Rogue' && (Number(c.level)||1)>=5) || c.hunterSuperiorDefense==='Uncanny Dodge')); }
-function isEvocationWizard(c,lvl){ return !!(c && c.cls==='Wizard' && c.subclass==='Evocation' && (Number(c.level)||1)>=(lvl||2)); }
+function hasEvasion(c){ return !!(c && ((c.cls==='Rogue' && myLevel(c)>=7) || c.hunterSuperiorDefense==='Evasion')); }
+function hasUncannyDodge(c){ return !!(c && ((c.cls==='Rogue' && myLevel(c)>=5) || c.hunterSuperiorDefense==='Uncanny Dodge')); }
+function isEvocationWizard(c,lvl){ return !!(c && c.cls==='Wizard' && c.subclass==='Evocation' && myLevel(c)>=(lvl||2)); }
 // Overchannel (14th): max damage on a leveled spell; the SECOND and later uses before your next
 // long rest backlash you with escalating necrotic (2d12/level on the first repeat, +1d12/level
 // each further use). `c.overchannelUses` holds how many times it's ALREADY been used this rest
@@ -1054,7 +1054,7 @@ function hasNotActedYet(s, unitId){ if(!s.order||!s.order.length||(s.battle&&s.b
 // IMMEDIATE effect (reduce an enemy's roll / boost your own), unlike the base feature's
 // give-an-ally-a-die-to-hold-for-later shape, which neither subclass feature actually needs.
 function bardicInspMax(c){ return Math.max(1, mod(abil(c,'cha'))); }
-function bardicInspDie(c){ const l=Number(c.level)||1; return l>=15?12:l>=10?10:l>=5?8:6; }
+function bardicInspDie(c){ const l=myLevel(c); return l>=15?12:l>=10?10:l>=5?8:6; }
 // Mindless Rage (6th level): can't be Charmed/Frightened while raging. Checked at every
 // PC-condition-application choke point (qbAdapter.addCond's PC branch, and player-net's own
 // 'cond' message handler for DM-hosted — a monster's own fear/charm attack sets this via
@@ -1169,7 +1169,7 @@ function battleCard(c){
   </div>`;
 }
 function isRaging(c){ return (c.effects||[]).some(e=>e.name==='Rage'); }
-function rageDamage(c){ const l=Number(c.level)||1; return l>=16?4:l>=9?3:2; }
+function rageDamage(c){ const l=myLevel(c); return l>=16?4:l>=9?3:2; }
 // Path of the Berserker — Frenzy (3rd level): a CHOICE made when you rage (not automatic —
 // real optimizers sometimes skip it to avoid exhaustion stacking), so toggleRage takes an
 // optional param instead of a separate function; every existing call site (#rageBtn/#rageBtn2/
@@ -1882,16 +1882,16 @@ function attackRiderOptions(c, atk, targetMo){
   const out={};
   if(!atk.spell){
     const wref=weaponByName(String(atk.name||'').replace(/\s*\((off-hand|opportunity)\)$/,''));
-    const sneakDice=Math.ceil((Number(c.level)||1)/2);
+    const sneakDice=Math.ceil(myLevel(c)/2);
     if(c.cls==='Rogue' && (!wref || wref.type==='ranged' || /finesse/.test(wref.props||'')) && !(c.battle&&c.battle.sneakUsed))
       out.sneak={dice:sneakDice, die:6, label:'🗡️ Sneak Attack +'+sneakDice+'d6'};
-    if(c.cls==='Paladin' && (Number(c.level)||1)>=2 && (!wref || wref.type==='melee')){
+    if(c.cls==='Paladin' && myLevel(c)>=2 && (!wref || wref.type==='melee')){
       const lvls=[1,2,3,4,5].filter(l=>{ const t=spellSlots(c)[l]||0; return t-Math.min(t,(c.slots[l]&&c.slots[l].used)||0)>0; });
       if(lvls.length) out.smite={levels:lvls};
     }
   }
   if(isLifeCleric(c,8) && !atk.spell && !(c.battle&&c.battle.divineStrikeUsed)){
-    const dice=(Number(c.level)||1)>=14?2:1;
+    const dice=myLevel(c)>=14?2:1;
     out.divineStrike={dice, die:8, label:'✝️ Divine Strike +'+dice+'d8 radiant'};
   }
   if(c.cls==='Ranger' && c.hunterPrey==='Colossus Slayer' && !atk.spell && !(c.battle&&c.battle.colossusSlayerUsed) && targetMo && targetMo.hp>0 && targetMo.hp<targetMo.max)
@@ -1910,11 +1910,11 @@ function attackRiderOptions(c, atk, targetMo){
 // base roll) is in a position to do.
 function applyAttackRiders(c, atk, targetMo, choices, isCrit, targetSurprised, log){
   choices=choices||{}; let total=0; const parts=[];
-  if(choices.sneak && !(c.battle&&c.battle.sneakUsed)){ const dice=Math.ceil((Number(c.level)||1)/2); const r=rollNotation((isCrit?dice*2:dice)+'d6');
+  if(choices.sneak && !(c.battle&&c.battle.sneakUsed)){ const dice=Math.ceil(myLevel(c)/2); const r=rollNotation((isCrit?dice*2:dice)+'d6');
     if(r){ total+=r.total; parts.push('sneak '+r.detail); if(c.battle) c.battle.sneakUsed=true; log('🗡️ Sneak Attack +'+r.total); } }
   if(choices.smiteLevel){ const l=Number(choices.smiteLevel), dice=Math.min(5,1+l)*(isCrit?2:1); const r=rollNotation(dice+'d8');
     if(r){ total+=r.total; parts.push('smite '+r.detail); if(!c.slots[l]) c.slots[l]={total:0,used:0}; c.slots[l].used=Math.min(spellSlots(c)[l]||0,(c.slots[l].used||0)+1); log('⚡ Divine Smite (L'+l+' slot) +'+r.total); } }
-  if(choices.divineStrike && !(c.battle&&c.battle.divineStrikeUsed)){ const dice=((Number(c.level)||1)>=14?2:1)*(isCrit?2:1); const r=rollNotation(dice+'d8');
+  if(choices.divineStrike && !(c.battle&&c.battle.divineStrikeUsed)){ const dice=(myLevel(c)>=14?2:1)*(isCrit?2:1); const r=rollNotation(dice+'d8');
     if(r){ total+=r.total; parts.push('divine strike '+r.detail); if(c.battle) c.battle.divineStrikeUsed=true; log('✝️ Divine Strike +'+r.total); } }
   if(choices.colossus && !(c.battle&&c.battle.colossusSlayerUsed)){ const dice=isCrit?2:1; const r=rollNotation(dice+'d8');
     if(r){ total+=r.total; parts.push('colossus slayer '+r.detail); if(c.battle) c.battle.colossusSlayerUsed=true; log('🏹 Colossus Slayer +'+r.total); } }
@@ -2153,40 +2153,40 @@ function openAttack(c){
   $('#atkClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#atkModal').onclick=e=>{ if(e.target.id==='atkModal') $('#modalRoot').innerHTML=''; };
 }
-function expertiseTotal(c){ const l=Number(c.level)||1; if(c.cls==='Rogue') return 2+(l>=6?2:0); if(c.cls==='Bard') return (l>=3?2:0)+(l>=10?2:0); return 0; }
+function expertiseTotal(c){ const l=myLevel(c); if(c.cls==='Rogue') return 2+(l>=6?2:0); if(c.cls==='Bard') return (l>=3?2:0)+(l>=10?2:0); return 0; }
 function expertiseOwed(c){ return Math.max(0, expertiseTotal(c) - SKILLS.filter(([k])=>c.skillExp[k]).length); }
 function pendingChoiceSpecs(c){
-  const specs=[];
+  const specs=[]; const l=myLevel(c);   // primary class's own level — see myLevel's doc comment
   if(c.race==='Half-Elf' && !c.raceDone){ specs.push({t:'ability',n:2,options:['str','dex','con','int','wis'],label:'Half-Elf · +1 to two abilities',_race:1}); specs.push({t:'skill',n:2,label:'Half-Elf · two skill proficiencies',_race:1}); }
   if(c.race==='Human (Variant)' && !c.raceDone){ specs.push({t:'ability',n:2,label:'Variant Human · +1 to two abilities',_race:1}); specs.push({t:'skill',n:1,label:'Variant Human · one skill proficiency',_race:1}); }
   if(c.race==='Dragonborn' && !c.dragon){ specs.push({t:'ancestry'}); }
-  if(!c.fightingStyle){ const fl=FIGHTING_STYLE_LEVEL[c.cls]; if(fl && (Number(c.level)||1)>=fl) specs.push({t:'fightingStyle',cls:c.cls}); }
+  if(!c.fightingStyle){ const fl=FIGHTING_STYLE_LEVEL[c.cls]; if(fl && l>=fl) specs.push({t:'fightingStyle',cls:c.cls}); }
   const eo=expertiseOwed(c); if(eo>0) specs.push({t:'expertise',n:eo,label:'Expertise · choose '+eo+' proficient skill'+(eo>1?'s':'')});
   // College of Lore — Bonus Proficiencies (3rd level): 3 more skill proficiencies, a one-time
   // grant. Reuses the exact same {t:'skill',n} choice shape Half-Elf/Variant Human already use
   // — no new choice-picker UI needed, just another spec pushed into the same queue.
-  if(c.cls==='Bard' && c.subclass==='College of Lore' && (Number(c.level)||1)>=3 && !c.loreBonusProfsChosen) specs.push({t:'skill',n:3,label:'College of Lore · three skill proficiencies',_loreBonus:1});
+  if(c.cls==='Bard' && c.subclass==='College of Lore' && l>=3 && !c.loreBonusProfsChosen) specs.push({t:'skill',n:3,label:'College of Lore · three skill proficiencies',_loreBonus:1});
   // Favored Enemy (1st/6th/14th) and Natural Explorer (1st/6th/10th): repeatable picks, one
   // spec pushed per still-owed pick so leveling up multiple levels at once (or a freshly
   // imported high-level character) is offered all of them, not just one.
   if(c.cls==='Ranger'){
-    const feOwed=[1,6,14].filter(l=>(Number(c.level)||1)>=l).length-(c.favoredEnemies||[]).length;
+    const feOwed=[1,6,14].filter(x=>l>=x).length-(c.favoredEnemies||[]).length;
     for(let i=0;i<feOwed;i++) specs.push({t:'pick', key:'favoredEnemies', multi:true, options:FAVORED_ENEMY_TYPES, label:'Favored Enemy'});
-    const ftOwed=[1,6,10].filter(l=>(Number(c.level)||1)>=l).length-(c.favoredTerrains||[]).length;
+    const ftOwed=[1,6,10].filter(x=>l>=x).length-(c.favoredTerrains||[]).length;
     for(let i=0;i<ftOwed;i++) specs.push({t:'pick', key:'favoredTerrains', multi:true, options:FAVORED_TERRAIN_TYPES, label:'Favored Terrain'});
   }
   // Hunter's four subclass picks (3rd/7th/11th/15th) — each is a one-time choice, unlike
   // Favored Enemy/Terrain above.
   if(c.cls==='Ranger' && c.subclass==='Hunter'){
-    if((Number(c.level)||1)>=3 && !c.hunterPrey) specs.push({t:'pick', key:'hunterPrey', options:['Colossus Slayer','Giant Killer','Horde Breaker'], label:"Hunter's Prey"});
-    if((Number(c.level)||1)>=7 && !c.hunterDefense) specs.push({t:'pick', key:'hunterDefense', options:['Escape the Horde','Multiattack Defense','Steel Will'], label:'Defensive Tactics'});
-    if((Number(c.level)||1)>=11 && !c.hunterMultiattack) specs.push({t:'pick', key:'hunterMultiattack', options:['Volley','Whirlwind Attack'], label:'Multiattack'});
-    if((Number(c.level)||1)>=15 && !c.hunterSuperiorDefense) specs.push({t:'pick', key:'hunterSuperiorDefense', options:['Evasion','Stand Against the Tide','Uncanny Dodge'], label:"Superior Hunter's Defense"});
+    if(l>=3 && !c.hunterPrey) specs.push({t:'pick', key:'hunterPrey', options:['Colossus Slayer','Giant Killer','Horde Breaker'], label:"Hunter's Prey"});
+    if(l>=7 && !c.hunterDefense) specs.push({t:'pick', key:'hunterDefense', options:['Escape the Horde','Multiattack Defense','Steel Will'], label:'Defensive Tactics'});
+    if(l>=11 && !c.hunterMultiattack) specs.push({t:'pick', key:'hunterMultiattack', options:['Volley','Whirlwind Attack'], label:'Multiattack'});
+    if(l>=15 && !c.hunterSuperiorDefense) specs.push({t:'pick', key:'hunterSuperiorDefense', options:['Evasion','Stand Against the Tide','Uncanny Dodge'], label:"Superior Hunter's Defense"});
   }
   // Metamagic (base Sorcerer, 3rd/10th/17th): 2 known at 3rd, +1 at 10th, +1 at 17th —
   // repeatable, same shape as Favored Enemy/Terrain above.
   if(c.cls==='Sorcerer'){
-    const mmOwed=(((Number(c.level)||1)>=3?2:0)+((Number(c.level)||1)>=10?1:0)+((Number(c.level)||1)>=17?1:0))-(c.metamagic||[]).length;
+    const mmOwed=((l>=3?2:0)+(l>=10?1:0)+(l>=17?1:0))-(c.metamagic||[]).length;
     for(let i=0;i<mmOwed;i++) specs.push({t:'pick', key:'metamagic', multi:true, options:METAMAGIC_OPTIONS, label:'Metamagic'});
   }
   // Dragon Ancestor (Draconic Bloodline, 1st level): one-shot ancestry choice, drives Elemental
@@ -2196,13 +2196,13 @@ function pendingChoiceSpecs(c){
   // no prerequisite checking (pact-boon/level gates some real invocations require), a curated
   // list rather than the full PHB roster, same scope call BEAST_SHAPES made for Wild Shape.
   if(c.cls==='Warlock'){
-    const lvl=Number(c.level)||1, tiers=[[2,2],[5,3],[7,4],[9,5],[12,6],[15,7],[18,8]];
-    let known=0; tiers.forEach(([l,n])=>{ if(lvl>=l) known=n; });
+    const tiers=[[2,2],[5,3],[7,4],[9,5],[12,6],[15,7],[18,8]];
+    let known=0; tiers.forEach(([x,n])=>{ if(l>=x) known=n; });
     const owed=known-(c.invocations||[]).length;
     for(let i=0;i<owed;i++) specs.push({t:'pick', key:'invocations', multi:true, options:ELDRITCH_INVOCATIONS, label:'Eldritch Invocation'});
   }
   // Pact Boon (base Warlock, 3rd level): one-shot.
-  if(c.cls==='Warlock' && (Number(c.level)||1)>=3 && !c.pactBoon) specs.push({t:'pick', key:'pactBoon', options:['Pact of the Chain','Pact of the Blade','Pact of the Tome'], label:'Pact Boon'});
+  if(c.cls==='Warlock' && l>=3 && !c.pactBoon) specs.push({t:'pick', key:'pactBoon', options:['Pact of the Chain','Pact of the Blade','Pact of the Tome'], label:'Pact Boon'});
   return specs;
 }
 const METAMAGIC_OPTIONS=['Careful Spell','Distant Spell','Empowered Spell','Extended Spell','Heightened Spell','Quickened Spell','Subtle Spell','Twinned Spell'];
@@ -2243,6 +2243,97 @@ const CLASS_HITDIE = {
 // Level a class chooses its subclass.
 const SUBCLASS_LEVEL = {Cleric:1, Sorcerer:1, Warlock:1, Druid:2, Wizard:2};
 function subclassLevel(c){ return SUBCLASS_LEVEL[c.cls]||3; }
+/* ---- multiclassing ----
+   c.classes = [{cls, level, subclass}], in the order taken — c.classes[0] is the "primary"
+   (starting) class. c.cls/c.subclass stay as plain aliases of c.classes[0], kept in sync by
+   syncPrimaryClass, so every existing single-class-scoped system (proficiencies, saves,
+   pendingChoiceSpecs, resource-pool formulas like Rage damage or Ki points, subclass-gated
+   isX helpers) keeps working completely unchanged and stays correctly scoped to your PRIMARY
+   class — this is a deliberate v1 boundary, not an oversight: RAW class FEATURES belong to
+   whichever class granted them, and modeling that per-class for every one of the ~30 existing
+   c.cls-gated formulas in this file is future work, not this pass. What multiclassing v1 makes
+   correct: total character level (proficiency bonus, HP), each class's own hit dice, each
+   class's own ASI progression, subclass selection captured per class (even if not yet acted on
+   by isX helpers for non-primary classes), and — the mechanic multiclassing exists for — a
+   correctly combined spell slot pool across your casting classes (see spellSlots).
+   c.level remains a real, always-total field (kept in sync here too) so every existing
+   `Number(c.level)` read for total-level things (profBonus, initiative, etc.) needs no change. */
+// Single-class characters (the overwhelming majority, including every pre-existing test fixture
+// and any code that sets c.level/c.subclass directly rather than through levelUp/syncPrimaryClass)
+// always read the LIVE c.level/c.subclass fields here, never c.classes[0] — this makes classLevel
+// immune to c.classes going stale relative to a directly-mutated c.level, at the cost of only
+// consulting the real per-class breakdown once a character has verifiably taken levels in 2+
+// classes (which only ever happens through levelUp's own class-array bookkeeping).
+function classLevel(c,cls){
+  if(!c) return 0;
+  if(!c.classes || c.classes.length<=1) return cls===c.cls ? (Number(c.level)||1) : 0;
+  const e=c.classes.find(x=>x.cls===cls); return e?(Number(e.level)||0):0;
+}
+function classSubclass(c,cls){
+  if(!c) return '';
+  if(!c.classes || c.classes.length<=1) return cls===c.cls ? (c.subclass||'') : '';
+  const e=c.classes.find(x=>x.cls===cls); return e?(e.subclass||''):'';
+}
+// "My own level in my primary class" — identical to Number(c.level)||1 for every single-class
+// character (provable: with one class entry, its level IS the total), so substituting this in
+// place of Number(c.level) anywhere already gated by c.cls==='X' is a no-op until you actually
+// multiclass, at which point it becomes correct instead of silently reading your total level.
+function myLevel(c){ return classLevel(c,c&&c.cls); }
+function totalLevel(c){
+  if(!c) return 1;
+  if(!c.classes || c.classes.length<=1) return Number(c.level)||1;
+  return c.classes.reduce((s,e)=>s+(Number(e.level)||0),0) || (Number(c.level)||1);
+}
+// Keeps c.cls/c.subclass/c.level in sync with c.classes[0]/total. For a single-class character
+// (the overwhelming majority, including any code — tests included — that sets c.cls/c.level/
+// c.subclass directly), the LIVE scalar fields are treated as authoritative and mirrored INTO
+// classes[0], not the reverse — otherwise ensureFields (which calls this on every load) would
+// silently clobber a direct field mutation back to whatever classes[0] happened to say. Only
+// once a character has genuinely multiclassed (2+ entries — which only ever happens through
+// levelUp's own class-array bookkeeping, always kept fresh) does c.classes become authoritative.
+function syncPrimaryClass(c){
+  if(!c.classes || !c.classes.length) return;
+  if(c.classes.length<=1){
+    c.classes[0].cls=c.cls; c.classes[0].level=Number(c.level)||1; c.classes[0].subclass=c.subclass||'';
+    return;
+  }
+  c.cls=c.classes[0].cls; c.subclass=c.classes[0].subclass||'';
+  c.level=totalLevel(c);
+}
+// Multiclassing ability-score prerequisites (PHB): 13 in the relevant score(s) to take your
+// FIRST level in a class other than your starting one. Soft-checked only (a warning, not a
+// hard block) in the level-up UI — DMs vary on enforcing this, and blocking outright would
+// stop someone importing/reconstructing a character built under a different table's ruling.
+const MULTICLASS_PREREQ = {
+  Barbarian:['str'], Bard:['cha'], Cleric:['wis'], Druid:['wis'], Fighter:['str','dex'],
+  Monk:['dex','wis'], Paladin:['str','cha'], Ranger:['dex','wis'], Rogue:['dex'],
+  Sorcerer:['cha'], Warlock:['cha'], Wizard:['int'], Artificer:['int']
+};
+function meetsMulticlassPrereq(c, cls){
+  const need=MULTICLASS_PREREQ[cls]; if(!need) return true;
+  // Every multi-ability entry in the table needs ALL of them (Paladin: str+cha, Monk: dex+wis,
+  // Ranger: dex+wis) — except Fighter, RAW's one "either" case (Strength 13 OR Dexterity 13).
+  if(cls==='Fighter') return need.some(k=>abil(c,k)>=13);
+  return need.every(k=>abil(c,k)>=13);
+}
+// Hit-dice total: TOTAL level worth of dice, sized to the PRIMARY class's die. RAW tracks a
+// separate pool per class die size, spent from whichever pool you choose — this app's hit-dice
+// spend/recovery system (parseHitDice, spendHitDie, hdPips) only ever tracked ONE {count,sides}
+// pair even before multiclassing existed, so rather than build a whole new per-class-pool
+// spender, the multiclass count stays exactly right (every level, any class, is one hit die)
+// and only the SIZE is approximated as your primary class's die for any secondary-class levels
+// — a documented simplification, not a dice-count bug (you never have fewer than your real
+// total to spend, you just always roll your primary class's die size for all of them).
+function hitDiceLabel(c){
+  const hd=CLASS_HITDIE[c.cls]||8;
+  return totalLevel(c)+'d'+hd;
+}
+// "Level 8 Fighter" (unchanged, single-class) or "Fighter 3 / Wizard 5" (multiclass) — used
+// anywhere the sheet previously wrote `Level ${c.level} ${esc(c.cls)}` inline.
+function classLabel(c){
+  if(!c.classes || c.classes.length<=1) return 'Level '+c.level+' '+esc(c.cls);
+  return c.classes.filter(e=>e.level>0).map(e=>esc(e.cls)+' '+e.level).join(' / ');
+}
 // Point-buy cost table (5e): scores 8–15.
 const PB_COST = {8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9};
 const STD_ARRAY = [15,14,13,12,10,8];
@@ -2276,7 +2367,7 @@ function canRitualCast(c, name){
   if(RITUAL_CASTERS.includes(c.cls)) return true;
   return hasFeat(c,'Ritual Caster');
 }
-function preparedMax(c){ const l=Number(c.level)||1, m=mod(abil(c,c.spellAbility));
+function preparedMax(c){ const l=myLevel(c), m=mod(abil(c,c.spellAbility));
   if(['Wizard','Cleric','Druid'].includes(c.cls)) return Math.max(1, m+l);
   if(['Paladin','Artificer'].includes(c.cls)) return Math.max(1, m+Math.floor(l/2));
   return null; }
@@ -2290,12 +2381,12 @@ function preparedCount(c){ return (c.spells||[]).filter(s=>s.prepared && (s.leve
 const OATH_SPELLS = { 'Devotion': {3:['Protection from Evil and Good','Sanctuary'],5:['Lesser Restoration','Zone of Truth'],9:['Beacon of Hope','Dispel Magic'],13:['Freedom of Movement','Guardian of Faith'],17:['Commune','Flame Strike']} };
 function oathSpellNames(c){
   const table=c && OATH_SPELLS[c.subclass]; if(!table) return [];
-  const lvl=Number(c.level)||1, out=[];
+  const lvl=myLevel(c), out=[];
   Object.keys(table).forEach(l=>{ if(lvl>=Number(l)) out.push(...table[l]); });
   return out;
 }
 // Sorcerer Font of Magic (PHB): sorcery points = sorcerer level, from level 2; refresh on a long rest.
-function sorcMax(c){ return (c.cls==='Sorcerer' && (Number(c.level)||1)>=2) ? Number(c.level) : 0; }
+function sorcMax(c){ return (c.cls==='Sorcerer' && myLevel(c)>=2) ? myLevel(c) : 0; }
 function sorcCur(c){ const m=sorcMax(c); if(!m) return 0; return Math.max(0, Math.min(m, c.sorcPts!=null?Number(c.sorcPts):m)); }
 // A leveled spell is castable only if it's prepared (prep casters); cantrips & known-casters' spells are always castable.
 function spellPrepared(c, name){ const s=(c.spells||[]).find(x=>x.name.toLowerCase()===String(name||'').toLowerCase()); return s? !!s.prepared : true; }
@@ -2303,8 +2394,12 @@ function castableSpells(c){ return (c.spells||[]).filter(s=> (s.level||0)===0 ||
 function applyClassDefaults(c){
   const sv=CLASS_SAVES[c.cls];
   if(sv){ c.saveProf={str:false,dex:false,con:false,int:false,wis:false,cha:false}; sv.forEach(s=>c.saveProf[s]=true); }
+  // A class SWITCH (not a multiclass level — this always clears subclass first) replaces the
+  // whole classes array with a single fresh entry: this editor is "redo my class from scratch",
+  // not "take a level in a new class", so any prior multiclass state is deliberately discarded.
+  c.classes=[{cls:c.cls, level:Number(c.level)||1, subclass:c.subclass||''}];
   const hd=CLASS_HITDIE[c.cls];
-  if(hd) c.hitDice.total=(Number(c.level)||1)+'d'+hd;
+  if(hd) c.hitDice.total=hitDiceLabel(c);
   if(CLASS_SPELL_ABILITY[c.cls]) c.spellAbility=CLASS_SPELL_ABILITY[c.cls];   // derived from class
 }
 // Standard racial ability increases (2014 PHB-style). Modern "custom origin" lets you reassign.
@@ -2678,7 +2773,7 @@ function effBonus(c, key){ let n=0; (c.effects||[]).forEach(e=>{ if(e.mods && e.
 function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mods.speedMul) m*=e.mods.speedMul; }); return m; }
 // Unarmored Movement (Monk 2nd): +10 ft at 2nd, scaling to +30 ft at 18th — only while
 // unarmored (armor OR shield breaks it, same as Unarmored Defense).
-function unarmoredMoveBonus(c){ if(!(c && c.cls==='Monk' && (c.armor||'none')==='none' && !c.shield)) return 0; const l=Number(c.level)||1;
+function unarmoredMoveBonus(c){ if(!(c && c.cls==='Monk' && (c.armor||'none')==='none' && !c.shield)) return 0; const l=myLevel(c);
   return l>=18?30:l>=14?25:l>=10?20:l>=6?15:l>=2?10:0; }
 // Mounted: your movement uses the MOUNT's speed (PHB) — same "swap the whole speed value"
 // shape wildShape already established one line up, checked first for the same reason.
@@ -3822,7 +3917,7 @@ function classSpells(c, maxLevel){
   return SPELLS.filter(s=> s.c.includes(lt) && (maxLevel==null || s.l<=maxLevel));
 }
 function maxSpellLevel(c){ // highest spell level castable at this class level (PHB tables)
-  const lvl=Number(c.level)||1;
+  const lvl=myLevel(c);
   // half casters: 1st at L2 (Artificer L1), 2nd at 5, 3rd at 9, 4th at 13, 5th at 17
   if(c.cls==='Paladin'||c.cls==='Ranger'||c.cls==='Artificer') return Math.min(5, Math.max(1, Math.ceil(lvl/4)));
   if(c.cls==='Warlock') return Math.min(5, Math.ceil(lvl/2));
@@ -3833,15 +3928,42 @@ const SLOTS_FULL=[[],[2],[3],[4,2],[4,3],[4,3,2],[4,3,3],[4,3,3,1],[4,3,3,2],[4,
 const SLOTS_HALF=[[],[],[2],[3],[3],[4,2],[4,2],[4,3],[4,3],[4,3,2],[4,3,2],[4,3,3],[4,3,3],[4,3,3,1],[4,3,3,1],[4,3,3,2],[4,3,3,2],[4,3,3,3,1],[4,3,3,3,1],[4,3,3,3,2],[4,3,3,3,2]];
 const SLOTS_ARTI=[[],[2],[2],[3],[3],[4,2],[4,2],[4,3],[4,3],[4,3,2],[4,3,2],[4,3,3],[4,3,3],[4,3,3,1],[4,3,3,1],[4,3,3,2],[4,3,3,2],[4,3,3,3,1],[4,3,3,3,1],[4,3,3,3,2],[4,3,3,3,2]];
 function warlockSlots(lvl){ return [ lvl>=17?4:lvl>=11?3:lvl>=2?2:1, lvl>=9?5:lvl>=7?4:lvl>=5?3:lvl>=3?2:1 ]; }
+const FULL_CASTER_CLASSES=['Bard','Cleric','Druid','Sorcerer','Wizard'];
+const HALF_CASTER_CLASSES=['Paladin','Ranger','Artificer'];   // Artificer's own solo table
+  // (SLOTS_ARTI) already matches SLOTS_HALF exactly, so counting it as a half-caster
+  // contribution to the multiclass table below is consistent with this app's existing
+  // single-class simplification, not a new one.
 function spellSlots(c){
-  const lvl=Math.max(1,Math.min(20,Number(c.level)||1));
   const out={1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0};
-  if(c.cls==='Warlock'){ const w=warlockSlots(lvl); out[w[1]]=w[0]; return out; }
-  let table=null;
-  if(['Bard','Cleric','Druid','Sorcerer','Wizard'].includes(c.cls)) table=SLOTS_FULL;
-  else if(['Paladin','Ranger'].includes(c.cls)) table=SLOTS_HALF;
-  else if(c.cls==='Artificer') table=SLOTS_ARTI;
-  if(table) (table[lvl]||[]).forEach((n,i)=>{ out[i+1]=n; });
+  const classes=(c.classes&&c.classes.length)?c.classes:[{cls:c.cls, level:c.level}];
+  if(classes.length<=1){
+    const lvl=Math.max(1,Math.min(20,Number(c.level)||1));
+    if(c.cls==='Warlock'){ const w=warlockSlots(lvl); out[w[1]]=w[0]; return out; }
+    let table=null;
+    if(FULL_CASTER_CLASSES.includes(c.cls)) table=SLOTS_FULL;
+    else if(['Paladin','Ranger'].includes(c.cls)) table=SLOTS_HALF;
+    else if(c.cls==='Artificer') table=SLOTS_ARTI;
+    if(table) (table[lvl]||[]).forEach((n,i)=>{ out[i+1]=n; });
+    return out;
+  }
+  // Multiclass Spellcaster table (PHB): sum full-caster levels in full, half-caster levels
+  // (Paladin/Ranger/Artificer) rounded down by half, then look up the SAME SLOTS_FULL table
+  // by that combined caster level — the multiclass rules reuse the full-caster progression on
+  // purpose, it isn't a separate table. Warlock's Pact Magic is never combined into this sum;
+  // its own slots are computed separately and layered on top of whatever's already at that
+  // spell level (this app doesn't track pact slots as a separate short-rest-recovering pool
+  // even for a solo Warlock — see warlockSlots' sole call site above — so this is consistent,
+  // not a new gap introduced by multiclassing).
+  let casterLevel=0;
+  classes.forEach(e=>{
+    const lvl=Number(e.level)||0;
+    if(FULL_CASTER_CLASSES.includes(e.cls)) casterLevel+=lvl;
+    else if(HALF_CASTER_CLASSES.includes(e.cls)) casterLevel+=Math.floor(lvl/2);
+  });
+  casterLevel=Math.max(0,Math.min(20,casterLevel));
+  (SLOTS_FULL[casterLevel]||[]).forEach((n,i)=>{ out[i+1]=n; });
+  const wlvl=classLevel(c,'Warlock');
+  if(wlvl>0){ const w=warlockSlots(wlvl); out[w[1]]=(out[w[1]]||0)+w[0]; }
   return out;
 }
 function spellLearnSelect(c, atLevel, mode){   // mode: 'leveled' (no cantrips) | 'cantrips' | undefined (all)
@@ -3875,15 +3997,30 @@ function featInitBonus(c){ return hasFeat(c,'Alert')?5:0; }   // Alert: +5 to in
 function passiveBonus(c,key){ return (hasFeat(c,'Observant')&&(key==='perception'||key==='investigation'))?5:0; }
 function passiveScore(c,key,ab){ return 10+skillBonus(c,key,ab,true)+passiveBonus(c,key); }
 // Initiative is a DEX check — Jack of All Trades applies to it too.
-function initiative(c){ const joat=(c.cls==='Bard'&&(Number(c.level)||1)>=2)?Math.floor(profBonus(c)/2):0;
+function initiative(c){ const joat=(c.cls==='Bard'&&myLevel(c)>=2)?Math.floor(profBonus(c)/2):0;
   return mod(abil(c,'dex'))+Number(c.initMisc||0)+featInitBonus(c)+joat; }
 function skillBudget(c){ return (CLASS_SKILLS_N[c.cls]||2) + 2 + featSkillBonus(c); }
 function skillCount(c){ return SKILLS.filter(([k])=>c.skillProf[k]).length; }
 // Average HP for the class/level: max die at L1, then per-level average, all + CON each level.
 function autoHP(c){
-  const hd=CLASS_HITDIE[c.cls]; if(!hd) return null;
-  const lvl=Number(c.level)||1, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
-  return Math.max(1, hd + con + (lvl-1)*(avg+con));
+  // Single-class fast path reads the LIVE c.cls/c.level directly (never c.classes[0], which can
+  // go stale relative to a directly-mutated c.level — see classLevel's doc comment).
+  const classes=(c.classes && c.classes.length>1) ? c.classes : [{cls:c.cls, level:c.level}];
+  if(!classes.some(e=>CLASS_HITDIE[e.cls])) return null;
+  const con=mod(abil(c,'con'));
+  // Max die on the very first level of your very first class, average+CON every level after —
+  // "after" includes the FIRST level of any class taken later via multiclassing, not just your
+  // own class's 2nd level onward (RAW: only character level 1 ever gets the max-die roll).
+  let total=0, first=true;
+  classes.forEach(e=>{
+    const hd=CLASS_HITDIE[e.cls]; if(!hd) return;
+    const avg=Math.floor(hd/2)+1;
+    for(let i=0;i<(Number(e.level)||0);i++){
+      total += first ? (hd+con) : (avg+con);
+      first=false;
+    }
+  });
+  return Math.max(1, total);
 }
 
 /* ---- data ---- */
@@ -3907,7 +4044,7 @@ function newCharacter(name){
   return {
     id: uid(),
     name: name || 'New Adventurer',
-    race:'', cls:'Fighter', subclass:'', level:1, background:'', alignment:'—', xp:0,
+    race:'', cls:'Fighter', subclass:'', level:1, classes:[{cls:'Fighter', level:1, subclass:''}], background:'', alignment:'—', xp:0,
     inspiration:false,
     abilMethod:'pointbuy',
     abilities:{str:8,dex:8,con:8,int:8,wis:8,cha:8},
@@ -3934,6 +4071,8 @@ function ensureFields(c){
   if(c.name==null) c.name='Adventurer';
   if(!c.cls) c.cls='Fighter';
   if(c.level==null) c.level=1;
+  if(!c.classes || !c.classes.length) c.classes=[{cls:c.cls, level:c.level, subclass:c.subclass||''}];
+  syncPrimaryClass(c);
   if(c.race==null) c.race=''; if(c.subclass==null) c.subclass=''; if(c.background==null) c.background='';
   if(c.xp==null) c.xp=0;
   if(!c.abilities) c.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10};
@@ -4321,7 +4460,7 @@ function skillBonus(c, key, ab, exp){
   let b = mod(abil(c, ab));
   const pb = profBonus(c);
   if(c.skillProf[key]) b += pb;
-  else if(c.cls==='Bard' && (Number(c.level)||1)>=2) b += Math.floor(pb/2);   // Jack of All Trades: ½ prof on non-proficient checks
+  else if(c.cls==='Bard' && myLevel(c)>=2) b += Math.floor(pb/2);   // Jack of All Trades: ½ prof on non-proficient checks
   if(exp && c.skillExp[key]) b += pb;
   return b;
 }
@@ -4469,7 +4608,7 @@ function renderHeader(){
   sel.style.display='';
   sel.innerHTML = DB.map(c=>`<option value="${c.id}" ${c.id===curId?'selected':''}>${esc(c.name)}</option>`).join('');
   const c=cur();
-  $('#hsub').textContent = (c ? `${esc(c.race||'')} ${esc(c.cls)} ${c.level}`.trim() : 'D&D 5e character keeper')+ver;
+  $('#hsub').textContent = (c ? `${esc(c.race||'')} ${classLabel(c).replace(/^Level \d+ /,'')}`.trim() : 'D&D 5e character keeper')+ver;
   const hp=$('#hpfp'), d20=$('#hd20');
   if(c && c.portrait){ hp.style.backgroundImage='url('+c.portrait+')'; hp.style.display=''; d20.style.display='none'; }
   else { hp.style.display='none'; d20.style.display=''; }
@@ -4620,7 +4759,7 @@ function renderWizard(c){
   if(def.key==='name') $('#wz_name').addEventListener('input',e=>{ c.name=e.target.value; renderHeader(); });
   if(def.key==='race') bindSelectCustom('wz_race','race');
   if(def.key==='class') $('#wz_cls').addEventListener('change',e=>{ c.cls=e.target.value; c.subclass=''; applyClassDefaults(c); save(); render(); });
-  if(def.key==='subclass') $('#wz_sub').addEventListener('change',e=>{ c.subclass=e.target.value; save(); });
+  if(def.key==='subclass') $('#wz_sub').addEventListener('change',e=>{ c.subclass=e.target.value; if(c.classes&&c.classes[0]) c.classes[0].subclass=e.target.value; save(); });
   if(def.key==='bg') bindSelectCustom('wz_bg','background');
   if(def.key==='abil') bindAbilHandlers(c);
   if(def.key==='skills') bindSkillHandlers(c);
@@ -4669,107 +4808,140 @@ function abilKeyByName(nm){ const f=ABILITIES.find(a=>a[1]===nm); return f?f[0]:
 function clampAbil(c){ ABILITIES.forEach(([k])=>{ const total=abilBase(c,k); if(total>20){ c.asiBonus[k]=Math.max(0,c.asiBonus[k]-(total-20)); } }); }   // clamp the permanent score (base+race+ASI), not temporary buffs
 function levelUp(){
   const c=cur(); if(c.level>=20){ flashBanner('Already level 20'); return; }
-  const nl=c.level+1;
-  const isAsi=asiLevels(c).includes(nl);
-  const needsSub = nl>=subclassLevel(c) && !c.subclass && (SUBCLASSES[c.cls]||[]).length>0;
-  const hd=CLASS_HITDIE[c.cls]||8, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
-  const learnCap = ({Wizard:2,Bard:1,Sorcerer:1,Warlock:1,Ranger:1})[c.cls] ?? 2;
-  const newCantrips = isCaster(c) ? Math.max(0, cantripsKnownAt(c.cls, nl) - cantripsKnownAt(c.cls, c.level)) : 0;
+  let selCls=c.cls;   // which class this level-up applies to — defaults to your primary class,
+                       // so a character who never touches the class-picker below behaves
+                       // identically to before multiclassing existed.
   let hpGain=null, asiMode='asi', learnedThisLevel=0, learnedCantrips=0, pendingFeat=null;
-  $('#modalRoot').innerHTML=`
-   <div class="modal" id="luModal"><div class="sheet">
-     <div class="grip"></div>
-     <h2>Level up → ${esc(c.cls)} ${nl}</h2>
-     <div class="card" style="margin:0 0 12px"><h2>Hit points (+CON ${sgn(con)})</h2>
-       <div class="row2"><button class="btn ghost" id="luAvg">Average +${Math.max(1,avg+con)}</button>
-         <button class="btn ghost" id="luRoll">Roll d${hd}</button></div>
-       <div class="muted" id="luHpMsg" style="font-size:13px;margin-top:8px">Pick how to gain HP.</div>
-     </div>
-     ${needsSub?`<div class="card" style="margin:0 0 12px"><h2>Choose subclass</h2>${select('luSub', SUBCLASSES[c.cls], SUBCLASSES[c.cls][0])}</div>`:''}
-     ${isAsi?`<div class="card" style="margin:0 0 12px"><h2>Ability Score Improvement</h2>
-        <div class="seg" id="luSeg"><button class="on" data-asi="asi">+2 / +1×2</button><button data-asi="feat">Take a feat</button></div>
-        <div id="luBody"></div></div>`:''}
-     ${isCaster(c)?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— ${esc(c.cls)}: ${learnCap} this level</span></h2>
-        <div class="addrow">${spellLearnSelect(c, nl, 'leveled')}<button class="btn sm" id="luLearn">Add</button></div>
-        <div class="muted" id="luSpellDesc" style="font-size:12px;margin-top:6px;line-height:1.5"></div>
-        <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px">Spells learned: 0 / ${learnCap}. Pick one, tap Add, then pick another.</div>
-        ${newCantrips>0?`<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px"><div class="muted" style="font-size:12px;margin-bottom:6px">✨ New cantrip${newCantrips>1?'s':''} at level ${nl} — choose ${newCantrips}</div>
-          <div class="addrow">${spellLearnSelect(c, nl, 'cantrips')}<button class="btn sm" id="luLearnC">Add</button></div>
-          <div class="muted" id="luCantripMsg" style="font-size:12px;margin-top:6px">Cantrips learned: 0 / ${newCantrips}.</div></div>`:''}
-        </div>`:''}
-     <button class="btn block" id="luApply">Apply level ${nl}</button>
-   </div></div>`;
-  const setHp=(v,m)=>{ hpGain=Math.max(1,v); $('#luHpMsg').textContent=m; };
-  $('#luAvg').onclick=()=>setHp(avg+con,`+${Math.max(1,avg+con)} HP (average)`);
-  $('#luRoll').onclick=()=>{ const r=rnd(hd); setHp(r+con,`Rolled ${r} ${sgn(con)} = ${Math.max(1,r+con)} HP`); };
-  function luBody(){
-    const el=$('#luBody'); if(!el) return;
-    if(asiMode==='asi'){
-      el.innerHTML = `<p class="muted" style="font-size:13px">+2 to one, or +1 to two (capped at 20).</p>
-         <div class="row2"><div><label>Increase</label>${select('luA1', ABILITIES.map(a=>a[1]), ABILITIES[0][1])}</div>
-         <div><label>And +1 to (optional)</label>${select('luA2', ['—',...ABILITIES.map(a=>a[1])], '—')}</div></div>`;
-    } else {
-      el.innerHTML = `<div><label>Feat</label>${select('luFeat', FEATS, FEATS[0])}</div><div class="muted" id="luFeatDesc" style="font-size:12px;margin-top:6px;line-height:1.5">${esc(FEAT_DESC[FEATS[0]]||'')}</div>`;
-      const f=$('#luFeat'); if(f) f.addEventListener('change',e=>{ $('#luFeatDesc').textContent=FEAT_DESC[e.target.value]||''; });
-    }
-  }
-  if(isAsi){ luBody(); $('#luSeg').querySelectorAll('[data-asi]').forEach(b=>b.onclick=()=>{ asiMode=b.dataset.asi; $('#luSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); luBody(); }); }
-  { const ls=$('#luSpell'); if(ls) ls.addEventListener('change',e=>{ const n=(e.target.value||'').split('|')[0]; const d=$('#luSpellDesc'); if(d) d.textContent=n?(SPELL_DESC[n]||'No reference summary.'):''; }); }
-  { const lb=$('#luLearn'); if(lb) lb.onclick=()=>{
-    if(learnedThisLevel>=learnCap){ $('#luLearnMsg').textContent='Reached this level’s limit ('+learnCap+'/'+learnCap+'). Add more on the Spells tab.'; return; }
-    const sel=$('#luSpell'); if(!sel||!sel.value){ $('#luLearnMsg').textContent='Pick a spell from the list first.'; return; }
-    const [n,l]=sel.value.split('|');
-    if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
-      const ns={name:n,level:Number(l),prepared:false,notes:''}; c.spells.push(ns);
-      const note=autoPrepare(c, ns);
-      c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
-      learnedThisLevel++;
-      $('#luLearnMsg').textContent= (learnedThisLevel<learnCap ? ('Learned '+n+note+'. Now pick your next spell ('+learnedThisLevel+'/'+learnCap+').') : ('Learned '+n+note+'. Done ('+learnedThisLevel+'/'+learnCap+').'));
-      const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
-    }
-  }; }
-  { const lc=$('#luLearnC'); if(lc) lc.onclick=()=>{
-    if(learnedCantrips>=newCantrips){ $('#luCantripMsg').textContent='Reached this level’s cantrip limit ('+newCantrips+'/'+newCantrips+').'; return; }
-    const sel=$('#luCantrip'); if(!sel||!sel.value){ $('#luCantripMsg').textContent='Pick a cantrip first.'; return; }
-    const [n,l]=sel.value.split('|');
-    if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
-      c.spells.push({name:n,level:0,prepared:false,notes:''});
-      c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
-      learnedCantrips++;
-      $('#luCantripMsg').textContent='Cantrips learned: '+learnedCantrips+' / '+newCantrips+'.';
-      const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
-    }
-  }; }
-  $('#luModal').onclick=e=>{ if(e.target.id==='luModal') $('#modalRoot').innerHTML=''; };
-  $('#luApply').onclick=()=>{
-    // require all this-level choices before applying
-    if(isCaster(c) && learnedThisLevel<learnCap){ flashBanner('Learn your '+learnCap+' spell'+(learnCap>1?'s':'')+' first ('+learnedThisLevel+'/'+learnCap+')'); return; }
-    if(newCantrips>0 && learnedCantrips<newCantrips){ flashBanner('Choose your new cantrip'+(newCantrips>1?'s':'')+' first ('+learnedCantrips+'/'+newCantrips+')'); return; }
-    if(isAsi && asiMode==='feat'){ const fv=$('#luFeat'); if(!fv||!fv.value){ flashBanner('Pick a feat first'); return; } }
-    if(hpGain==null) hpGain=Math.max(1,avg+con);
-    if(hasFeat(c,'Tough')) hpGain+=2;   // Tough: +2 max HP per level, every level after you take it
-    c.hp.max+=hpGain; c.hp.cur+=hpGain;
-    if(needsSub){ const s=$('#luSub'); if(s) c.subclass=s.value; }
-    // Draconic Resilience (1st level): +1 max HP this level AND every level after — checked
-    // after subclass assignment above, since a Sorcerer can pick Draconic Bloodline on this
-    // exact level-up (1st level) and still needs the bonus to apply immediately.
-    if(isDraconicSorcerer(c,1)){ c.hp.max+=1; c.hp.cur+=1; }
-    let asiNote='';
-    if(isAsi){
+  function renderModal(){
+    const curClsLevel=classLevel(c,selCls), isNewClass=curClsLevel===0;
+    const nlForCls=curClsLevel+1;
+    const isAsi=asiLevels({cls:selCls}).includes(nlForCls);
+    const needsSub = nlForCls>=(SUBCLASS_LEVEL[selCls]||3) && !classSubclass(c,selCls) && (SUBCLASSES[selCls]||[]).length>0;
+    const hd=CLASS_HITDIE[selCls]||8, con=mod(abil(c,'con')), avg=Math.floor(hd/2)+1;
+    const learnCap = ({Wizard:2,Bard:1,Sorcerer:1,Warlock:1,Ranger:1})[selCls] ?? 2;
+    // Spell-learning stays scoped to your PRIMARY class only (see myLevel's doc comment on why
+    // most class-feature progression is v1's boundary) — a secondary caster's new spells known
+    // can still be added anytime via the Spells tab's own Add control, just not auto-prompted
+    // here the way your primary class's are.
+    const showSpellLearn = selCls===c.cls && isCaster({cls:selCls});
+    const newCantrips = showSpellLearn ? Math.max(0, cantripsKnownAt(selCls, nlForCls) - cantripsKnownAt(selCls, curClsLevel)) : 0;
+    learnedThisLevel=0; learnedCantrips=0; hpGain=null; asiMode='asi'; pendingFeat=null;
+    const newTotal=totalLevel(c)+1;
+    const takenClasses=c.classes.map(e=>e.cls);
+    const classOptions=`<optgroup label="Level up">`+takenClasses.map(k=>`<option value="${k}" ${k===selCls?'selected':''}>${k} (currently ${classLevel(c,k)})</option>`).join('')+`</optgroup>`
+      +(CLASSES.filter(k=>k!=='Other'&&!takenClasses.includes(k)).length?`<optgroup label="Multiclass into a new class">`+CLASSES.filter(k=>k!=='Other'&&!takenClasses.includes(k)).map(k=>`<option value="${k}" ${k===selCls?'selected':''}>${k}</option>`).join('')+`</optgroup>`:'');
+    const prereqWarn = isNewClass && !meetsMulticlassPrereq(c,selCls) ? `<p class="muted" style="font-size:12px;color:var(--bad);margin:8px 0 0">⚠ Multiclassing into ${esc(selCls)} normally needs ${MULTICLASS_PREREQ[selCls].map(k=>k.toUpperCase()+' 13+').join(selCls==='Fighter'?' or ':' and ')} — not enforced, your table's call.</p>` : '';
+    $('#modalRoot').innerHTML=`
+     <div class="modal" id="luModal"><div class="sheet">
+       <div class="grip"></div>
+       <h2>Level up → ${esc(selCls)} ${nlForCls} <span class="muted" style="text-transform:none;font-size:12px">(total ${newTotal})</span></h2>
+       ${(c.classes.length>1||CLASSES.some(k=>k!=='Other'&&!takenClasses.includes(k)))?`<div class="card" style="margin:0 0 12px"><h2>Which class?</h2><select id="luClassPick">${classOptions}</select>${prereqWarn}</div>`:''}
+       <div class="card" style="margin:0 0 12px"><h2>Hit points (+CON ${sgn(con)})</h2>
+         <div class="row2"><button class="btn ghost" id="luAvg">Average +${Math.max(1,avg+con)}</button>
+           <button class="btn ghost" id="luRoll">Roll d${hd}</button></div>
+         <div class="muted" id="luHpMsg" style="font-size:13px;margin-top:8px">Pick how to gain HP.</div>
+       </div>
+       ${needsSub?`<div class="card" style="margin:0 0 12px"><h2>Choose subclass</h2>${select('luSub', SUBCLASSES[selCls], SUBCLASSES[selCls][0])}</div>`:''}
+       ${isAsi?`<div class="card" style="margin:0 0 12px"><h2>Ability Score Improvement</h2>
+          <div class="seg" id="luSeg"><button class="on" data-asi="asi">+2 / +1×2</button><button data-asi="feat">Take a feat</button></div>
+          <div id="luBody"></div></div>`:''}
+       ${showSpellLearn?`<div class="card" style="margin:0 0 12px"><h2>Learn spells <span class="muted" style="text-transform:none;font-size:11px">— ${esc(selCls)}: ${learnCap} this level</span></h2>
+          <div class="addrow">${spellLearnSelect(c, nlForCls, 'leveled')}<button class="btn sm" id="luLearn">Add</button></div>
+          <div class="muted" id="luSpellDesc" style="font-size:12px;margin-top:6px;line-height:1.5"></div>
+          <div class="muted" id="luLearnMsg" style="font-size:12px;margin-top:6px">Spells learned: 0 / ${learnCap}. Pick one, tap Add, then pick another.</div>
+          ${newCantrips>0?`<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px"><div class="muted" style="font-size:12px;margin-bottom:6px">✨ New cantrip${newCantrips>1?'s':''} at level ${nlForCls} — choose ${newCantrips}</div>
+            <div class="addrow">${spellLearnSelect(c, nlForCls, 'cantrips')}<button class="btn sm" id="luLearnC">Add</button></div>
+            <div class="muted" id="luCantripMsg" style="font-size:12px;margin-top:6px">Cantrips learned: 0 / ${newCantrips}.</div></div>`:''}
+          </div>`:(selCls!==c.cls && isCaster({cls:selCls})?`<p class="muted" style="font-size:12px;margin:0 0 12px">New ${esc(selCls)} spells known: add them anytime from the Spells tab.</p>`:'')}
+       <button class="btn block" id="luApply">Apply level ${nlForCls}</button>
+     </div></div>`;
+    const setHp=(v,m)=>{ hpGain=Math.max(1,v); $('#luHpMsg').textContent=m; };
+    $('#luAvg').onclick=()=>setHp(avg+con,`+${Math.max(1,avg+con)} HP (average)`);
+    $('#luRoll').onclick=()=>{ const r=rnd(hd); setHp(r+con,`Rolled ${r} ${sgn(con)} = ${Math.max(1,r+con)} HP`); };
+    function luBody(){
+      const el=$('#luBody'); if(!el) return;
       if(asiMode==='asi'){
-        const k1=abilKeyByName($('#luA1').value), a2=$('#luA2').value;
-        if(k1) c.asiBonus[k1]+= (a2==='—'?2:1);
-        if(a2!=='—'){ const k2=abilKeyByName(a2); if(k2) c.asiBonus[k2]+=1; }
-        clampAbil(c);
-        asiNote=', ASI '+$('#luA1').value+(a2!=='—'?' & '+a2:'');
-      } else { pendingFeat=$('#luFeat').value; asiNote=', feat: '+pendingFeat; }
+        el.innerHTML = `<p class="muted" style="font-size:13px">+2 to one, or +1 to two (capped at 20).</p>
+           <div class="row2"><div><label>Increase</label>${select('luA1', ABILITIES.map(a=>a[1]), ABILITIES[0][1])}</div>
+           <div><label>And +1 to (optional)</label>${select('luA2', ['—',...ABILITIES.map(a=>a[1])], '—')}</div></div>`;
+      } else {
+        el.innerHTML = `<div><label>Feat</label>${select('luFeat', FEATS, FEATS[0])}</div><div class="muted" id="luFeatDesc" style="font-size:12px;margin-top:6px;line-height:1.5">${esc(FEAT_DESC[FEATS[0]]||'')}</div>`;
+        const f=$('#luFeat'); if(f) f.addEventListener('change',e=>{ $('#luFeatDesc').textContent=FEAT_DESC[e.target.value]||''; });
+      }
     }
-    c.level=nl; const h=CLASS_HITDIE[c.cls]; if(h) c.hitDice.total=nl+'d'+h;
-    logChange(c, 'Leveled up to '+nl+' (+'+hpGain+' HP)'+(needsSub&&c.subclass?', subclass: '+c.subclass:'')+asiNote);
-    $('#modalRoot').innerHTML=''; save(); render(); flashBanner('Welcome to level '+nl+'!');
-    if(pendingFeat) applyFeat(c, pendingFeat, ()=>resolveChoices(c));   // feat first, then any new class/race choices (e.g. L6 Expertise)
-    else resolveChoices(c);   // new Fighting Style / Expertise unlocked by this level
-  };
+    if(isAsi){ luBody(); $('#luSeg').querySelectorAll('[data-asi]').forEach(b=>b.onclick=()=>{ asiMode=b.dataset.asi; $('#luSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); luBody(); }); }
+    { const cp=$('#luClassPick'); if(cp) cp.addEventListener('change',e=>{ selCls=e.target.value; renderModal(); }); }
+    { const ls=$('#luSpell'); if(ls) ls.addEventListener('change',e=>{ const n=(e.target.value||'').split('|')[0]; const d=$('#luSpellDesc'); if(d) d.textContent=n?(SPELL_DESC[n]||'No reference summary.'):''; }); }
+    { const lb=$('#luLearn'); if(lb) lb.onclick=()=>{
+      if(learnedThisLevel>=learnCap){ $('#luLearnMsg').textContent='Reached this level’s limit ('+learnCap+'/'+learnCap+'). Add more on the Spells tab.'; return; }
+      const sel=$('#luSpell'); if(!sel||!sel.value){ $('#luLearnMsg').textContent='Pick a spell from the list first.'; return; }
+      const [n,l]=sel.value.split('|');
+      if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
+        const ns={name:n,level:Number(l),prepared:false,notes:''}; c.spells.push(ns);
+        const note=autoPrepare(c, ns);
+        c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
+        learnedThisLevel++;
+        $('#luLearnMsg').textContent= (learnedThisLevel<learnCap ? ('Learned '+n+note+'. Now pick your next spell ('+learnedThisLevel+'/'+learnCap+').') : ('Learned '+n+note+'. Done ('+learnedThisLevel+'/'+learnCap+').'));
+        const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
+      }
+    }; }
+    { const lc=$('#luLearnC'); if(lc) lc.onclick=()=>{
+      if(learnedCantrips>=newCantrips){ $('#luCantripMsg').textContent='Reached this level’s cantrip limit ('+newCantrips+'/'+newCantrips+').'; return; }
+      const sel=$('#luCantrip'); if(!sel||!sel.value){ $('#luCantripMsg').textContent='Pick a cantrip first.'; return; }
+      const [n,l]=sel.value.split('|');
+      if(!c.spells.some(s=>s.name.toLowerCase()===n.toLowerCase())){
+        c.spells.push({name:n,level:0,prepared:false,notes:''});
+        c.spells.sort((a,b)=>(a.level-b.level)||a.name.localeCompare(b.name)); save();
+        learnedCantrips++;
+        $('#luCantripMsg').textContent='Cantrips learned: '+learnedCantrips+' / '+newCantrips+'.';
+        const opt=sel.querySelector('option[value="'+sel.value.replace(/"/g,'\\"')+'"]'); if(opt) opt.remove(); sel.value='';
+      }
+    }; }
+    $('#luModal').onclick=e=>{ if(e.target.id==='luModal') $('#modalRoot').innerHTML=''; };
+    $('#luApply').onclick=()=>{
+      // require all this-level choices before applying
+      if(showSpellLearn && learnedThisLevel<learnCap){ flashBanner('Learn your '+learnCap+' spell'+(learnCap>1?'s':'')+' first ('+learnedThisLevel+'/'+learnCap+')'); return; }
+      if(newCantrips>0 && learnedCantrips<newCantrips){ flashBanner('Choose your new cantrip'+(newCantrips>1?'s':'')+' first ('+learnedCantrips+'/'+newCantrips+')'); return; }
+      if(isAsi && asiMode==='feat'){ const fv=$('#luFeat'); if(!fv||!fv.value){ flashBanner('Pick a feat first'); return; } }
+      if(hpGain==null) hpGain=Math.max(1,avg+con);
+      if(hasFeat(c,'Tough')) hpGain+=2;   // Tough: +2 max HP per level, every level after you take it
+      c.hp.max+=hpGain; c.hp.cur+=hpGain;
+      let subNote='';
+      const subPick = needsSub ? ($('#luSub')&&$('#luSub').value) : null;
+      if(subPick) subNote=', subclass: '+subPick;
+      let entry=c.classes.find(e=>e.cls===selCls);
+      if(entry){ entry.level=nlForCls; if(subPick) entry.subclass=subPick; }
+      else { entry={cls:selCls, level:1, subclass:subPick||''}; c.classes.push(entry); }
+      // Deliberately NOT syncPrimaryClass here: its single-class branch mirrors the LIVE
+      // c.level/c.cls INTO classes[0] (so ensureFields never clobbers a direct test-style
+      // mutation elsewhere) — the opposite of what's needed right here, where classes[] was
+      // just updated and IS the authoritative source. Sync straight from classes[] instead.
+      c.cls=c.classes[0].cls; c.subclass=c.classes[0].subclass||'';
+      c.level=c.classes.reduce((s,e)=>s+(Number(e.level)||0),0);
+      // Draconic Resilience (1st level): +1 max HP this level AND every level after — checked
+      // after c.classes is updated/synced above, since a Sorcerer can pick Draconic Bloodline
+      // on this exact level-up (1st level) and still needs the bonus to apply immediately.
+      // Primary-class-only per this pass's scope (myLevel/isDraconicSorcerer both read c.cls) —
+      // moot for a brand-new multiclass entry anyway, since it can never become primary.
+      if(isDraconicSorcerer(c,1)){ c.hp.max+=1; c.hp.cur+=1; }
+      let asiNote='';
+      if(isAsi){
+        if(asiMode==='asi'){
+          const k1=abilKeyByName($('#luA1').value), a2=$('#luA2').value;
+          if(k1) c.asiBonus[k1]+= (a2==='—'?2:1);
+          if(a2!=='—'){ const k2=abilKeyByName(a2); if(k2) c.asiBonus[k2]+=1; }
+          clampAbil(c);
+          asiNote=', ASI '+$('#luA1').value+(a2!=='—'?' & '+a2:'');
+        } else { pendingFeat=$('#luFeat').value; asiNote=', feat: '+pendingFeat; }
+      }
+      c.hitDice.total=hitDiceLabel(c);
+      logChange(c, (isNewClass?'Multiclassed into ':'Leveled up ')+selCls+' to '+nlForCls+' (total level '+c.level+') (+'+hpGain+' HP)'+subNote+asiNote);
+      $('#modalRoot').innerHTML=''; save(); render(); flashBanner('Welcome to '+selCls+' '+nlForCls+'!');
+      if(pendingFeat) applyFeat(c, pendingFeat, ()=>resolveChoices(c));   // feat first, then any new class/race choices (e.g. L6 Expertise)
+      else resolveChoices(c);   // new Fighting Style / Expertise unlocked by this level
+    };
+  }
+  renderModal();
 }
 
 /* ---------- BIO ---------- */
@@ -4811,7 +4983,7 @@ function renderSheet(c){
 
   <div class="card">
     <div class="row between" style="margin-bottom:12px">
-      <h2 style="margin:0;color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px">Level ${c.level} ${esc(c.cls)}${c.subclass?` · ${esc(c.subclass)}`:''}</h2>
+      <h2 style="margin:0;color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px">${classLabel(c)}${c.subclass?` · ${esc(c.subclass)}`:''}</h2>
       <button class="btn sm" id="levelUpBtn" ${c.level>=20?'disabled style="opacity:.4"':''}>⬆ Level Up</button>
     </div>
     <div class="tiles">
@@ -4922,6 +5094,9 @@ function renderSheet(c){
   bindSelectCustom('f_race','race'); bindSelectCustom('f_background','background');
   $('#f_cls').addEventListener('change',e=>{ c.cls=e.target.value; c.subclass=''; applyClassDefaults(c); save(); render(); });
   bindSelectCustom('f_subclass','subclass');
+  // bindSelectCustom writes c.subclass directly — mirror it into c.classes[0] (the primary
+  // class entry) so classSubclass()/classLevel() readers stay in sync with this editor too.
+  ['f_subclass_sel','f_subclass_cust'].forEach(id=>{ const el=$('#'+id); if(el) el.addEventListener('change',()=>{ if(c.classes&&c.classes[0]) c.classes[0].subclass=c.subclass||''; save(); }); });
   bindNum('f_xp','xp');
   $('#f_profOverride').addEventListener('change',e=>{ c.profOverride = e.target.value===''?'':Number(e.target.value); save(); render(); });
   $('#f_insp').addEventListener('change',e=>{ c.inspiration=e.target.checked; save(); });
@@ -5103,7 +5278,7 @@ function renderCombat(c){
       <input type="number" id="hpamt" value="1" min="1" inputmode="numeric">
       <button class="btn sm" id="healBtn" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button>
     </div>
-    ${autoHP(c)?`<button class="btn ghost sm block" id="autoHp" style="margin-top:10px">Set max HP to class average — ${autoHP(c)} (${esc(c.cls)} d${CLASS_HITDIE[c.cls]} + CON)</button>`:''}
+    ${autoHP(c)?`<button class="btn ghost sm block" id="autoHp" style="margin-top:10px">Set max HP to class average — ${autoHP(c)} (${c.classes&&c.classes.length>1?'per class':esc(c.cls)+' d'+CLASS_HITDIE[c.cls]} + CON)</button>`:''}
   </div>
 
   <div class="card">
@@ -5919,6 +6094,7 @@ function forgeRandom(ans){
   const prio=RND_PRIO[c.cls]||['str','con','dex','wis','cha','int'];
   prio.forEach((k,i)=>{ c.abilities[k]=STD_ARRAY[i]; });
   if((SUBCLASSES[c.cls]||[]).length) c.subclass=rndPick(SUBCLASSES[c.cls]);   // always give a subclass for a complete hero
+  if(c.classes&&c.classes[0]) c.classes[0].subclass=c.subclass||'';
   // skills: prefer class-ability skills, fill up to budget
   const classAbils=new Set(prio.slice(0,3));
   const pref=shuffle(SKILLS.filter(s=>classAbils.has(s[2]))), rest=shuffle(SKILLS.filter(s=>!classAbils.has(s[2])));
@@ -10287,7 +10463,7 @@ function openQbSheet(c){
   const ct=RACE_TRAITS[c.race]||[], cf=(CLASS_FEATURES[c.cls]||[]).filter(f=>f[0]<=(Number(c.level)||1));
   const sheet=`<div class="modal" id="qbsModal"><div class="sheet"><div class="grip"></div>
     <h2 style="margin:0">${esc(c.name)}</h2>
-    <div class="muted" style="font-size:12px;margin:2px 0 10px">Level ${c.level} ${esc(c.race||'')} ${esc(c.cls)}${c.subclass?' · '+esc(c.subclass):''}</div>
+    <div class="muted" style="font-size:12px;margin:2px 0 10px">${esc(c.race||'')} ${classLabel(c)}${c.subclass?' · '+esc(c.subclass):''}</div>
     <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:0 0 10px">
       <div class="tile"><div class="lab">HP</div><div class="big">${c.hp.cur}/${c.hp.max}</div></div>
       <div class="tile"><div class="lab">AC ${bd('ac')}</div><div class="big">${computeAC(c)}</div></div>
@@ -12521,7 +12697,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.210';
+const APP_VERSION='v120.211';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

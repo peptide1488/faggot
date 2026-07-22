@@ -2552,3 +2552,88 @@ clicking through to a real `MOUNT_CATALOG` pick spawns the mount and updates `ef
 dismounting with a fresh movement budget correctly clears `c.mountedOn`. (An initial dismount
 attempt with no movement remaining was correctly blocked by the cost gate — confirms the guard
 works, not a bug — see the movement-cost note above.)
+
+## Multiclassing v1 (v120.211)
+
+Closed the roadmap's #1 requested feature: characters can now take levels in a second (or
+third, etc.) class, following the user's explicit priority pick over the other remaining large
+items (combat depth, modularization). This is the biggest single change this app has taken —
+touching character data, the level-up flow, and roughly 30 class-feature-scaling call sites —
+so it shipped with a deliberately bounded, honestly-documented v1 scope rather than attempting
+full RAW breadth in one pass.
+
+**Data model:** `c.classes = [{cls, level, subclass}]`, in the order taken (`c.classes[0]` is
+your PRIMARY/starting class). `c.cls`/`c.subclass`/`c.level` remain plain fields — kept as
+aliases of the primary class / total level — so every pre-existing single-class-scoped system
+in this ~12,500-line file keeps working completely unchanged. New helpers: `classLevel(c,cls)`,
+`classSubclass(c,cls)`, `myLevel(c)` ("my primary class's own level" — provably identical to
+`c.level` for any single-class character), `totalLevel(c)`, `classLabel(c)` (display string),
+`hitDiceLabel(c)`, `meetsMulticlassPrereq(c,cls)` (soft-checked 13-in-relevant-ability warning,
+not enforced — DMs vary, and enforcing it could block reconstructing an imported character).
+
+**What's genuinely multiclass-correct:** total character level (proficiency bonus, HP, the L20
+cap); each class's own hit dice (dice COUNT is always the true total, sized to your primary
+class's die — see the dedicated simplification note below); each class's own ASI/feat
+progression (a Fighter 3/Wizard 5 correctly hasn't hit Fighter's first ASI yet, even though
+total level is 8); subclass selection captured PER CLASS (even a secondary class's subclass is
+stored, ready for a future pass); and — the mechanic multiclassing exists for — a correctly
+combined spell slot pool: full-caster classes sum their levels, half-casters (Paladin/Ranger/
+Artificer) contribute half rounded down, and the combined caster level looks up the SAME
+`SLOTS_FULL` table a solo full-caster uses (the multiclass rules reuse it on purpose, per PHB).
+Warlock's Pact Magic is never folded into that sum — its own `warlockSlots()` count is computed
+separately and layered on top of whatever's already at that spell level, consistent with how
+this app already treated a solo Warlock's slots (long-rest-recovering, not a separate
+short-rest pool) rather than a new gap introduced by multiclassing.
+
+**Deliberate v1 boundary — class FEATURES stay scoped to your PRIMARY class only:** the ~30
+existing formulas for class resource pools and feature-granting content (Rage damage/uses, Ki
+points, Channel Divinity uses, Lay on Hands pool, Martial Arts die, Bardic Inspiration die,
+Sneak Attack/Divine Strike dice, Sorcery Points, expertise, and every entry in
+`pendingChoiceSpecs` — Fighting Style, Metamagic, Favored Enemy, Hunter's Prey, Eldritch
+Invocations, Pact Boon, etc.) were already implicitly "your one class's own level" before
+multiclassing existed; they're now correctly `myLevel`-based (a genuine bug fix — previously a
+multiclassed primary-class character would have read their TOTAL level for these, e.g. a
+Fighter 3/Wizard 5 would have wrongly scaled Second Wind or a Battle Master die off level 8) but
+they remain intentionally primary-class-only. A secondary spellcasting class's new spells known
+aren't auto-prompted at level-up (the modal shows a note pointing at the Spells tab's own Add
+button instead, which isn't level-gated). Modeling per-class feature ownership for a SECONDARY
+class is real future work, not silently promised here.
+
+**Hit dice simplification (documented, not a bug):** RAW tracks a separate short-rest-healing
+pool per class die size. This app's hit-dice spend/recovery system (`parseHitDice`,
+`spendHitDie`, the pip UI) only ever tracked one `{count,sides}` pair, even before
+multiclassing — rather than build a new per-class-pool spender, `hitDiceLabel` keeps the dice
+COUNT exactly right (every level, any class, is one hit die — you never have fewer to spend
+than you actually own) and only approximates the SIZE as your primary class's die for any
+secondary-class levels.
+
+**Level-up UI:** a class-picker now sits atop the level-up modal — defaults to your primary
+class (so anyone who never touches it sees an unchanged flow), lists every class you've already
+taken plus a "multiclass into a new class" group for the rest. Picking a new class shows a
+non-blocking ability-score-prerequisite warning (Fighter is RAW's one "either" prerequisite —
+Strength 13 OR Dexterity 13 — everything else in the table is "and"). HP rolls/averages use the
+SELECTED class's own hit die; ASI/subclass timing is checked against that class's own new level.
+
+Found and fixed one real regression during testing, not just new code: `ensureFields` (which
+runs on every load) was unconditionally overwriting `c.cls`/`c.level`/`c.subclass` FROM
+`c.classes[0]` — for a single-class character this meant any code that set those fields directly
+(several existing tests do exactly this, e.g. `pd.cls='Paladin'`) got silently reverted back to
+whatever `classes[0]` happened to still say. Fixed by making the single-class sync direction
+mirror the LIVE fields INTO `classes[0]` instead (only for length-1 arrays; a genuine multiclass
+array, which only `levelUp` ever produces, stays the authoritative source) — this makes
+`classLevel`/`myLevel`/`totalLevel` immune to `c.classes` going stale relative to a direct field
+mutation anywhere in the app, present or future.
+
+Tests: 25 new assertions in `rules-test.js` covering the single-class no-op guarantee for every
+new helper, the `ensureFields` clobbering regression directly, a genuine two-class breakdown
+(`classLevel`/`classSubclass`/`myLevel` all reading correctly, proven against a case where
+primary-class-level and total-level differ — Battle Master's die size), the combined spell slot
+table for both a caster/non-caster mix and a half-caster+Warlock mix, a solo Warlock proven
+unaffected by the multiclass code path, and the ability-score-prerequisite OR/AND distinction.
+Also live-verified via Playwright end-to-end against the real DOM: the class-picker correctly
+lists existing classes with their current level plus multiclass options, switching to a new
+class correctly swaps the HP die and prerequisite warning and suppresses the primary-only
+spell-learning section, and applying a level correctly updates `c.classes`, the primary alias,
+total level, and the composed hit-dice string — checked for both a fresh multiclass entry and a
+second level taken in an already-existing secondary class, plus a plain single-class level-up
+confirmed byte-for-byte unchanged in outcome.

@@ -2619,5 +2619,76 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- "make the systems": multiclassing v1 ----
+   Scope (documented in AUDIT.md): total level, hit dice, ASI progression, subclass capture,
+   and — the headline mechanic — combined spell slots are all genuinely multiclass-aware.
+   Class FEATURE-granting content (pendingChoiceSpecs) and resource-pool formulas (Rage
+   damage, Ki points, Channel Divinity, etc.) stay scoped to your PRIMARY (first-taken) class
+   only, per myLevel's own doc comment — this is a deliberate v1 boundary, not a bug. */
+{
+  // Single-class: every helper must be a byte-for-byte no-op vs. reading c.level/c.cls
+  // directly — this is what makes the myLevel substitution across ~30 call sites safe.
+  const solo=newCharacter('Solo'); solo.cls='Ranger'; solo.level=7; solo.subclass='Hunter';
+  T('classLevel: single-class returns the live c.level for your own class', classLevel(solo,'Ranger')===7);
+  T('classLevel: single-class returns 0 for a class you do not have', classLevel(solo,'Fighter')===0);
+  T('myLevel: identical to c.level for a single-class character', myLevel(solo)===solo.level);
+  T('totalLevel: identical to c.level for a single-class character', totalLevel(solo)===7);
+  T('classSubclass: single-class returns the live c.subclass', classSubclass(solo,'Ranger')==='Hunter');
+  T('classLabel: single-class format unchanged ("Level N Class")', classLabel(solo)==='Level 7 Ranger');
+
+  // ensureFields/syncPrimaryClass must NEVER clobber a direct c.cls/c.level/c.subclass
+  // mutation back to a stale c.classes[0] — this was a real regression caught by this exact
+  // pattern already used throughout the rest of this test file (e.g. `pd.cls='Paladin'`).
+  const direct=newCharacter('Direct'); direct.cls='Wizard'; direct.level=5; direct.subclass='Evocation';
+  ensureFields(direct);
+  T('ensureFields does not clobber a directly-mutated c.cls/level/subclass', direct.cls==='Wizard' && direct.level===5 && direct.subclass==='Evocation');
+  T('ensureFields keeps classes[0] mirroring the live fields after a direct mutation', direct.classes[0].cls==='Wizard' && direct.classes[0].level===5 && direct.classes[0].subclass==='Evocation');
+
+  // Genuine multiclass: Fighter 3 (Battle Master) / Wizard 5 (Evocation), Fighter taken first
+  // (primary). Total level 8, but Fighter's OWN level is 3 — this is exactly the distinction
+  // myLevel exists to get right (superiority die/etc. must key off Fighter's own level, not 8).
+  const mc=newCharacter('Multi'); mc.cls='Fighter'; mc.level=3; mc.subclass='Battle Master';
+  mc.classes=[{cls:'Fighter',level:3,subclass:'Battle Master'},{cls:'Wizard',level:5,subclass:'Evocation'}];
+  syncPrimaryClass(mc);
+  T('syncPrimaryClass: total level sums both classes (3+5=8)', mc.level===8);
+  T('syncPrimaryClass: c.cls/subclass stay the PRIMARY (first-taken) class', mc.cls==='Fighter' && mc.subclass==='Battle Master');
+  T('classLevel: reads each class\'s own level from the real breakdown', classLevel(mc,'Fighter')===3 && classLevel(mc,'Wizard')===5 && classLevel(mc,'Cleric')===0);
+  T('classSubclass: per-class subclass, not just the primary alias', classSubclass(mc,'Wizard')==='Evocation');
+  T('myLevel: your PRIMARY class\'s own level, not total (3, not 8)', myLevel(mc)===3);
+  T('superiorityDieSize: correctly d8 (Fighter lvl 3) not d10 (would be wrong reading total lvl 8)', superiorityDieSize(mc)===8);
+  T('classLabel: multiclass format lists each class with its own level', classLabel(mc)==='Fighter 3 / Wizard 5');
+  T('hitDiceLabel: dice COUNT is the true total (8), sized to the primary class\'s die', hitDiceLabel(mc)==='8d10');
+  { const con=mod(abil(mc,'con'));   // Fighter d10 max on lvl 1, then 2 more Fighter avg(6) + 5 Wizard avg(4)
+    T('autoHP: max die on character level 1 only, average+CON every level after (each class its own die)', autoHP(mc)===(10+con)+2*(6+con)+5*(4+con)); }
+
+  // Spell slots — the headline mechanic. Wizard 5 is the only caster here (Fighter contributes
+  // nothing): combined caster level = 5 → straight off the shared SLOTS_FULL table, same as a
+  // solo 5th-level Wizard would get, proving the multiclass table reuses the full-caster table.
+  const slots1=spellSlots(mc);
+  T('spellSlots (Fighter/Wizard 5): matches a solo caster-level-5 full-caster exactly', slots1[1]===4 && slots1[2]===3 && slots1[3]===2 && slots1[4]===0);
+
+  // Half-caster + Warlock: Paladin 6 (half → contributes floor(6/2)=3 to the shared pool) +
+  // Warlock 2 (excluded from the pool, own Pact Magic layered on top instead).
+  const pw=newCharacter('PactKnight'); pw.cls='Paladin'; pw.level=6; pw.subclass='Devotion';
+  pw.classes=[{cls:'Paladin',level:6,subclass:'Devotion'},{cls:'Warlock',level:2,subclass:''}];
+  syncPrimaryClass(pw);
+  const slots2=spellSlots(pw);
+  T('spellSlots (Paladin 6/Warlock 2): shared pool at caster level 3 = SLOTS_FULL[3] = [4,2]', slots2[2]===2);
+  T('spellSlots (Paladin 6/Warlock 2): Warlock\'s 2 pact slots (1st-level, its own level 2) layer onto the shared L1 count (4+2=6)', slots2[1]===6);
+
+  // A solo Warlock must be completely unaffected by the multiclass math (single-class fast path).
+  const solowl=newCharacter('SoloLock'); solowl.cls='Warlock'; solowl.level=5;
+  const slots3=spellSlots(solowl);
+  T('spellSlots: solo Warlock still uses warlockSlots directly, unaffected by multiclass code', slots3[3]===2 && slots3[1]===0 && slots3[2]===0);
+
+  // Multiclass ability-score prerequisite (soft-checked in the level-up UI, not enforced here).
+  const prereqOk=newCharacter('Strong'); prereqOk.abilities={str:15,dex:10,con:10,int:10,wis:10,cha:10};
+  const prereqBad=newCharacter('Weak'); prereqBad.abilities={str:8,dex:10,con:10,int:10,wis:10,cha:10};
+  T('meetsMulticlassPrereq: 13+ in the relevant score passes (Barbarian: str only)', meetsMulticlassPrereq(prereqOk,'Barbarian')===true);
+  T('meetsMulticlassPrereq: below 13 fails', meetsMulticlassPrereq(prereqBad,'Barbarian')===false);
+  T('meetsMulticlassPrereq: multi-ability classes need ALL listed scores (Paladin: str+cha, only str met)', meetsMulticlassPrereq(prereqOk,'Paladin')===false);
+  T('meetsMulticlassPrereq: Fighter is the one "either" case (str 13 OR dex 13) — str alone is enough', meetsMulticlassPrereq(prereqOk,'Fighter')===true);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
