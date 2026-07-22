@@ -5895,11 +5895,17 @@ function forgeRandom(ans){
 }
 
 /* ---- backup ---- */
+// Full backup: characters (as before) + DM campaigns + saved battle maps — everything that
+// actually matters if localStorage gets cleared (the AI Narrator key is deliberately left
+// out: a credential, not app data, and shouldn't end up in a file someone might share).
+// `v:1` + the `characters` key let importData tell this apart from the OLD bare-array
+// format (a plain characters list) that already-downloaded backups are in — both still work.
 function exportData(){
-  const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
+  const bundle={v:1, exportedAt:Date.now(), characters:DB, campaigns:campaigns(), maps:savedMaps()};
+  const blob=new Blob([JSON.stringify(bundle,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
-  a.href=url; a.download='grimoire-characters.json'; a.click();
+  a.href=url; a.download='grimoire-backup.json'; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function resetAllData(){
@@ -5964,12 +5970,31 @@ function importData(e){
   r.onload=()=>{
     try{
       const data=JSON.parse(r.result);
-      if(!Array.isArray(data)) throw new Error('bad');
-      if(!confirm('Import will merge these characters into your list. Continue?')){ e.target.value=''; return; }
+      // OLD format (pre-campaigns/maps backups already on people's devices): a bare character
+      // array. NEW format: {v:1, characters, campaigns, maps}. Both stay importable forever.
+      let chars, campData=null, mapData=null;
+      if(Array.isArray(data)){ chars=data; }
+      else if(data && Array.isArray(data.characters)){ chars=data.characters; campData=data.campaigns||null; mapData=data.maps||null; }
+      else throw new Error('bad');
+      if(!confirm('Import will merge this backup into your data. Existing characters/campaigns/maps are never overwritten — only new ones are added. Continue?')){ e.target.value=''; return; }
       const ids=new Set(DB.map(c=>c.id));
-      data.forEach(c=>{ if(c && !ids.has(c.id)) DB.push(ensureFields(c)); });
-      save(); render();
-      alert('Imported '+data.length+' character(s).');
+      let added=0;
+      chars.forEach(c=>{ if(c && !ids.has(c.id)){ DB.push(ensureFields(c)); added++; } });
+      save();
+      let campAdded=0;
+      if(campData){
+        const all=campaigns();
+        Object.keys(campData).forEach(name=>{ if(!(name in all)){ all[name]=campData[name]; campAdded++; } });
+        try{ localStorage.setItem('grimoire.campaigns',JSON.stringify(all)); }catch(err){}
+      }
+      let mapAdded=0;
+      if(mapData){
+        const all=savedMaps();
+        Object.keys(mapData).forEach(name=>{ if(!(name in all)){ all[name]=mapData[name]; mapAdded++; } });
+        try{ localStorage.setItem('grimoire.maps',JSON.stringify(all)); }catch(err){}
+      }
+      render();
+      alert('Imported '+added+' character(s)'+(campAdded?', '+campAdded+' campaign(s)':'')+(mapAdded?', '+mapAdded+' map(s)':'')+'. Anything already on this device with the same name/id was left untouched.');
     }catch(err){ alert('That file could not be read as a Grimoire backup.'); }
     e.target.value='';
   };
@@ -12375,7 +12400,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.206';
+const APP_VERSION='v120.207';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

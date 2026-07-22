@@ -2388,3 +2388,33 @@ production bug, but exactly the kind of mistake this suite exists to catch.
 Remaining "make the systems" backlog: the mount system (Mounted Combatant) — the last major
 item, needs its own scoping pass before starting per `VISION.md`'s roadmap (it touches unit
 movement/rendering across all three modes, comparable in scope to Echo Knight).
+
+## Full backup export/import (v120.207)
+
+VISION.md roadmap item #2 ("insurance against localStorage wipes"). Turned out to be smaller
+than scoped: character export/import (`exportData`/`importData`, the App & Data menu's
+⬇/⬆ buttons) already existed — the actual gap was that it only ever covered characters, not
+DM campaigns or saved battle maps, both of which live in their own separate localStorage keys
+(`grimoire.campaigns`, `grimoire.maps`).
+
+- `exportData()` now bundles `{v:1, exportedAt, characters, campaigns, maps}` into one download
+  (`grimoire-backup.json`) instead of a bare character array. The AI Narrator key
+  (`grimoire.aikey`) is deliberately left out — it's a credential, not app data, and has no
+  business ending up in a file someone might hand to a friend.
+- `importData()` accepts BOTH the new bundle shape and the OLD bare-array format, so backups
+  already sitting on someone's device from before this change still import correctly forever —
+  detected by `Array.isArray(data)` vs. `data.characters` being present.
+- **Merge is strictly additive, never overwrites**: characters skip existing `id`s (unchanged
+  behavior), campaigns/maps skip existing name keys — restoring an old backup can't clobber
+  newer local data by accident. Matches the safety posture the character-merge already had.
+- No unit tests: both functions are fundamentally DOM/File-API-bound (`Blob`, `URL.createObjectURL`,
+  `FileReader`), which `rules-test.js`'s stub DOM doesn't model (same reason `openSummonSpellUI`/
+  `openMove`/every other modal-driving function in this app has no direct test either).
+  Verified instead by actually driving the real functions in a live browser (Playwright):
+  confirmed the exported bundle round-trips correctly end-to-end (export → wipe localStorage →
+  import → all three data types restored), the never-overwrite guarantee holds on a re-import
+  with conflicting data (0 new entries, existing data untouched), and the old bare-array format
+  still imports cleanly.
+
+Remaining "make the systems" backlog: the mount system (Mounted Combatant), still the last
+major item and still needs its own scoping pass first.
