@@ -2474,3 +2474,36 @@ UI-gate boolean, a mirrored-list addition matching an already-tested sibling) ve
 direct code inspection rather than new automated tests — `playerAttackMenu`/the Use-menu modal
 are DOM-rendering functions with no return value to assert on, same reason `openSummonSpellUI`/
 `openMove` have no direct tests either.
+
+## Mode-parity audit — follow-up: `pcAttackList` unification (v120.209)
+
+Closed the architectural debt flagged in v120.209's own note above: `qbPcAttacks` and
+`playerAttackMenu` were two hand-maintained lists of "what can this character attack with
+right now," the root cause behind 3 of the previous pass's 5 findings. Extracted one shared
+`pcAttackList(c)` — `qbPcAttacks` is now a thin wrapper around it; `playerAttackMenu` consumes
+it too, translating each flat `{name,toHit,dmg,dt,tiles,melee,reach,vers,offhand}` entry into
+its own `{label,sub,atk}` modal shape. A future attack-granting feature (a feat, a class
+feature) now only needs to be added in ONE place — the exact bug class from v120.208's audit
+becomes structurally impossible to reintroduce for anything routed through this list.
+
+- Preserved `playerAttackMenu`'s "reach" vs "melee" display distinction (a cosmetic label
+  difference the unification could easily have dropped) by adding a `reach` field to the
+  shared list rather than deciding it wasn't worth carrying over.
+- Picked up `vers` (versatile weapon two-handed damage) as a side effect — `qbPcAttacks` never
+  had it, `playerAttackMenu` always did; `attackFlow` (the actual attack-resolution modal both
+  paths route through) already reads `atk.vers` generically, so QB combat gains the versatile
+  weapon toggle for free rather than needing its own separate fix.
+- Verified two ways: `rules-test.js` now asserts `qbPcAttacks(c)` and `pcAttackList(c)` produce
+  byte-identical output (proving the wrapper claim, not just asserting it in a comment) plus
+  direct coverage of all 3 previously-drifted features landing together in one list. Then,
+  since `playerAttackMenu` itself still has no return value to unit-test, drove the REAL
+  function live in a browser (Playwright) with a character rigged with off-hand-eligible
+  weapons + Crossbow Expert + a custom attack — confirmed the rendered modal HTML shows every
+  entry with correct labels/formatting, not just that the underlying data array is right.
+
+Remaining "make the systems" backlog: the mount system (Mounted Combatant), still needing its
+own scoping pass. Mode-parity audit itself can be considered done for this pass — the
+Sneak-Attack-family riders were already unified (v120.199), the 5 acute gaps are fixed
+(v120.208), and their structural root cause is closed (this entry). Future passes should watch
+for the same pattern (a feature built once and wired into only one UI trigger path) rather than
+assuming it's fully solved forever.

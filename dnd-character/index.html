@@ -7520,26 +7520,12 @@ function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; retu
 function playerAttackMenu(c){
   const me=myMapPos();
   const actions=[];
-  if(c.wildShape){
-    wildShapeAttacks(c).forEach(a=>actions.push({label:a.name, sub:(a.melee?'melee':'ranged')+' · '+a.dmg, tiles:a.tiles, atk:a}));
-  } else {
-  weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const b=weaponDmgBonus(c,w,it);
-    actions.push({label:it.name+(it.magicBonus?' +'+it.magicBonus:''), sub:(w.type==='ranged'?'ranged':/reach/.test(w.props||'')?'reach':'melee')+' · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
-      atk:{name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}});
-    // Crossbow Expert bonus shot — was QB-only (qbPcAttacks already had this), missing here.
-    if(it.name==='Hand Crossbow' && hasFeat(c,'Crossbow Expert')){ const nm=it.name+(it.magicBonus?' +'+it.magicBonus:'')+' (Crossbow Expert)';
-      actions.push({label:nm, sub:'bonus action · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
-        atk:{name:nm, toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', offhand:true}}); } });
-  if(canOffhand(c)){ const seen=new Set(); offhandWeapons(c).forEach(w=>{ if(seen.has(w.n))return; seen.add(w.n); const oa=offhandAtk(c,w);
-    actions.push({label:w.n+' — off-hand', sub:'bonus action · '+oa.dmg+' '+(w.dt||''), tiles:weaponRangeTiles(c,w), atk:oa}); }); }
-  // Custom "Add attack" entries (c.attacks) — was QB-only (qbPcAttacks already had this),
-  // missing here, so a player's own hand-added attack never showed up in DM-hosted battles.
-  (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
-    actions.push({label:a.name, sub:'melee · '+(a.damage||'1d4'), tiles:1, atk:{name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:''}}); });
-  if(hasNaturalWeapons(c)) actions.push({label:'Claws (Alter Self)', sub:'melee · 1d6 slashing', tiles:1, atk:{name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing'}});
-  if(c.cls==='Monk'){ const ma=martialArtsUnarmedAtk(c); actions.push({label:ma.name, sub:'melee · '+ma.dmg+' '+ma.dt, tiles:1, atk:ma}); }
-  else if(hasFeat(c,'Tavern Brawler')){ const tb={name:'Unarmed strike (Tavern Brawler)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d4'+sgn(mod(abil(c,'str'))), dt:'bludgeoning'}; actions.push({label:tb.name, sub:'melee · '+tb.dmg+' '+tb.dt, tiles:1, atk:tb}); }
-  }
+  // Same shared pcAttackList(c) qbPcAttacks uses (see its own doc comment) — was a separately-
+  // maintained list here that silently drifted from QB's; unified in the mode-parity pass.
+  pcAttackList(c).forEach(atk=>{
+    const kind = atk.offhand ? 'bonus action' : (atk.melee===false ? 'ranged' : atk.reach ? 'reach' : 'melee');
+    actions.push({label:atk.name, sub:kind+' · '+atk.dmg+' '+(atk.dt||''), tiles:atk.tiles, atk});
+  });
   // (spells & cantrips are cast via the ✨ Spells button → map targeting)
   if(!actions.length){ flashBanner('No weapons — use ✨ Spells to cast'); return; }
   let pick=null;
@@ -10642,17 +10628,25 @@ const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name
 // and player-net so the same list of attacks shows up either way, same idea as every other
 // unified maneuver this session.
 function wildShapeAttacks(c){ if(!c.wildShape) return []; return parseMonsterAttacks(c.wildShape.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d4', dt:'', tiles:a.tiles||1, melee:(a.tiles||1)<=2})); }
-function qbPcAttacks(c){ if(c.wildShape) return wildShapeAttacks(c); const out=[];
+// Single shared source for "what can this character attack with right now" — QB's grid
+// combat and player-net's Attack menu used to be two separately-maintained lists
+// (qbPcAttacks/playerAttackMenu) that silently drifted: off-hand attacks, Crossbow Expert's
+// bonus shot, and custom "Add attack" entries each ended up missing from one or the other —
+// 3 of the 5 mode-parity audit findings in v120.208. One list now, consumed by both; a future
+// attack-granting feature only needs to be added here, not twice. Flat
+// {name,toHit,dmg,dt,tiles,melee,reach?,vers?,offhand?} objects — each caller adapts the shape
+// to its own UI (qbPcAttacks returns it as-is; playerAttackMenu wraps each into its own
+// {label,sub,atk} shape for that modal's rendering).
+function pcAttackList(c){
+  if(c.wildShape) return wildShapeAttacks(c);
+  const out=[];
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name); if(!w) return; const b=weaponDmgBonus(c,w,it);
-    out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'});
+    out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged', reach:/reach/.test(w.props||''), vers:w.vers?(w.vers+(b?sgn(b):'')):''});
     // Crossbow Expert (PHB): once you've made the Attack action, a bonus-action extra shot
     // with a hand crossbow you're holding — same bonus-action gate (atk.offhand) two-weapon
     // fighting's off-hand attack already uses, so it needs no new UI plumbing at all.
     if(it.name==='Hand Crossbow' && hasFeat(c,'Crossbow Expert')) out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:'')+' (Crossbow Expert)', toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:false, offhand:true}); });
-  // Two-Weapon Fighting off-hand attack (PHB): was player-net/sheet-only (playerAttackMenu
-  // already had this via canOffhand/offhandWeapons/offhandAtk) — QB grid combat never got it,
-  // a real gap the mode-parity audit caught. Same shared helpers, just adapted to this
-  // function's flat-array shape instead of playerAttackMenu's {label,sub,atk} wrapper.
+  // Two-Weapon Fighting off-hand attack (PHB).
   if(canOffhand(c)){ const seen=new Set(); offhandWeapons(c).forEach(w=>{ if(seen.has(w.n)) return; seen.add(w.n);
     out.push(Object.assign({tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}, offhandAtk(c,w))); }); }
   (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0; out.push({name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:'', tiles:1, melee:true}); });
@@ -10666,6 +10660,7 @@ function qbPcAttacks(c){ if(c.wildShape) return wildShapeAttacks(c); const out=[
   if(!out.length) out.push({name:'Unarmed strike', toHit:mod(abil(c,'str'))+profBonus(c), dmg:String(1+mod(abil(c,'str'))), dt:'bludgeoning', tiles:1, melee:true});
   return out;
 }
+function qbPcAttacks(c){ return pcAttackList(c); }
 function hasNaturalWeapons(c){ return !!(c&&(c.effects||[]).some(e=>e.name==='Alter Self')); }
 // Martial Arts (Monk 1st): DEX (if better) instead of STR, and the scaling martial arts die
 // instead of a flat 1+mod — shared by qbPcAttacks and playerAttackMenu so both list the exact
@@ -12418,7 +12413,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.208';
+const APP_VERSION='v120.209';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

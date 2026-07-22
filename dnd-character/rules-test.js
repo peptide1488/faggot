@@ -2478,26 +2478,30 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('spendHitDie (short rest): inspiringLeaderUsed resets for a character who has the feat', leader.inspiringLeaderUsed===false);
 }
 
-/* ---- Mode-parity audit fixes: qbPcAttacks/playerAttackMenu had silently drifted ---- */
+/* ---- Mode-parity audit fixes + follow-up unification: qbPcAttacks/playerAttackMenu ---- */
 {
-  // Two-Weapon Fighting off-hand attack: playerAttackMenu already had this (canOffhand/
-  // offhandWeapons/offhandAtk); qbPcAttacks (QB grid combat) never did — a dual-wielder in
-  // solo Quick Battle had no bonus-action off-hand attack at all. Testing qbPcAttacks
-  // directly since playerAttackMenu is a DOM-rendering function with no return value to
-  // assert on (same reason openSummonSpellUI/openMove have no direct tests either).
+  // v120.208 fixed 3 findings by patching both lists independently (off-hand added to
+  // qbPcAttacks, Crossbow Expert + custom attacks added to playerAttackMenu). This follow-up
+  // pass replaced BOTH hand-maintained lists with one shared pcAttackList(c) — qbPcAttacks is
+  // now a thin wrapper around it, and playerAttackMenu consumes it too (untestable directly,
+  // being a DOM-rendering function with no return value — same reason openSummonSpellUI/
+  // openMove have none either — but since it now reads the SAME data this test exercises,
+  // testing pcAttackList thoroughly covers both consumers' correctness at the data layer).
   const duelist=newCharacter('Duelist2'); duelist.cls='Fighter'; duelist.level=1;
   duelist.abilities={str:10,dex:16,con:10,int:10,wis:10,cha:10};
-  duelist.items=[{name:'Dagger',kind:'weapon',qty:1,equipped:true},{name:'Dagger',kind:'weapon',qty:1,equipped:true,slot:2}];
-  T('canOffhand: two light weapons qualify for two-weapon fighting', canOffhand(duelist)===true);
-  const dAtks=qbPcAttacks(duelist);
-  const offhandEntry=dAtks.find(a=>a.offhand && /off-hand/.test(a.name));
-  T('qbPcAttacks: off-hand attack now appears in QB grid combat (was missing — the actual mode-parity bug)', !!offhandEntry);
-
-  // Crossbow Expert bonus shot: qbPcAttacks already had this (v120.205); playerAttackMenu
-  // (DM-hosted/player-net) never did. The reverse of the off-hand gap above — same root
-  // cause (two hand-maintained attack lists), opposite direction. Not independently
-  // re-tested here since playerAttackMenu isn't a return-value function to assert on;
-  // fixed by inspection (mirrors qbPcAttacks's own already-tested Hand Crossbow clause).
+  duelist.items=[
+    {name:'Dagger',kind:'weapon',qty:1,equipped:true},{name:'Dagger',kind:'weapon',qty:1,equipped:true,slot:2},
+    {name:'Hand Crossbow',kind:'weapon',qty:1,equipped:true},
+  ];
+  duelist.attacks=[{name:'Improvised Chair', bonus:'+2', damage:'1d4'}];
+  duelist.feats=[{name:'Crossbow Expert'}];
+  const list=pcAttackList(duelist);
+  T('qbPcAttacks produces the exact same list pcAttackList does (thin wrapper, not a second implementation)', JSON.stringify(qbPcAttacks(duelist))===JSON.stringify(list));
+  T('pcAttackList: off-hand attack present (was the QB-only gap)', list.some(a=>a.offhand && /off-hand/.test(a.name)));
+  T('pcAttackList: Crossbow Expert bonus shot present (was the player-net-only gap)', list.some(a=>a.offhand && /Crossbow Expert/.test(a.name)));
+  T('pcAttackList: custom "Add attack" entry present (was the player-net-only gap)', list.some(a=>a.name==='Improvised Chair' && a.toHit===2));
+  // Two Dagger ITEMS (needed for canOffhand to qualify) → two Dagger entries, plus Hand Crossbow.
+  T('pcAttackList: real weapon attacks (2x Dagger, Hand Crossbow) still present alongside the derived ones', list.filter(a=>a.name==='Dagger').length===2 && list.some(a=>a.name==='Hand Crossbow'));
 }
 
 /* ---- "make the systems" (7): Battle Master maneuvers / Martial Adept ---- */
