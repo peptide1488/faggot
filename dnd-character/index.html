@@ -7525,9 +7525,17 @@ function playerAttackMenu(c){
   } else {
   weaponItems(c).forEach(({it})=>{ const w=weaponByName(it.name)||{dmg:'1d4',dt:'',type:'melee',props:''}; const b=weaponDmgBonus(c,w,it);
     actions.push({label:it.name+(it.magicBonus?' +'+it.magicBonus:''), sub:(w.type==='ranged'?'ranged':/reach/.test(w.props||'')?'reach':'melee')+' · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
-      atk:{name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}}); });
+      atk:{name:it.name+(it.magicBonus?' +'+it.magicBonus:''), toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', vers:w.vers?(w.vers+(b?sgn(b):'')):''}});
+    // Crossbow Expert bonus shot — was QB-only (qbPcAttacks already had this), missing here.
+    if(it.name==='Hand Crossbow' && hasFeat(c,'Crossbow Expert')){ const nm=it.name+(it.magicBonus?' +'+it.magicBonus:'')+' (Crossbow Expert)';
+      actions.push({label:nm, sub:'bonus action · '+(w.dmg+(b?sgn(b):''))+' '+(w.dt||''), tiles:weaponRangeTiles(c,w),
+        atk:{name:nm, toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', offhand:true}}); } });
   if(canOffhand(c)){ const seen=new Set(); offhandWeapons(c).forEach(w=>{ if(seen.has(w.n))return; seen.add(w.n); const oa=offhandAtk(c,w);
     actions.push({label:w.n+' — off-hand', sub:'bonus action · '+oa.dmg+' '+(w.dt||''), tiles:weaponRangeTiles(c,w), atk:oa}); }); }
+  // Custom "Add attack" entries (c.attacks) — was QB-only (qbPcAttacks already had this),
+  // missing here, so a player's own hand-added attack never showed up in DM-hosted battles.
+  (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0;
+    actions.push({label:a.name, sub:'melee · '+(a.damage||'1d4'), tiles:1, atk:{name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:''}}); });
   if(hasNaturalWeapons(c)) actions.push({label:'Claws (Alter Self)', sub:'melee · 1d6 slashing', tiles:1, atk:{name:'Claws (Alter Self)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d6', dt:'slashing'}});
   if(c.cls==='Monk'){ const ma=martialArtsUnarmedAtk(c); actions.push({label:ma.name, sub:'melee · '+ma.dmg+' '+ma.dt, tiles:1, atk:ma}); }
   else if(hasFeat(c,'Tavern Brawler')){ const tb={name:'Unarmed strike (Tavern Brawler)', toHit:mod(abil(c,'str'))+profBonus(c), dmg:'1d4'+sgn(mod(abil(c,'str'))), dt:'bludgeoning'}; actions.push({label:tb.name, sub:'melee · '+tb.dmg+' '+tb.dt, tiles:1, atk:tb}); }
@@ -7620,7 +7628,7 @@ function renderPlayerBattle(c){
     if(cost==null){ flashBanner('Out of range'); return; }
     if(cost>(b.move||0)){   // beyond normal speed → Dash (costs your action)
       if(!dashAvail){ flashBanner('Too far — Dash needs your action (already used)'); return; }
-      b.move=(b.move||0)+effSpeed(c); spendAction(c); logChange(c,'🏃 Dash (action) — extra movement'); }
+      b.move=(b.move||0)+effSpeed(c); spendAction(c); b.dashed=true; logChange(c,'🏃 Dash (action) — extra movement'); }
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; net.moveMode=false;
     const provokers=(s.battle&&s.battle.active)?s.monsters.filter(mo=>mo.hp>0 && leavesReach(me.x,me.y,x,y,mo.x,mo.y,1)):[];
     animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 200, ()=>{ save();
@@ -8578,7 +8586,7 @@ function openAdjacentUseUI(c, s, me){
           <button class="btn sm" data-use="obj:${i}">Use</button></div>`;
       }).join('');
       body+=foes.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}${mo.surprised?' · 😲 Surprised':''}</b><small>Combat maneuver · (${mo.x},${mo.y})</small></div>
-        ${(isAssassin(c,3)&&mode==='qb')?`<button class="btn ghost sm" data-suptgl="${i}">${mo.surprised?'Un-':''}Surprise</button>`:''}
+        ${(isAssassin(c,3)&&mode)?`<button class="btn ghost sm" data-suptgl="${i}">${mo.surprised?'Un-':''}Surprise</button>`:''}
         <button class="btn sm" data-use="foe:${i}">Use</button></div>`).join('');
       body+=allies.map((al,i)=>`<div class="spell"><div class="nm"><b>${esc(al.name)}</b><small>Down — Stabilize · (${al.x},${al.y})</small></div>
         <button class="btn sm" data-use="ally:${i}">Use</button></div>`).join('');
@@ -8850,15 +8858,19 @@ function openAdjacentUseUI(c, s, me){
       flashBanner('🏹 Volley — hit '+hits+'/'+group.length);
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello();
     });
-    // Marking a foe Surprised (Assassinate's auto-crit clause, Death Strike) — QB only for now:
-    // this app has no ambush/surprise-round system, and QB is the only mode where the local
-    // monster list is authoritative (player-net's is a synced mirror, so a local toggle here
-    // wouldn't reach the DM's real session without a round-trip this pass doesn't build).
+    // Marking a foe Surprised (Assassinate's auto-crit clause, Death Strike) — this app has no
+    // ambush/surprise-round system, so a manual toggle stands in for it. Mode-parity audit fix:
+    // this used to be QB-only on the theory that player-net's monster list is "just a synced
+    // mirror" and a local toggle "wouldn't reach the DM's real session" — true, but irrelevant:
+    // `foes` here and `attackFlow`'s own targetMo lookup both read the SAME net.session.monsters
+    // array by reference, so this device's own subsequent attack (all Assassinate needs) sees
+    // the flag correctly without any round-trip. Other devices not seeing the mark is a real,
+    // acceptable gap (nobody else needs to know), not a reason to block the mechanic outright.
     document.querySelectorAll('[data-suptgl]').forEach(b=>b.onclick=()=>{
       const mo=foes[Number(b.dataset.suptgl)]; if(!mo) return;
       mo.surprised=!mo.surprised;
       flashBanner(mo.name+(mo.surprised?' is now marked Surprised':' is no longer marked Surprised'));
-      qbLog((mo.surprised?'😲 ':'')+mo.name+(mo.surprised?' — Surprised':' — no longer surprised'));
+      log((mo.surprised?'😲 ':'')+mo.name+(mo.surprised?' — Surprised':' — no longer surprised'));
       draw(null); save();
     });
     document.querySelectorAll('[data-hbtgt]').forEach(b=>b.onclick=()=>{
@@ -10637,6 +10649,12 @@ function qbPcAttacks(c){ if(c.wildShape) return wildShapeAttacks(c); const out=[
     // with a hand crossbow you're holding — same bonus-action gate (atk.offhand) two-weapon
     // fighting's off-hand attack already uses, so it needs no new UI plumbing at all.
     if(it.name==='Hand Crossbow' && hasFeat(c,'Crossbow Expert')) out.push({name:it.name+(it.magicBonus?' +'+it.magicBonus:'')+' (Crossbow Expert)', toHit:weaponToHit(c,w,it), dmg:w.dmg+(b?sgn(b):''), dt:w.dt||'', tiles:weaponRangeTiles(c,w), melee:false, offhand:true}); });
+  // Two-Weapon Fighting off-hand attack (PHB): was player-net/sheet-only (playerAttackMenu
+  // already had this via canOffhand/offhandWeapons/offhandAtk) — QB grid combat never got it,
+  // a real gap the mode-parity audit caught. Same shared helpers, just adapted to this
+  // function's flat-array shape instead of playerAttackMenu's {label,sub,atk} wrapper.
+  if(canOffhand(c)){ const seen=new Set(); offhandWeapons(c).forEach(w=>{ if(seen.has(w.n)) return; seen.add(w.n);
+    out.push(Object.assign({tiles:weaponRangeTiles(c,w), melee:w.type!=='ranged'}, offhandAtk(c,w))); }); }
   (c.attacks||[]).forEach(a=>{ const bn=Number(String(a.bonus).replace(/[^0-9-]/g,''))||0; out.push({name:a.name, toHit:bn, dmg:a.damage||'1d4', dt:'', tiles:1, melee:true}); });
   // Alter Self's "natural weapons" option (PHB): unarmed strikes deal 1d6 and count as
   // magical — a real damage bump over the flat 1+STR fallback below, not just cosmetic.
@@ -11425,7 +11443,7 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
   // After skill prompts succeed, commit the move
   function commitMove(opts){
     opts=opts||{};
-    if(cost>(b.move||0)){ if(!dashAvail){ flashBanner('Too far — Dash needs your action'); return; } b.move=(b.move||0)+effSpeed(c); spendAction(c); qbLog('🏃 '+c.name+' dashes'); }
+    if(cost>(b.move||0)){ if(!dashAvail){ flashBanner('Too far — Dash needs your action'); return; } b.move=(b.move||0)+effSpeed(c); spendAction(c); b.dashed=true; qbLog('🏃 '+c.name+' dashes'); }
     const fromX=pc.x, fromY=pc.y; b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; s.moveMode=false;
     const provokers=s.monsters.filter(m=>m.hp>0 && !m.reactionUsed && leavesReach(fromX,fromY,x,y,m.x,m.y,1));
     const riseFt=Math.max(0,(heightAt(s,x,y)-heightAt(s,fromX,fromY))*5);
@@ -12400,7 +12418,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.207';
+const APP_VERSION='v120.208';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

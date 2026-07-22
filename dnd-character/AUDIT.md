@@ -2418,3 +2418,59 @@ DM campaigns or saved battle maps, both of which live in their own separate loca
 
 Remaining "make the systems" backlog: the mount system (Mounted Combatant), still the last
 major item and still needs its own scoping pass first.
+
+## Mode-parity audit — first pass (v120.208)
+
+The user's stated #1 annoyance: features wired into Quick Battle but not DM-hosted/player-net
+(or the reverse). Ran a dedicated audit (grepped every `mode==='qb'`/`mode==='player'` gate
+around whole feature blocks, cross-checked every `hasFeat`/`isX` subclass check's call sites,
+and specifically re-verified the "12-subclass pass" and this session's own new systems). Fixed
+5 confirmed gaps; found the rider system itself (Sneak Attack/Smite/maneuvers, v120.199+) is
+genuinely unified already — not re-litigated.
+
+- **Two-Weapon Fighting off-hand attack — was missing from QB entirely.** `playerAttackMenu`
+  (player-net) already called `canOffhand`/`offhandWeapons`/`offhandAtk`; `qbPcAttacks` (QB
+  grid combat) never did, so a dual-wielder in solo Quick Battle had no bonus-action off-hand
+  attack at all — a core combat mechanic silently absent in the app's most-used mode. Fixed by
+  calling the same shared helpers `playerAttackMenu` already used, adapted to `qbPcAttacks`'s
+  flat-array shape.
+- **Crossbow Expert's bonus shot (v120.205, this session) — was missing from player-net.**
+  Built into `qbPcAttacks` when the feat shipped, never ported to `playerAttackMenu` — meaning
+  a Crossbow Expert in a DM-hosted game lost their bonus-action shot. The exact bug class the
+  user described, in code from three commits ago. Fixed.
+- **Custom "Add attack" entries (`c.attacks`) — were missing from player-net.**
+  `qbPcAttacks` folds these in; `playerAttackMenu` never did, so a hand-added attack on a
+  character sheet silently vanished in DM-hosted play. Fixed.
+- **Charger (v120.205, this session) — was unreachable in REAL combat in BOTH modes.** The
+  Use-menu button was correctly built mode-shared (`mode &&`), but gated on `c.battle.dashed`,
+  which was only ever set by the character sheet's manual battle-tracker Dash button — the
+  actual grid-combat Dash paths (QB's `commitMove`, player-net's move handler), the way anyone
+  actually Dashes during a real battle, never set it. A feature that shipped fully wired to the
+  UI but was never actually triggerable. Fixed by setting `b.dashed=true` in both grid-Dash
+  branches, mirroring the sheet tracker's existing line.
+- **Assassinate's auto-crit / Death Strike surprise toggle — was QB-only by a stale, overly
+  cautious call.** The resolver half (`attackFlow`, `Engine.hitResult`) was already correctly
+  mode-agnostic — the gap was purely the UI toggle that flags a monster Surprised, gated
+  `mode==='qb'` with a comment reasoning player-net's monster list is "just a synced mirror"
+  and wouldn't reach the DM. True but irrelevant: the toggle, `attackFlow`'s own target lookup,
+  and `Engine.attack`'s adapter `unit()` call all read the SAME `net.session.monsters` array by
+  reference — this device's own subsequent attack sees the flag correctly with no round-trip
+  needed. Widened the gate to `mode` (both modes); other devices not seeing the mark is a real,
+  acceptable gap (nobody else needs to know), not a reason to block the mechanic.
+
+**Known architectural debt, flagged not fixed**: `qbPcAttacks` and `playerAttackMenu` remain
+two separately-maintained lists of "what can this character attack with right now" — the root
+cause behind 3 of the 5 findings above. A proper fix extracts one shared `pcAttackList(c)` both
+consume; deferred this pass since `playerAttackMenu` is a DOM-rendering function with its own
+label/sub-text formatting (including a "reach" vs "melee" display nuance) that would need
+careful untangling, and a rushed refactor of live combat-attack UI carries more regression risk
+than the direct patches shipped here. Next mode-parity pass should do this extraction — until
+then, any NEW attack-list feature (a future feat, say) must be added to BOTH functions by hand,
+same as this pass's own findings.
+
+Tests: 2 new assertions (`qbPcAttacks`'s off-hand fix, directly testable). The other four fixes
+are one-line/small-diff changes to already-tested code paths (movement cost calculation, a
+UI-gate boolean, a mirrored-list addition matching an already-tested sibling) verified by
+direct code inspection rather than new automated tests — `playerAttackMenu`/the Use-menu modal
+are DOM-rendering functions with no return value to assert on, same reason `openSummonSpellUI`/
+`openMove` have no direct tests either.

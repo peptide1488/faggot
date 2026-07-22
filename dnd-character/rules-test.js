@@ -2478,6 +2478,28 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('spendHitDie (short rest): inspiringLeaderUsed resets for a character who has the feat', leader.inspiringLeaderUsed===false);
 }
 
+/* ---- Mode-parity audit fixes: qbPcAttacks/playerAttackMenu had silently drifted ---- */
+{
+  // Two-Weapon Fighting off-hand attack: playerAttackMenu already had this (canOffhand/
+  // offhandWeapons/offhandAtk); qbPcAttacks (QB grid combat) never did — a dual-wielder in
+  // solo Quick Battle had no bonus-action off-hand attack at all. Testing qbPcAttacks
+  // directly since playerAttackMenu is a DOM-rendering function with no return value to
+  // assert on (same reason openSummonSpellUI/openMove have no direct tests either).
+  const duelist=newCharacter('Duelist2'); duelist.cls='Fighter'; duelist.level=1;
+  duelist.abilities={str:10,dex:16,con:10,int:10,wis:10,cha:10};
+  duelist.items=[{name:'Dagger',kind:'weapon',qty:1,equipped:true},{name:'Dagger',kind:'weapon',qty:1,equipped:true,slot:2}];
+  T('canOffhand: two light weapons qualify for two-weapon fighting', canOffhand(duelist)===true);
+  const dAtks=qbPcAttacks(duelist);
+  const offhandEntry=dAtks.find(a=>a.offhand && /off-hand/.test(a.name));
+  T('qbPcAttacks: off-hand attack now appears in QB grid combat (was missing — the actual mode-parity bug)', !!offhandEntry);
+
+  // Crossbow Expert bonus shot: qbPcAttacks already had this (v120.205); playerAttackMenu
+  // (DM-hosted/player-net) never did. The reverse of the off-hand gap above — same root
+  // cause (two hand-maintained attack lists), opposite direction. Not independently
+  // re-tested here since playerAttackMenu isn't a return-value function to assert on;
+  // fixed by inspection (mirrors qbPcAttacks's own already-tested Hand Crossbow clause).
+}
+
 /* ---- "make the systems" (7): Battle Master maneuvers / Martial Adept ---- */
 {
   T('superiorityDiceMax: Martial Adept alone grants 1', superiorityDiceMax({cls:'Wizard', feats:[{name:'Martial Adept'}]})===1);
