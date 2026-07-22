@@ -32,6 +32,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
@@ -2565,6 +2566,57 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   bm.superiorityDiceLeft=0; bm.hitDice={total:'3d10',used:0}; bm.hp={max:30,cur:20,temp:0};
   spendHitDie(bm);
   T('spendHitDie (short rest): superiorityDiceLeft refills', bm.superiorityDiceLeft===superiorityDiceMax(bm));
+}
+
+/* ---- "make the systems" (8): mount system (Mounted Combatant) — "lite" scope ---- */
+{
+  const rider=newCharacter('Cavalier'); rider.cls='Fighter'; rider.level=3;
+  rider.abilities={str:16,dex:12,con:14,int:10,wis:10,cha:10};
+  rider.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:effSpeed(rider),moveUsed:0};
+
+  T('effSpeed: unmounted uses the character\'s own speed', effSpeed(rider)===30);
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[], players:[{id:'pc', side:'pc', name:rider.name, c:rider, x:2,y:2, hpCur:rider.hp.cur, hpMax:rider.hp.max}] });
+
+  const warhorse=MOUNT_CATALOG.find(m=>m.id==='warhorse');
+  const startMove=rider.battle.move;
+  const unit=mountUp(getQB(), rider, 'pc', warhorse, 2, 2, ()=>{});
+  T('mountUp: spawns a real ally unit in s.monsters (not hostile-targetable)', !!unit && unit.ally===true && unit.mount===true);
+  T('mountUp: isHostile correctly excludes the mount (ally:true)', isHostile(unit)===false);
+  T('mountUp: sets c.mountedOn', rider.mountedOn && rider.mountedOn.name==='Warhorse');
+  T('mountUp: spends half the character\'s own (unmounted) speed', rider.battle.move===startMove-Math.ceil(30/2));
+  T('effSpeed: mounted now returns the MOUNT\'s speed (60), not the rider\'s own (30)', effSpeed(rider)===60);
+
+  // Mounted Combatant: advantage vs an unmounted creature, melee only, feat-gated.
+  const foe={id:'f1', side:'mon', base:'Goblin', name:'Foe', hp:7, max:7, ac:12, x:2,y:2, attacksLeft:1};
+  getQB().monsters.push(foe);
+  T('Engine.hitResult: no advantage without the feat, even while mounted', Engine.hitResult(qbAdapter, 'pc', 'f1', {toHit:5, dmg:'1d6'}).adv===0);
+  rider.feats=[{name:'Mounted Combatant'}];
+  T('Engine.hitResult: Mounted Combatant grants advantage vs an unmounted creature (melee)', Engine.hitResult(qbAdapter, 'pc', 'f1', {toHit:5, dmg:'1d6'}).adv===1);
+  // Ranged check needs real distance (hitResult prefers gridDist over the tiles-based guess
+  // whenever both units have real positions) — a far-away foe, not the same tile as the rider.
+  const farFoe={id:'f2', side:'mon', base:'Goblin', name:'FarFoe', hp:7, max:7, ac:12, x:9,y:9, attacksLeft:1};
+  getQB().monsters.push(farFoe);
+  T('Engine.hitResult: Mounted Combatant does NOT grant advantage on a RANGED attack (PHB: melee only)', Engine.hitResult(qbAdapter, 'pc', 'f2', {toHit:5, dmg:'1d6', tiles:6}).adv===0);
+
+  // Voluntary dismount — fresh movement pool (a new turn's worth), since mounting already
+  // spent this turn's movement and dismounting needs its own budget, same as any other
+  // real turn boundary in this app.
+  rider.battle.move=effSpeed(rider);
+  const moveBeforeDismount=rider.battle.move;
+  const dOk=dismountRider(rider, ()=>{});
+  T('dismountRider: succeeds and clears mountedOn', dOk===true && rider.mountedOn===null);
+  T('dismountRider: spends half the MOUNT\'s speed (60/2=30)', rider.battle.move===moveBeforeDismount-30);
+  T('effSpeed: back to the character\'s own speed after dismounting', effSpeed(rider)===30);
+
+  // Forced dismount when the mount drops to 0 HP.
+  rider.battle.move=effSpeed(rider); // fresh movement to mount up again
+  const unit2=mountUp(getQB(), rider, 'pc', warhorse, 2, 2, ()=>{});
+  T('mountUp: can mount again after dismounting', !!unit2 && rider.mountedOn && rider.mountedOn.name==='Warhorse');
+  unit2.hp=0;
+  checkMountDeaths(getQB(), ()=>{});
+  T('checkMountDeaths: a mount hitting 0 HP forces the rider off (QB)', rider.mountedOn===null);
+  setQB(null);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

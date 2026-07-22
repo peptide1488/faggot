@@ -2507,3 +2507,48 @@ Sneak-Attack-family riders were already unified (v120.199), the 5 acute gaps are
 (v120.208), and their structural root cause is closed (this entry). Future passes should watch
 for the same pattern (a feature built once and wired into only one UI trigger path) rather than
 assuming it's fully solved forever.
+
+## "Make the systems" (8): mount system — Mounted Combatant (v120.210)
+
+Built a real mount system, closing the last item on the "make the systems" feat-audit backlog.
+`MOUNT_CATALOG` (Pony/Riding Horse/Warhorse) sits alongside `SUMMON_CATALOG`; mounting spawns
+the mount as a real `s.monsters` entry (`ally:true, mount:true, controllerId, riderId`) so it
+shows up on the map, can be targeted, and is correctly excluded from `isHostile`. `effSpeed`
+swaps to the mount's speed while mounted (same pattern as Wild Shape). Mounted Combatant's
+advantage-on-melee-attacks-against-smaller-foes clause is wired into `Engine.hitResult` via a
+`mountedAdv` opts flag, gated on melee + the feat + the rider being mounted (the "against a
+creature smaller than your mount" size clause is dropped — see below).
+
+Mounting/dismounting both cost half a movement action (RAW), spent from the relevant unit's
+current `battle.move` — mounting spends half the character's own (pre-mount) speed, voluntary
+dismounting spends half the MOUNT's speed. A mount dropping to 0 HP force-dismounts its rider
+for free (`checkMountDeaths`, hooked into `qbCheckEnd()` for QB and the DM's `'attack'` handler
+for DM-hosted) since a dead mount obviously can't be ridden regardless of movement budget.
+
+Shared across all 3 modes from the start, per the standing unification rule: one `mountUp`/
+`dismountRider`/`checkMountDeaths` set of functions, with player-net wired via `sendMountSync`
+(mirrors `sendEchoSync` exactly — local mutation + a net message so the DM's authoritative state
+picks it up) and a `mountDied` DM→player message for the forced-dismount case.
+
+Honestly deferred (documented inline where each is dropped, matching this session's practice of
+naming cuts rather than silently shipping a partial feature):
+- **Redirect-attacks-to-mount clause** (Mounted Combatant lets the rider redirect an attack
+  targeting them onto the mount instead) — no redirect UI hook exists yet; would need the same
+  shape as `shadowMartyrRedirect` but wasn't built this pass.
+- **Mount takes half/no damage on an AOE the rider Dex-saves** — no such split exists anywhere
+  in the damage-application path; would require a new AOE-companion-damage rule, out of scope.
+- **"Smaller than your mount" size qualifier on the advantage clause** — no creature-size field
+  exists anywhere in the bestiary or `MOUNT_CATALOG`; the advantage clause is granted for any
+  melee attack while mounted with the feat, slightly more generous than RAW.
+
+Tests: 18 new assertions in `rules-test.js` — unmounted/mounted `effSpeed`, `mountUp` spawning
+a correctly-tagged ally unit with movement cost deducted, Mounted Combatant's advantage gating
+(feat+melee → adv; feat+ranged → no adv, using a distant foe to force real-distance melee=false;
+no feat → no adv), voluntary `dismountRider` (clears `mountedOn`, reverts `effSpeed`, costs the
+mount's own movement), re-mounting after a dismount, and `checkMountDeaths` force-dismounting
+when a mount hits 0 HP. Also live-verified via Playwright end-to-end against the real DOM: the
+Use-menu correctly shows "Mount Up"/"Dismount \<name\>" buttons based on `c.mountedOn` state,
+clicking through to a real `MOUNT_CATALOG` pick spawns the mount and updates `effSpeed`, and
+dismounting with a fresh movement budget correctly clears `c.mountedOn`. (An initial dismount
+attempt with no movement remaining was correctly blocked by the cost gate — confirms the guard
+works, not a bug — see the movement-cost note above.)

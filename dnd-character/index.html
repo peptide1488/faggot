@@ -526,6 +526,7 @@ function attackAdvantage(aC, tC, melee, opts){
   // Goading Attack (Battle Master maneuver): the goaded creature has disadvantage on attacks
   // against anyone OTHER than whoever goaded it.
   if(opts&&opts.goadedDisadv){ adv--; why.push('goaded — must focus the one who goaded you'); }
+  if(opts&&opts.mountedAdv){ adv++; why.push('mounted (Mounted Combatant)'); }
   if(opts&&opts.attackerVision!=null){
     if(opts.attackerVision===0){ adv--; why.push('fighting in darkness'); }
   }
@@ -2679,7 +2680,9 @@ function effSpeedMul(c){ let m=1; (c.effects||[]).forEach(e=>{ if(e.mods && e.mo
 // unarmored (armor OR shield breaks it, same as Unarmored Defense).
 function unarmoredMoveBonus(c){ if(!(c && c.cls==='Monk' && (c.armor||'none')==='none' && !c.shield)) return 0; const l=Number(c.level)||1;
   return l>=18?30:l>=14?25:l>=10?20:l>=6?15:l>=2?10:0; }
-function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+unarmoredMoveBonus(c)+(hasFeat(c,'Mobile')?10:0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
+// Mounted: your movement uses the MOUNT's speed (PHB) — same "swap the whole speed value"
+// shape wildShape already established one line up, checked first for the same reason.
+function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; if(c.mountedOn) return c.mountedOn.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+unarmoredMoveBonus(c)+(hasFeat(c,'Mobile')?10:0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
 function modSummary(mods){ if(!mods) return ''; const parts=[];
   if(mods.ac) parts.push(sgn(mods.ac)+' AC');
   if(mods.speed) parts.push(sgn(mods.speed)+' ft');
@@ -3091,6 +3094,65 @@ function summonCatalogEntry(spellName){
   const h=SPELL_HANDLERS[spellName];
   const key=(h&&h.catalog)||spellName;
   return SUMMON_CATALOG[key]||null;
+}
+// Mount system ("make the systems" — Mounted Combatant feat). Mounting itself is a baseline
+// PHB player option (anyone can ride a horse); the feat only grants combat benefits while
+// mounted, checked separately below. A curated list, PHB stats, not the full tack-and-harness
+// catalog — riding is what matters here, not horse economics.
+const MOUNT_CATALOG=[
+  {id:'pony', label:'🐴 Pony', name:'Pony', ac:10, hp:11, spd:40},
+  {id:'horse', label:'🐎 Riding Horse', name:'Riding Horse', ac:10, hp:13, spd:60},
+  {id:'warhorse', label:'🐎 Warhorse', name:'Warhorse', ac:11, hp:19, spd:60},
+];
+// Mounting/dismounting costs HALF your speed (PHB) — spent from c.battle.move exactly like any
+// other movement, not the Action. The mount is a real unit (same s.monsters store Echo/summons
+// use, tagged mount:true/ally:true/controllerId/riderId) that PERSISTS after dismounting (a
+// horse doesn't vanish when you get off, unlike a dismissed Echo) — "Dismiss mount" is a
+// separate, explicit action. Rider and mount share one grid tile (rider IS the mount's rider,
+// not a second token) — the simplest faithful rendering of "you're riding it" without a whole
+// second-unit-tracks-alongside-the-first movement system.
+function mountUp(s, c, controllerId, mountDef, x, y, log){
+  if(!s.monsters) s.monsters=[];
+  const half=Math.ceil(effSpeed(c)/2);
+  if(c.battle && (c.battle.move||0)<half){ flashBanner('Not enough movement left to mount (needs half your speed)'); return null; }
+  const id='mount_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,5);
+  const unit={ id, side:'mon', ally:true, mount:true, controllerId, riderId:controllerId, riderName:c.name,
+    base:mountDef.name, name:mountDef.name, x, y, hp:mountDef.hp, max:mountDef.hp, ac:mountDef.ac,
+    atk:'', attacks:0, attacksLeft:0, speed:mountDef.spd, moveLeft:mountDef.spd, reactionUsed:false, brain:'passive', conds:[], facing:'down' };
+  s.monsters.push(unit);
+  c.mountedOn={id, name:mountDef.name, speed:mountDef.spd};
+  if(c.battle) c.battle.move=Math.max(0,(c.battle.move||0)-half);
+  log('🐴 '+(c.name||'You')+' mounts a '+mountDef.name);
+  return unit;
+}
+/** Voluntary dismount — half speed, mount stays on the map (RAW: it's a real animal, not a
+ * summon). Forced dismount (mount drops to 0 HP) calls this same cleanup minus the speed cost
+ * — see checkMountDeaths. */
+function dismountRider(c, log, opts){
+  if(!c.mountedOn) return false;
+  if(!(opts&&opts.forced)){
+    const half=Math.ceil((c.mountedOn.speed||30)/2);
+    if(c.battle && (c.battle.move||0)<half){ flashBanner('Not enough movement left to dismount (needs half your speed)'); return false; }
+    if(c.battle) c.battle.move=Math.max(0,(c.battle.move||0)-half);
+  }
+  const name=c.mountedOn.name;
+  c.mountedOn=null;
+  log((opts&&opts.forced?'🐴 Thrown from your ':'🐴 Dismounts your ')+name);
+  return true;
+}
+/** A mount's rider dying isn't PHB-required, but a mount's own death forcing its rider to
+ * dismount definitely is ("if your mount ... drops to 0 hit points ... you fall prone"; this
+ * app doesn't model the fall-prone/fall-damage clause specifically, same "documented
+ * simplification, not a knock-on rules cascade" treatment forced conditions get elsewhere).
+ * QB: c is reachable directly. DM-hosted: the rider's real c only exists on their OWN device,
+ * so this only clears the DM's mirror-side mount unit; dismissal message below tells the
+ * actual player's device to clear its own c.mountedOn. */
+function checkMountDeaths(s, log){
+  if(!s||!s.monsters) return;
+  s.monsters.filter(m=>m.mount && m.hp<=0).forEach(m=>{
+    if(s===QB){ const c=(s.players[0]&&s.players[0].c); if(c&&c.mountedOn&&c.mountedOn.id===m.id) dismountRider(c, log, {forced:true}); }
+    else { dmSend(m.riderId, {t:'mountDied', name:m.name}); }
+  });
 }
 /** Legal empty tile for a summon. */
 function summonPlaceOk(s, me, cat, x, y){
@@ -6332,7 +6394,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
     Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent});
     dmBroadcast(); render();
-  } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
+  } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; checkMountDeaths(net.session, ()=>{}); dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
   else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true;
@@ -6361,6 +6423,15 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     else { net.session.monsters.push({id:'echo_'+cid+'_'+Date.now().toString(36), side:'mon', ally:true, echo:true, controllerId:cid,
       base:'Echo', name:d.name||"Echo", x:d.x, y:d.y, hp:d.hp, max:d.max, ac:d.ac, atk:'', attacks:0, attacksLeft:0,
       speed:30, moveLeft:30, reactionUsed:false, brain:'passive', conds:[], facing:'down'}); }
+    dmBroadcast(); render(); }
+  // Mount sync — same shape as echoSync just above, looked up by controllerId not a shared id.
+  else if(d.t==='mountSync'){ const cid=conn.peer;
+    let m=net.session.monsters.find(x=>x.mount && x.controllerId===cid);
+    if(!d.exists){ if(m) net.session.monsters=net.session.monsters.filter(x=>x!==m); }
+    else if(m){ m.x=d.x; m.y=d.y; m.ac=d.ac; m.hp=d.hp; m.max=d.max; }
+    else { net.session.monsters.push({id:'mount_'+cid+'_'+Date.now().toString(36), side:'mon', ally:true, mount:true, controllerId:cid, riderId:cid,
+      base:d.mountName||'Mount', name:d.mountName||'Mount', x:d.x, y:d.y, hp:d.hp, max:d.max, ac:d.ac, atk:'', attacks:0, attacksLeft:0,
+      speed:d.spd||30, moveLeft:d.spd||30, reactionUsed:false, brain:'passive', conds:[], facing:'down'}); }
     dmBroadcast(); render(); }
   // Stabilize targets ANOTHER connected player — the actor already rolled locally (see
   // maneuverStabilize) and only needs the DM to relay the result to the target's own device,
@@ -6519,6 +6590,7 @@ function playerOnData(d){ if(!d) return;
   // then resync" round-trip this session established.
   else if(d.t==='echoDestroyed'){ const c=playerChar(); if(c){ reclaimPotential(c, m=>logChange(c,m)); save(); render(); playerHello(); if((c.hp.temp||0)>0) flashBanner('🩸 Reclaim Potential — +'+c.hp.temp+' temporary HP'); } }
   else if(d.t==='shadowMartyrTriggered'){ const c=playerChar(); if(c){ if(c.battle) c.battle.reaction=true; c.shadowMartyrUsed=true; c.shadowMartyrArmed=false; logChange(c,'👤 Shadow Martyr — the echo steps into an attack meant for you'); save(); render(); playerHello(); flashBanner('🛡 Shadow Martyr triggered — the echo takes the hit'); } }
+  else if(d.t==='mountDied'){ const c=playerChar(); if(c && c.mountedOn){ const name=c.mountedOn.name; c.mountedOn=null; logChange(c,'🐴 Your '+name+' has fallen — you are thrown from the saddle'); save(); render(); playerHello(); flashBanner('🐴 Your mount has died — you are dismounted'); } }
   else if(d.t==='cuttingWordsTriggered'){ const c=playerChar(); if(c){ if(c.battle) c.battle.reaction=true; c.bardicInspLeft=Math.max(0,(c.bardicInspLeft||0)-1); c.cuttingWordsArmed=false; logChange(c,'🎵 Cutting Words — reduced an attack roll by '+d.die); save(); render(); playerHello(); flashBanner('🎵 Cutting Words triggered — reduced the roll by '+d.die); } }
   else if(d.t==='maneuverCheck'){
     // A DM-controlled monster attempts Shove/Grapple on this player — the DM can't roll our
@@ -8562,6 +8634,8 @@ function openAdjacentUseUI(c, s, me){
       if(preserveLifeTargets.length && (c.channelDivinityLeft||0)>0) body+=`<button class="btn block" id="usePreserveLife" style="margin-bottom:8px;text-align:left">✝️ Channel Divinity: Preserve Life<small style="display:block;opacity:.75">Action — distribute ${preserveLifePool(c)} HP among creatures within 30 ft, ½ max HP cap each (${c.channelDivinityLeft} use${c.channelDivinityLeft===1?'':'s'} left)</small></button>`;
       if(inspiringLeaderTargets.length) body+=`<button class="btn block" id="useInspiringLeader" style="margin-bottom:8px;text-align:left">🎺 Inspiring Leader<small style="display:block;opacity:.75">10 min — ${inspiringLeaderAmount(c)} temp HP to ${inspiringLeaderTargets.length} ${inspiringLeaderTargets.length===1?'creature':'creatures'} within 30 ft</small></button>`;
       if(mode && hasFeat(c,'Charger') && c.battle.dashed && !c.battle.bonus && foes.length) body+=`<button class="btn block" data-use="charger" style="margin-bottom:8px;text-align:left">🏃 Charger<small style="display:block;opacity:.75">Bonus action — melee attack (+5 damage) or shove (10 ft)</small></button>`;
+      if(mode && !c.mountedOn) body+=`<button class="btn block" data-use="mountup" style="margin-bottom:8px;text-align:left">🐴 Mount Up<small style="display:block;opacity:.75">Half your speed — climb onto a mount (baseline PHB action, no feat needed)</small></button>`;
+      if(mode && c.mountedOn) body+=`<button class="btn ghost block" id="useDismount" style="margin-bottom:8px;text-align:left">🐴 Dismount ${esc(c.mountedOn.name)}<small style="display:block;opacity:.75">Half your speed</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Whirlwind Attack' && foes.length) body+=`<button class="btn block" id="useWhirlwind" style="margin-bottom:8px;text-align:left">🏹 Whirlwind Attack<small style="display:block;opacity:.75">Action — one melee attack against every adjacent foe (${foes.length} in reach)</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Volley'){ const rangedAtk=qbPcAttacks(c).find(a=>!a.melee); if(rangedAtk){ const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk.tiles||1)); if(near.length) body+=`<button class="btn block" id="useVolley" style="margin-bottom:8px;text-align:left">🏹 Volley<small style="display:block;opacity:.75">Action — ranged attack against every foe within 10 ft of a target foe (pick one)</small></button>`; } }
       if(mode && isLoreBard(c,3)) body+=`<button class="btn ${c.cuttingWordsArmed?'':'ghost'} block" id="useCuttingWords" style="margin-bottom:8px;text-align:left"${(c.bardicInspLeft||0)<=0?' disabled style="opacity:.5"':''}>🎵 ${c.cuttingWordsArmed?'Cutting Words — ARMED (tap to cancel)':'Ready Cutting Words'}<small style="display:block;opacity:.75">${(c.bardicInspLeft||0)<=0?'No Bardic Inspiration left — rest to recharge':'Reaction — reduce a monster attack roll within 60 ft ('+(c.bardicInspLeft||0)+' use'+((c.bardicInspLeft||0)===1?'':'s')+' left)'}</small></button>`;
@@ -8654,6 +8728,12 @@ function openAdjacentUseUI(c, s, me){
       body+=foes.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · (${mo.x},${mo.y})</small></div>
         <button class="btn ghost sm" data-chargeratk="${i}">⚔ +5 dmg</button>
         <button class="btn ghost sm" data-chargershove="${i}">🤜 Shove 10ft</button></div>`).join('');
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='mountPick'){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Mount up — half your speed.</p>`;
+      body+=MOUNT_CATALOG.map((m,i)=>`<div class="spell"><div class="nm"><b>${esc(m.label)}</b><small>AC ${m.ac} · HP ${m.hp} · ${m.spd} ft speed</small></div>
+        <button class="btn sm" data-mounttgt="${i}">Mount</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='servant'){
@@ -8822,6 +8902,24 @@ function openAdjacentUseUI(c, s, me){
       maneuverShove(ad, me, mo, 'push', log, 2, true);   // Charger: 10 ft, bonus action not the Action
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello();
     });
+    // Mount sync (player-net only): the DM's copy is authoritative, same "local echo, then
+    // tell the DM" shape sendEchoSync already established — looked up by controllerId on the
+    // DM's side (mountSync handler), not by an exact shared id, matching echoSync's own
+    // slightly loose-but-working convention.
+    const sendMountSync=(liveMount)=>{ if(mode!=='player'||!net.conn) return;
+      try{ net.conn.send(liveMount ? {t:'mountSync', exists:true, mountName:liveMount.name, ac:liveMount.ac, hp:liveMount.hp, max:liveMount.max, spd:liveMount.speed, x:liveMount.x, y:liveMount.y} : {t:'mountSync', exists:false}); }catch(e){} };
+    document.querySelectorAll('[data-mounttgt]').forEach(b=>b.onclick=()=>{
+      const def=MOUNT_CATALOG[Number(b.dataset.mounttgt)]; if(!def) return;
+      const unit=mountUp(s, c, mode==='qb'?'pc':net.peer.id, def, me.x, me.y, log);
+      if(!unit) return;
+      sendMountSync(unit);
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    });
+    { const ud=$('#useDismount'); if(ud) ud.onclick=()=>{
+      const ok=dismountRider(c, log);
+      if(ok) sendMountSync(null);
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    }; }
     { const uw=$('#useWhirlwind'); if(uw) uw.onclick=()=>{
       if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
       if(c.battle) spendAction(c);
@@ -8893,7 +8991,7 @@ function openAdjacentUseUI(c, s, me){
       const [kind,idx]=b.dataset.use.split(':');
       draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]}
         : kind==='heal' ? {kind:'healTarget', t:healerHealTargets[Number(idx)]}
-        : kind==='charger' ? {kind:'chargerPick'}
+        : kind==='charger' ? {kind:'chargerPick'} : kind==='mountup' ? {kind:'mountPick'}
         : kind==='servant' ? {kind:'servant'} : kind==='echo' ? {kind:'echo'} : kind==='intimidate' ? {kind:'intimidatePick'} : Object.assign({kind:'obj'}, items[Number(idx)]));
     });
     // Commanding the servant spends the BONUS action resource, independent of the shared
@@ -10434,7 +10532,16 @@ const Engine = {
     // (same "name, not id" convention grappledBy already established) — disadvantage whenever
     // the goaded creature (the ATTACKER here) targets anyone other than whoever goaded it.
     const goadedDisadv=!!(a && a.goadedBy && t && a.goadedBy!==ad.name(t));
-    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv, goadedDisadv});
+    // Mounted Combatant feat: advantage on MELEE attacks (PHB is specific — melee only) vs an
+    // unmounted creature, while mounted. RAW also requires the target be smaller than your
+    // mount; this app has no creature-size data anywhere in the bestiary to check against (the
+    // same "no model to hook" gap Crossbow Expert's melee-disadvantage clause hit), so the
+    // size qualifier is dropped — a documented simplification, not silently narrower than it
+    // looks. "Unmounted" only ever matters for a real character target riding their OWN mount
+    // (a monster can never be mounted in this engine, so this is always true against them).
+    const targetSubj=ad.checkSubject&&ad.checkSubject(t);
+    const mountedAdv=!!(armorSubj && armorSubj.mountedOn && hasFeat(armorSubj,'Mounted Combatant') && melee && !(targetSubj && targetSubj.mountedOn));
+    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv, goadedDisadv, mountedAdv});
     const r=Engine.roll(atk.toHit, ac, face, cx.adv);
     if(cx.autoCrit && r.hit) r.crit=true;
     return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why}, r);
@@ -10692,6 +10799,7 @@ function qbCheckEnd(){ if(!QB) return;
     }
   }
   pruneDeadSummons(QB);
+  checkMountDeaths(QB, qbLog);
   if(QB.players[0].c.hp.cur<=0){ QB.over='lose'; } else if(!qbEnemiesAlive()){ QB.over='win'; } }
 
 function openQuickBattle(){
@@ -12413,7 +12521,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.209';
+const APP_VERSION='v120.210';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
