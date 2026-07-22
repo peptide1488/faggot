@@ -32,7 +32,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
-  'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;'+
+  'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
@@ -2688,6 +2688,55 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('meetsMulticlassPrereq: below 13 fails', meetsMulticlassPrereq(prereqBad,'Barbarian')===false);
   T('meetsMulticlassPrereq: multi-ability classes need ALL listed scores (Paladin: str+cha, only str met)', meetsMulticlassPrereq(prereqOk,'Paladin')===false);
   T('meetsMulticlassPrereq: Fighter is the one "either" case (str 13 OR dex 13) — str alone is enough', meetsMulticlassPrereq(prereqOk,'Fighter')===true);
+}
+
+/* ---- "make the systems": magic items + attunement ---- */
+{
+  const c=newCharacter('Item Tester'); c.cls='Fighter'; c.level=5; c.classes=[{cls:'Fighter',level:5,subclass:''}];
+  syncPrimaryClass(c); c.abilities={str:14,dex:12,con:14,int:10,wis:10,cha:10}; c.saveProf={str:true,con:true,dex:false,int:false,wis:false,cha:false};
+  c.items=[{name:'Longsword',kind:'weapon',qty:1,equipped:true},{name:'Chain Shirt',kind:'armor',armorKey:'chainshirt',qty:1,equipped:true},{name:'Shield',kind:'shield',qty:1,equipped:true}];
+
+  const baseAC=computeAC(c), baseSave=saveMod(c,'dex');
+  const cloak={name:'Cloak of Protection', rarity:'Uncommon', requiresAttunement:true, mods:{ac:1,save:1}, desc:'x'};
+  T('magicItemTargetKind: a wondrous accessory has no equip-target (added standalone)', magicItemTargetKind(cloak)===null);
+  T('addWondrousItem: adds a new unequipped item to inventory', addWondrousItem(c,cloak) && c.items[c.items.length-1].name==='Cloak of Protection' && !c.items[c.items.length-1].equipped);
+  const cloakIdx=c.items.length-1;
+
+  T('gearBonus: an attunement item does NOT contribute while unequipped', gearBonus(c,'ac')===0);
+  T('toggleAttune: fails to attune an unequipped item', toggleAttune(c,cloakIdx)===false && !c.items[cloakIdx].attuned);
+  setEquipped(c, cloakIdx, true);
+  T('gearBonus: STILL does not contribute while equipped-but-not-attuned (RAW: attunement required)', gearBonus(c,'ac')===0);
+  T('toggleAttune: succeeds once equipped', toggleAttune(c,cloakIdx)===true && c.items[cloakIdx].attuned===true);
+  T('attunedCount: reflects the one attuned item', attunedCount(c)===1);
+  T('gearBonus: now contributes both AC and save mods once equipped AND attuned', gearBonus(c,'ac')===1 && gearBonus(c,'save')===1);
+  T('computeAC: reflects the Cloak\'s +1 AC once attuned', computeAC(c)===baseAC+1);
+  T('saveMod: reflects the Cloak\'s +1 to every saving throw once attuned (not just AC)', saveMod(c,'dex')===baseSave+1 && saveMod(c,'wis')===mod(abil(c,'wis'))+1);
+
+  // 3-attunement cap.
+  const ring=MAGIC_ITEMS.find(m=>m.name==='Ring of Protection'), bracers=MAGIC_ITEMS.find(m=>m.name==='Bracers of Defense'), ioun=MAGIC_ITEMS.find(m=>m.name==='Ioun Stone of Protection');
+  [ring,bracers,ioun].forEach(m=>{ addWondrousItem(c,m); const i=c.items.length-1; setEquipped(c,i,true); toggleAttune(c,i); });
+  T('toggleAttune: caps at 3 attuned items total', attunedCount(c)===3);
+  const extra={name:'Ioun Stone of Protection #2', rarity:'Rare', requiresAttunement:true, mods:{ac:1}, desc:'x'};
+  addWondrousItem(c,extra); const extraIdx=c.items.length-1; setEquipped(c,extraIdx,true);
+  T('toggleAttune: refuses a 4th attunement even though the item is equipped', toggleAttune(c,extraIdx)===false && !c.items[extraIdx].attuned);
+  const unattuneResult=toggleAttune(c,cloakIdx);   // cloak is currently attuned — this call toggles it OFF
+  T('toggleAttune: un-attuning succeeds and frees the slot back up', unattuneResult===true && c.items[cloakIdx].attuned===false && attunedCount(c)===2);
+  T('toggleAttune: the freed slot can now attune the 4th item', toggleAttune(c,extraIdx)===true && attunedCount(c)===3);
+
+  // Weapon/armor enchantment (permanent, not a spell effect — reuses the same it.magicBonus
+  // field the "Magic Weapon" spell already established, so weaponToHit/weaponDmgBonus need no
+  // changes at all to pick it up).
+  const c2=newCharacter('Enchant Tester'); c2.items=[{name:'Longsword',kind:'weapon',qty:1,equipped:true}];
+  const w=weaponByName('Longsword'); const beforeHit=weaponToHit(c2,w);
+  T('enchantWeapon: sets magicBonus on the target weapon item', enchantWeapon(c2,0,2) && c2.items[0].magicBonus===2);
+  T('weaponToHit: a permanently enchanted +2 weapon adds +2 to hit, same path as the spell effect', weaponToHit(c2,w,c2.items[0])===beforeHit+2);
+  T('enchantWeapon: refuses a non-weapon item index', enchantWeapon(c2,99,1)===false);
+
+  const c3=newCharacter('Armor Enchant'); c3.items=[{name:'Chain Shirt',kind:'armor',armorKey:'chainshirt',qty:1,equipped:true}];
+  const acBefore=computeAC(c3);
+  T('enchantArmorLike: adds to the armor\'s own mods.ac (additive, stacks with a prior enchant)', enchantArmorLike(c3,0,1) && c3.items[0].mods.ac===1);
+  T('computeAC: reflects the freshly-enchanted armor\'s +1', computeAC(c3)===acBefore+1);
+  T('enchantArmorLike: refuses a weapon/wondrous item index', enchantArmorLike(c3, 5, 1)===false);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

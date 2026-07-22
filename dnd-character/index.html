@@ -1083,7 +1083,53 @@ function spendAction(c){ const b=c&&c.battle; if(!b) return;
   const max=(b.actionsMax!=null?b.actionsMax:actionsPerTurn(c));
   const used=(b.actionsUsed!=null?b.actionsUsed:(b.action?1:0));
   b.actionsMax=max; b.actionsUsed=Math.min(max,used+1); b.action=b.actionsUsed>=max; }
-function gearBonus(c,key){ let n=0; (c.items||[]).forEach(it=>{ if(it.equipped&&it.mods&&it.mods[key]) n+=Number(it.mods[key])||0; }); return n; }
+// An item needing attunement (RAW) only contributes its mods once it's BOTH equipped AND
+// attuned — everything else (mundane gear, and magic items that don't require attunement,
+// like a plain +1 weapon/armor) only ever needed `equipped`, unchanged.
+function gearBonus(c,key){ let n=0; (c.items||[]).forEach(it=>{ if(it.equipped&&(!it.requiresAttunement||it.attuned)&&it.mods&&it.mods[key]) n+=Number(it.mods[key])||0; }); return n; }
+function attunedCount(c){ return (c.items||[]).filter(it=>it.attuned).length; }
+// Attuning/un-attuning (RAW: max 3 attuned items at once; you must have the item equipped —
+// this app doesn't separately model the "short rest spent attuning" time cost, same "we track
+// the resource, not the downtime minutiae" simplification the rest of this app already applies
+// to things like preparing spells or donning armor).
+function toggleAttune(c, idx){
+  const it=c.items[idx]; if(!it || !it.requiresAttunement) return false;
+  if(!it.attuned){
+    if(!it.equipped){ flashBanner('Equip it first to attune'); return false; }
+    if(attunedCount(c)>=3){ flashBanner('Already attuned to 3 items (the max)'); return false; }
+    it.attuned=true;
+  } else it.attuned=false;
+  logChange(c, (it.attuned?'Attuned to ':'Ended attunement with ')+it.name+' ('+attunedCount(c)+'/3)');
+  save();
+  return true;
+}
+// Curated common/iconic magic items with purely additive numeric effects — the same "curated,
+// not exhaustive" scope this app already applies to spells/monsters/invocations/maneuvers.
+// Items whose RAW effect SETS an ability score outright (Belt of Giant Strength, Headband of
+// Intellect, Gauntlets of Ogre Power, Amulet of Health…) are deliberately left out: this app's
+// gear-mods system is purely additive (see gearBonus above), and "set to 19 unless already
+// higher" doesn't fit that shape without a second, different mechanism — a real, named gap,
+// not silently approximated as a flat +N (which would be wrong for a character who already has
+// a higher score than the item's floor).
+const MAGIC_ITEMS = [
+  {name:'Cloak of Protection', rarity:'Uncommon', requiresAttunement:true, mods:{ac:1,save:1}, desc:'+1 AC and +1 to all saving throws while attuned.'},
+  {name:'Ring of Protection', rarity:'Rare', requiresAttunement:true, mods:{ac:1,save:1}, desc:'+1 AC and +1 to all saving throws while attuned.'},
+  {name:'Bracers of Defense', rarity:'Rare', requiresAttunement:true, mods:{ac:2}, desc:'+2 AC while attuned. (RAW restricts this to wearing no armor/shield — not enforced here.)'},
+  {name:'Ioun Stone of Protection', rarity:'Rare', requiresAttunement:true, mods:{ac:1}, desc:'+1 AC while attuned (orbits your head).'},
+  {name:'+1 Weapon', rarity:'Uncommon', requiresAttunement:false, weaponBonus:1, desc:'+1 to attack and damage rolls with this weapon.'},
+  {name:'+2 Weapon', rarity:'Rare', requiresAttunement:false, weaponBonus:2, desc:'+2 to attack and damage rolls with this weapon.'},
+  {name:'+3 Weapon', rarity:'Very Rare', requiresAttunement:false, weaponBonus:3, desc:'+3 to attack and damage rolls with this weapon.'},
+  {name:'+1 Armor', rarity:'Rare', requiresAttunement:false, mods:{ac:1}, desc:'+1 AC while worn.'},
+  {name:'+2 Armor', rarity:'Very Rare', requiresAttunement:false, mods:{ac:2}, desc:'+2 AC while worn.'},
+  {name:'+1 Shield', rarity:'Uncommon', requiresAttunement:false, mods:{ac:1}, desc:'+1 AC on top of the shield\'s own +2 while worn.'},
+];
+// Which existing inventory item a catalog entry needs picked (a +1 Weapon enchants a weapon you
+// already own, RAW-style — it isn't a second item you carry alongside a mundane one); null for
+// the standalone wondrous items (Cloak of Protection etc.), which just become new items outright.
+function magicItemTargetKind(m){ if(m.weaponBonus) return 'weapon'; if(/Armor$/.test(m.name)) return 'armor'; if(/Shield$/.test(m.name)) return 'shield'; return null; }
+function enchantWeapon(c, itemIdx, bonus){ const it=c.items[itemIdx]; if(!it||it.kind!=='weapon') return false; it.magicBonus=bonus; save(); return true; }
+function enchantArmorLike(c, itemIdx, acBonus){ const it=c.items[itemIdx]; if(!it||(it.kind!=='armor'&&it.kind!=='shield')) return false; it.mods=Object.assign({}, it.mods, {ac:((it.mods&&it.mods.ac)||0)+(acBonus||0)}); save(); return true; }
+function addWondrousItem(c, m){ if(!m || magicItemTargetKind(m)) return false; c.items.push({name:m.name, kind:'wondrous', qty:1, equipped:false, requiresAttunement:!!m.requiresAttunement, mods:Object.assign({},m.mods), notes:m.desc}); save(); return true; }
 function equippedWeapons(c){ const out=[]; (c.items||[]).forEach((it,i)=>{ if(it.kind==='weapon'&&it.equipped) out.push({it,i}); }); return out; }
 function weaponItems(c){ const out=[]; (c.items||[]).forEach((it,i)=>{ if(it.kind==='weapon') out.push({it,i}); }); return out; }
 function weaponAbil(c,w){ if(w.type==='ranged') return 'dex'; if(/finesse/.test(w.props||'')) return mod(abil(c,'dex'))>=mod(abil(c,'str'))?'dex':'str'; return 'str'; }
@@ -2780,6 +2826,7 @@ function unarmoredMoveBonus(c){ if(!(c && c.cls==='Monk' && (c.armor||'none')===
 function effSpeed(c,opts){ if(c.wildShape) return c.wildShape.speed||30; if(c.mountedOn) return c.mountedOn.speed||30; const ignoreFx=!!(opts&&opts.ignoreEffects); return Math.round((Number(c.speed||0)+unarmoredMoveBonus(c)+(hasFeat(c,'Mobile')?10:0)+(ignoreFx?0:effBonus(c,'speed'))+gearBonus(c,'speed'))*(ignoreFx?1:effSpeedMul(c))); }
 function modSummary(mods){ if(!mods) return ''; const parts=[];
   if(mods.ac) parts.push(sgn(mods.ac)+' AC');
+  if(mods.save) parts.push(sgn(mods.save)+' all saves');
   if(mods.speed) parts.push(sgn(mods.speed)+' ft');
   if(mods.speedMul) parts.push('×'+mods.speedMul+' speed');
   ['str','dex','con','int','wis','cha'].forEach(k=>{ if(mods[k]) parts.push(sgn(mods[k])+' '+k.toUpperCase()); });
@@ -4456,6 +4503,12 @@ function profBonus(c){
   if(c.profOverride!=='' && c.profOverride!=null && !isNaN(c.profOverride)) return Number(c.profOverride);
   return Math.ceil(Number(c.level||1)/4)+1;
 }
+// The one shared saving-throw total — was duplicated inline at 5 call sites (none of which
+// picked up a flat item/effect bonus), the same "built once, wired into only one place" pattern
+// this app's mode-parity audit already flagged elsewhere. A magic item's/effect's flat save
+// bonus (Cloak of Protection, Ring of Protection, Bless-style effects) now applies everywhere
+// a saving throw is computed, not just wherever someone happened to add it first.
+function saveMod(c,ability){ return mod(abil(c,ability)) + (c.saveProf&&c.saveProf[ability]?profBonus(c):0) + gearBonus(c,'save') + effBonus(c,'save'); }
 function skillBonus(c, key, ab, exp){
   let b = mod(abil(c, ab));
   const pb = profBonus(c);
@@ -4479,7 +4532,7 @@ function statBreakdown(c, spec){
   const A=abilFullName, pb=profBonus(c), parts=spec.split(':'), t=parts[0], a=parts[1], b=parts[2];
   let title='', lines=[], total=0, raw=false, note='';
   if(t==='abil'){ title=A(a)+' Score'; lines=abilScoreLines(c,a); total=abil(c,a); raw=true; note='Ability modifier '+sgn(mod(total)); }
-  else if(t==='save'){ title=A(a)+' Saving Throw'; lines=[{l:A(a)+' modifier', v:mod(abil(c,a))}]; if(c.saveProf[a]) lines.push({l:'Proficiency · '+(c.cls||'class'), v:pb}); total=mod(abil(c,a))+(c.saveProf[a]?pb:0); }
+  else if(t==='save'){ title=A(a)+' Saving Throw'; lines=[{l:A(a)+' modifier', v:mod(abil(c,a))}]; if(c.saveProf[a]) lines.push({l:'Proficiency · '+(c.cls||'class'), v:pb}); const gbv=gearBonus(c,'save'); if(gbv) lines.push({l:'Equipment', v:gbv}); const ebv=effBonus(c,'save'); if(ebv) lines.push({l:'Active spell effects', v:ebv}); total=saveMod(c,a); }
   else if(t==='skill'){ const nm=(SKILLS.find(s=>s[0]===a)||['',a])[1]; title=nm+' Skill'; lines=[{l:A(b)+' modifier', v:mod(abil(c,b))}]; if(c.skillProf[a]) lines.push({l:'Proficiency', v:pb}); if(c.skillExp[a]) lines.push({l:'Expertise (double prof.)', v:pb}); total=skillBonus(c,a,b,true); }
   else if(t==='init'){ title='Initiative'; lines=[{l:'DEX modifier', v:mod(abil(c,'dex'))}]; if(Number(c.initMisc)) lines.push({l:'Misc bonus', v:Number(c.initMisc)}); if(featInitBonus(c)) lines.push({l:'Alert feat', v:5}); total=initiative(c); }
   else if(t==='ac'){ title='Armor Class';
@@ -5010,7 +5063,7 @@ function renderSheet(c){
     <h2>${chev('saves')}Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— ● = proficient (from ${esc(c.cls)})</span></h2>
     ${collapsed.saves?'':ABILITIES.map(([k,nm])=>{
       const prof=!!c.saveProf[k];
-      const b = mod(abil(c,k)) + (prof?profBonus(c):0);
+      const b = saveMod(c,k);
       return `<div class="listrow">
         <span class="profdot ${prof?'on':''}"></span>
         <div class="nm">${nm}</div>
@@ -5181,7 +5234,7 @@ function renderAbil(c){
     <h2>Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— ● = proficient (from ${esc(c.cls)})</span></h2>
     ${ABILITIES.map(([k,nm])=>{
       const prof=!!c.saveProf[k];
-      const b = mod(abil(c,k)) + (prof?pb:0);
+      const b = saveMod(c,k);
       return `<div class="listrow">
         <span class="profdot ${prof?'on':''}"></span>
         <div class="nm">${nm}</div>
@@ -5869,8 +5922,9 @@ function renderItems(c){
           : (modSummary(it.mods)||esc(it.notes||''));
         return `<div class="spell" ${it.equipped?'style="box-shadow:inset 0 0 0 1px var(--accent);border-radius:8px"':''}>
           <span style="flex:none">${itemEmblem(itemIconKey(it),4)}</span>
-          <div class="nm"><b>${esc(it.name)}${it.equipped?' <span class="sub" style="color:var(--accent)">✓ equipped</span>':''}</b><small>${esc(stats)}</small></div>
+          <div class="nm"><b>${esc(it.name)}${it.equipped?' <span class="sub" style="color:var(--accent)">✓ equipped</span>':''}${it.attuned?' <span class="sub" style="color:var(--gold)">✦ attuned</span>':''}</b><small>${esc(stats)}</small></div>
           <button class="btn ghost sm" data-equip="${i}">${it.equipped?'Unequip':'Equip'}</button>
+          ${it.requiresAttunement?`<button class="btn ghost sm" data-attune="${i}">${it.attuned?'End attune':'Attune'}</button>`:''}
           <button class="del" data-delitem="${i}">✕</button>
         </div>`; }).join('');
     })()}
@@ -5884,8 +5938,22 @@ function renderItems(c){
       </select>
       <button class="btn sm" id="eqAdd">Add</button>
     </div>
-    <div class="addrow">
-      <input id="eqw_name" placeholder="Custom magic item (e.g. Ring of Protection)">
+    <div class="card" style="margin:10px 0 0;padding:10px">
+      <h2 style="font-size:12px">🪄 Magic items <span class="muted" style="text-transform:none;font-size:11px">— ${attunedCount(c)}/3 attuned</span></h2>
+      <div class="addrow">
+        <select id="mi_pick" style="flex:2">
+          <option value="">— add a magic item —</option>
+          ${MAGIC_ITEMS.map((m,i)=>`<option value="${i}">${esc(m.name)} (${m.rarity}${m.requiresAttunement?', attunement':''})</option>`).join('')}
+        </select>
+      </div>
+      <div id="mi_targetRow" style="display:none" class="addrow">
+        <select id="mi_target" style="flex:2"></select>
+      </div>
+      <div class="muted" id="mi_desc" style="font-size:12px;margin:6px 0"></div>
+      <button class="btn sm block" id="miAdd" disabled>Add</button>
+    </div>
+    <div class="addrow" style="margin-top:10px">
+      <input id="eqw_name" placeholder="Custom magic item (e.g. Deck of Illusions)">
       <input id="eqw_ac" type="number" placeholder="+AC" style="max-width:64px">
       <button class="btn sm" id="eqwAdd">Add</button>
     </div>
@@ -5939,8 +6007,38 @@ function renderItems(c){
     c.items.push({name, kind:'wondrous', qty:1, equipped:false, mods: ac?{ac}:{}});
     save(); render();
   });
+  { const mp=$('#mi_pick'), tRow=$('#mi_targetRow'), tSel=$('#mi_target'), desc=$('#mi_desc'), addBtn=$('#miAdd');
+    function refresh(){
+      const idx=mp.value; const m=idx!==''?MAGIC_ITEMS[Number(idx)]:null;
+      if(!m){ tRow.style.display='none'; desc.textContent=''; addBtn.disabled=true; return; }
+      desc.textContent=m.desc;
+      const tk=magicItemTargetKind(m);
+      if(tk){
+        const cands=c.items.map((it,i)=>({it,i})).filter(o=>o.it.kind===tk);
+        tRow.style.display='';
+        tSel.innerHTML = cands.length ? cands.map(({it,i})=>`<option value="${i}">${esc(it.name)}</option>`).join('') : `<option value="">— none, add a ${tk} first —</option>`;
+        addBtn.disabled = !cands.length;
+      } else { tRow.style.display='none'; addBtn.disabled=false; }
+    }
+    mp.addEventListener('change', refresh);
+    addBtn.addEventListener('click',()=>{
+      const idx=mp.value; const m=idx!==''?MAGIC_ITEMS[Number(idx)]:null; if(!m) return;
+      const tk=magicItemTargetKind(m);
+      let ok=false, targetName='';
+      if(tk==='weapon'){ const ti=Number(tSel.value); targetName=(c.items[ti]||{}).name; ok=enchantWeapon(c,ti,m.weaponBonus); }
+      else if(tk==='armor'||tk==='shield'){ const ti=Number(tSel.value); targetName=(c.items[ti]||{}).name; ok=enchantArmorLike(c,ti,m.mods.ac); }
+      else ok=addWondrousItem(c,m);
+      if(!ok) return;
+      logChange(c, tk ? ('Enchanted '+targetName+' as a '+m.name) : ('Added '+m.name+' to inventory'));
+      render();
+      if(tk) flashBanner(targetName+' is now a '+m.name);
+    });
+  }
   app.querySelectorAll('[data-equip]').forEach(el=>el.addEventListener('click',()=>{
     const i=Number(el.dataset.equip); setEquipped(c, i, !c.items[i].equipped);
+  }));
+  app.querySelectorAll('[data-attune]').forEach(el=>el.addEventListener('click',()=>{
+    const i=Number(el.dataset.attune); if(toggleAttune(c,i)) render();
   }));
   app.querySelectorAll('[data-delitem]').forEach(el=>el.addEventListener('click',()=>{
     const i=Number(el.dataset.delitem); const it=c.items[i];
@@ -6744,7 +6842,7 @@ function playerOnData(d){ if(!d) return;
     // sendTerrainHazardCheck's DM-mode branches).
     const c=playerChar(); if(!c) return;
     const ability=d.ability||'con';
-    const bonus=mod(abil(c,ability))+(c.saveProf&&c.saveProf[ability]?profBonus(c):0);
+    const bonus=saveMod(c,ability);
     const roll=rnd(20)+bonus, saved=roll>=d.dc;
     const cond=d.cond||'Poisoned';
     if(d.dmg){
@@ -10457,7 +10555,7 @@ function dmMonsterAttack(mo){
 // read-only character sheet for Quick Battle — mid-combat reference, no editing
 function openQbSheet(c){
   const abils=ABILITIES.map(([k,nm])=>`<div class="tile"><div class="lab">${nm.slice(0,3).toUpperCase()}</div><div class="big">${sgn(mod(abil(c,k)))}</div><div class="muted" style="font-size:11px">${abil(c,k)}</div></div>`).join('');
-  const saves=ABILITIES.map(([k,nm])=>{ const prof=!!c.saveProf[k]; return `<div class="listrow"><span class="profdot ${prof?'on':''}"></span><div class="nm">${nm}</div><div class="val">${sgn(mod(abil(c,k))+(prof?profBonus(c):0))}</div></div>`; }).join('');
+  const saves=ABILITIES.map(([k,nm])=>{ const prof=!!c.saveProf[k]; return `<div class="listrow"><span class="profdot ${prof?'on':''}"></span><div class="nm">${nm}</div><div class="val">${sgn(saveMod(c,k))}</div></div>`; }).join('');
   const profSkills=SKILLS.filter(([key])=>c.skillProf[key]||c.skillExp[key]);
   const equipped=(c.items||[]).filter(it=>it.equipped);
   const ct=RACE_TRAITS[c.race]||[], cf=(CLASS_FEATURES[c.cls]||[]).filter(f=>f[0]<=(Number(c.level)||1));
@@ -10812,7 +10910,11 @@ function unitController(u){ return u.controller || (u.side==='mon' ? (u.brain||'
 // is identical regardless of which mode or which kind of creature it is. `cs`==null means this
 // adapter genuinely doesn't have that side's real sheet locally (a DM looking at a connected
 // player) — the only case that still needs a network round-trip; see checkSubject on each adapter.
-function abilCheckBonus(cs, ab){ return cs ? mod(abil(cs,ab))+((cs.saveProf&&cs.saveProf[ab])?profBonus(cs):0) : 0; }
+// saveMod already computes exactly this (ability mod + proficiency + any equipped/attuned
+// item's or active effect's flat save bonus) — this is the same math, just tolerant of cs
+// being null (the one real difference: a DM's mirror of a connected player has no local sheet
+// to check yet, see the comment above sessionAdapter.checkSubject).
+function abilCheckBonus(cs, ab){ return cs ? saveMod(cs,ab) : 0; }
 // Adapter binding the unified Engine to a multiplayer net.session.
 // Monsters carry .hp/.max; players carry .hpCur/.hpMax — that's how we tell them apart.
 const sessionAdapter = {
@@ -12697,7 +12799,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.211';
+const APP_VERSION='v120.212';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

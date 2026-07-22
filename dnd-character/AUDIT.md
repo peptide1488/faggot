@@ -2637,3 +2637,55 @@ spell-learning section, and applying a level correctly updates `c.classes`, the 
 total level, and the composed hit-dice string — checked for both a fresh multiclass entry and a
 second level taken in an already-existing secondary class, plus a plain single-class level-up
 confirmed byte-for-byte unchanged in outcome.
+
+## Magic items + attunement (v120.212)
+
+Closed another VISION.md wishlist item. Previously the only way to give a character a magic
+item was the freeform "custom item" box (a name + a flat AC number, nothing else) or the
+temporary Magic Weapon spell effect — there was no curated catalog, no attunement limit, and no
+item ever granted a bonus to anything but AC. Built a real (if intentionally curated) magic item
+system on top of the gear-mods infrastructure that already existed for mundane equipment.
+
+**Curated `MAGIC_ITEMS` catalog** (`Cloak of Protection`, `Ring of Protection`, `Bracers of
+Defense`, `Ioun Stone of Protection`, `+1/+2/+3 Weapon`, `+1/+2 Armor`, `+1 Shield`) — the same
+"real, additive, curated" scope this app already applies to spells/monsters/maneuvers/
+invocations. Left out on purpose: any item whose RAW effect **sets** an ability score outright
+(Belt of Giant Strength, Headband of Intellect, Gauntlets of Ogre Power, Amulet of Health) —
+this app's gear-mods system (`gearBonus`) is purely additive, and "set to 19 unless already
+higher" doesn't fit that shape without a second, different mechanism; approximating it as a flat
+`+N` would be silently wrong for a character whose score already exceeds the item's floor, so it
+was left undone rather than shipped subtly incorrect.
+
+**Attunement**: `it.attuned` lives directly on the item (no separate index-tracking array, so
+it's immune to reordering when other items are added/removed — the same convention `it.equipped`
+already used). `toggleAttune(c,idx)` enforces the real RAW shape: the item must be equipped
+first, and a character can have at most 3 items attuned at once. `gearBonus` now gates an
+attunement item's mods on `equipped && attuned` together — everything else (mundane gear, and
+the non-attunement +N weapons/armor) still only ever needed `equipped`, unchanged.
+
+**Enchanting an existing weapon/armor/shield** (the `+N Weapon/Armor/Shield` catalog entries)
+targets an item you already own rather than creating a second item alongside it — RAW-correct
+(a "+1 Longsword" is one item, not a mundane longsword plus a separate "+1 Weapon" trinket).
+`enchantWeapon` reuses the exact `it.magicBonus` field the Magic Weapon spell effect already
+established, so `weaponToHit`/`weaponDmgBonus` needed zero changes to pick up a permanent
+enchantment the same way they already handle a temporary spell one.
+
+**Found and fixed a real unification gap while building this**, not just new code: saving-throw
+totals were duplicated inline at 5 separate call sites across the file, and none of them added a
+flat item or effect bonus — so a Cloak of Protection's +1-to-all-saves half worked (AC) and half
+silently didn't (saves), which would have shipped as a real bug if not caught. Extracted one
+`saveMod(c,ability)` function and rewired all 5 display sites plus, more importantly,
+`abilCheckBonus` — the single function every adapter's `saveBonus` already shares, i.e. the
+actual gameplay-critical path real saving throws resolve through in combat (Sanctuary, Holy
+Aura, spell saves, hazard saves) — to go through it too. This is the same "one shared function,
+not five copies" house rule this app already enforces for feats/mode-parity, just newly applied
+here.
+
+Tests: 20 new assertions — attunement gating on `gearBonus` (equipped-only vs. equipped+attuned),
+the 3-item cap and its release on un-attuning, `computeAC`/`saveMod` both reflecting an attuned
+item's bonus (proving the saveMod fix, not just asserting it), and `enchantWeapon`/
+`enchantArmorLike` applying correctly (including refusing a wrong-kind item index). Also
+live-verified via Playwright against the real DOM: adding a Cloak of Protection from the picker,
+equipping it, attuning it through the real button, and confirming both the rendered AC tile and
+`saveMod` change — plus the weapon-enchant flow's conditional "which weapon?" picker appearing
+only for target-needing catalog entries and correctly applying `magicBonus` to the chosen item.
