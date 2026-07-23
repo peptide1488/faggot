@@ -2689,3 +2689,54 @@ live-verified via Playwright against the real DOM: adding a Cloak of Protection 
 equipping it, attuning it through the real button, and confirming both the rendered AC tile and
 `saveMod` change — plus the weapon-enchant flow's conditional "which weapon?" picker appearing
 only for target-needing catalog entries and correctly applying `magicBonus` to the chosen item.
+
+## DM-placed traps (v120.213)
+
+Closed another VISION.md wishlist item (traps/hazards) — specifically the DM-authored-trap half;
+spell/AOE-created hazards (Grease, gas clouds, etc.) already existed. Built on the existing
+`s.hazards` cell-tracking infrastructure's sibling shape rather than reusing it directly: a trap
+is single-tile, one-shot, and non-expiring-by-timer, different enough from an AOE zone that a
+dedicated `s.traps` array (not `s.hazards`) was the honest fit.
+
+**Curated `TRAP_CATALOG`** (Pressure Plate, Spiked Pit, Poison Needle Trap, Fire Rune, Lightning
+Rune) — same "real, additive, curated" scope as every other content table this pass. A DM places
+one via the exact same click-to-paint brush pattern terrain/decor already use (a new `x:`-
+prefixed selection alongside the existing `t:`/`d:` ones), one trap per tile.
+
+**Trigger resolution reuses the mode-split this app already established** for terrain hazards
+(`checkTerrainHazardCond` vs. `sendTerrainHazardCheck`) for the same reason: QB and DM-hosted
+monsters have their real stat block locally and can just roll the save (`checkTrapTrigger`), but
+a connected player's real sheet only lives on their own device, so DM-hosted's player-move path
+sends a message and lets them resolve it locally (`sendTrapTriggerCheck`) — reusing the *exact*
+existing `'hazard'` net message shape wholesale (a trap just populates the `dmg` field that a
+terrain hazard message leaves empty), so no new message type was needed at all. Hooked into
+all 5 real movement-commit call sites: QB player (`commitMove`) and monster (`qbApplyIntent`)
+movement, and DM-hosted's monster-move, DM-manual-player-move, and player-self-reported-move
+paths — the same 5 sites `checkTerrainHazardCond`/`sendTerrainHazardCheck` already hook into.
+
+**Found and fixed a real privacy bug while building this**, not shipped-then-discovered: traps
+are meant to be invisible to players until sprung, but `dmBroadcast` sends the DM's *entire*
+session object to every connected player's device — an un-redacted `s.traps` array would leak
+every hidden trap's exact map location to anyone willing to open devtools on their own client,
+regardless of whether they'd have any legitimate way to know it was there. Fixed by having
+`dmBroadcast` send a copy of the session with untriggered traps stripped (triggered ones still
+go out — no longer a secret once sprung) rather than the raw array, without touching the DM's
+own live `session.traps` state.
+
+Deliberately out of scope, documented inline: no passive-Perception "spot the trap" check (traps
+are simply invisible until triggered, not findable/disarmable — a real simplification, not a
+half-built search mechanic) and no re-arming (every trap is strictly one-shot; RAW some can
+reset but most published ones don't bother, and this app doesn't need the complexity for what's
+already a curated feature).
+
+Tests: 14 new assertions — `checkTrapTrigger`'s fail/save branches (forced deterministic via an
+absurd DC, the same trick this app's own hazard tests already use) proving damage, halving on a
+save, condition-on-fail-only, and trigger-once idempotency; `sendTrapTriggerCheck`'s message
+shape and immediate triggered-marking; and — most importantly, since it was a real bug this pass
+caught rather than shipped — `dmBroadcast`'s redaction, proving an untriggered trap never
+appears in what a connected player's device receives while a triggered one still does, and that
+the DM's own live state is untouched by the redaction copy. Also live-verified via Playwright
+against the real DOM: placing a trap through the actual palette+click-to-place UI, moving a
+monster onto it through the DM's real move-token handler and confirming HP/condition/triggered
+state all update correctly with a real d20 roll, and confirming a simulated connected player's
+`dmBroadcast` payload only ever contains the now-triggered trap.

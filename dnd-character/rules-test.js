@@ -32,7 +32,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
-  'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;'+
+  'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
@@ -2737,6 +2737,51 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('enchantArmorLike: adds to the armor\'s own mods.ac (additive, stacks with a prior enchant)', enchantArmorLike(c3,0,1) && c3.items[0].mods.ac===1);
   T('computeAC: reflects the freshly-enchanted armor\'s +1', computeAC(c3)===acBefore+1);
   T('enchantArmorLike: refuses a weapon/wondrous item index', enchantArmorLike(c3, 5, 1)===false);
+}
+
+/* ---- "make the systems": DM-placed traps ---- */
+{
+  T('TRAP_CATALOG: every entry has a sane dc/dmg/ability shape', TRAP_CATALOG.every(t=>t.dc>=10&&t.dc<=20&&/^\d+d\d+$/.test(t.dmg)&&['str','dex','con','int','wis','cha'].includes(t.ability)));
+
+  const s={map:{cols:5,rows:5,tiles:{}}, battle:{round:1,active:true}, log:[], players:[], monsters:[], traps:[]};
+  s.traps.push({x:2,y:2,name:'Spiked Pit',dmg:'2d6',dtype:'piercing',dc:999,ability:'dex',cond:'Prone',triggered:false});   // DC 999 → always fails
+  const mo={name:'Goblin',x:2,y:2,base:'Goblin',hp:20,max:20};
+  const res=checkTrapTrigger(s, mo, 2, 2, false);
+  T('checkTrapTrigger: a monster failing the save takes full damage', res && res.saved===false && res.applied>0 && mo.hp===20-res.applied);
+  T('checkTrapTrigger: a failed save applies the trap\'s condition', mo.conds && mo.conds.some(c=>c.name==='Prone'));
+  T('checkTrapTrigger: marks the trap triggered so it can\'t fire twice', s.traps[0].triggered===true);
+  const res2=checkTrapTrigger(s, mo, 2, 2, false);
+  T('checkTrapTrigger: a second trigger attempt on the same (now-sprung) tile is a no-op', res2===null);
+
+  // Guaranteed save (DC so low any roll succeeds) → half damage, no condition.
+  s.traps.push({x:3,y:3,name:'Fire Rune',dmg:'4d6',dtype:'fire',dc:-100,ability:'dex',cond:null,triggered:false});
+  const c=newCharacter('Trap Tester'); c.abilities={str:10,dex:14,con:14,int:10,wis:10,cha:10}; c.hp={max:30,cur:30,temp:0};
+  const res3=checkTrapTrigger(s, c, 3, 3, true);
+  T('checkTrapTrigger: a PC succeeding the save takes half damage', res3 && res3.saved===true && c.hp.cur===30-res3.applied && res3.applied>0);
+  T('checkTrapTrigger: a no-condition trap never sets one, even on a fail', !c.conditions || !c.conditions.Prone);
+
+  T('trapAt: finds a trap by exact cell', trapAt(s,2,2) && trapAt(s,2,2).name==='Spiked Pit');
+  T('trapAt: an empty tile has none', trapAt(s,0,0)===null);
+
+  // Player-net path (DM has no local sheet — sends a message for the player's own device to
+  // resolve). Reuses the existing 'hazard' message shape; dmSend needs a real net.conns entry.
+  setNet({role:'dm', conns:[{peer:'p1', send(msg){ this._last=msg; }}]});
+  s.traps.push({x:4,y:4,name:'Poison Needle Trap',dmg:'2d10',dtype:'poison',dc:15,ability:'con',cond:'Poisoned',triggered:false});
+  const p={id:'p1', name:'RemotePlayer'};
+  sendTrapTriggerCheck(s, p, 4, 4);
+  const sentMsg=getNet().conns[0]._last;
+  T('sendTrapTriggerCheck: marks the trap triggered immediately (before the player even responds)', s.traps.find(t=>t.name==='Poison Needle Trap').triggered===true);
+  T('sendTrapTriggerCheck: sends the existing \'hazard\' message shape (no new message type needed)', sentMsg && sentMsg.t==='hazard' && sentMsg.dc===15 && sentMsg.ability==='con' && sentMsg.dmg==='2d10' && sentMsg.cond==='Poisoned');
+  setNet(null);
+
+  // dmBroadcast must never leak an un-sprung trap's location to a connected player.
+  setNet({role:'dm', session:{traps:[{x:1,y:1,name:'Hidden One',triggered:false},{x:2,y:2,name:'Sprung One',triggered:true}]}, conns:[{peer:'p1', send(msg){ this._last=msg; }}], campaign:null});
+  dmBroadcast();
+  const broadcast=getNet().conns[0]._last;
+  T('dmBroadcast: strips untriggered traps from the outbound session', !broadcast.session.traps.some(t=>t.name==='Hidden One'));
+  T('dmBroadcast: still includes already-triggered traps (no longer a secret)', broadcast.session.traps.some(t=>t.name==='Sprung One'));
+  T('dmBroadcast: does not mutate the DM\'s own live session.traps array', getNet().session.traps.length===2);
+  setNet(null);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

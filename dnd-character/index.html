@@ -6672,7 +6672,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
   else if(d.t==='target'){ net.session.players.forEach(p=>{ if(p.id===conn.peer) p.target=d.mon; }); render(); }
   else if(d.t==='move'){ const p=net.session.players.find(x=>x.id===conn.peer); if(p){ p.x=d.x; p.y=d.y; p.placed=true;
-    if(net.session.battle&&net.session.battle.active) sendTerrainHazardCheck(net.session,p,d.x,d.y);
+    if(net.session.battle&&net.session.battle.active){ sendTerrainHazardCheck(net.session,p,d.x,d.y); sendTrapTriggerCheck(net.session,p,d.x,d.y); }
     dmBroadcast(); render(); } }
   else if(d.t==='endturn'){ const cur=net.session.order&&net.session.order[net.session.turn]; if(cur&&cur.id===conn.peer) dmNextTurn(); }
   else if(d.t==='moncond'){ const mo=net.session.monsters.find(m=>m.id===d.mon); if(mo){ mo.conds=mo.conds||[]; if(!mo.conds.some(x=>x.name===d.cond)) mo.conds.push({name:d.cond,rounds:d.rounds||10}); dmBroadcast(); render(); flashBanner(mo.name+' → '+d.cond); } }
@@ -6751,7 +6751,15 @@ function dmOpportunityAttack(mo,p){
   flashBanner('⚔ Opportunity: '+mo.name+(ev.hit?' hits '+p.name+' for '+ev.dmg+(ev.holyAura&&ev.holyAura.blinded?' (blinded by Holy Aura)':''):' misses '+p.name));
   dmBroadcast(); render();
 }
-function dmBroadcast(){ if(!net||net.role!=='dm') return; const msg={t:'session',session:net.session}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} });
+// Traps are meant to be hidden from players until they're actually sprung — but dmBroadcast
+// sends the WHOLE session object over the wire, so an un-redacted trap list would leak every
+// trap's exact location to anyone inspecting their own device's received data, regardless of
+// whether they'd ever legitimately have found it. Strip untriggered traps from the outbound
+// copy specifically; triggered ones are common knowledge by then, so those still go out (a
+// player who just got hit by one, or watched a monster spring it, should see it on their map).
+function dmBroadcast(){ if(!net||net.role!=='dm') return;
+  const sessionOut = (net.session.traps&&net.session.traps.length) ? Object.assign({},net.session,{traps:net.session.traps.filter(t=>t.triggered)}) : net.session;
+  const msg={t:'session',session:sessionOut}; net.conns.forEach(c=>{ try{ c.send(msg); }catch(e){} });
   if(net.campaign){ clearTimeout(net._cpT); net._cpT=setTimeout(()=>{ if(net&&net.role==='dm'&&net.campaign) saveCampaign(net.campaign,true); },1500); } }   // active campaign autosaves (debounced)
 function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.placed) return; p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ if(m.placed) return; m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
 function rollInitiative(){ const s=net.session; const o=[];
@@ -10199,6 +10207,8 @@ function renderDM(){
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
     <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Elevation:</span><button class="chip ${net.sel==='t:elev+'?'on':''}" data-place="t:elev+">⬆ Raise</button><button class="chip ${net.sel==='t:elev-'?'on':''}" data-place="t:elev-">⬇ Lower</button></div>
     <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Decorate:</span>${Object.keys(DECOR).map(k=>`<button class="chip ${net.sel==='d:'+k?'on':''}" data-place="d:${k}">${DECOR[k].name}</button>`).join('')}<button class="chip ${net.sel==='d:erase'?'on':''}" data-place="d:erase">✕ Erase</button></div>
+    <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">🪤 Traps <span title="Hidden from players until triggered">(DM-only, hidden)</span>:</span>${TRAP_CATALOG.map(t=>`<button class="chip ${net.sel==='x:'+t.name?'on':''}" data-place="x:${esc(t.name)}">${esc(t.name)}</button>`).join('')}<button class="chip ${net.sel==='x:erase'?'on':''}" data-place="x:erase">✕ Erase</button></div>
+    ${(s.traps||[]).length?`<p class="muted" style="font-size:11px;margin:0 0 6px">${s.traps.filter(t=>!t.triggered).length} armed, ${s.traps.filter(t=>t.triggered).length} sprung — only you can see trap tiles on this map.</p>`:''}
     <div class="chips">${s.monsters.map(mo=>`<button class="chip ${net.sel==='m'+mo.id?'on':''}" data-place="m${mo.id}">🟥 ${esc(mo.name)}</button>`).join('')}${s.players.map(p=>`<button class="chip ${net.sel==='p'+p.id?'on':''}" data-place="p${p.id}">🟩 ${esc(p.name)}</button>`).join('')}</div>
     <div class="addrow" style="margin-top:8px"><select id="mPreset" style="flex:2"><option value="">— load a map —</option><optgroup label="Presets">${Object.keys(MAP_PRESETS).map(k=>`<option value="p:${esc(k)}">${esc(k)}</option>`).join('')}</optgroup>${Object.keys(savedMaps()).length?`<optgroup label="Saved">${Object.keys(savedMaps()).map(n=>`<option value="s:${esc(n)}">💾 ${esc(n)}</option>`).join('')}</optgroup>`:''}</select><button class="btn sm" id="mLoad">Load</button><button class="btn ghost sm" id="mSave">💾 Save</button></div>
     <div class="addrow" style="margin-top:6px"><button class="btn ghost sm" id="mImportJson" title="Import map JSON from voxel engine Export for Grimoire">📥 Import map JSON</button><input type="file" id="mImportFile" accept="application/json,.json" hidden></div>
@@ -10262,6 +10272,10 @@ function renderDM(){
       else { if((key==='torch'||key==='torch_unlit') && !nextToWall(s,x,y)){ flashBanner('🔥 Torches mount on a wall — pick a tile next to one'); return; }
         s.map.decor[x+','+y]=key; }
       dmBroadcast(); render(); return; }
+    if(net.sel.slice(0,2)==='x:'){ const key=net.sel.slice(2); s.traps=s.traps||[];
+      s.traps=s.traps.filter(t=>!(t.x===x&&t.y===y));   // one trap per tile — placing/erasing replaces whatever was there
+      if(key!=='erase'){ const def=TRAP_CATALOG.find(t=>t.name===key); if(def) s.traps.push(Object.assign({x,y,triggered:false},def)); }
+      dmBroadcast(); render(); return; }
     const ter=terrainAt(s,x,y);
     if(net.sel[0]==='m'){ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(mo){ const fromX=mo.x, fromY=mo.y, wasBattle=s.battle.active, mfly=monsterFlies(mo);
       if(s.battle.active){ const tdef0=TERRAIN[ter]; if(tdef0&&tdef0.solid && !(mfly&&isPitTerrain(ter))){ flashBanner((isPitTerrain(ter)?'Pit blocks ':'Wall blocks ')+mo.name); return; }
@@ -10271,12 +10285,12 @@ function renderDM(){
         if(cost>(mo.moveLeft||0)){ if(!dashAvail){ flashBanner(mo.name+' too far — needs its action to Dash'); return; } mo.moveLeft=(mo.moveLeft||0)+(mo.speed||30); mo.attacksLeft=0; flashBanner('🏃 '+mo.name+' Dashes (action used)'); }
         mo.moveLeft=(mo.moveLeft||0)-cost; }
       mo.x=x; mo.y=y; mo.placed=true;
-      if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; Events.emit({type:'hazard', unitId:mo.id, terrain:ter, deadly:true}); flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); Events.emit({type:'hazard', unitId:mo.id, terrain:ter, dmg:d}); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } checkTerrainHazardCond(s,mo,x,y,false); }
+      if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; Events.emit({type:'hazard', unitId:mo.id, terrain:ter, deadly:true}); flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); Events.emit({type:'hazard', unitId:mo.id, terrain:ter, dmg:d}); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } checkTerrainHazardCond(s,mo,x,y,false); checkTrapTrigger(s,mo,x,y,false); }
       Events.emit({type:'move', id:mo.id, by:mo.name, to:{x:mo.x,y:mo.y}, fly:mfly});
       if(wasBattle){ const leaving=s.players.filter(p=>(p.hpCur||0)>0 && leavesReach(fromX,fromY,mo.x,mo.y,p.x,p.y,1)); leaving.forEach(p=>dmSend(p.id,{t:'oachance',mon:mo.id,name:mo.name,ac:mo.ac})); if(leaving.length) flashBanner('⚔ '+mo.name+' provokes opportunity attack'+(leaving.length>1?'s':'')+' from '+leaving.map(p=>p.name).join(', ')); }
     } }
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && isFullWall(ter)){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
-      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, deadly:true}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, dmg:d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } sendTerrainHazardCheck(s,p,x,y); } } }
+      if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, deadly:true}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, dmg:d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } sendTerrainHazardCheck(s,p,x,y); sendTrapTriggerCheck(s,p,x,y); } } }
     net.sel=null; dmBroadcast(); render(); });
   { const mc=$('#mClear'); if(mc) mc.onclick=()=>{ if(confirm('Clear all terrain & elevation?')){ s.map.tiles={}; s.map.height={}; s.map.decor={}; dmBroadcast(); render(); } }; }
   { const ml=$('#mLoad'); if(ml) ml.onclick=()=>{ const v=$('#mPreset').value; if(!v) return; const [k,nm]=[v.slice(0,1),v.slice(2)]; const d=k==='p'?MAP_PRESETS[nm]:savedMaps()[nm]; if(d&&confirm('Load "'+nm+'"? This replaces the current map.')) loadMapData(d); }; }
@@ -11700,7 +11714,7 @@ function qbApplyIntent(u, it, done){
     // step of the move animation, not just once, so the camera tracks the monster the
     // whole way instead of just its starting tile.
     animateToken(null,(nx,ny)=>{ u.x=nx; u.y=ny; frameCameraOnCellSmooth(QB, nx, ny, 1.55); }, path, 220, ()=>{ save();
-      if(!ufly) qbCheckTerrainProne(QB,u,it.to.x,it.to.y,false);
+      if(!ufly){ qbCheckTerrainProne(QB,u,it.to.x,it.to.y,false); checkTrapTrigger(QB,u,it.to.x,it.to.y,false); }
       Events.emit({type:'move', id:u.id, by:u.name, to:it.to, fly:ufly});
       if(provokePc) qbPcOAonMonster(pc, u);
       setTimeout(done, provokePc?500:0); }, u);
@@ -11849,7 +11863,7 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
         else if(hasFeatherFall(c)){ qbLog('🪶 '+c.name+' falls '+dropFt+' ft — Feather Fall, no damage'); }
         else if(dropFt>=10){ const fd=fallDamageTotal(dropFt); if(fd){ applyHp(c,-fd); qbLog('📉 '+c.name+' falls '+dropFt+' ft — '+fd+' bludgeoning'); } }
       }
-      if(!fly) qbCheckTerrainProne(s,c,x,y,true);
+      if(!fly){ qbCheckTerrainProne(s,c,x,y,true); checkTrapTrigger(s,c,x,y,true); }
       // Difficult terrain note on destination
       const tdef2=TERRAIN[ter], dd2=DECOR[decorAt(s,x,y)];
       if((tdef2&&tdef2.diff)||(dd2&&dd2.diff)) qbLog('🥾 Difficult terrain at destination');
@@ -12460,6 +12474,51 @@ function inNoCastZone(s,x,y){ const hz=hazardAt(s,x,y); return !!(hz&&hz.noCast)
 // name specifically — Silence shares the same noCast hazard shape but must never suppress a
 // buff, only block new spellcasting.
 function inAntimagicField(s,x,y){ const hz=hazardAt(s,x,y); return !!(hz&&hz.name==='Antimagic Field'); }
+/* ---- DM-placed traps ----
+   A curated set of classic single-tile traps (not spell-created — a DM paints one onto the
+   map before/during a fight, reusing the exact click-to-place brush pattern terrain/decor
+   already use). Deliberately out of scope for v1: a passive-Perception "spot the trap"
+   check (traps are simply invisible to players on the map until triggered — a real,
+   named simplification, not modeled as findable/disarmable) and re-arming (each trap is
+   strictly one-shot, matching the common case; RAW some traps CAN reset, most published
+   ones don't bother, and this app doesn't need the added complexity for what's already a
+   curated feature). s.traps = [{x,y,name,dmg,dtype,dc,ability,cond}], `triggered` added
+   once sprung so the SAME find-by-cell lookup checkTrapTrigger uses also naturally skips
+   an already-sprung trap without a separate "is this tile clear" bookkeeping pass. */
+const TRAP_CATALOG = [
+  {name:'Pressure Plate (darts)', dmg:'2d10', dtype:'piercing', dc:13, ability:'dex', cond:null},
+  {name:'Spiked Pit', dmg:'2d6', dtype:'piercing', dc:13, ability:'dex', cond:'Prone'},
+  {name:'Poison Needle Trap', dmg:'2d10', dtype:'poison', dc:15, ability:'con', cond:'Poisoned'},
+  {name:'Fire Rune', dmg:'4d6', dtype:'fire', dc:15, ability:'dex', cond:null},
+  {name:'Lightning Rune', dmg:'4d10', dtype:'lightning', dc:15, ability:'dex', cond:null},
+];
+function trapAt(s,x,y){ return (s.traps||[]).find(t=>t.x===x&&t.y===y)||null; }
+// Direct resolution — used wherever this device already has the real stat block to roll
+// against (QB always; DM-hosted for monsters, which live entirely in s.monsters).
+function checkTrapTrigger(s, unit, x, y, isPc){
+  const trap=(s.traps||[]).find(t=>!t.triggered && t.x===x && t.y===y); if(!trap) return null;
+  trap.triggered=true;
+  const bonus = isPc ? saveMod(unit, trap.ability) : monsterSaveBonus(unit);
+  const roll=rnd(20)+bonus, saved=roll>=trap.dc;
+  const dmgTotal=(rollNotation(trap.dmg)||{total:0}).total;
+  const applied=saved?Math.floor(dmgTotal/2):dmgTotal;
+  if(isPc){ if(applied>0) applyHp(unit,-applied); if(!saved && trap.cond){ unit.conditions=unit.conditions||{}; unit.conditions[trap.cond]=true; } }
+  else { if(applied>0) unit.hp=Math.max(0,(unit.hp||0)-applied); if(!saved && trap.cond){ unit.conds=unit.conds||[]; if(!unit.conds.some(c=>c.name===trap.cond)) unit.conds.push({name:trap.cond, rounds:10}); } }
+  qbLog('🪤 '+(unit.name||'Someone')+' triggers a '+trap.name+'! ('+roll+' vs DC '+trap.dc+' — '+applied+' '+trap.dtype+(!saved&&trap.cond?', '+trap.cond:'')+')', s);
+  return {trap, saved, applied};
+}
+// DM-hosted's player path — the DM has no local copy of a connected player's real ability
+// scores/saves, so it can't roll for them (same reasoning as sendTerrainHazardCheck); it
+// reuses that exact same 'hazard' net message the player's own device already knows how to
+// resolve fully (save roll, damage, condition) — traps just populate the dmg field that
+// terrain hazards leave empty (terrain damage is already handled by a separate branch at
+// each of those call sites).
+function sendTrapTriggerCheck(s, p, x, y){
+  const trap=(s.traps||[]).find(t=>!t.triggered && t.x===x && t.y===y); if(!trap) return;
+  trap.triggered=true;
+  if(typeof dmSend==='function') dmSend(p.id, {t:'hazard', name:trap.name, dc:trap.dc, ability:trap.ability, dmg:trap.dmg, cond:trap.cond});
+  qbLog('🪤 '+(p.name||'A player')+' triggers a hidden '+trap.name+'!', s);
+}
 // Dex save or suffer a condition when a creature ends its move on hazardous terrain
 // (Grease → Prone, Web → Restrained). Mode-agnostic, same reasoning as paintHazardTerrain.
 function checkTerrainHazardCond(s,unit,x,y,isPc){ const tdef=TERRAIN[terrainAt(s,x,y)]; if(!tdef||!(tdef.prone||tdef.restrain)) return;
@@ -12799,7 +12858,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.212';
+const APP_VERSION='v120.213';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
