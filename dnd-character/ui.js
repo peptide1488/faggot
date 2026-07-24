@@ -2503,6 +2503,7 @@ function applyHp(c,delta,dtype){
     if(before>0 && c.hp.cur===0){
       if((dmg-before)>=c.hp.max){ c.death.fail=3; c.conditions['Unconscious']=true; logChange(c,'💀 Massive damage — instant death'); flashBanner('💀 Instant death — overkill ≥ max HP'); }
       else { c.conditions['Unconscious']=true; logChange(c,'Dropped to 0 HP — Unconscious'); flashBanner('Down! Roll death saves'); }
+      checkFallDamage(c, m=>logChange(c,m));   // knocked unconscious mid-flight → falls, see its own doc comment for scope
     }
   }else{
     c.hp.cur=Math.min(c.hp.max,c.hp.cur+delta);
@@ -3734,6 +3735,7 @@ function renderPlayerBattle(c){
       <div class="tile"><div class="lab">Move left${b.moveUsed?' · used '+b.moveUsed:''}</div><div class="big">${b.move||0}</div></div>
       <div class="tile"><div class="lab">AC</div><div class="big">${computeAC(c)}</div></div>
     </div>
+    ${c.altitude>0?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">🕊️ Airborne at ${c.altitude} ft</p>`:''}
     <div class="chips" style="margin-top:10px">
       <button class="chip ${!hasAction(c)?'on':''}" data-pbt="action">${!hasAction(c)?'✓ ':''}Action${(b.actionsMax||1)>1?' '+actionsLeft(c)+'/'+(b.actionsMax||1):''}</button>
       <button class="chip ${b.bonus?'on':''}" data-pbt="bonus">${b.bonus?'✓ ':''}Bonus</button>
@@ -3910,6 +3912,13 @@ function openAdjacentUseUI(c, s, me){
       if(mode && hasFeat(c,'Charger') && c.battle.dashed && !c.battle.bonus && foes.length) body+=`<button class="btn block" data-use="charger" style="margin-bottom:8px;text-align:left">🏃 Charger<small style="display:block;opacity:.75">Bonus action — melee attack (+5 damage) or shove (10 ft)</small></button>`;
       if(mode && !c.mountedOn && (c.ownedMounts||[]).length) body+=`<button class="btn block" data-use="mountup" style="margin-bottom:8px;text-align:left">🐴 Mount Up<small style="display:block;opacity:.75">Half your speed — climb onto a mount you own (baseline PHB action, no feat needed)</small></button>`;
       if(mode && c.mountedOn) body+=`<button class="btn ghost block" id="useDismount" style="margin-bottom:8px;text-align:left">🐴 Dismount ${esc(c.mountedOn.name)}<small style="display:block;opacity:.75">Half your speed</small></button>`;
+      if(mode && isFlying(c)) body+=`<div class="card" style="margin:0 0 8px;padding:8px 10px">
+        <div class="nm"><b>🕊️ Altitude: ${c.altitude||0} ft</b><small style="display:block;opacity:.75">Climbing/descending costs movement 1:1, same as any vertical move — knocked unconscious while airborne and you fall (see the info on this in AUDIT.md).</small></div>
+        <div class="row2" style="margin-top:6px">
+          <button class="btn ghost sm" id="useAltUp" ${((c.battle&&c.battle.move)||0)<5?'disabled style="opacity:.5"':''}>⬆ Climb 5 ft</button>
+          <button class="btn ghost sm" id="useAltDown" ${!(c.altitude>0)?'disabled style="opacity:.5"':''}>⬇ Descend 5 ft</button>
+        </div>
+      </div>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Whirlwind Attack' && foes.length) body+=`<button class="btn block" id="useWhirlwind" style="margin-bottom:8px;text-align:left">🏹 Whirlwind Attack<small style="display:block;opacity:.75">Action — one melee attack against every adjacent foe (${foes.length} in reach)</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Volley'){ const rangedAtk=qbPcAttacks(c).find(a=>!a.melee); if(rangedAtk){ const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk.tiles||1)); if(near.length) body+=`<button class="btn block" id="useVolley" style="margin-bottom:8px;text-align:left">🏹 Volley<small style="display:block;opacity:.75">Action — ranged attack against every foe within 10 ft of a target foe (pick one)</small></button>`; } }
       if(mode && isLoreBard(c,3)) body+=`<button class="btn ${c.cuttingWordsArmed?'':'ghost'} block" id="useCuttingWords" style="margin-bottom:8px;text-align:left"${(c.bardicInspLeft||0)<=0?' disabled style="opacity:.5"':''}>🎵 ${c.cuttingWordsArmed?'Cutting Words — ARMED (tap to cancel)':'Ready Cutting Words'}<small style="display:block;opacity:.75">${(c.bardicInspLeft||0)<=0?'No Bardic Inspiration left — rest to recharge':'Reaction — reduce a monster attack roll within 60 ft ('+(c.bardicInspLeft||0)+' use'+((c.bardicInspLeft||0)===1?'':'s')+' left)'}</small></button>`;
@@ -4192,6 +4201,18 @@ function openAdjacentUseUI(c, s, me){
     { const ud=$('#useDismount'); if(ud) ud.onclick=()=>{
       const ok=dismountRider(c, log, null, s);
       if(ok) sendMountSync(null);
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    }; }
+    { const au=$('#useAltUp'); if(au) au.onclick=()=>{
+      if(((c.battle&&c.battle.move)||0)<5){ flashBanner('Not enough movement left'); return; }
+      c.battle.move=Math.max(0,c.battle.move-5); c.altitude=(c.altitude||0)+5;
+      log('🕊️ '+c.name+' climbs to '+c.altitude+' ft');
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    }; }
+    { const ad=$('#useAltDown'); if(ad) ad.onclick=()=>{
+      if(!(c.altitude>0)) return;
+      c.altitude=Math.max(0,(c.altitude||0)-5); if(c.battle) c.battle.move=Math.max(0,(c.battle.move||0)-5);
+      log('🕊️ '+c.name+' descends to '+c.altitude+' ft');
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
     }; }
     { const uw=$('#useWhirlwind'); if(uw) uw.onclick=()=>{
@@ -5696,6 +5717,7 @@ function renderQuickBattle(){
       <div class="tile"><div class="lab">Move</div><div class="big">${b.move||0}<span style="font-size:11px">ft</span></div></div>
       <div class="tile"><div class="lab">Attacks</div><div class="big">${b.attacksLeft||0}</div></div>
     </div>
+    ${c.altitude>0?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">🕊️ Airborne at ${c.altitude} ft</p>`:''}
     <div class="chips" style="margin-top:10px">
       <button class="chip ${!hasAction(c)?'on':''}">${!hasAction(c)?'✓ ':''}Action${(b.actionsMax||1)>1?' '+actionsLeft(c)+'/'+(b.actionsMax||1):''}</button>
       <button class="chip ${b.bonus?'on':''}">Bonus</button>

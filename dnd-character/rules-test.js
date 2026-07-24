@@ -2935,5 +2935,37 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setDB(getDB().filter(x=>x.id!==c.id)); save(); setQB(null);
 }
 
+/* ---- "make the systems": flying altitude ---- */
+{
+  const c=newCharacter('Aarakocra Scout'); c.race='Aarakocra'; c.hp={max:20,cur:20,temp:0};
+  c.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  T('isFlying: a flying race is airborne-capable', isFlying(c)===true);
+  T('ensureFields: a character defaults to altitude 0', (()=>{ const f=newCharacter('X'); ensureFields(f); return f.altitude===0; })());
+
+  c.altitude=0;
+  checkFallDamage(c, ()=>{});
+  T('checkFallDamage: a grounded character (altitude 0) is a no-op', c.hp.cur===20 && c.altitude===0);
+
+  c.altitude=5;   // 5 ft always deals 0 fall damage (fallDamageTotal: floor(5/10)=0 dice) — deterministic case
+  checkFallDamage(c, ()=>{});
+  T('checkFallDamage: a short 5-ft drop deals no damage (floor(5/10)=0 dice) but still resets altitude', c.hp.cur===20 && c.altitude===0);
+
+  c.altitude=50; c.hp.cur=20;
+  const logs=[]; checkFallDamage(c, m=>logs.push(m));
+  T('checkFallDamage: a real fall (50 ft) always resets altitude to 0', c.altitude===0);
+  T('checkFallDamage: a real fall logs a message either way (damage or a soft landing)', logs.length===1);
+
+  // The applyHp hook: getting knocked to 0 HP while airborne triggers a fall automatically.
+  const flyer=newCharacter('Owlin Cleric'); flyer.race='Owlin'; flyer.hp={max:10,cur:10,temp:0};
+  flyer.altitude=100; flyer.conditions={}; flyer.death={succ:0,fail:0};
+  applyHp(flyer, -10);   // exactly lethal — drops to 0 HP, should trigger the fall check
+  T('applyHp: dropping to 0 HP while airborne (100 ft) resets altitude — the fall happened', flyer.altitude===0);
+  T('applyHp: still correctly Unconscious at 0 (or dead from fall+massive damage — either way, not still standing)', flyer.hp.cur===0 || flyer.death.fail>=1);
+
+  const grounded=newCharacter('Grounded Fighter'); grounded.hp={max:10,cur:10,temp:0}; grounded.altitude=0; grounded.conditions={}; grounded.death={succ:0,fail:0};
+  applyHp(grounded, -10);
+  T('applyHp: a grounded character dropping to 0 HP is unaffected by the fall-damage hook (no-op path)', grounded.altitude===0 && grounded.hp.cur===0);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

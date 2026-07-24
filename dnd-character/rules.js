@@ -1232,6 +1232,7 @@ function ensureFields(c){
   if(c.race==null) c.race=''; if(c.subclass==null) c.subclass=''; if(c.background==null) c.background='';
   if(c.xp==null) c.xp=0;
   if(!c.ownedMounts) c.ownedMounts=[];
+  if(c.altitude==null) c.altitude=0;
   if(!c.abilities) c.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10};
   if(!c.conditions) c.conditions={};
   if(c.exhaustion==null) c.exhaustion=0;
@@ -2010,6 +2011,21 @@ function elevationMoveExtra(s,x,y,nx,ny,mover,fly,runUp){
 
 function fallDamageTotal(feet){ const dice=Math.min(20, Math.floor(Math.max(0,feet)/10)); if(dice<=0) return 0;
   let t=0; for(let i=0;i<dice;i++) t+=1+Math.floor(Math.random()*6); return t; }
+// Altitude: a flying PC can climb/descend (Use-menu, spends movement 1:1 like any other
+// vertical movement this app already models for jumping/climbing). Losing consciousness while
+// airborne means falling — reuses fallDamageTotal, the exact same formula a cliff-drop already
+// uses (1d6 bludgeoning per 10 ft, capped at 20d6). Deliberately narrower than full RAW: only
+// hooked to dropping to 0 HP (the single most common and highest-stakes "fell out of the sky"
+// moment), not every incapacitating condition (Paralyzed/Stunned from a failed save mid-someone
+// -else's-turn) — a real, named simplification, not a silently-missed mechanic. Mutates c.hp.cur
+// directly rather than recursing through applyHp (which is what CALLS this in the first place).
+function checkFallDamage(c, log){
+  if(!(c.altitude>0)) return;
+  const feet=c.altitude; c.altitude=0;
+  const fd=fallDamageTotal(feet);
+  if(fd>0){ c.hp.cur=Math.max(0,c.hp.cur-fd); log('💥 '+(c.name||'You')+' falls '+feet+' ft out of the sky — '+fd+' bludgeoning'); }
+  else log('🕊️ '+(c.name||'You')+' drifts down '+feet+' ft to the ground');
+}
 
 function dijkstra(s, sx, sy, maxFeet, fly, mover){
   const cols=s.map.cols, rows=s.map.rows, tiles=s.map.tiles||{}, K=(x,y)=>x+','+y;

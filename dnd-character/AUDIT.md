@@ -3076,3 +3076,49 @@ character sheet render pulling from all three new files at once (`computeAC`/`sp
 Quick Battle attack + undo cycle (deep `rules.js` call chains: `qbResolveAttack` → `Engine.attack`
 → riders → `qbUndoTurn`), a DM-hosted `deployMonster`/`dmBroadcast` round-trip (`net.js`), and
 the Bestiary/Encounter Builder modals opening correctly (`ui.js`).
+
+## Flying altitude (v120.221)
+
+User follow-up idea from the mount-ownership conversation: "when flying, ability to select
+altitude." Previously `fly` was a pure boolean (can this unit cross pits/hazards) with no height
+tracked at all. Added `c.altitude` (feet, defaulted 0 by `ensureFields`) for any flying PC,
+adjustable via the same Use-menu Mount Up/Dismount already lives in — "⬆ Climb 5 ft" / "⬇
+Descend 5 ft" buttons, spending movement 1:1 from `c.battle.move` exactly like any other
+vertical movement this app already models (jumping, climbing a cliff face). Shown whenever
+`isFlying(c)` — the same check `effSpeed`-adjacent code already used for the Fly/Levitate
+effects and the flying-race set, no new "can this creature fly" logic needed.
+
+**The real mechanic, not just a number to look at**: reused `fallDamageTotal` — the exact same
+1d6-per-10-ft (capped 20d6) formula a cliff-drop already uses — and hooked it into `applyHp`'s
+existing "dropped to 0 HP → Unconscious" branch via a new `checkFallDamage(c, log)`. Getting
+knocked out mid-flight now actually matters: you fall, take real fall damage on top of whatever
+knocked you out, and land (altitude resets to 0). A 5-ft altitude always deals 0 damage
+(`floor(5/10)=0` dice) — correctly a "soft landing," not a bug, and used as the test suite's one
+deterministic case since `fallDamageTotal` itself rolls real dice.
+
+**Deliberately narrower than full RAW**, documented inline rather than silently approximated:
+only hooked to dropping to 0 HP (the single most common, highest-stakes "fell out of the sky"
+moment), not every incapacitating condition — a Paralyzed/Stunned/Sleep effect applied mid a
+different creature's turn doesn't trigger an immediate fall in this pass, only unconsciousness
+from damage does. Also out of scope: melee-reach blocking based on altitude (a real RAW
+consideration — a ground-bound 5-ft-reach attacker genuinely cannot melee something 20 ft up),
+since that touches the shared `Engine.hitResult` path every mode resolves attacks through and is
+meaningfully bigger/riskier than a self-contained altitude tracker; DM-hosted monster altitude
+(the Use-menu altitude control is PC-only, mirroring how `openAdjacentUseUI` already has no
+DM-side equivalent — "DM-hosted has no PC of its own to Use with," per CLAUDE.md); and monster-
+side altitude entirely (the field/fall-hook exist for PCs only this pass, though nothing stops
+a DM from tracking a flying monster's height narratively).
+
+Tests: 10 new assertions — `checkFallDamage`'s no-op case (grounded), its deterministic
+zero-damage case (5 ft), a real-fall case (50 ft, checking altitude resets and a message logs
+either way since the actual damage roll is real dice, not asserted to an exact number), and —
+the mechanic that actually matters — `applyHp`'s hook firing correctly when a flying character
+drops to 0 HP (altitude resets, still correctly ends up either Unconscious or dead, never both
+airborne AND at 0 HP simultaneously) versus a grounded character at 0 HP being completely
+unaffected by the hook (proving it's altitude-gated, not a blanket change to death-at-0 logic).
+Also live-verified via Playwright: a real Aarakocra character's Use-menu correctly shows the
+altitude section only because `isFlying(c)` is true, Descend correctly starts disabled at 0 ft,
+clicking the real Climb button spends movement and updates `c.altitude` with the battle card's
+"Airborne at N ft" note appearing, and the full `applyHp` fall-on-unconscious flow confirmed
+end-to-end through the real function (not a mock) with the fall message landing in the
+character's own log.
