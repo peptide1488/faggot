@@ -32,7 +32,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
-  'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;'+
+  'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
@@ -2628,6 +2628,49 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   fresh.ownedMounts=['warhorse'];
   ensureFields(fresh);
   T('ensureFields: does not clobber an already-set ownedMounts list', fresh.ownedMounts.length===1 && fresh.ownedMounts[0]==='warhorse');
+}
+
+/* ---- "make the systems": Find Steed / Find Greater Steed ---- */
+{
+  T('FIND_STEED_CATALOG: Find Steed has the 5 real PHB options', FIND_STEED_CATALOG['Find Steed'].map(m=>m.name).sort().join(',')==='Camel,Elk,Mastiff,Pony,Warhorse');
+  T('FIND_STEED_CATALOG: Find Greater Steed has the 6 real Tasha\'s options', FIND_STEED_CATALOG['Find Greater Steed'].length===6);
+
+  const pal=newCharacter('Find Steed Pal'); pal.cls='Paladin'; pal.level=5; pal.abilities={str:16,dex:10,con:14,int:10,wis:10,cha:16}; applyClassDefaults(pal);
+  pal.spells=[{name:'Find Steed',level:2,prepared:true}];
+  pal.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:effSpeed(pal),moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[], players:[{id:'pc', side:'pc', name:pal.name, c:pal, x:2,y:2, hpCur:pal.hp.cur, hpMax:pal.hp.max}] });
+
+  const slotsBefore=(pal.slots[2]&&pal.slots[2].used)||0;
+  T('castSpell: Find Steed consumes a real 2nd-level slot (it is not free/no-slot-needed)', castSpell(pal,'Find Steed',2)===true && ((pal.slots[2]&&pal.slots[2].used)||0)===slotsBefore+1);
+  const warhorse=FIND_STEED_CATALOG['Find Steed'].find(m=>m.id==='warhorse');
+  const unit=findSteedSummon(getQB(), pal, 'pc', warhorse, 'Find Steed', 2, 2, ()=>{});
+  T('findSteedSummon: spawns a real mount unit and mounts the caster', !!unit && pal.mountedOn && pal.mountedOn.name==='Warhorse');
+  T('findSteedSummon: tags the unit findSteed (so dismount/death makes it vanish, not stay)', unit.findSteed===true);
+  T('findSteedSummon: records the bond (spell + mount id) for a future re-cast to find', pal.findSteedBond && pal.findSteedBond.spell==='Find Steed' && pal.findSteedBond.mountId===unit.id);
+  T('findSteedSummon: bypasses the ownership gate entirely — no ownedMounts needed', !pal.ownedMounts || !pal.ownedMounts.includes('warhorse'));
+
+  // Vanish on voluntary dismount (RAW: "disappears, leaving no physical form").
+  pal.battle.move=effSpeed(pal);
+  dismountRider(pal, ()=>{}, null, getQB());
+  T('dismountRider: a findSteed mount is removed from s.monsters entirely on dismount', !getQB().monsters.some(m=>m.id===unit.id));
+
+  // Re-summoning: mount again, then damage it, then re-cast the SAME spell to restore instead
+  // of re-prompting — findSteedRestore is what openFindSteedUI calls to make that decision.
+  pal.battle.move=effSpeed(pal);
+  const unit2=findSteedSummon(getQB(), pal, 'pc', warhorse, 'Find Steed', 2, 2, ()=>{});
+  unit2.hp=1;
+  const restored=findSteedRestore(pal, getQB(), 'Find Steed');
+  T('findSteedRestore: heals the SAME bonded unit back to full, not a new one', restored && restored.id===unit2.id && restored.hp===restored.max);
+  T('findSteedRestore: re-mounts if you\'d dismounted (voluntary dismount doesn\'t end the bond)', pal.mountedOn && pal.mountedOn.id===unit2.id);
+  T('findSteedRestore: a DIFFERENT spell name is not the same bond, returns null', findSteedRestore(pal, getQB(), 'Find Greater Steed')===null);
+
+  // Vanish at 0 HP too (forced dismount path), not just voluntary dismount.
+  unit2.hp=0;
+  checkMountDeaths(getQB(), ()=>{});
+  T('checkMountDeaths: a findSteed mount at 0 HP is removed from s.monsters (no corpse, unlike a mundane mount)', !getQB().monsters.some(m=>m.id===unit2.id));
+  T('checkMountDeaths: the rider is correctly dismounted too', pal.mountedOn===null);
+  setQB(null);
 }
 
 /* ---- "make the systems": multiclassing v1 ----

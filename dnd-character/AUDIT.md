@@ -2891,3 +2891,47 @@ Mounts card renders the 3 catalog toggles, tapping one persists to `c.ownedMount
 correctly hides "Mount Up" with zero owned mounts and shows it once one is owned, the mount
 picker correctly lists ONLY the owned mount (not Pony/Riding Horse when only Warhorse is owned),
 and mounting itself still works end-to-end through the real gated flow.
+
+## Find Steed / Find Greater Steed (v120.218)
+
+User follow-up to the mount-ownership fix: real RAW spells (Find Steed, Paladin 2nd; Find
+Greater Steed, Paladin 4th, Tasha's) let a Paladin magically summon a bonded mount, no ownership
+needed. Built on top of the exact same `mountUp`/`dismountRider` mechanic the ownership fix just
+gated — this is precisely why that gate lives at the UI layer instead of inside `mountUp`
+itself: a spell-summoned steed needed to bypass ownership cleanly, and now does, with zero
+changes to the mechanic itself.
+
+Added both spells to the real spell data (`SPELL_SRC`/`SPELL_DESC`, Paladin-only, Conjuration)
+so they show up naturally in spell prep/learning. Casting either routes through a new
+`openFindSteedUI` (mirroring `openSummonSpellUI`'s established "cast → pick → spawn" shape, but
+skipping the placement step entirely — you're mounted immediately at your own tile, matching the
+spell's actual effect rather than making the player click a target tile for a horse they're
+about to be sitting on anyway).
+
+Two RAW-specific differences from a mundane owned mount, both driven by a `findSteed:true` tag
+on the summoned unit: it vanishes ("leaves behind no physical form") from `s.monsters` entirely
+on dismount OR at 0 HP, rather than staying on the map like a real animal/dead body would; and
+re-casting the SAME spell while already bonded (`c.findSteedBond={spell,mountId}`) restores the
+existing steed to full HP instead of prompting the picker again for a second one — pulled the
+spell-cast-time slot cost apart from that check with a `hp>0` live-bond guard in `openFindSteedUI`
+itself so a genuinely-vanished (0 HP) bonded steed correctly falls through to a fresh pick
+instead of silently doing nothing.
+
+Extracted the actual spawn/restore logic (`findSteedSummon`, `findSteedRestore`) out of the
+modal's click handlers into standalone functions — this app's stub test DOM can't simulate real
+button clicks (`document.querySelectorAll` always returns `[]` there), so anything meant to be
+unit-tested rather than Playwright-only needs to live outside the click handler itself, same
+reasoning `mountUp`/`dismountRider` were already written this way for.
+
+Tests: 12 new assertions — the catalog's real PHB/Tasha's option lists, a real 2nd-level slot
+actually being consumed (not a free/no-slot spell), `findSteedSummon` correctly tagging and
+bonding, `findSteedRestore` healing the same unit (not spawning a second) and correctly
+returning null for a different spell name or a fully-vanished bond, and vanish-on-dismount/
+vanish-at-0-HP both confirmed via `dismountRider`/`checkMountDeaths` directly. Also live-verified
+via Playwright: `routeCast` correctly opens the real picker showing all 5 Find Steed options,
+picking one consumes a real slot and mounts immediately, and — the trickiest case — re-casting
+after resetting the turn (a live bug in the FIRST attempt at this check turned out to be the
+test forgetting to reset action economy between casts, not app code, confirmed by checking
+`canCast`'s real return value directly before concluding anything) correctly restores the same
+wounded steed to full HP with no duplicate spawned, while dismounting confirmed the unit
+vanishing from the live map.
