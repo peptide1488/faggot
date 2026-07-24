@@ -304,7 +304,7 @@ function weaponAbil(c,w){ if(w.type==='ranged') return 'dex'; if(/finesse/.test(
 
 function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, colossusSlayerUsed:false, hordeBreakerUsed:false, castBonusSpell:false, castLeveledSpell:false, dashed:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
 
-function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); }
+function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); c.absorbResist=null; }   // Absorb Elements resistance lasts "until the start of your next turn" (RAW) — expire it here. The +1d6 melee rider (c.absorbRider) intentionally survives into this turn and is consumed on the first melee hit (applyAttackRiders); if never used it lingers, a minor documented simplification.
 
 function battleCard(c){
   if(!c.battle) return `<div class="card"><button class="btn block" id="startBattle">⚔ Enter Battle Mode</button>
@@ -486,6 +486,15 @@ function applyAttackRiders(c, atk, targetMo, choices, isCrit, targetSurprised, l
     if(!isFiendTarget){ const r=rollNotation('10d10')||{total:0,detail:''}; total+=r.total; parts.push('Hurl Through Hell '+r.detail); log('😈 Hurl Through Hell +'+r.total+' psychic'); }
     else parts.push('Hurl Through Hell (fiend — immune to the psychic damage)');
   }
+  // Absorb Elements (reaction) rider: the first melee hit after casting adds +1d6 of the absorbed
+  // damage type (PHB). Auto-applied (not an opt-in choice like Sneak Attack) and one-shot —
+  // consumed here on the next qualifying hit. Melee only; skips ranged/spell attacks.
+  if(c.absorbRider && !atk.spell){
+    const wref=weaponByName(String(atk.name||'').replace(/\s*\((off-hand|opportunity)\)$/,''));
+    if(!wref || wref.type==='melee'){ const dt=c.absorbRider, r=rollNotation((isCrit?2:1)+'d6');
+      if(r){ total+=r.total; parts.push('Absorb Elements '+dt+' '+r.detail); log('🌀 Absorb Elements +'+r.total+' '+dt); }
+      c.absorbRider=null; }
+  }
   let doubled=false;
   if(targetSurprised && isAssassin(c,17)){
     const dc=8+mod(abil(c,'dex'))+profBonus(c), save=rnd(20)+(targetMo?monsterSaveBonus(targetMo):0);
@@ -656,16 +665,58 @@ function sorcCur(c){ const m=sorcMax(c); if(!m) return 0; return Math.max(0, Mat
 function spellPrepared(c, name){ const s=(c.spells||[]).find(x=>x.name.toLowerCase()===String(name||'').toLowerCase()); return s? !!s.prepared : true; }
 
 function castableSpells(c){ return (c.spells||[]).filter(s=> (s.level||0)===0 || !isPrepCaster(c) || s.prepared); }
-// Shield reaction eligibility — deliberately NOT reusing canCast(c,'Shield',1) here: canCast has
-// UI side effects (flashBanner on every reason it'd refuse), which is correct when a player
-// actively tries to cast but wrong for a passive "could they?" check run on every incoming
-// attack. A quieter, narrower re-check of the same three gates (known/prepared, reaction free,
-// slot available) — see openShieldPrompt's caller for where this actually offers the choice.
-function shieldEligible(c){
+// Reaction-spell readiness — deliberately NOT reusing canCast(c,name,1) here: canCast has UI
+// side effects (flashBanner on every reason it'd refuse), which is correct when a player actively
+// tries to cast but wrong for a passive "could they?" check run on every incoming attack. A
+// quieter re-check of the same three gates (known/prepared, reaction free, a slot available).
+// All three currently-supported reaction spells (Shield, Absorb Elements, Hellish Rebuke) are
+// 1st-level and are cast at 1st here — upcast scaling (Rebuke's +1d10/level, Absorb's +1d6/level)
+// isn't modeled, a named simplification (see AUDIT), same "base effect only" shape Shield uses.
+// Lowest spell-slot level (≥1) this character still has an unspent slot at, or 0 if none. Using
+// the LOWEST available (not hard-coding level 1) is what lets a Warlock react — their pact slots
+// live at their pact-slot level (e.g. a L5 Warlock's slots are level-3 slots, spellSlots[1]===0),
+// so a level-1-check would wrongly lock Warlocks out of Hellish Rebuke, their iconic reaction.
+function lowestReactionSlot(c){
+  const ss=spellSlots(c);
+  for(let l=1;l<=9;l++){ const tot=ss[l]||0, used=Math.min(tot,(c.slots&&c.slots[l]&&c.slots[l].used)||0); if(tot-used>0) return l; }
+  return 0;
+}
+function reactionSpellReady(c, name){
   if(!c||!c.battle||c.battle.reaction) return false;
-  if(!castableSpells(c).some(s=>s.name==='Shield')) return false;
-  const tot=spellSlots(c)[1]||0, used=Math.min(tot,(c.slots[1]&&c.slots[1].used)||0);
-  return tot-used>0;
+  if(!castableSpells(c).some(s=>s.name===name)) return false;
+  return lowestReactionSlot(c)>0;
+}
+function shieldEligible(c){ return reactionSpellReady(c,'Shield'); }   // kept: the synced shieldReady flag + existing callers
+function isElementalDamage(dt){ return /^(acid|cold|fire|lightning|thunder)$/i.test(String(dt||'')); }
+// Which reaction spells can this character fire against THIS incoming attack? ctx supplies the
+// attack-specific gates the readiness check can't know on its own: wouldFlip (would +5 AC turn
+// this hit into a miss — Shield only), dtype (Absorb Elements needs elemental damage), and
+// inRebukeRange (Hellish Rebuke is 60 ft). Returns an ordered [{id,label,note}] the reaction
+// menu renders directly — one source of truth shared by QB (local) and the DM-hosted offer.
+function availableReactions(c, ctx){
+  ctx=ctx||{}; const out=[];
+  if(ctx.wouldFlip && reactionSpellReady(c,'Shield')) out.push({id:'shield', label:'🛡️ Shield', note:'+5 AC — this attack would miss'});
+  if(isElementalDamage(ctx.dtype) && reactionSpellReady(c,'Absorb Elements')) out.push({id:'absorb', label:'🌀 Absorb Elements', note:'halve the '+ctx.dtype+' damage · +1d6 '+ctx.dtype+' on your next melee hit'});
+  if(ctx.inRebukeRange!==false && reactionSpellReady(c,'Hellish Rebuke')) out.push({id:'rebuke', label:'😈 Hellish Rebuke', note:'2d10 fire back at the attacker (Dex save for half)'});
+  return out;
+}
+// Apply a chosen reaction's cost + immediate self-effect. Shared by QB and a player's own device
+// in DM-hosted (the two places that hold the real character `c`) — one path, never a per-mode
+// copy. Returns {retaliate:{...}} when the reaction strikes back AFTER the triggering damage
+// (Hellish Rebuke), so the caller can apply that against the attacker via whichever adapter it
+// owns; {} otherwise. dtype is the incoming attack's damage type (for Absorb Elements).
+function castPcReaction(c, choice, dtype, log){
+  if(!c||!c.battle) return {};
+  c.battle.reaction=true;
+  const sl=lowestReactionSlot(c)||1;   // spend the lowest available slot (a Warlock's pact slot is >1st — see lowestReactionSlot). Upcast scaling of the effect isn't modeled (documented simplification).
+  if(!c.slots[sl]) c.slots[sl]={total:0,used:0};
+  c.slots[sl].used=Math.min(spellSlots(c)[sl]||0,(c.slots[sl].used||0)+1);
+  if(choice==='shield'){ addEffect(c,'Shield'); log&&log('🛡️ '+(c.name||'You')+' casts Shield — +5 AC until the start of their next turn'); return {}; }
+  if(choice==='absorb'){ c.absorbResist=dtype; c.absorbRider=dtype;   // resist the trigger (applyHp) + rider on next melee hit (applyAttackRiders); both cleared at start of next turn (resetTurnState) or on use
+    log&&log('🌀 '+(c.name||'You')+' casts Absorb Elements — resistance to '+dtype+' until their next turn'); return {}; }
+  if(choice==='rebuke'){ const dc=8+profBonus(c)+mod(abil(c,c.spellAbility)); const r=rollNotation('2d10')||{total:0,detail:''};
+    log&&log('😈 '+(c.name||'You')+' casts Hellish Rebuke — 2d10 fire back at the attacker'); return {retaliate:{name:'Hellish Rebuke', dmg:r.total, dc, dtype:'fire'}}; }
+  return {};
 }
 
 function applyClassDefaults(c){
@@ -3125,6 +3176,10 @@ function castDetectThoughts(c, mo, log){
 function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
   const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
+  // Damage type (e.g. "2d8+4 bludgeoning", "4d6 fire") — previously unparsed, so monster hits
+  // reached applyHp with no dtype and the target's resistances/immunities/vulnerabilities by type
+  // never applied (nor could Absorb Elements know the damage was elemental). Now extracted.
+  const dt=part.match(/\b(acid|cold|fire|lightning|thunder|poison|necrotic|radiant|psychic|force|bludgeoning|piercing|slashing)\b/i);
   let tiles=/reach/i.test(part)?2:1;
   if(/breath|cone|line/i.test(part)) tiles=6;
   else if(/bow|crossbow|sling|javelin|dart|spit|ray|bolt|hurl|thrown|web|net|stinger|spike/i.test(part)) tiles=24;
@@ -3140,7 +3195,7 @@ function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim())
   else if(/blinded/i.test(part)) cond='Blinded';
   else if(/charm/i.test(part)) cond='Charmed';
   else if(/poisoned/i.test(part)) cond='Poisoned';
-  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, tiles, cond, raw:part}; }); }
+  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, dtype:dt?dt[1].toLowerCase():'', tiles, cond, raw:part}; }); }
 
 function spellCondOf(name){ const sc=SPELL_COND[name]; return sc?{c:sc.c, rounds:sc.r}:null; }
 

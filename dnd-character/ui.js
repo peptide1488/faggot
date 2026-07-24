@@ -2477,6 +2477,12 @@ function applyHp(c,delta,dtype){
     // Fiendish Resilience (The Fiend 10th): resistance (half) to the chosen damage type.
     let frNote='';
     if(dtype && dmg>0 && c.fiendishResilience===dtype){ dmg=Math.floor(dmg/2); frNote=' (½ Fiendish Resilience)'; }
+    // Absorb Elements (reaction): resistance (half) to the triggering acid/cold/fire/lightning/
+    // thunder damage until the start of your next turn (RAW). c.absorbResist is set when the
+    // reaction is cast (castPcReaction) and cleared in resetTurnState; it protects the triggering
+    // hit and any same-type damage before your next turn — exactly the spell's duration.
+    let aeNote='';
+    if(dtype && dmg>0 && c.absorbResist===dtype){ dmg=Math.floor(dmg/2); aeNote=' (½ Absorb Elements)'; }
     // Uncanny Dodge (Rogue 5th / Ranger Hunter's Superior Hunter's Defense): halve damage from
     // an attack, once per round via your reaction. Applied automatically rather than as a live
     // prompt — nothing in this app's damage pipeline pauses mid-resolution to ask, and a
@@ -2490,7 +2496,7 @@ function applyHp(c,delta,dtype){
     concDmg=dmg;   // damage taken (after resistance) drives the concentration DC, even if temp HP absorbs it
     if(c.hp.temp>0){ const a=Math.min(c.hp.temp,dmg); c.hp.temp-=a; dmg-=a; }
     const before=c.hp.cur; c.hp.cur=Math.max(0,c.hp.cur-dmg);
-    logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+hamNote+frNote+udNote+' damage → '+c.hp.cur+' HP');
+    logChange(c,'Took '+dmg+(raged?' (½ rage resistance)':'')+hamNote+frNote+aeNote+udNote+' damage → '+c.hp.cur+' HP');
     if(raged) flashBanner('🪓 Rage — damage halved (physical)');
     // damage while at 0 HP = a failed death save; if it equals/exceeds your max HP you die outright (PHB massive damage)
     // Taking damage also ends a Stabilize (PHB) — back to rolling death saves.
@@ -3412,7 +3418,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent,shieldReady:!!d.char.shieldReady});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent,shieldReady:!!d.char.shieldReady,absorbReady:!!d.char.absorbReady,rebukeReady:!!d.char.rebukeReady});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; checkMountDeaths(net.session, ()=>{}); dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -3660,26 +3666,33 @@ function playerOnData(d){ if(!d) return;
     if(net.conn){ try{ net.conn.send({t:'maneuverResult', kind:d.kind, mon:d.mon, hit}); }catch(e){} }
     render();
   }
-  // Shield reaction (DM-hosted) — the DM's monster rolled a hit that +5 AC could flip, and this
-  // device's synced shieldReady flag said we could react. The real spell list/slots/reaction
-  // live only here, so the actual cast happens on this device (same "DM can't roll our side"
-  // reasoning as 'hazard'/'maneuverCheck'), then we report the choice — and our new AC if we
-  // cast — back so the DM can finish resolving. Auto-declines if we're somehow no longer
-  // eligible (slot spent since the offer, etc.) so the DM never hangs waiting.
+  // Reaction offer (DM-hosted) — the DM's monster hit us and our synced readiness flags said we
+  // could react. The real spell list/slots/reaction live only here, so the menu + cast happen on
+  // this device (same "DM can't roll our side" reasoning as 'hazard'/'maneuverCheck'); we report
+  // the choice back — plus our new AC (Shield) or the rolled retaliation (Hellish Rebuke) — so the
+  // DM can finish resolving. Re-validates the DM's offered options against our real sheet (a slot
+  // could've been spent since our last hello) and auto-declines if none survive, so the DM never
+  // hangs. One shared menu/castPcReaction with Quick Battle — only the transport differs.
   else if(d.t==='reactionOffer'){
     const c=playerChar();
-    const decline=()=>{ if(net.conn){ try{ net.conn.send({t:'reactionChoice', shield:false}); }catch(e){} } };
-    if(!c || d.reaction!=='shield' || !shieldEligible(c)){ decline(); return; }
-    openShieldPrompt(c, {total:d.total, ac:d.ac}, ()=>{
-      c.battle.reaction=true;
-      if(!c.slots[1]) c.slots[1]={total:0,used:0};
-      c.slots[1].used=Math.min(spellSlots(c)[1]||0,(c.slots[1].used||0)+1);
-      addEffect(c,'Shield');
-      logChange(c,'🛡️ Shield — +5 AC until the start of your next turn (reaction vs '+(d.monName||'an attack')+')');
+    const decline=()=>{ if(net.conn){ try{ net.conn.send({t:'reactionChoice', choice:'none'}); }catch(e){} } };
+    const valid=(d.options||[]).filter(o=>{
+      if(o.id==='shield') return reactionSpellReady(c,'Shield');
+      if(o.id==='absorb') return reactionSpellReady(c,'Absorb Elements') && isElementalDamage(d.dtype);
+      if(o.id==='rebuke') return reactionSpellReady(c,'Hellish Rebuke');
+      return false;
+    });
+    if(!c || !valid.length){ decline(); return; }
+    openReactionMenu(c, {attackerName:d.monName, total:d.total, ac:d.ac, dtype:d.dtype, options:valid}, choice=>{
+      if(choice==='none'){ decline(); return; }
+      const res=castPcReaction(c, choice, d.dtype, m=>logChange(c,m));
       save(); render(); playerHello();
-      if(net.conn){ try{ net.conn.send({t:'reactionChoice', shield:true, newAC:computeAC(c)}); }catch(e){} }
-      flashBanner('🛡️ Shield cast — +5 AC');
-    }, decline);
+      const msg={t:'reactionChoice', choice};
+      if(choice==='shield') msg.newAC=computeAC(c);
+      if(res.retaliate) msg.retaliate={dmg:res.retaliate.dmg, dc:res.retaliate.dc};
+      if(net.conn){ try{ net.conn.send(msg); }catch(e){} }
+      flashBanner(choice==='shield'?'🛡️ Shield cast — +5 AC':choice==='absorb'?'🌀 Absorb Elements — half the '+d.dtype:'😈 Hellish Rebuke!');
+    });
   }
 }
 
@@ -5065,7 +5078,7 @@ function dmMonsterAttack(mo){
     } else if(st.phase==='aim'){
       body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maRoll">🎲 Roll to hit (+${st.atk.hit||0}) vs AC ${t.ac}</button>`;
     } else if(st.phase==='waitReaction'){
-      body+=`<div class="card" style="text-align:center;margin:0 0 8px">🛡️ ${esc(mo.name)} rolled <b>${st.pendingRoll}</b> — a hit ${esc(t.name)} could block.<br><span class="muted" style="font-size:12px">Waiting for ${esc(t.name)}'s Shield decision…</span></div>
+      body+=`<div class="card" style="text-align:center;margin:0 0 8px">⚡ ${esc(mo.name)} rolled <b>${st.pendingRoll}</b> — a hit ${esc(t.name)} may react to.<br><span class="muted" style="font-size:12px">Waiting for ${esc(t.name)}'s reaction decision…</span></div>
         <button class="btn ghost block" id="maReactSkip">Resolve without waiting</button>`;
     } else {
       const ac=st.ac!=null?st.ac:t.ac, crit=st.crit||st.d20===20, isHit=st.total>=ac||crit;
@@ -5098,22 +5111,36 @@ function dmMonsterAttack(mo){
       // Finalize into the HIT/MISS phase — deferred behind the Shield round-trip below when one
       // is offered, so the AC the DM sees reflects the player's actual reaction choice.
       const finalize=acOverride=>{ st.d20=res.d20; st.total=res.total; st.ac=acOverride!=null?acOverride:res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; draw(); };
-      // Shield reaction offer: only when +5 AC could actually flip THIS hit to a miss, against a
-      // real connected player (never an echo redirect / dominated ally) whose device told us
-      // it's Shield-ready. Never against a crit (AC can't stop one — same reasoning Sanctuary's
-      // gate uses). Pauses this modal; net._pendingReaction resumes it when their choice lands
-      // (or the 15s safety timeout fires, so an away player can't hang the DM's turn).
+      // Reaction offer (DM-hosted): a real connected player (never an echo redirect / dominated
+      // ally) who was HIT may spend their reaction. The DM can't call reactionSpellReady (it has
+      // no copy of the player's sheet), so it gates on the readiness flags the player's own device
+      // synced (shieldReady/absorbReady/rebukeReady) plus the attack context the DM DOES know
+      // (would-flip, elemental dtype, 60-ft range) — the mirror of availableReactions' local
+      // logic. Pauses this modal; net._pendingReaction resumes it when the choice lands (or the
+      // 15s safety timeout fires, so an away player can't hang the DM's turn).
       const p=tgt();
-      if(!dominated && !st.echoRedirect && res.hit && !res.crit && res.total < res.ac+5 && p && p.shieldReady){
+      const ropts=[];
+      if(p && !dominated && !st.echoRedirect && res.hit){
+        if(p.shieldReady && !res.crit && res.total < res.ac+5) ropts.push({id:'shield', label:'🛡️ Shield', note:'+5 AC — this attack would miss'});
+        if(p.absorbReady && isElementalDamage(st.atk.dtype)) ropts.push({id:'absorb', label:'🌀 Absorb Elements', note:'halve the '+st.atk.dtype+' damage · +1d6 on your next melee'});
+        if(p.rebukeReady && gridDist(mo.x,mo.y,p.x,p.y)<=12) ropts.push({id:'rebuke', label:'😈 Hellish Rebuke', note:'2d10 fire back at '+esc(mo.name)+' (Dex save)'});
+      }
+      if(ropts.length){
         st.phase='waitReaction'; st.reactionTarget=p.id; st.pendingRoll=res.total;
-        dmSend(p.id, {t:'reactionOffer', reaction:'shield', mon:mo.id, monName:mo.name, total:res.total, ac:res.ac});
-        flashBanner('🛡️ Offering '+p.name+' a Shield reaction…');
+        dmSend(p.id, {t:'reactionOffer', options:ropts, mon:mo.id, monName:mo.name, total:res.total, ac:res.ac, dtype:st.atk.dtype||''});
+        flashBanner('⚡ Offering '+p.name+' a reaction…');
         net._pendingReaction={ playerId:p.id, resume:choice=>{
           clearTimeout(st.reactionTimer);
-          if(choice && choice.shield){ const pp=tgt(); if(pp){ pp.ac=choice.newAC; pp.shieldReady=false; } flashBanner('🛡️ '+p.name+' casts Shield — AC '+choice.newAC); dmBroadcast(); finalize(choice.newAC); }
+          const kind=choice&&choice.choice;
+          if(kind==='shield'){ const pp=tgt(); if(pp){ pp.ac=choice.newAC; pp.shieldReady=false; } flashBanner('🛡️ '+p.name+' casts Shield — AC '+choice.newAC); dmBroadcast(); finalize(choice.newAC); }
+          else if(kind==='absorb'){ const pp=tgt(); if(pp) pp.absorbReady=false; flashBanner('🌀 '+p.name+' casts Absorb Elements — the '+(st.atk.dtype||'')+' damage is halved on their device'); finalize(); }
+          else if(kind==='rebuke'){ const pp=tgt(); if(pp) pp.rebukeReady=false; const rb=choice.retaliate;
+            if(rb){ const rev=Engine.castApply(sessionAdapter, p.id, mo.id, {name:'Hellish Rebuke', save:'dex', dc:rb.dc, dmgTotal:rb.dmg, dtype:'fire'});
+              flashBanner('😈 '+p.name+' — Hellish Rebuke: '+mo.name+(rev.saved?' saves':' fails')+' — '+rev.dmg+' fire'); dmBroadcast(); }
+            finalize(); }
           else { if(choice&&choice.timedOut) flashBanner('⏱️ No reaction from '+p.name+' — resolving'); finalize(); }
         }};
-        st.reactionTimer=setTimeout(()=>{ if(net._pendingReaction && net._pendingReaction.playerId===st.reactionTarget){ const r=net._pendingReaction; net._pendingReaction=null; r.resume({shield:false, timedOut:true}); } }, 15000);
+        st.reactionTimer=setTimeout(()=>{ if(net._pendingReaction && net._pendingReaction.playerId===st.reactionTarget){ const r=net._pendingReaction; net._pendingReaction=null; r.resume({choice:'none', timedOut:true}); } }, 15000);
         draw();
         return;
       }
@@ -5142,7 +5169,7 @@ function dmMonsterAttack(mo){
     // damage are passed in; the Engine mutates via the adapter and emits the event stream.
     const saveSp=savedKnown=>({name:st.atk.name, dc:st.atk.dc?st.atk.dc.n:10, save:st.atk.dc?String(st.atk.dc.ab).toLowerCase():null, savedKnown, dmgTotal:Math.abs(st.dmg), cond:st.atk.cond?{c:st.atk.cond,rounds:10}:null});
     { const ap=$('#maApply'); if(ap) ap.onclick=()=>{ const rollTargetId = st.echoRedirect ? st.echoRedirect.id : st.targetId;
-      const ev=Engine.attack(sessionAdapter, mo.id, rollTargetId, {name:st.atk.name, toHit:st.atk.hit||0, dmg:st.atk.dmg||'1d6', tiles:st.atk.tiles}, {face:st.d20, dmgTotal:Math.abs(st.dmg)});
+      const ev=Engine.attack(sessionAdapter, mo.id, rollTargetId, {name:st.atk.name, toHit:st.atk.hit||0, dmg:st.atk.dmg||'1d6', tiles:st.atk.tiles, dtype:st.atk.dtype||''}, {face:st.d20, dmgTotal:Math.abs(st.dmg)});
       if(ev.sanctuary&&ev.sanctuary.blocked) flashBanner('🛡️ '+tgt().name+"'s Sanctuary holds — "+mo.name+" can't bring itself to attack (Wis "+ev.sanctuary.roll+' vs DC '+ev.sanctuary.dc+')');
       else if(ev.hit){ flashBanner(mo.name+' hits '+(st.echoRedirect?st.echoRedirect.name:tgt().name)+' for '+ev.dmg+(ev.holyAura&&ev.holyAura.blinded?' — Holy Aura blinds '+mo.name:'')); if(st.atk.cond){ const cu=sessionAdapter.unit(rollTargetId); if(cu) sessionAdapter.addCond(cu, st.atk.cond, 10); flashBanner('🌀 '+tgt().name+' is '+st.atk.cond); }
         if(st.echoRedirect && st.echoRedirect.hp<=0) dmSend(st.echoRedirect.controllerId, {t:'echoDestroyed'}); }
@@ -5726,22 +5753,24 @@ function openCombatRollModal(opts){
   draw();
 }
 
-// Reactions — Shield, Quick Battle only for now: QB is one device/one human, so pausing mid-
-// resolution for a Yes/No choice is a plain synchronous modal. DM-hosted/player-net would need
-// the SAME choice to reach a connected PLAYER'S own device (the DM resolving a monster's attack
-// doesn't get to decide their reaction for them) — a real network round-trip this pass doesn't
-// build, matching VISION.md's own note that a general reaction system needs its own design pass
-// first. Not silently narrower: DM-hosted/player-net attacks simply don't offer Shield at all
-// yet, same as before this feature existed.
-function openShieldPrompt(c, hitPreview, onAccept, onDecline){
-  $('#modalRoot').innerHTML=`<div class="modal" id="shieldModal"><div class="sheet"><div class="grip"></div>
-    <h2>🛡️ Cast Shield?</h2>
-    <p class="muted" style="font-size:12.5px;margin:0 0 10px">An attack targets ${esc(c.name)} — rolled ${hitPreview.total} vs AC ${hitPreview.ac} (currently <b>hits</b>). Shield is a reaction: +5 AC until the start of your next turn (uses a 1st-level slot). With Shield, this attack would miss.</p>
-    <div class="row2"><button class="btn ghost block" id="shieldNo">Take the hit</button><button class="btn block" id="shieldYes">🛡️ Cast Shield</button></div>
+// Reaction menu — a PC is hit and may spend their reaction on one of the eligible reaction spells
+// (Shield / Absorb Elements / Hellish Rebuke, computed by availableReactions). Used two ways:
+// synchronously in Quick Battle (one device), and on a connected player's OWN device in DM-hosted
+// (the DM sends a reactionOffer, this renders the menu, the choice is messaged back — the DM never
+// picks a player's reaction for them). `onChoice` is called with the option id ('shield'|'absorb'|
+// 'rebuke') or 'none'. The per-mode "what to actually DO with that choice" lives in the caller,
+// since QB owns the monster locally while DM-hosted must resolve retaliation across the wire.
+function openReactionMenu(c, ctx, onChoice){
+  const opts=ctx.options||[];
+  $('#modalRoot').innerHTML=`<div class="modal" id="reactModal"><div class="sheet"><div class="grip"></div>
+    <h2>⚡ Reaction?</h2>
+    <p class="muted" style="font-size:12.5px;margin:0 0 10px">${esc(ctx.attackerName||'An attack')} hits ${esc(c.name)} — ${ctx.total} vs AC ${ctx.ac}${ctx.dtype?' · '+esc(ctx.dtype):''}. Spend your reaction?</p>
+    ${opts.map(o=>`<button class="btn block" data-react="${o.id}" style="margin-bottom:8px;text-align:left">${o.label}<small style="display:block;opacity:.75">${esc(o.note)}</small></button>`).join('')}
+    <button class="btn ghost block" id="reactNone">Take the hit (keep reaction)</button>
   </div></div>`;
-  $('#shieldModal').onclick=e=>{ if(e.target.id==='shieldModal'){ $('#modalRoot').innerHTML=''; onDecline(); } };
-  $('#shieldNo').onclick=()=>{ $('#modalRoot').innerHTML=''; onDecline(); };
-  $('#shieldYes').onclick=()=>{ $('#modalRoot').innerHTML=''; onAccept(); };
+  $('#reactModal').onclick=e=>{ if(e.target.id==='reactModal'){ $('#modalRoot').innerHTML=''; onChoice('none'); } };
+  $('#reactNone').onclick=()=>{ $('#modalRoot').innerHTML=''; onChoice('none'); };
+  document.querySelectorAll('[data-react]').forEach(b=>b.onclick=()=>{ $('#modalRoot').innerHTML=''; onChoice(b.dataset.react); });
 }
 
 function qbResolveAttack(att, tgt, atk, done){
@@ -5754,8 +5783,12 @@ function qbResolveAttack(att, tgt, atk, done){
     if(cwDie) qbLog('🎵 Cutting Words — '+qbName(att)+"'s attack roll is reduced by "+cwDie);
     const redirected=shadowMartyrRedirect(QB, tgt);
     if(redirected){ qbLog('👤 Shadow Martyr — the echo steps into the attack meant for '+qbName(tgt)); tgt=redirected; }
-    const finish=()=>{
-      const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});
+    // reaction: {} normally, or {retaliate:{...}} from Hellish Rebuke. face: pass the previewed
+    // d20 so the resolved outcome matches what the reaction choice was made against (Engine.attack
+    // rolls fresh otherwise, which would let the offer and the result disagree). No reaction →
+    // no face → fresh roll, byte-for-byte the same as before this feature.
+    const finish=(reaction, face)=>{
+      const ev=Engine.attack(qbAdapter, att.id, tgt.id, atk, face!=null?{face}:undefined);
       const blocked=(ev.sanctuary&&ev.sanctuary.blocked)||ev.altitudeBlocked;
       if(!blocked){
         const ranged=(atk.tiles||1)>1, dtype=atk.dtype||'';
@@ -5769,29 +5802,34 @@ function qbResolveAttack(att, tgt, atk, done){
         if(blocked){ /* noop */ }
         else if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit', tgt.x, tgt.y); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
           if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); }
-          if(tgt.echo && tgt.hp<=0) reclaimPotential(QB.players[0].c, qbLog); }
+          if(tgt.echo && tgt.hp<=0) reclaimPotential(QB.players[0].c, qbLog);
+          // Hellish Rebuke retaliation — only after a hit actually landed (the spell triggers on
+          // being damaged). The attacker (a monster) makes a Dex save vs the PC's spell DC for
+          // half, resolved through the same Engine.castApply every save-for-half spell uses.
+          if(reaction && reaction.retaliate){ const rb=reaction.retaliate;
+            const rev=Engine.castApply(qbAdapter, tgt.id, att.id, {name:rb.name, save:'dex', dc:rb.dc, dmgTotal:rb.dmg, dtype:rb.dtype});
+            sfx('firebolt'); attackFx('hit', att.x, att.y);
+            qbLog('😈 Hellish Rebuke — '+qbName(att)+(rev.saved?' saves':' fails')+' ('+(rev.saveRoll!=null?rev.saveRoll:'?')+' vs DC '+rb.dc+') — '+rev.dmg+' fire'); } }
         else { sfx('miss'); attackFx('miss', tgt.x, tgt.y); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
         qbCheckEnd(); save(); render(); done&&done(ev);
       }, 280);
     };
-    // Shield reaction: only worth offering when it would actually flip this specific attack
-    // from a hit to a miss (a rational player never burns the reaction + slot otherwise) — a
-    // preview roll via Engine.hitResult decides that; the real roll after accepting is fresh
-    // (Shield's +5 AC lands as a real 1-round effect via addEffect/SPELL_EFFECTS, so it also
-    // protects against any OTHER attack this round, not just this one — more correct than
-    // hard-coding a forced miss). A natural 20 can't be prevented by AC at all (crit), so it's
-    // never offered against one — same reasoning Sanctuary's own gate gives no false hope.
-    if(tgt.side==='pc' && tgt.c && shieldEligible(tgt.c)){
+    // Reaction offer: a PC who was HIT may spend their reaction on Shield (would-flip only),
+    // Absorb Elements (elemental damage), or Hellish Rebuke — availableReactions decides which
+    // apply. A preview roll (Engine.hitResult) gates the offer; the chosen outcome is then
+    // resolved against that SAME roll (finish(..., pre.d20)) so the offer and result can't
+    // disagree. Never offered against a crit-flip for Shield (AC can't stop a crit).
+    if(tgt.side==='pc' && tgt.c){
       const pre=Engine.hitResult(qbAdapter, att.id, tgt.id, atk);
-      if(pre.hit && !pre.crit && pre.total<pre.ac+5){
-        openShieldPrompt(tgt.c, pre, ()=>{
-          tgt.c.battle.reaction=true;
-          if(!tgt.c.slots[1]) tgt.c.slots[1]={total:0,used:0};
-          tgt.c.slots[1].used=Math.min(spellSlots(tgt.c)[1]||0,(tgt.c.slots[1].used||0)+1);
-          addEffect(tgt.c,'Shield');
-          qbLog('🛡️ '+tgt.c.name+' casts Shield in response — +5 AC until the start of their next turn');
-          save(); finish();
-        }, finish);
+      const dtype=atk.dtype||atk.dt||'';
+      const ropts = pre.hit ? availableReactions(tgt.c, {wouldFlip:!pre.crit && pre.total<pre.ac+5, dtype, inRebukeRange:gridDist(att.x,att.y,tgt.x,tgt.y)<=12}) : [];
+      if(ropts.length){
+        openReactionMenu(tgt.c, {attackerName:qbName(att), total:pre.total, ac:pre.ac, dtype, options:ropts}, choice=>{
+          if(choice==='none'){ finish(); return; }
+          const res=castPcReaction(tgt.c, choice, dtype, qbLog);
+          save();
+          finish(res, pre.d20);   // resolve against the previewed roll so Shield's raised AC / the hit that triggered Absorb/Rebuke all line up
+        });
         return;
       }
     }

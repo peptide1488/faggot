@@ -3445,3 +3445,58 @@ side (real modal, real Yes button, AC 9→14, `reactionChoice` reported back) AN
 a real Ogre attack rolled into the flip window actually paused (`reactionOffer` sent, modal showed
 "Waiting for…"), and the player's `reactionChoice` with a raised AC resumed it and correctly
 flipped the shown result from a hit to a MISS, mirror AC updated, `shieldReady` consumed.
+
+## Reaction system generalized — Hellish Rebuke + Absorb Elements (v120.228)
+
+v120.226/227 shipped Shield as a bespoke Shield-only prompt. This pass turns that into a real
+reaction *system* and adds the next two most-used reaction spells across QB and DM-hosted both,
+proving the framework generalizes rather than being a one-off.
+
+**The Shield-only `openShieldPrompt` became a general `openReactionMenu`** listing whichever
+reactions actually apply to the incoming hit, decided by one shared `availableReactions(c, ctx)`:
+Shield (only when +5 AC would flip the hit), Absorb Elements (only vs acid/cold/fire/lightning/
+thunder damage), Hellish Rebuke (in 60 ft). A shared `castPcReaction(c, choice, dtype, log)`
+applies the chosen reaction's cost + self-effect and returns a retaliation descriptor when one
+strikes back — used by BOTH Quick Battle (local) and a player's own device in DM-hosted, never a
+per-mode copy. Only the trigger transport differs (a synchronous menu in QB; the
+`reactionOffer`→`reactionChoice` round-trip in DM-hosted), exactly the device-boundary reality.
+
+**Hellish Rebuke** (retaliation): resolved through the same `Engine.castApply` every save-for-half
+spell already uses — the attacker makes a Dex save vs the caster's real spell DC, 2d10 fire, half
+on a save. In DM-hosted the player's device rolls the damage + sends its DC; the DM rolls its own
+monster's save and applies it. **Absorb Elements** (defensive): `castPcReaction` sets
+`c.absorbResist` (a new resistance `applyHp` honours, halving the triggering elemental damage —
+next to Rage/Fiendish Resilience) which expires at the start of your next turn (`resetTurnState`),
+plus `c.absorbRider` for the +1d6-of-that-type on your next melee hit (auto-applied and one-shot in
+`applyAttackRiders`). In DM-hosted the halving happens naturally on the player's own device when
+the DM's damage message arrives.
+
+**Two real bugs fixed along the way, both pre-existing:**
+- **`parseMonsterAttacks` never extracted a damage type.** Monster hits reached `applyHp` with no
+  `dtype`, so a target's resistances/immunities/vulnerabilities *by type* silently never applied
+  (nor could Absorb know the damage was elemental). Now parsed — a correctness win well beyond
+  this feature.
+- **Reaction eligibility was hard-coded to a 1st-level slot**, which locked **Warlocks** out of
+  Hellish Rebuke entirely — their pact slots live at a higher level (`spellSlots[1]===0`), so the
+  iconic Warlock reaction never fired. Fixed with `lowestReactionSlot(c)` (lowest available slot
+  ≥1, upcast base-effect-only), verified live: a L5 Warlock spends a level-3 pact slot to Rebuke.
+
+Absorb Elements was also **not learnable** — it lived in `REACTION_SPELLS` but was missing from
+`SPELL_SRC`/`SPELL_DESC`/`SPELL_RANGE`, so no character could add it. Now a real 1st-level
+Abjuration on the Sorcerer/Wizard/Ranger/Artificer lists.
+
+**Named simplifications** (documented, not silent): upcast scaling of reaction spells (Rebuke's
++1d10/level, Absorb's +1d6/level) isn't modeled — all cast at base effect, the same "base only"
+shape Shield uses; Absorb Elements only triggers off attack damage this pass (not a failed save
+vs an elemental AoE like a Fireball); and the +1d6 Absorb rider, if never spent on a melee hit,
+lingers rather than expiring at end of your next turn (a minor bound).
+
+Tests: 22 new/updated assertions — `availableReactions`' per-option gating (all three vs a
+would-flip elemental hit, only Rebuke vs a plain physical hit, nothing once the reaction is
+spent), `castPcReaction` for each spell, `applyHp` halving the absorbed type (and NOT a different
+type), the rider surviving `resetTurnState` and being consumed by `applyAttackRiders`, the
+Warlock pact-slot fix, `parseMonsterAttacks` dtype extraction, and the full DM-hosted round-trip
+(player picks Shield or Rebuke from the synced-option menu and reports back the choice + new AC /
+rolled retaliation). Also live-verified via Playwright: the QB menu offering all three for an
+elemental would-flip hit and Absorb setting its resist+rider, and Hellish Rebuke end-to-end — a
+L5 Warlock spending a pact slot to deal 6 fire back to the attacker (half, on a successful save).

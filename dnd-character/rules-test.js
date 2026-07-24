@@ -3240,8 +3240,10 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   knowsShield.battle={action:false,bonus:false,reaction:false};
   T('shieldEligible: knows Shield, has a free slot and reaction — eligible', shieldEligible(knowsShield)===true);
 
-  const noSlots=Object.assign({},knowsShield); noSlots.slots={1:{total:3,used:99}};   // shieldEligible checks the real spellSlots(c) max, not this stored total — 99 guarantees "none left" regardless of the class formula
-  T('shieldEligible: no 1st-level slots left — not eligible', shieldEligible(noSlots)===false);
+  // Exhaust EVERY slot level (a L3 Sorcerer has 1st AND 2nd-level slots, and Shield can upcast
+  // into either — so "no slots at all" is what makes it ineligible, not just no 1st-level ones).
+  const noSlots=Object.assign({},knowsShield); noSlots.slots={1:{used:99},2:{used:99},3:{used:99}};
+  T('shieldEligible: no spell slots left at any level — not eligible', shieldEligible(noSlots)===false);
 
   const usedReaction=Object.assign({},knowsShield,{battle:{action:false,bonus:false,reaction:true}});
   T('shieldEligible: reaction already spent this round — not eligible', shieldEligible(usedReaction)===false);
@@ -3257,13 +3259,13 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   addEffect(shielded,'Shield');
   T('addEffect(c,\'Shield\'): actually raises computeAC by 5 once triggered', computeAC(shielded)===acBefore+5);
 
-  // qbResolveAttack: a monster's attack against a Shield-eligible PC pauses for a prompt instead
-  // of auto-resolving immediately, ONLY when +5 AC would actually flip this specific roll from a
-  // hit to a miss. This harness's document.getElementById returns a fresh disconnected stub on
-  // every call (see fakeEl() at the top of this file), so DOM inspection can't verify the modal
-  // — swap out openShieldPrompt itself instead, the same "replace the boundary" pattern this
-  // file already uses for net.conn.send/Math.random.
-  const origPrompt=openShieldPrompt;
+  // qbResolveAttack: a monster's attack against a reaction-ready PC pauses for the reaction menu
+  // instead of auto-resolving, ONLY when a reaction actually applies (here: Shield, when +5 AC
+  // would flip this roll from a hit to a miss). This harness's document.getElementById returns a
+  // fresh disconnected stub on every call (see fakeEl()), so DOM inspection can't verify the
+  // modal — swap out openReactionMenu itself, the same "replace the boundary" pattern this file
+  // uses for net.conn.send/Math.random.
+  const origMenu=openReactionMenu;
   const pcShield=newCharacter('Shielded PC'); pcShield.cls='Sorcerer'; pcShield.level=3; pcShield.armor='none';
   pcShield.abilities={str:10,dex:10,con:14,int:10,wis:10,cha:16};
   pcShield.spells=[{name:'Shield',level:1,prepared:true}]; pcShield.slots={1:{total:3,used:0}};
@@ -3275,19 +3277,20 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const preAC=computeAC(pcShield);   // 10 (unarmored, dex mod 0) — asserted below so the mocked roll's math stays honest
   T('sanity: this fixture\'s AC is the plain unarmored baseline the mocked roll below assumes', preAC===10);
   let captured=null;
-  openShieldPrompt=(c,pre,onAccept,onDecline)=>{ captured={c,pre,onAccept,onDecline}; };
+  openReactionMenu=(c,ctx,onChoice)=>{ captured={c,ctx,onChoice}; };
   const origRandomShield=Math.random; Math.random=()=>0.57;   // rnd(20) = floor(0.57*20)+1 = 12
   qbResolveAttack(getQB().monsters[0], getQB().players[0], {name:'Bite', toHit:0, dmg:'1d6', tiles:1});   // roll 12 + toHit 0 = 12, hits AC 10 but would miss AC 15 (10+5) — exactly the "Shield would flip it" case
   Math.random=origRandomShield;
-  T('qbResolveAttack: a Shield-eligible PC facing a would-flip hit gets a reaction prompt (attack paused for a choice)', !!captured && captured.c===pcShield);
-  captured.onAccept();
-  T('qbResolveAttack: accepting Shield actually casts it — spends the reaction', getQB().players[0].c.battle.reaction===true);
-  T('qbResolveAttack: accepting Shield spends the 1st-level slot', getQB().players[0].c.slots[1].used===1);
-  T('qbResolveAttack: accepting Shield actually raises the PC\'s AC via the real effect pipeline', computeAC(getQB().players[0].c)===preAC+5);
+  T('qbResolveAttack: a reaction-ready PC facing a would-flip hit gets the reaction menu (attack paused)', !!captured && captured.c===pcShield);
+  T('qbResolveAttack: the menu offers Shield for a would-flip hit', !!captured && captured.ctx.options.some(o=>o.id==='shield'));
+  captured.onChoice('shield');
+  T('qbResolveAttack: choosing Shield actually casts it — spends the reaction', getQB().players[0].c.battle.reaction===true);
+  T('qbResolveAttack: choosing Shield spends the 1st-level slot', getQB().players[0].c.slots[1].used===1);
+  T('qbResolveAttack: choosing Shield actually raises the PC\'s AC via the real effect pipeline', computeAC(getQB().players[0].c)===preAC+5);
   setQB(null);
 
-  // A hit that would land even WITH +5 AC (overwhelming toHit) never bothers offering Shield —
-  // a rational player wouldn't burn the resource on an attack it can't stop anyway.
+  // A hit that would land even WITH +5 AC (overwhelming toHit) never offers Shield — and with no
+  // other reaction available, no menu opens at all.
   const pcShield2=newCharacter('Shielded PC 2'); pcShield2.cls='Sorcerer'; pcShield2.level=3; pcShield2.armor='none';
   pcShield2.spells=[{name:'Shield',level:1,prepared:true}]; pcShield2.slots={1:{total:3,used:0}};
   pcShield2.hp={max:20,cur:20,temp:0}; pcShield2.conditions={};
@@ -3297,9 +3300,9 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     players:[{id:'pc',side:'pc',name:pcShield2.name,c:pcShield2,x:1,y:0,hpCur:pcShield2.hp.cur,hpMax:pcShield2.hp.max}] });
   captured=null;
   qbResolveAttack(getQB().monsters[0], getQB().players[0], {name:'Bite', toHit:99, dmg:'1d6', tiles:1});   // +5 AC could never matter here
-  T('qbResolveAttack: no prompt when +5 AC wouldn\'t change the outcome anyway', captured===null);
+  T('qbResolveAttack: no menu when no reaction would change the outcome', captured===null);
   setQB(null);
-  openShieldPrompt=origPrompt;
+  openReactionMenu=origMenu;
 }
 
 /* ---- Reactions — Shield in DM-hosted (v120.227): the transport (dmSend/conn.send/dmBroadcast)
@@ -3308,7 +3311,7 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
    reactionOffer→reactionChoice round-trip. The player's own device decides eligibility and casts
    (the DM never sees their spell list/slots), reporting back only the choice + new AC. ---- */
 {
-  const origPrompt2=openShieldPrompt;
+  const origMenu2=openReactionMenu;
 
   // playerHello now advertises shieldReady so the DM knows whether to even offer — same
   // reaction-readiness channel shadowMartyrArmed/cuttingWordsArmed already use.
@@ -3323,22 +3326,38 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   playerHello();
   T('playerHello: advertises shieldReady:true when the player can react with Shield', helloSends.some(m=>m.t==='hello' && m.char.shieldReady===true));
 
-  // Player receives a reactionOffer and is eligible → casts Shield, reports back shield:true + new AC.
+  // Player receives a reactionOffer (DM sends the eligible options) and picks Shield → casts,
+  // reports back choice:'shield' + new AC.
   const acBefore=computeAC(caster);
   const netSends=[];
   getNet().conn.send=m=>netSends.push(m);
-  openShieldPrompt=(c,pre,onAccept)=>onAccept();   // auto-accept
-  playerOnData({t:'reactionOffer', reaction:'shield', mon:'m1', monName:'Goblin', total:12, ac:acBefore});
-  T('reactionOffer (player): an eligible player casts Shield — spends the reaction', caster.battle.reaction===true);
+  openReactionMenu=(c,ctx,onChoice)=>onChoice('shield');   // auto-pick Shield
+  playerOnData({t:'reactionOffer', options:[{id:'shield',label:'🛡️ Shield',note:''}], mon:'m1', monName:'Goblin', total:12, ac:acBefore, dtype:''});
+  T('reactionOffer (player): picking Shield from the menu casts it — spends the reaction', caster.battle.reaction===true);
   T('reactionOffer (player): casting Shield raises the real AC by 5', computeAC(caster)===acBefore+5);
-  T('reactionOffer (player): reports the choice back to the DM with the new AC', netSends.some(m=>m.t==='reactionChoice' && m.shield===true && m.newAC===acBefore+5));
+  T('reactionOffer (player): reports choice:shield back to the DM with the new AC', netSends.some(m=>m.t==='reactionChoice' && m.choice==='shield' && m.newAC===acBefore+5));
 
-  // A second offer now auto-declines — reaction already spent this round (shieldEligible false).
+  // A second offer now auto-declines — reaction already spent this round (nothing survives the
+  // local re-validation), so no menu opens and a decline is still sent.
   netSends.length=0;
-  let promptShown=false; openShieldPrompt=()=>{ promptShown=true; };
-  playerOnData({t:'reactionOffer', reaction:'shield', mon:'m1', monName:'Goblin', total:12, ac:acBefore});
-  T('reactionOffer (player): auto-declines when no longer eligible (reaction already spent) — no prompt shown', promptShown===false);
-  T('reactionOffer (player): still sends a decline so the DM never hangs waiting', netSends.some(m=>m.t==='reactionChoice' && m.shield===false));
+  let menuShown=false; openReactionMenu=()=>{ menuShown=true; };
+  playerOnData({t:'reactionOffer', options:[{id:'shield',label:'🛡️ Shield',note:''}], mon:'m1', monName:'Goblin', total:12, ac:acBefore, dtype:''});
+  T('reactionOffer (player): auto-declines when no offered option survives local re-validation — no menu shown', menuShown===false);
+  T('reactionOffer (player): still sends choice:none so the DM never hangs waiting', netSends.some(m=>m.t==='reactionChoice' && m.choice==='none'));
+
+  // Hellish Rebuke path: an eligible player picks rebuke → reports the rolled retaliation back.
+  const warlock=newCharacter('Net Warlock'); warlock.cls='Warlock'; warlock.level=3; applyClassDefaults(warlock);
+  warlock.spells=[{name:'Hellish Rebuke',level:1,prepared:true}]; warlock.spellAbility='cha';
+  warlock.hp={max:20,cur:20,temp:0};
+  warlock.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setDB(getDB().concat([warlock]));
+  getNet().charId=warlock.id; getNet().peer={id:'me1'};
+  const wlSends=[]; getNet().conn.send=m=>wlSends.push(m);
+  openReactionMenu=(c,ctx,onChoice)=>onChoice('rebuke');
+  playerOnData({t:'reactionOffer', options:[{id:'rebuke',label:'😈 Hellish Rebuke',note:''}], mon:'m1', monName:'Ogre', total:18, ac:12, dtype:'bludgeoning'});
+  T('reactionOffer (player): Hellish Rebuke spends the reaction', warlock.battle.reaction===true);
+  T('reactionOffer (player): reports choice:rebuke back WITH a rolled retaliation (dmg + DC)', wlSends.some(m=>m.t==='reactionChoice' && m.choice==='rebuke' && m.retaliate && m.retaliate.dmg>0 && m.retaliate.dc>0));
+  setDB(getDB().filter(x=>x.id!==warlock.id));
   setNet(null);
   setDB(getDB().filter(x=>x.id!==caster.id));
 
@@ -3346,18 +3365,68 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   let resumed=null;
   setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[], players:[{id:'p1',name:'PC'}], order:[], turn:0}});
   getNet()._pendingReaction={playerId:'p1', resume:choice=>{ resumed=choice; }};
-  dmOnData({peer:'p1'}, {t:'reactionChoice', shield:true, newAC:15});
-  T('reactionChoice (DM): resumes the paused attack with the player\'s choice', resumed && resumed.shield===true && resumed.newAC===15);
+  dmOnData({peer:'p1'}, {t:'reactionChoice', choice:'shield', newAC:15});
+  T('reactionChoice (DM): resumes the paused attack with the player\'s choice', resumed && resumed.choice==='shield' && resumed.newAC===15);
   T('reactionChoice (DM): clears the pending reaction so it can\'t fire twice', getNet()._pendingReaction===null);
 
   // A reactionChoice from the WRONG player (not the one we're waiting on) is ignored — no
   // cross-talk if two attacks were somehow in flight.
   getNet()._pendingReaction={playerId:'p1', resume:choice=>{ resumed='WRONG'; }};
   resumed=null;
-  dmOnData({peer:'someone-else'}, {t:'reactionChoice', shield:false});
+  dmOnData({peer:'someone-else'}, {t:'reactionChoice', choice:'none'});
   T('reactionChoice (DM): a choice from a different player than we\'re awaiting is ignored', resumed===null && getNet()._pendingReaction!==null);
   setNet(null);
-  openShieldPrompt=origPrompt2;
+  openReactionMenu=origMenu2;
+}
+
+/* ---- Reactions — Hellish Rebuke + Absorb Elements mechanics (v120.228) ---- */
+{
+  // Absorb Elements is now learnable (was in REACTION_SPELLS but missing from the spell list).
+  T('data: Absorb Elements is now in the learnable spell list (SPELL_SRC), 1st level', spellMeta('Absorb Elements') && spellMeta('Absorb Elements').l===1);
+  T('data: Absorb Elements has a real range so the "no silent range gap" audit still passes', !!parseSpellMechanics('Absorb Elements').range);
+
+  // parseMonsterAttacks now extracts a damage type (was unparsed — monster hits reached applyHp
+  // with no dtype, so resistances/immunities never applied by type).
+  const fireAtk=parseMonsterAttacks('Flame Bite +5 (2d6+3 fire)')[0];
+  T('parseMonsterAttacks: extracts the damage type (fire) it used to drop', fireAtk.dtype==='fire');
+  T('isElementalDamage: recognises fire as elemental', isElementalDamage('fire')===true && isElementalDamage('bludgeoning')===false);
+
+  // availableReactions gates each option on its own trigger.
+  const sorc=newCharacter('Reactor'); sorc.cls='Sorcerer'; sorc.level=3; sorc.spellAbility='cha';
+  sorc.spells=[{name:'Shield',level:1,prepared:true},{name:'Absorb Elements',level:1,prepared:true},{name:'Hellish Rebuke',level:1,prepared:true}];
+  sorc.slots={1:{total:4,used:0}}; sorc.battle={action:false,bonus:false,reaction:false};
+  const elemOpts=availableReactions(sorc, {wouldFlip:true, dtype:'fire', inRebukeRange:true});
+  T('availableReactions: offers all three vs a would-flip elemental hit in range', elemOpts.map(o=>o.id).sort().join(',')==='absorb,rebuke,shield');
+  const physOpts=availableReactions(sorc, {wouldFlip:false, dtype:'slashing', inRebukeRange:true});
+  T('availableReactions: a non-flip, non-elemental hit offers only Hellish Rebuke', physOpts.map(o=>o.id).join(',')==='rebuke');
+  T('availableReactions: nothing offered once the reaction is already spent', (()=>{ const s2=Object.assign({},sorc,{battle:{action:false,bonus:false,reaction:true}}); return availableReactions(s2,{wouldFlip:true,dtype:'fire',inRebukeRange:true}).length===0; })());
+
+  // Absorb Elements: castPcReaction sets the resist + rider; applyHp halves the triggering type.
+  const c=newCharacter('Absorber'); c.cls='Sorcerer'; c.level=3; c.spellAbility='cha';
+  c.spells=[{name:'Absorb Elements',level:1,prepared:true}]; c.slots={1:{total:4,used:0}};
+  c.hp={max:30,cur:30,temp:0}; c.conditions={}; c.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  castPcReaction(c, 'absorb', 'fire', ()=>{});
+  T('castPcReaction(absorb): spends the reaction and a slot', c.battle.reaction===true && c.slots[1].used===1);
+  T('castPcReaction(absorb): sets the resist + melee rider flags for the fire type', c.absorbResist==='fire' && c.absorbRider==='fire');
+  applyHp(c, -10, 'fire');
+  T('applyHp: Absorb Elements halves the triggering fire damage (10 → 5)', c.hp.cur===25);
+  applyHp(c, -10, 'cold');
+  T('applyHp: a DIFFERENT damage type is NOT halved by a fire Absorb (10 full)', c.hp.cur===15);
+  resetTurnState(c);
+  T('resetTurnState: the Absorb resistance expires at the start of your next turn', !c.absorbResist);
+  T('resetTurnState: the +1d6 melee rider SURVIVES into your next turn (consumed on a hit, not on turn start)', c.absorbRider==='fire');
+  // The rider fires on the next melee hit and is consumed.
+  const riderBonus=applyAttackRiders(c, {name:'Longsword', tiles:1}, {hp:20,max:20}, {}, false, false, ()=>{});
+  T('applyAttackRiders: the Absorb rider adds bonus damage on the next melee hit', riderBonus.total>0);
+  T('applyAttackRiders: the rider is one-shot — consumed after use', c.absorbRider==null);
+
+  // Hellish Rebuke: castPcReaction returns a retaliation descriptor (2d10 fire, a real DC).
+  const wl=newCharacter('Rebuker'); wl.cls='Warlock'; wl.level=5; wl.spellAbility='cha'; wl.abilities={str:8,dex:14,con:14,int:10,wis:10,cha:18};
+  wl.spells=[{name:'Hellish Rebuke',level:1,prepared:true}]; wl.slots={}; wl.battle={action:false,bonus:false,reaction:false};
+  T('sanity: a L5 Warlock\'s slots are pact (level-3) slots, not level 1 — the case the slot fix handles', spellSlots(wl)[1]===0 && spellSlots(wl)[3]>0);
+  const rb=castPcReaction(wl, 'rebuke', 'slashing', ()=>{});
+  T('castPcReaction(rebuke): returns a retaliation (2d10 fire) with the caster\'s real spell DC', rb.retaliate && rb.retaliate.dtype==='fire' && rb.retaliate.dmg>=2 && rb.retaliate.dmg<=20 && rb.retaliate.dc===8+profBonus(wl)+mod(abil(wl,'cha')));
+  T('castPcReaction(rebuke): a Warlock spends their pact slot (level 3), proving reactions aren\'t level-1-locked', wl.battle.reaction===true && wl.slots[3] && wl.slots[3].used===1);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
