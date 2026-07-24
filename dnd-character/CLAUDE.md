@@ -2,25 +2,62 @@
 
 The single-file rule is **retired** (per VISION.md's 2026-07-21 alignment — "single-file
 index.html is no longer sacred, proactively modularize"). Modularization is staged, not a
-big-bang rewrite: **Stage 1 (done) split out `data.js`** — every pure content table (spells,
-monsters, classes, items, terrain, maps, sprites — ~90 tables, no logic) — leaving all game
-*rules/UI logic* still in index.html's `<script>` block (~11,800 lines now, was ~13,200).
-`sw.js` is the offline cache (both `index.html` and `data.js` are in its `ASSETS` list — **any
-new module file must be added there too, or offline breaks silently**), `AUDIT.md` is the
-5e-rules baseline, `rules-test.js` is the test harness.
+big-bang rewrite, and **Stages 1 and 2 are both done**: `index.html`'s `<script>` block went
+from ~13,200 lines to **~2,300 lines**. The code now lives across 5 files:
+- **`data.js`** (Stage 1) — every pure content table (spells, monsters, classes, items,
+  terrain, maps, sprites — ~90 tables, no logic).
+- **`rules.js`** (Stage 2) — character math, combat resolution, spellcasting, grid/movement
+  math, monster AI (~461 functions, classified by a "no DOM/network signal in the body"
+  heuristic — see below).
+- **`net.js`** (Stage 2) — DM-hosted session handling, player-net messaging, campaign
+  persistence (~24 functions).
+- **`ui.js`** (Stage 2) — modal builders, `render()`/`renderSheet`/`renderCombat`/etc., anything
+  touching `document`/`$()`/`.innerHTML` (~140 functions).
+- **`index.html`**'s own `<script>` block — top-level state only now (`DB`, `QB`, `net`, `tab`,
+  `curId`, …) plus bootstrap/init statements that must run in a specific order (`BRAINS.tactical
+  = function(...)`, `Events.on(...)`, service-worker registration, the final `render()` call).
 
-**`data.js` is loaded via `<script src>` before the main inline `<script>`** — classic (non-
-module) script tags share one lexical scope, so `data.js`'s top-level `const`/`let` tables are
-plain globals the main script already reads by name, zero call-site changes needed anywhere.
-`rules-test.js` reproduces this by concatenating `data.js` + the extracted `<script>` content
-into ONE `eval()` call (`eval()`'s `let`/`const` don't leak across *separate* eval calls the way
-they do across script tags in a real page — this is a real gotcha, not a stylistic choice, if
-you ever add a third module file: keep it in the same concatenated eval, don't eval it alone).
-**Ordering matters inside data.js**: a few tables reference an earlier one in the same file
-(`MAP_PRESETS` syncs against `INTERACT_TYPES`; `SPRITE_MANIFEST` uses the `_SV`/`_s4` helpers
-declared just above it) — if you add a new data table, check it doesn't reference something
-declared later in the same file, and if it references a *function*, that function must stay in
-the main script and the table can't be pure data (don't move it to data.js).
+`sw.js` is the offline cache — `index.html`, `data.js`, `rules.js`, `net.js`, and `ui.js` are
+ALL in its `ASSETS` list — **any new module file must be added there too, or offline breaks
+silently**. `AUDIT.md` is the 5e-rules baseline, `rules-test.js` is the test harness.
+
+**All four extracted files load via `<script src>` before the main inline `<script>`**, in
+that order (data → rules → net → ui → main) — classic (non-module) script tags share one
+lexical scope, so every top-level `const`/`let`/`function` in an earlier-loaded file is a plain
+global the later files already read by name, zero call-site changes needed anywhere. Function
+declarations are safe to place in ANY of the 4 files regardless of what they reference
+internally (even something defined in a file that loads LATER) — they're hoisted, and nothing
+actually CALLS them until long after every script has finished loading (user interaction,
+`render()`, etc.). The one thing that DOES care about order: top-level code that executes
+IMMEDIATELY at parse time (a `const X = someFn()` or bare statement, not a function body) — this
+is exactly why Stage 2 only moved `function`/`async function` declarations and left every
+top-level executing statement (`BRAINS.tactical=…`, `Events.on(…)`, the final `render()`, event-
+listener setup) in index.html untouched, in its original relative order.
+
+`rules-test.js` reproduces the script-tag sharing by concatenating `data.js`+`rules.js`+
+`net.js`+`ui.js`+the extracted `<script>` content into ONE `eval()` call (`eval()`'s `let`/
+`const` don't leak across *separate* eval calls the way they do across script tags in a real
+page — a real gotcha, not a stylistic choice; keep any future module file in that same
+concatenated eval, don't eval it alone).
+
+**Extraction methodology, if you ever do this again**: two hand-rolled line-position heuristics
+both produced real, silent corruption before this shipped — a bare top-level statement between
+two functions got swept into the wrong one, and a dedented closing `); }` from a multi-line
+arrow-function chain (`WIZ_BASE.filter(s=>\n ... \n); }`) got misread as a new top-level
+statement, truncating the function it belonged to. Both were caught by actually running the
+test suite against the extraction, not by assuming a mechanical script's output was correct.
+The fix that actually worked: for each function's exact end line, grow a candidate end line one
+at a time and use Node's real parser (`new vm.Script(text)`) to check when the accumulated text
+first becomes syntactically valid — a function is complete the instant its own braces balance,
+so this is exact, not heuristic. Don't hand-roll a brace/string/template-literal tracker for
+this; it's a known-hard problem (regex-vs-division ambiguity, nested `${}` in template literals)
+that the real parser already solves correctly.
+
+**`data.js` ordering**: a few tables reference an earlier one in the same file (`MAP_PRESETS`
+syncs against `INTERACT_TYPES`; `SPRITE_MANIFEST` uses the `_SV`/`_s4` helpers declared just
+above it) — if you add a new data table, check it doesn't reference something declared later in
+the same file, and if it references a *function*, that function must stay reachable (rules.js is
+fine, since it loads right after data.js) and the table can't be pure data-only content.
 
 **The isometric battle-map renderer is its own file, `iso-renderer.js`**, loaded via
 `<script src>` — split out deliberately (v118) after three straight live-deploy rounds fixing
@@ -29,9 +66,15 @@ it plain data via a `<canvas class="isocanvas" data-cols/rows/rot/tiles/height/p
 `iso-renderer.js`'s own `MutationObserver` paints it — no direct function call between the two.
 Its tests live in `iso-renderer-test.js`, separate from `rules-test.js`. See AUDIT.md v117–v118.
 
-**Next modularization stages (not yet done, per VISION.md's ordering):** rules logic, then net/
-multiplayer code, then UI — each its own staged pass with tests green after every step, same
-discipline as Stage 1. Don't attempt them all at once.
+**The rules.js/net.js/ui.js split is a heuristic, not hand-verified per-function** — a function
+landed in `ui.js` if its body contains a DOM signal (`$('#...`, `document.getElementById`,
+`.innerHTML=`, `modalRoot`, `render()`, etc.), in `net.js` if it contains a networking signal
+(`net.role`/`net.session`/`dmSend(`/`dmBroadcast(`/`conn.send`) and doesn't already match the UI
+signal, else `rules.js`. This is "good enough to be useful," not perfectly pure — some functions
+in `rules.js` may incidentally reference `net`/`QB` for a mode-check without being fundamentally
+networking code, and `ui.js` at ~6,200 lines is still large (a few functions, like the ~670-line
+Use-menu builder `openAdjacentUseUI`, are simply that big). A future pass could refine the split
+further; this pass's bar was "correct and shippable," not "semantically perfect."
 
 ## Efficiency protocol — read this before reading code
 
@@ -94,7 +137,7 @@ Data tables (all live in `data.js` now, not index.html — see the modularizatio
 - `MONSTERS_5E` — bestiary {n,cr,ac,hp,spd,init,attacks,atk,…}; `MONSTER_RVI` — resist/vuln/imm
 - `TERRAIN` — tile properties (solid/opaque/diff/dmg/deadly); `MAP_PRESETS` — battle maps
 
-Rules logic:
+Rules logic (lives in `rules.js` now, not index.html):
 - `function canCast` / `function castSpell` — action economy + slots + bonus-action-spell
   rule + concentration entry point
 - `function parseSpellMechanics` — prose→mechanics parser; `scaleCantrip`/`cantripTier` —
@@ -112,7 +155,8 @@ Rules logic:
 - `skillBonus` (Jack of All Trades), `initiative`, `passiveScore` (Observant), `profBonus`
 - `function levelUp` — level-up modal; `pendingChoiceSpecs`/`applyFeat` — choice flows
 
-Combat / grid / multiplayer:
+Combat / grid / multiplayer (grid math + Engine + BRAINS + QB live in `rules.js`; `dmHost`/
+`dmOnData`/`renderDM`/`playerJoin`/campaign persistence live in `net.js`):
 - `function dijkstra` / `losClear` / `coverBetween` / `leavesReach` — grid math
   (Chebyshev distance, 1 tile = 5 ft, no diagonal corner-cutting)
 - **Isometric battle-map rendering lives in `iso-renderer.js`, not index.html** — `mapGridHTML`
@@ -137,8 +181,8 @@ Combat / grid / multiplayer:
 - `parseMonsterAttacks` — parses bestiary `atk` strings (also load-bearing prose:
   `+N (dice)`, `DC N Abl`, reach/range/condition keywords)
 
-UI (rarely rules-relevant): `render()` dispatcher, `renderSheet`, `renderCombat`,
-`renderSpells`, `renderItems`, `battleCard`, `castModal`, `mapGridHTML`.
+UI (lives in `ui.js` now, rarely rules-relevant): `render()` dispatcher, `renderSheet`,
+`renderCombat`, `renderSpells`, `renderItems`, `battleCard`, `castModal`, `mapGridHTML`.
 
 ## Conventions
 - Battle state lives on `c.battle` {actionsUsed/Max, bonus, reaction, attacksLeft, move,

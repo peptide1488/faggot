@@ -3009,3 +3009,70 @@ also-moved `INTERACT_TYPES`; `SPRITE_MANIFEST`'s file paths correctly using the 
 helpers), and a full live Quick Battle started and rendered end-to-end (the single heaviest
 consumer of moved data tables at once — bestiary, terrain, sprites, spell data all exercised
 together).
+
+## Modularization Stage 2: rules.js/net.js/ui.js (v120.220)
+
+User's direct follow-up to Stage 1 — "keep going, 11k lines is insane." Executed Stage 2 of the
+documented staged plan: relocate every top-level `function`/`async function` declaration out of
+index.html into three themed files by content heuristic. `index.html`'s `<script>` block goes
+from **~11,800 lines to ~2,300** — an 80% reduction from where Stage 1 left it, ~93% off the
+original 13,179. 625 functions moved: 461 into `rules.js` (character math, combat resolution,
+spellcasting, grid/movement math, monster AI), 24 into `net.js` (DM-hosted session handling,
+player-net messaging, campaign persistence), 140 into `ui.js` (modal builders, `render()` and
+its dispatch tree). Only function declarations moved — every `const`/`let` and every bare
+top-level executing statement (`BRAINS.tactical = function(...)`, `Events.on(...)`, service-
+worker registration, the final `render()` call) stayed in `index.html`, untouched, in original
+order, since those carry real load-order meaning that a function declaration never does.
+
+**Two real, silent-corruption bugs caught in the extraction tooling itself before anything
+shipped** — both found by actually running the test suite against each attempt rather than
+trusting a mechanical script's output:
+
+1. A first attempt reused Stage 1's "next top-level `const`/`let`/`function` line is the
+   boundary" logic. Between two functions in this file sits a bare top-level statement,
+   `BRAINS.tactical = function(qb, u){...}` (assigning a property, not declaring a new name) —
+   it doesn't match any of those three patterns, so it silently got swept into whichever
+   function textually preceded it and relocated to the wrong file. Since it depends on
+   `const BRAINS = {}` staying declared in `index.html` and running before it, this produced a
+   real `ReferenceError: Cannot access 'BRAINS' before initialization` on load. Also missed:
+   `async function aiNarrate(...)` — the boundary regex only recognized bare `function`, not
+   `async function`.
+2. A second attempt widened the boundary rule to "any column-0, non-indented line starts a new
+   top-level unit" — reasonable in general, but wrong for this codebase's occasional style of
+   dedenting a multi-line chain's closing punctuation to column 0 for readability
+   (`function wizSteps(c){ return WIZ_BASE.filter(s=>\n  ...\n  ...\n); }` — that closing
+   `); }` line starts at column 0 and was misread as a NEW top-level statement, truncating
+   `wizSteps` mid-body and leaving its real closer orphaned in `index.html`).
+
+**What actually worked**: stopped hand-rolling a boundary heuristic (line position, then a
+bespoke brace/string/template-literal tracker that itself turned out buggy — regex-vs-division
+ambiguity and nested `${}` inside template literals are known-hard problems a real parser
+already solves) and used Node's own parser instead. For each function's candidate start line,
+grow a candidate end line one at a time and check `new vm.Script(text)` — a function declaration
+is syntactically complete the INSTANT its own braces balance, so the first line count that
+parses cleanly is exactly the true end, not a heuristic guess. Verified zero overlaps across all
+625 resolved boundaries, and spot-checked both prior failure cases (`wizSteps` now correctly
+includes its dedented closer; `BRAINS.tactical` correctly excluded and left in place) before
+trusting the result enough to extract.
+
+**Same "shared script-tag global scope" mechanism Stage 1 already established** makes this safe
+regardless of classification accuracy: function declarations are hoisted and never called until
+long after every `<script src>` has finished loading, so a function landing in the "wrong"
+themed file (a real possibility — the ui/net/rules split is a content-heuristic, not
+hand-verified per function, see CLAUDE.md) affects code organization, not runtime correctness.
+The only thing that DOES care about order is top-level immediately-executing code, which is
+exactly why Stage 2 deliberately left those bare statements untouched.
+
+`sw.js`'s `ASSETS` cache list updated (`rules.js`/`net.js`/`ui.js` added), `CLAUDE.md` rewritten
+with the extraction methodology (the two bugs and the fix) documented for whoever attempts a
+similar split later, and the "next stage" framing updated — Stages 1 and 2 are both done now.
+
+Tests: no new assertions (structural move, not a rules change) — the existing 876
+`rules-test.js` assertions plus `iso-renderer-test.js` are exactly what caught both bugs before
+they shipped. Also live-verified via Playwright: fresh load with zero new console errors (one
+pre-existing, unrelated sprite-path 404 confirmed present before this change too), a full
+character sheet render pulling from all three new files at once (`computeAC`/`spellSlots` from
+`rules.js`, `render()`/`renderSheet` from `ui.js`, `monsterDef` bridging to `data.js`), a real
+Quick Battle attack + undo cycle (deep `rules.js` call chains: `qbResolveAttack` → `Engine.attack`
+→ riders → `qbUndoTurn`), a DM-hosted `deployMonster`/`dmBroadcast` round-trip (`net.js`), and
+the Bestiary/Encounter Builder modals opening correctly (`ui.js`).
