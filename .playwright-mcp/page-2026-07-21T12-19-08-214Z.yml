@@ -1,0 +1,132 @@
+- generic [active] [ref=f17e1]:
+  - generic [ref=f17e2]:
+    - heading "⚔️ 6 Heroes vs 30 Goblins" [level=1] [ref=f17e3]
+    - generic [ref=f17e4]: Live on the real voxel engine — not a screenshot.
+    - button "▶ Start Battle" [disabled] [ref=f17e5]
+    - button "↺ Reset Map" [ref=f17e6] [cursor=pointer]
+    - generic [ref=f17e7]:
+      - generic [ref=f17e9]: Waiting for the voxel engine to boot…
+      - generic [ref=f17e10]: Engine ready. Loading sprites from Grimoire's art (goblin + 6 classes)…
+      - generic [ref=f17e11]: Party of 6 takes the field.
+      - generic [ref=f17e12]: 28 goblins swarm in. The horde is here.
+  - iframe [ref=f17e8]:
+    - generic [ref=f18e3]:
+      - generic [ref=f18e4]: Iso3D Voxel Engine 0.12.5
+      - generic [ref=f18e5]: left click/drag = place/paint · alt+click/drag = remove · right-drag = orbit · wheel = zoom · Q/E = rotate cam · R = rotate brush · S = toggle slab · P = paint/place toggle · T = top-down view
+      - generic [ref=f18e6]: "Brush: stone · Mode: place · Facing: N · Slab: off"
+      - generic [ref=f18e7]:
+        - generic [ref=f18e8]:
+          - generic [ref=f18e9]: Material
+          - generic [ref=f18e10]:
+            - button "bedrock" [ref=f18e11] [cursor=pointer]
+            - button "stone" [ref=f18e12] [cursor=pointer]
+            - button "dirt" [ref=f18e13] [cursor=pointer]
+            - button "sand" [ref=f18e14] [cursor=pointer]
+            - button "mud" [ref=f18e15] [cursor=pointer]
+            - button "grass" [ref=f18e16] [cursor=pointer]
+            - button "cliff" [ref=f18e17] [cursor=pointer]
+            - button "wood" [ref=f18e18] [cursor=pointer]
+            - button "planks" [ref=f18e19] [cursor=pointer]
+            - button "glass" [ref=f18e20] [cursor=pointer]
+            - button "shelf" [ref=f18e21] [cursor=pointer]
+            - button "dungeon_wall" [ref=f18e22] [cursor=pointer]
+            - button "dungeon_wall_thin" [ref=f18e23] [cursor=pointer]
+            - button "dungeon_wall_outer" [ref=f18e24] [cursor=pointer]
+            - button "dungeon_wall_corner" [ref=f18e25] [cursor=pointer]
+            - button "dungeon_stairs" [ref=f18e26] [cursor=pointer]
+            - button "dungeon_ramp" [ref=f18e27] [cursor=pointer]
+            - button "stone_stairs" [ref=f18e28] [cursor=pointer]
+            - button "stone_ramp" [ref=f18e29] [cursor=pointer]
+            - button "dungeon_pillar" [ref=f18e30] [cursor=pointer]
+            - button "stone_pillar" [ref=f18e31] [cursor=pointer]
+            - button "dungeon_pillar_single" [ref=f18e32] [cursor=pointer]
+            - button "stone_pillar_single" [ref=f18e33] [cursor=pointer]
+        - generic [ref=f18e34]:
+          - generic [ref=f18e35]: Object
+          - generic [ref=f18e36]:
+            - button "door" [ref=f18e37] [cursor=pointer]
+            - button "door_open" [ref=f18e38] [cursor=pointer]
+            - button "window" [ref=f18e39] [cursor=pointer]
+            - button "table" [ref=f18e40] [cursor=pointer]
+            - button "chair" [ref=f18e41] [cursor=pointer]
+            - button "torch" [ref=f18e42] [cursor=pointer]
+            - button "torch_off" [ref=f18e43] [cursor=pointer]
+        - generic [ref=f18e44]:
+          - generic [ref=f18e45]: Liquid
+          - button "water" [ref=f18e47] [cursor=pointer]
+        - generic [ref=f18e48]:
+          - generic [ref=f18e49]: Gas
+          - generic [ref=f18e50]:
+            - button "fog" [ref=f18e51] [cursor=pointer]
+            - button "gas" [ref=f18e52] [cursor=pointer]
+        - generic [ref=f18e53]:
+          - generic [ref=f18e54]: Billboard
+          - generic [ref=f18e55]: (none yet)
+        - generic [ref=f18e57]:
+          - generic [ref=f18e58]: Monster
+          - generic [ref=f18e59]: (coming soon)
+      - generic [ref=f18e62]:
+        - checkbox "Finite liquid source, volume 50" [ref=f18e63]
+        - text: Finite liquid source, volume
+        - spinbutton [ref=f18e64]: "50"
+      - generic [ref=f18e66]:
+        - text: Wind (pushes gas/smoke)
+        - combobox "Wind (pushes gas/smoke)" [ref=f18e67]:
+          - option "None" [selected]
+          - option "North"
+          - option "East"
+          - option "South"
+          - option "West"
+      - generic [ref=f18e68]:
+        - button "toggle slab" [ref=f18e69] [cursor=pointer]
+        - button "toggle mode" [ref=f18e70] [cursor=pointer]
+        - button "undo" [ref=f18e71] [cursor=pointer]
+        - button "toggle unit-move" [ref=f18e72] [cursor=pointer]
+        - button "toggle decal mode" [ref=f18e73] [cursor=pointer]
+        - button "toggle top-down view" [ref=f18e74] [cursor=pointer]
+        - button "toggle spell casting" [ref=f18e75] [cursor=pointer]
+        - combobox [ref=f18e76]:
+          - option "Cloudkill" [selected]
+          - option "Stinking Cloud"
+          - option "Sleet Storm"
+          - option "Insect Plague"
+          - option "Web"
+          - option "Spike Growth"
+          - option "Entangle"
+          - option "Grease"
+          - option "Gust of Wind"
+          - option "Fireball"
+          - option "Shatter"
+          - option "Thunderwave"
+          - option "Burning Hands"
+          - option "Cone of Cold"
+          - option "Lightning Bolt"
+          - option "Ice Storm"
+          - option "Sunburst"
+          - option "Circle of Death"
+          - option "Flame Strike"
+          - option "Meteor Swarm"
+          - option "Sunbeam"
+          - option "Disintegrate (utility clear)"
+      - generic [ref=f18e77]:
+        - button "toggle day/dungeon" [ref=f18e78] [cursor=pointer]
+        - text: "Lighting: day"
+      - generic [ref=f18e79]:
+        - button "Export JSON" [ref=f18e80] [cursor=pointer]
+        - button "Import JSON" [ref=f18e81] [cursor=pointer]
+        - button "Export for Grimoire" [ref=f18e82] [cursor=pointer]
+        - button "Save → Grimoire library" [ref=f18e83] [cursor=pointer]
+        - button "Preview in Iso3D" [ref=f18e84] [cursor=pointer]
+        - button "Load showcase map" [ref=f18e85] [cursor=pointer]
+        - button "Load hills demo" [ref=f18e86] [cursor=pointer]
+      - textbox [ref=f18e87]
+      - generic [ref=f18e88]:
+        - text: "Assets folder: (not connected)"
+        - button "Choose folder" [ref=f18e89] [cursor=pointer]
+      - generic [ref=f18e90]:
+        - button "Material Maker" [ref=f18e91] [cursor=pointer]
+        - button "Object Maker" [ref=f18e92] [cursor=pointer]
+        - button "Decal Maker" [ref=f18e93] [cursor=pointer]
+        - button "Billboard Maker" [ref=f18e94] [cursor=pointer]
+        - button "Spell Maker" [ref=f18e95] [cursor=pointer]
+        - button "Sun/Ambient" [ref=f18e96] [cursor=pointer]

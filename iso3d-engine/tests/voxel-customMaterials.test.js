@@ -113,6 +113,41 @@ console.log('buildMaterialDef — properties: translucent/light promoted to top 
   assert(lit.properties.damage === 1 && lit.properties.translucent === undefined && lit.properties.light === undefined, 'gameplay-only tags stay nested; translucent/light are not duplicated there');
 }
 
+console.log('buildMaterialDef — properties.gas: promoted to top level, forces solid:false/opaque:false/translucent:true');
+{
+  const layout = planMaterialLayout({ heightBlocks: 1 });
+  const gasDef = buildMaterialDef({
+    materialId: 'test_gas_mat',
+    layout,
+    properties: { gas: true, damage: 1 },
+  });
+  assert(gasDef.gas === true, 'gas is promoted to the TOP level (spread.js\'s isGasType reads BLOCKS[type].gas directly)');
+  assert(gasDef.solid === false, 'a gas material is forced non-solid regardless of the base cube default (matches built-in fog)');
+  assert(gasDef.opaque === false, 'a gas material is forced non-opaque, so it renders see-through like fog/water');
+  assert(gasDef.translucent === true, 'a gas material is forced translucent too, even if the caller never separately set that flag');
+  assert(gasDef.properties.damage === 1 && gasDef.properties.gas === undefined, 'gameplay-only tags stay nested; gas is not duplicated there');
+
+  const nonGasDef = buildMaterialDef({ materialId: 'test_nongas_mat', layout, properties: { damage: 1 } });
+  assert(nonGasDef.gas === undefined && nonGasDef.solid === true && nonGasDef.opaque === true, 'a material with no gas property keeps the ordinary solid/opaque cube defaults, unaffected');
+}
+
+console.log('buildMaterialDef — a gas material emits no top/side/bottom/shape/wedge/autotile at all, just gasFogColor/gasDensity');
+{
+  const gasDef = buildMaterialDef({
+    materialId: 'test_volumetric_gas',
+    layout: null, // no layout at all — a real gas material never builds one (see voxel.html's Material Maker gas branch)
+    properties: { gas: true },
+    shape: 'column_thin', // should be silently ignored for a gas material — no geometry to shape
+    wedge: 'ramp', // same — should be ignored
+    gasFogColor: [0.2, 0.8, 0.3],
+    gasDensity: 0.6,
+  });
+  assert(gasDef.top === undefined && gasDef.side === undefined && gasDef.bottom === undefined, 'no top/side/bottom UV refs at all — a gas material has no texture-backed faces');
+  assert(gasDef.shape === undefined && gasDef.wedge === undefined && gasDef.topAutotile === undefined, 'shape/wedge/autotile are all ignored for a gas material, even if passed in');
+  assert(gasDef.gasFogColor[0] === 0.2 && gasDef.gasFogColor[1] === 0.8 && gasDef.gasFogColor[2] === 0.3, 'gasFogColor passes through onto the def, read directly by voxel.html\'s recomputeGasVolumes');
+  assert(gasDef.gasDensity === 0.6, 'gasDensity passes through too');
+}
+
 console.log('createCustomMaterial — full round trip through the real registry');
 {
   const layout = planMaterialLayout({ heightBlocks: 2 });
@@ -148,6 +183,16 @@ console.log('createCustomMaterial — optional shape (any material pairs with an
   });
   assert(Array.isArray(BLOCKS.test_flared_column.shape) && BLOCKS.test_flared_column.shape[2] === 'column_base', 'a depth-indexed shape array is stored as-is, same as depth-indexed side textures');
   deleteCustomMaterial('test_flared_column');
+}
+
+console.log('createCustomMaterial — optional wedge (mutually exclusive with shape, e.g. a ramp)');
+{
+  const layout = planMaterialLayout({ heightBlocks: 1 });
+  const rampEntry = createCustomMaterial({ name: 'Test Ramp Stone', heightBlocks: 1, layout, wedge: 'ramp', properties: {} });
+  assert(BLOCKS.test_ramp_stone.wedge === 'ramp', 'a wedge name passed to createCustomMaterial lands on def.wedge');
+  assert(BLOCKS.test_ramp_stone.shape === undefined, 'def.shape stays unset when only a wedge is given');
+  assert(rampEntry.wedge === 'ramp', 'the returned library entry also carries the wedge (so it survives export/import/reload)');
+  deleteCustomMaterial('test_ramp_stone');
 }
 
 console.log('material library persistence (localStorage)');

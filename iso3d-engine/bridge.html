@@ -49,6 +49,7 @@
 
   <script type="module">
     import { Iso3DHost, makeDemoGrimoireSession, APP_VERSION } from './src/host.js';
+    import { BATTLE_MAP_STORAGE_KEY } from './src/voxel/exportBattleMap.js';
 
     const stage = document.getElementById('stage');
     const logEl = document.getElementById('log');
@@ -69,7 +70,28 @@
     ];
 
     let host;
-    let session = makeDemoGrimoireSession();
+    /** Load session from voxel "Preview in Iso3D" bake, else demo. */
+    function loadInitialSession() {
+      const params = new URLSearchParams(location.search);
+      if (params.get('battlePreview') === '1' || params.get('preview') === '1') {
+        try {
+          const raw = localStorage.getItem(BATTLE_MAP_STORAGE_KEY);
+          if (raw) {
+            const data = JSON.parse(raw);
+            if (data && data.session && data.session.map) {
+              log(`Loaded voxel battle preview · ${data.map?.cols}×${data.map?.rows} · walk ${data.map?.stats?.walkable ?? '?'}`);
+              return data.session;
+            }
+          }
+          log('No battle preview in localStorage — using demo map');
+        } catch (e) {
+          log('Preview load failed: ' + e.message);
+        }
+      }
+      return makeDemoGrimoireSession();
+    }
+
+    let session = loadInitialSession();
 
     function tryBase(i) {
       if (host) host.destroy();
@@ -80,7 +102,11 @@
       host.centerOnMap();
       host.onTileClick = (x, y, unit) => {
         if (unit) log(`Unit: ${unit.label} @ (${x},${y}) HP ${unit.hp}/${unit.maxHp}`);
-        else log(`Tile (${x}, ${y})`);
+        else {
+          const t = session.map?.tiles?.[`${x},${y}`];
+          const h = session.map?.height?.[`${x},${y}`];
+          log(`Tile (${x}, ${y}) · ${t || '?'} h=${h ?? 0}`);
+        }
       };
       info.textContent = `Iso3D ${APP_VERSION} · assetBase="${base || '(none)'}" · click tiles`;
       log(`Session loaded · ${session.players.length} PCs · ${session.monsters.length} monsters · assets: ${base || 'fallback tokens'}`);
@@ -92,7 +118,7 @@
     document.getElementById('btnReset').onclick = () => {
       session = makeDemoGrimoireSession();
       host.setSession(session, { resetCamera: true });
-      log('Session reset');
+      log('Session reset to demo');
     };
     document.getElementById('btnFx').onclick = () => {
       const p = session.players[0];

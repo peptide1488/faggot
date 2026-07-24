@@ -1,0 +1,226 @@
+- generic [ref=f25e1]:
+  - banner [ref=f25e2]:
+    - generic [ref=f25e3]:
+      - generic [ref=f25e10]:
+        - generic [ref=f25e11]: Grimoire v120.183
+        - generic [ref=f25e12]: Fighter 1 · v120.183
+      - generic [ref=f25e13]:
+        - combobox "Switch character" [ref=f25e14]:
+          - option "SpriteTest" [selected]
+          - option "PreWarmTest"
+          - option "DiagBB"
+          - option "RevertCheck"
+          - option "DrawCheck"
+        - button "🔍" [ref=f25e15] [cursor=pointer]
+        - button "＋" [ref=f25e16] [cursor=pointer]
+        - button "⚙" [ref=f25e17] [cursor=pointer]
+  - main [ref=f25e18]:
+    - generic [ref=f25e19]:
+      - generic [ref=f25e20]:
+        - heading "🎲 DM Mode" [level=2] [ref=f25e21]
+        - button "Exit" [ref=f25e22] [cursor=pointer]
+      - paragraph [ref=f25e23]: "Players tap \"Join game\" and enter:"
+      - generic [ref=f25e24]: connecting…
+      - generic [ref=f25e25]: 0 player(s) connected
+    - generic [ref=f25e26]:
+      - heading "📜 Campaign" [level=2] [ref=f25e28]
+      - paragraph [ref=f25e29]: Save this session — map, monsters, party progress & log — to continue another night. Players join first, then you load.
+      - generic [ref=f25e30]:
+        - combobox [ref=f25e31]:
+          - option "— saved campaigns —" [selected]
+        - button "Load" [ref=f25e32] [cursor=pointer]
+        - button "💾 Save" [ref=f25e33] [cursor=pointer]
+    - generic [ref=f25e34]:
+      - generic [ref=f25e35]:
+        - heading "Battle" [level=2] [ref=f25e36]
+        - generic [ref=f25e37]:
+          - button "−" [ref=f25e38] [cursor=pointer]
+          - generic [ref=f25e39]: Round 1
+          - button "＋" [ref=f25e40] [cursor=pointer]
+      - button "▶ Start battle (places tokens & rolls initiative)" [ref=f25e41] [cursor=pointer]
+    - generic [ref=f25e42]:
+      - heading "Players" [level=2] [ref=f25e43]
+      - generic [ref=f25e44]: No players yet — share the code.
+    - generic [ref=f25e45]:
+      - heading [level=2] [ref=f25e46]:
+        - text: Monsters
+        - button "📖 Bestiary" [ref=f25e47] [cursor=pointer]
+        - button "🧑 New NPC" [ref=f25e48] [cursor=pointer]
+      - generic [ref=f25e49]: No monsters. Add from the 📖 Bestiary or below.
+      - generic [ref=f25e50]:
+        - textbox "Name" [ref=f25e51]
+        - spinbutton "HP" [ref=f25e52]
+        - spinbutton "AC" [ref=f25e53]
+        - button "Add" [ref=f25e54] [cursor=pointer]
+    - generic [ref=f25e55]:
+      - heading [level=2] [ref=f25e56]:
+        - text: Map — 8×8
+        - button "🔄 Rotate" [ref=f25e57] [cursor=pointer]
+      - paragraph [ref=f25e61]: Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)
+      - generic [ref=f25e62]:
+        - button "Erase" [ref=f25e63] [cursor=pointer]
+        - button "Grass" [ref=f25e64] [cursor=pointer]
+        - button "Stone" [ref=f25e65] [cursor=pointer]
+        - button "Wood" [ref=f25e66] [cursor=pointer]
+        - button "Sand" [ref=f25e67] [cursor=pointer]
+        - button "Snow" [ref=f25e68] [cursor=pointer]
+        - button "Mud" [ref=f25e69] [cursor=pointer]
+        - button "Rubble" [ref=f25e70] [cursor=pointer]
+        - button "Water" [ref=f25e71] [cursor=pointer]
+        - button "Brush" [ref=f25e72] [cursor=pointer]
+        - button "Fog" [ref=f25e73] [cursor=pointer]
+        - button "Ice" [ref=f25e74] [cursor=pointer]
+        - button "Acid" [ref=f25e75] [cursor=pointer]
+        - button "Caltrops" [ref=f25e76] [cursor=pointer]
+        - button "Lava" [ref=f25e77] [cursor=pointer]
+        - button "🧱 Wall (full)" [ref=f25e78] [cursor=pointer]
+        - button "⛰ Cave wall" [ref=f25e79] [cursor=pointer]
+        - button "🧱 Low wall" [ref=f25e80] [cursor=pointer]
+        - button "▭ Window" [ref=f25e81] [cursor=pointer]
+        - button "🕳 Pit / chasm" [ref=f25e82] [cursor=pointer]
+        - button "🕳 Pit" [ref=f25e83] [cursor=pointer]
+        - button "Grease" [ref=f25e84] [cursor=pointer]
+        - button "Web" [ref=f25e85] [cursor=pointer]
+        - button "◆ Wall of Force" [ref=f25e86] [cursor=pointer]
+        - button "❄ Wall of Ice" [ref=f25e87] [cursor=pointer]
+        - button "🧱 Wall of Stone" [ref=f25e88] [cursor=pointer]
+        - button "💨 Wind Wall" [ref=f25e89] [cursor=pointer]
+      - generic [ref=f25e90]:
+        - generic [ref=f25e91]: "Elevation:"
+        - button "⬆ Raise" [ref=f25e92] [cursor=pointer]
+        - button "⬇ Lower" [ref=f25e93] [cursor=pointer]
+      - generic [ref=f25e94]:
+        - generic [ref=f25e95]: "Decorate:"
+        - button "Tree" [ref=f25e96] [cursor=pointer]
+        - button "Tree B" [ref=f25e97] [cursor=pointer]
+        - button "Dead tree" [ref=f25e98] [cursor=pointer]
+        - button "Snow tree" [ref=f25e99] [cursor=pointer]
+        - button "Jungle tree" [ref=f25e100] [cursor=pointer]
+        - button "Bush" [ref=f25e101] [cursor=pointer]
+        - button "Thicket" [ref=f25e102] [cursor=pointer]
+        - button "Snow bush" [ref=f25e103] [cursor=pointer]
+        - button "Rock" [ref=f25e104] [cursor=pointer]
+        - button "Stump" [ref=f25e105] [cursor=pointer]
+        - button "Log" [ref=f25e106] [cursor=pointer]
+        - button "Mushroom" [ref=f25e107] [cursor=pointer]
+        - button "Crystal" [ref=f25e108] [cursor=pointer]
+        - button "Torch" [ref=f25e109] [cursor=pointer]
+        - button "Campfire" [ref=f25e110] [cursor=pointer]
+        - button "Unlit torch" [ref=f25e111] [cursor=pointer]
+        - button "Door (closed)" [ref=f25e112] [cursor=pointer]
+        - button "Door (open)" [ref=f25e113] [cursor=pointer]
+        - button "Grate (closed)" [ref=f25e114] [cursor=pointer]
+        - button "Grate (open)" [ref=f25e115] [cursor=pointer]
+        - button "Loose plank" [ref=f25e116] [cursor=pointer]
+        - button "Loose rock" [ref=f25e117] [cursor=pointer]
+        - button "Lever" [ref=f25e118] [cursor=pointer]
+        - button "Switch" [ref=f25e119] [cursor=pointer]
+        - button "Pressure trap" [ref=f25e120] [cursor=pointer]
+        - button "Disarmed trap" [ref=f25e121] [cursor=pointer]
+        - button "Acid cauldron" [ref=f25e122] [cursor=pointer]
+        - button "Tipped cauldron" [ref=f25e123] [cursor=pointer]
+        - button "Bell" [ref=f25e124] [cursor=pointer]
+        - button "Chest" [ref=f25e125] [cursor=pointer]
+        - button "Drawbridge (up)" [ref=f25e126] [cursor=pointer]
+        - button "Drawbridge (down)" [ref=f25e127] [cursor=pointer]
+        - button "Oil barrel" [ref=f25e128] [cursor=pointer]
+        - button "Acid barrel" [ref=f25e129] [cursor=pointer]
+        - button "Powder keg" [ref=f25e130] [cursor=pointer]
+        - button "✕ Erase" [ref=f25e131] [cursor=pointer]
+      - generic [ref=f25e132]:
+        - combobox [ref=f25e133]:
+          - option "— load a map —" [selected]
+          - option "Open Field"
+          - option "Castle"
+          - option "Mechanics Lab"
+          - option "Cliff Run"
+          - option "Fireball Field"
+          - option "Sunset Ridge"
+          - option "Chasm Bridge"
+          - option "Swamp"
+          - option "Frozen Lake"
+          - option "Torchlit Crypt"
+          - option "Dungeon"
+          - option "Cave"
+          - option "Tavern"
+        - button "Load" [ref=f25e134] [cursor=pointer]
+        - button "💾 Save" [ref=f25e135] [cursor=pointer]
+      - button "📥 Import map JSON" [ref=f25e137] [cursor=pointer]
+      - paragraph [ref=f25e138]: "Voxel maps: export from iso3d-engine → Export for Grimoire, then import here (or Save → Grimoire library if both apps share the same origin)."
+      - button "Clear all terrain" [ref=f25e139] [cursor=pointer]
+      - generic [ref=f25e140]:
+        - generic [ref=f25e141]: Grid
+        - spinbutton [ref=f25e142]: "8"
+        - generic [ref=f25e143]: ×
+        - spinbutton [ref=f25e144]: "8"
+        - button "Resize" [ref=f25e145] [cursor=pointer]
+    - generic [ref=f25e146]:
+      - heading "Battle Log" [level=2] [ref=f25e147]
+      - generic [ref=f25e148]: Monster attacks & player hits show here.
+  - generic [ref=f25e152]:
+    - heading "🧑 New NPC" [level=2] [ref=f25e154]
+    - generic [ref=f25e155]:
+      - generic [ref=f25e156]: Name
+      - textbox "Innkeeper Rosalind" [active] [ref=f25e157]
+    - generic [ref=f25e158]:
+      - generic [ref=f25e159]: Race
+      - combobox [ref=f25e160]:
+        - option "— none —"
+        - option "Dwarf"
+        - option "Elf"
+        - option "Halfling"
+        - option "Human" [selected]
+        - option "Human (Variant)"
+        - option "Dragonborn"
+        - option "Gnome"
+        - option "Half-Elf"
+        - option "Half-Orc"
+        - option "Tiefling"
+        - option "Aasimar"
+        - option "Tabaxi"
+        - option "Goliath"
+        - option "Firbolg"
+        - option "Goblin"
+        - option "Kobold"
+        - option "Lizardfolk"
+        - option "Tortle"
+        - option "Warforged"
+        - option "Kenku"
+        - option "Aarakocra"
+        - option "Yuan-Ti"
+    - generic [ref=f25e161]:
+      - generic [ref=f25e162]: Ability scores
+      - generic [ref=f25e163]:
+        - generic [ref=f25e164]:
+          - generic [ref=f25e165]: STR
+          - spinbutton [ref=f25e166]: "8"
+        - generic [ref=f25e167]:
+          - generic [ref=f25e168]: DEX
+          - spinbutton [ref=f25e169]: "10"
+        - generic [ref=f25e170]:
+          - generic [ref=f25e171]: CON
+          - spinbutton [ref=f25e172]: "10"
+        - generic [ref=f25e173]:
+          - generic [ref=f25e174]: INT
+          - spinbutton [ref=f25e175]: "10"
+        - generic [ref=f25e176]:
+          - generic [ref=f25e177]: WIS
+          - spinbutton [ref=f25e178]: "10"
+        - generic [ref=f25e179]:
+          - generic [ref=f25e180]: CHA
+          - spinbutton [ref=f25e181]: "18"
+    - generic [ref=f25e182]:
+      - generic [ref=f25e183]:
+        - generic [ref=f25e184]: AC
+        - spinbutton [ref=f25e185]: "10"
+      - generic [ref=f25e186]:
+        - generic [ref=f25e187]: HP
+        - spinbutton [ref=f25e188]: "10"
+      - generic [ref=f25e189]:
+        - generic [ref=f25e190]: Speed
+        - spinbutton [ref=f25e191]: "30"
+    - generic [ref=f25e192]:
+      - generic [ref=f25e193]: Attack(s) — optional, same format as the bestiary e.g. "Dagger +3 (1d4+1)"
+      - textbox "Dagger +3 (1d4+1)" [ref=f25e194]
+    - button "Deploy" [ref=f25e195] [cursor=pointer]
+    - button "Close" [ref=f25e196] [cursor=pointer]

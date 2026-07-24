@@ -7,3 +7,11 @@
 *.pyc
 *.log
 .aider*
+
+# secrets / API keys
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.development.secrets
+**/tools/.env
+*.secrets

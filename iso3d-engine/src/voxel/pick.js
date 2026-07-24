@@ -60,13 +60,18 @@ function faceFromAxis(axis, faceSign) {
   return FACE_BY_AXIS[axis][faceSign < 0 ? 0 : 1];
 }
 
-function testCell(store, c, r, z, origin, dir, includeTranslucent) {
+function testCell(store, c, r, z, origin, dir, includeTranslucent, opaqueOnly) {
   const block = store.get(c, r, z);
   if (!block) return null;
   const parsed = parseBlock(block);
   const def = BLOCKS[parsed.type];
   if (!def) return null;
   if (def.translucent && !includeTranslucent) return null;
+  // Light occlusion only cares about full opaque cubes — models (torch/door/chair), shapes,
+  // wedges, and non-solid props must not cast a fake full-cell shadow that snuffs point lights.
+  if (opaqueOnly) {
+    if (!def.opaque || !def.solid || def.model || def.shape || def.wedge || parsed.slab) return null;
+  }
 
   const height = parsed.slab ? 0.5 : 1;
   const boxMin = [c, r, z];
@@ -94,10 +99,12 @@ function testCell(store, c, r, z, origin, dir, includeTranslucent) {
  * Cast a ray through the voxel store. Returns the first hit as
  * { c, r, z, face, t, point, block } or null if nothing is hit within maxDist.
  * opts.includeTranslucent: also hit water/glass (default false — they're see-through).
+ * opts.opaqueOnly: only full opaque solid cubes (for torch/light occlusion — skips props).
  */
 export function raycastVoxels(store, origin, direction, opts = {}) {
   const maxDist = opts.maxDist ?? 128;
   const includeTranslucent = !!opts.includeTranslucent;
+  const opaqueOnly = !!opts.opaqueOnly;
 
   const len = Math.hypot(direction[0], direction[1], direction[2]);
   if (len < 1e-12) return null;
@@ -128,7 +135,7 @@ export function raycastVoxels(store, origin, direction, opts = {}) {
   let t = 0;
   let guard = 0;
   while (t <= maxDist && guard++ < 100000) {
-    const hit = testCell(store, x, y, z, origin, dir, includeTranslucent);
+    const hit = testCell(store, x, y, z, origin, dir, includeTranslucent, opaqueOnly);
     if (hit) return hit;
 
     if (tMaxX < tMaxY && tMaxX < tMaxZ) {

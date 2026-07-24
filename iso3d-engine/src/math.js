@@ -162,31 +162,80 @@ export const ISO_PITCH = Math.atan(1 / Math.SQRT2);
 
 /**
  * Build projection * view for an orthographic isometric camera.
- * camRot is yaw in radians.
+ * camRot is yaw in radians. `pitch` (radians, default ISO_PITCH) lets a caller override the
+ * camera's tilt — e.g. voxel.html's "top-down mode" passes something near PI/2 (straight down)
+ * instead of the fixed isometric angle every other existing caller still gets by omitting it.
+ *
+ * opts (optional):
+ *   elevMin / elevMax — world-Y range of scene content (voxel elevation). Defaults cover a
+ *     typical strata+walls column. Used to aim the look-at mid-height and size the depth range
+ *     so tall geometry doesn't clip when zoomed/pitched, without wasting precision below bedrock.
+ *
+ * Ortho framing is controlled ONLY by camZoom → size. Eye distance is free: we pick it so the
+ * visible volume fits in a tight near/far band with a healthy far/near ratio (24-bit depth).
+ * Earlier code used near≈2 with far hundreds when zoomed out, which crushed depth precision
+ * (faces z-fight / "disappear") and still clipped near-side cliffs when zoomed in.
  */
-export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect, out = createMat4()) {
+export function getCameraMatrix(camRot, camZoom, camPanX, camPanY, aspect, out = createMat4(), pitch = ISO_PITCH, opts = {}) {
   const projection = createMat4();
   const view = createMat4();
 
-  const size = 10 / (camZoom || 1);
-  ortho(projection, -size * aspect, size * aspect, -size, size, 0.1, 500);
+  // Ortho half-height in world units. Zoom OUT → larger size → more of the map in frame.
+  const size = 10 / Math.max(camZoom || 1, 1e-4);
+  const asp = Math.max(aspect || 1, 1e-4);
 
-  const distance = 40;
-  const pitch = ISO_PITCH;
+  const elevMin = opts.elevMin != null ? opts.elevMin : 0;
+  const elevMax = opts.elevMax != null ? opts.elevMax : 24;
+  const elevMid = (elevMin + elevMax) * 0.5;
+  // Half-span of elevations, plus a few blocks of pad for props/billboards above the top.
+  const elevHalf = Math.max(6, (elevMax - elevMin) * 0.5 + 4);
+
+  // Half-diagonal of the orthographic view rectangle (world units on the view plane).
+  const viewHalfDiag = size * Math.hypot(asp, 1);
+  // Map that view extent + elevation into a view-axis depth half-range. Under iso pitch both
+  // horizontal offsets toward the camera and tall columns shrink/grow eye-depth; be generous
+  // so near-side cliffs and top-down tall stacks never hit the clip planes.
+  const cosP = Math.abs(Math.cos(pitch));
+  const sinP = Math.abs(Math.sin(pitch));
+  const depthHalf = viewHalfDiag * (0.85 + cosP * 0.75) + elevHalf * (0.6 + sinP * 0.9) + 6;
+
+  // Eye distance is independent of framing under ortho. Choose it so
+  //   far/near = (d+depthHalf)/(d-depthHalf) ≤ maxRatio
+  // → d ≥ depthHalf * (maxRatio+1)/(maxRatio-1). 24-bit depth stays clean under ~50–100 ratio.
+  const maxRatio = 36;
+  const distForRatio = depthHalf * (maxRatio + 1) / (maxRatio - 1);
+  const distance = Math.max(distForRatio, depthHalf * 1.4, 14);
+
+  let near = distance - depthHalf;
+  let far = distance + depthHalf;
+  // Tiny floor only for numerical stability (NOT the old near=2 hammer that forced huge far).
+  if (near < 0.2) {
+    far += 0.2 - near;
+    near = 0.2;
+  }
+  far = Math.max(near + 8, far);
+
+  ortho(projection, -size * asp, size * asp, -size, size, near, far);
+
+  // Aim at mid elevation so the depth budget isn't wasted under the world floor, and so
+  // top-down pitch doesn't put high stacks between the eye and the near plane.
+  const target = [camPanX, elevMid, camPanY];
   const eye = [
     camPanX + distance * Math.cos(pitch) * Math.sin(camRot),
-    distance * Math.sin(pitch),
+    elevMid + distance * Math.sin(pitch),
     camPanY + distance * Math.cos(pitch) * Math.cos(camRot),
   ];
-  const target = [camPanX, 0, camPanY];
-  const up = [0, 1, 0];
+  // Straight down (or very close to it) makes the default up=[0,1,0] parallel to the eye->target
+  // direction — a degenerate lookAt. Same fix already used elsewhere in this codebase for the
+  // same reason (see voxel.html's computeLightMVP).
+  const up = Math.cos(pitch) < 0.01 ? [0, 0, 1] : [0, 1, 0];
 
   lookAt(view, eye, target, up);
   multiply(out, projection, view);
   // Camera right/up in world space (from lookAt basis) — for depth-tested billboards
   const right = [view[0], view[4], view[8]];
   const camUp = [view[1], view[5], view[9]];
-  return { matrix: out, eye, target, right, camUp, view };
+  return { matrix: out, eye, target, right, camUp, view, near, far, size, distance };
 }
 
 export function gridToWorld(col, row, cols, rows, height = 0) {

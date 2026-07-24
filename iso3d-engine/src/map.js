@@ -117,6 +117,41 @@ export function buildDemoMap(cols = 12, rows = 12) {
   return map;
 }
 
+/**
+ * Bounded (default 32x32, matching voxel/spread.js's own WORLD_MAX_C/R world-edge convention)
+ * voxel-engine demo terrain: a grass field with gentle rolling hills (layered sine waves,
+ * clamped to MAX_HEIGHT — deterministic, no RNG, so it's reproducible run to run) and a round
+ * pond with a sandy beach ring in the middle. Distinct from buildDemoMap (the original 2D
+ * iso3d game's own small scripted scene, still used by that game — this one is voxel.html's,
+ * built for the new fixed-depth strata (see store.js's genStrata) and its own new bounded-world
+ * requirement, not a replacement for the 2D game's demo).
+ */
+export function buildRollingHillsDemoMap(cols = 32, rows = 32) {
+  const map = createMap(cols, rows, 0, TERRAIN.GRASS);
+  const cx = cols / 2;
+  const cy = rows / 2;
+  const pondRadius = Math.min(cols, rows) * 0.12;
+  const beachRadius = pondRadius + 1.5;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = map.cells[r * cols + c];
+      const dist = Math.hypot(c - cx, r - cy);
+      if (dist <= pondRadius) {
+        cell.type = TERRAIN.WATER;
+        cell.h = 0;
+      } else if (dist <= beachRadius) {
+        cell.type = TERRAIN.SAND;
+        cell.h = 0;
+      } else {
+        const hillNoise = Math.sin(c * 0.35) * Math.cos(r * 0.3) + Math.sin((c + r) * 0.18) * 0.6;
+        cell.type = TERRAIN.GRASS;
+        cell.h = Math.max(0, Math.min(MAX_HEIGHT, Math.round((hillNoise + 1.2) * 1.1)));
+      }
+    }
+  }
+  return map;
+}
+
 export function isWalkable(map, col, row) {
   const cell = cellAt(map, col, row);
   if (!cell) return false;

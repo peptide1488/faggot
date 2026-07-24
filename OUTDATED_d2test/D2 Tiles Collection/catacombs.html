@@ -1,0 +1,425 @@
+<html class="catacombs">
+	<head>
+		<link rel="icon" href="./scroll.gif">
+		<link rel="stylesheet" href="./style.css">
+		<script src="./main.js"></script>
+		
+		<title>Catacombs</title>
+	</head>
+	<body class="notes-show">
+		<div id="notes-btn" class="notes-btn">
+			<span class="notes-on">Turn off notes</span>
+			<span class="notes-off">Turn on notes</span>
+		</div>
+		
+		<div class="back-to-main">
+			<a class="link1" href="./index.html">Back to the main page</a>
+		</div>
+		<div class="text2">Catacombs</div>
+		
+		<div class="">
+			<div class="note text-left">
+			The whole catacombs maze is pretty much a bunch of 2-lane corridors. You can choose one of two lanes and some of them appear to have less deadends.
+			<br>Horizontal bottom: 7
+			<br>Horizontal top: 9
+			<br>Vertical left: 11
+			<br>Vertical right: 3
+			<br>
+			<br>Almost all of the deadends appear when you move left horizontally (topleft) or up vertically (topright).
+			<br>It also appears that there's much more deadends on the left lane going up.
+			<br>Therefore going down from the entrance would be optimal.
+			<br>If you explore Catacombs counter-clockwise you hit the most deadend-intense part the last. So go straight down from the entrance and then continue to the lefthand, taking the right lane on the way up.
+			<br>
+			<br>Maps in D2 seem to be generated with the rule of not having any deadends on the way down. It ensures that everything is accessable, but it also means that way down is the fastest way.
+			<br>
+			<br>Topright deadend with a small deadend and a space after it is the only tile with such a space. If you notice that space you can turn back.
+			<br>
+			<br>Bottom left deadends have right door sitting deeper than any other door of the same kind. If you see door being deeper than usual going bottom left, turn around.
+			<br>
+			<br>There is a "cleavage" type of hallway, one with a fat wall between the corridors. Whenever you see cleavage being shorter than it should be it's a deadend.
+			<br>
+			<br>Bottomleft deadend with a fireplace has 2 doors as opposed to exit of the same room configuration. If you see 2 doors near such "exit" - it's a deadend. If there's only one door on the left it's an exit/waypoint.
+			
+			
+			<!--
+			Horizontal bottom lane to the exit is faster
+			Horizontal top has a deadend at the waypoint
+			Horizontal top has a deadend at the deadend xd
+			Horizontal bottom is slower
+			/Horizontal top deadend (going left)
+			Horizontal top slower (going right)
+			
+			Vertical right is slower
+			/Vertical left deadend (going up nasty)
+			/Vertical left deadend (going up)
+			Vertical left is slower
+			
+			Turns
+			/Horizontal bottom deadend (going left)
+			/Horizontal top deadend (going left)
+			/Horizontal top deadend (going left)
+			/Horizontal top deadend (going left)
+			/Left lane going down has a nasty roundabout
+			[half the turns from left to up have deadends on top lane]
+			
+			/Vertical left deadend (going up)
+			/Vertical left deadend (going up)
+			/Horizontal bottom deadend (going left)
+			/Vertical left deadend (going up)
+			/Vertical left deadend (going down sorta)
+			/Horizontal bottom deadend (going left)
+			
+			Crossroads
+			/Horizontal bottom deadend (going left)
+			/Horizontal bottom deadend (going left)
+			/Horizontal top deadend (going left)
+			/Vertical left deadend (going up)
+			/Vertical left deadend (going up)
+			/Horizontal top deadend (going left)
+			/Horizontal bottom deadend (going left)
+			/Vertical left deadend (going up)
+			/Horizontal top deadend (going left)
+			/Vertical left deadend (going up)
+			/Horizontal top deadend (going left)
+			
+			
+			/Vertical right deadend (going up)
+			/Vertical right deadend (going up)
+			/Vertical left deadend (going up)
+			
+			/Vertical left deadend (going up)
+			/Horizontal top deadend (going left)
+			/Horizontal bottom deadend (going left)
+			/Vertical right deadend (going up)
+			
+			
+			
+			Horizontal bottom deadends (going left): 7
+			Horizontal top deadends (going left): 9
+			Vertical right deadend (going up): 3
+			Vertical left deadend (going up): 11
+			
+			Vertical left deadend (going down sorta): 1.5
+			
+			
+			-->
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">Entrances</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catEWup.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catEWup2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catEWup3.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catEWup4.PNG">
+				</div>
+			</div>
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catNSup.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catNSup2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catNSup3.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catNSup4.PNG">
+				</div>
+			<div>
+			<div class="inline-block">
+				<img class="tile" src=".\images\ACT1\CATACOMB\catNSEWexit.PNG">
+			</div>
+			
+			<div>
+				<div class="note">Some entrances are closer to the edge of the tile, so it would make sense to start running in that direction first (mostly down)</div>
+			</div>
+		</div>
+		<div class="">
+			<div class="text1">Exits</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catEdown.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catEdown2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catNdown.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catNdown2.PNG">
+				</div>
+			</div>
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catSdown.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catSdown2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catWdown.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catWdown2.PNG">
+				</div>
+			</div>
+		</div>
+		<div class="">
+			<div class="text1">Waypoints</div>
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catNway.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catWway.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catSway.PNG">
+					<img class="tile" src=".\images\ACT1\CATACOMB\catEway.PNG">
+				</div>
+			</div>
+		</div>
+			
+		<div class="">
+			<div class="text1">Deadends</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catE.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catE2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catE3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catE4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catEtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catN.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catN2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catN3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catN4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catS.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catS4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catS3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catS2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catStheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catW.PNG">
+						<div class="img-wrap">
+							<span class="img-note5">
+								The first room here is the only room that widens in both directions
+							</span>
+							<img class="tile" src=".\images\ACT1\CATACOMB\catW2.PNG">
+						</div>
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catW3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catW4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catWtheme1.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">Corridors</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catEW.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catEW2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catEW3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catEW4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catEWtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNS.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNS2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNS3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNS4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNStheme1.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">Turns</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNE.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNE4.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNE3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNE2.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNEtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">	
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSW.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSW2.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSW4.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSW3.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSWtheme1.PNG">	
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">	
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNW.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNW2.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNW3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNW4.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNWtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">	
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSE.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSE2.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSE3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSE4.PNG">
+					</div>
+					<div class="inline-block">	
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSEtheme1.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">Crossroads</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNEW.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNEW2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNEW3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNEW4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNEWtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSE.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSE2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSE3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSE4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSEtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSW.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSW2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSW3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSW4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSWtheme1.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSEW.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSEW2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSEW3.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSEW4.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catSEWtheme1.PNG">	
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSEW.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSEW2.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSEW4.PNG">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSEW3.PNG">
+					</div>
+					<div class="inline-block">
+						<img class="tile" src=".\images\ACT1\CATACOMB\catNSEWtheme1.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">Catacombs Level 4</div>
+			
+			<div class="inline-block">
+				<img class="bigimage" src=".\images\ACT1\CATACOMB\andy3.PNG">
+			</div>
+		</div>
+	</body>
+</html>

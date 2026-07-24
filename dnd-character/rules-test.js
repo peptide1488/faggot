@@ -566,6 +566,7 @@ T('paralyzed target: no auto-crit at range', attackAdvantage(S([]),S(['Paralyzed
 T('invisible attacker → advantage', attackAdvantage(S(['Invisible']),S([]),true).adv===1);
 T('Faerie Fire-outlined target grants advantage to attackers (was tagged but never checked)', attackAdvantage(S([]),S(['Faerie Fire']),true).adv===1);
 T('Guiding Bolt-guided target grants advantage to the next attacker', attackAdvantage(S([]),S(['Guided']),true).adv===1);
+T('Help action: target marked Helped grants advantage to the next attacker', attackAdvantage(S([]),S(['Helped']),true).adv===1);
 T('True Strike gives the attacker advantage', attackAdvantage(S(['True Strike']),S([]),true).adv===1);
 T('Guiding Bolt is registered as the Guided condition', SPELL_COND['Guiding Bolt'].c==='Guided');
 

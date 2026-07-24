@@ -28,6 +28,10 @@ function attackAdvantage(aC, tC, melee, opts){
   // same simplification every other timed condition here already gets — grants advantage for
   // the condition's whole duration rather than exactly one attack.
   if(T('Distracting Strike')){ adv++; why.push('target distracted (Distracting Strike)'); }
+  // Help action (PHB): an ally aided your attack against this creature — advantage. Same
+  // duration-based simplification as Distracting Strike above (grants advantage for the
+  // condition's whole ~1-round life rather than being consumed by exactly one attack).
+  if(T('Helped')){ adv++; why.push('an ally aided your attack (Help action)'); }
   if(A('True Strike')){ adv++; why.push('true strike'); }
   // Lighting: attacker in darkness without vision → disadvantage; target unseen in dark → adv for attacker if they can see (simplified)
   if(opts&&opts.armorDisadvantage){ adv--; why.push('not proficient with worn armor'); }

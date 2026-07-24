@@ -1,0 +1,283 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Epic Battle Demo — 6 Heroes vs 30 Goblins</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0a0a0f; overflow: hidden; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  #panel {
+    position: fixed; top: 16px; left: 16px; z-index: 10; width: 360px;
+    background: rgba(12,12,18,0.88); color: #e4e6ee; border-radius: 10px;
+    padding: 14px 16px; font: 13px/1.5 -apple-system, Segoe UI, sans-serif;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  #panel h1 { font-size: 16px; margin: 0 0 4px; }
+  #panel .sub { color: #9aa0b4; margin: 0 0 12px; font-size: 12px; }
+  #startBtn {
+    width: 100%; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+    background: #d94b3f; color: #fff; border: none; border-radius: 6px;
+  }
+  #startBtn:disabled { background: #4a4a55; cursor: default; }
+  #startBtn:not(:disabled):hover { background: #ef5b4e; }
+  #resetBtn {
+    width: 100%; margin-top: 8px; padding: 8px; font-size: 12px; cursor: pointer;
+    background: #2a2a35; color: #cfd2e0; border: 1px solid #3d3d4a; border-radius: 6px;
+  }
+  #log {
+    margin-top: 12px; max-height: 260px; overflow-y: auto; font: 12px/1.5 Consolas, monospace;
+    background: #06060a; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap;
+  }
+  #log .hit { color: #ff9b6b; }
+  #log .info { color: #8fb8ff; }
+  #log .win { color: #7dd87d; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>⚔️ 6 Heroes vs 30 Goblins</h1>
+  <div class="sub">Live on the real voxel engine — not a screenshot.</div>
+  <button id="startBtn">▶ Start Battle</button>
+  <button id="resetBtn">↺ Reset Map</button>
+  <div id="log">Click Start to load the battlefield…</div>
+</div>
+<iframe id="stage" src="voxel.html"></iframe>
+<script>
+const startBtn = document.getElementById('startBtn');
+const resetBtn = document.getElementById('resetBtn');
+const logEl = document.getElementById('log');
+const iframe = document.getElementById('stage');
+
+function log(msg, cls) {
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function clearLog() { logEl.innerHTML = ''; }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function waitForReady() {
+  return new Promise((resolve) => {
+    const check = () => {
+      const w = iframe.contentWindow;
+      if (w && w.__voxelReady) resolve(w);
+      else setTimeout(check, 150);
+    };
+    check();
+  });
+}
+
+function wheelZoom(win, deltaY) {
+  const canvas = win.document.getElementById('c');
+  const r = canvas.getBoundingClientRect();
+  canvas.dispatchEvent(new win.WheelEvent('wheel', {
+    deltaY, clientX: r.left + r.width / 2, clientY: r.top + r.height * 0.42, bubbles: true,
+  }));
+}
+
+const GOBLIN_BLOCK = 'shelf'; // underlying destructible marker (what a strike actually hits) —
+                               // BURIED one cell under the real ground surface (see
+                               // placeOnGround) so it never renders as a visible cube; only the
+                               // sprite billboard standing on top is visible.
+const SPRITE_BASE = '../dnd-character/sprites/hq'; // real art, shared with Grimoire's battle map
+const HERO_CLASSES = ['fighter', 'wizard', 'cleric', 'rogue', 'ranger', 'paladin'];
+
+/** Place a destructible marker BURIED one cell below the real terrain surface at (c,r) — fully
+ * hidden under the existing ground-top block, which keeps occluding it exactly as before, so
+ * there is never a visible "the goblin is standing on an ugly wooden cube" artifact — and put
+ * the sprite at the real standing height on top. The field is NOT flat (rolling hills), so this
+ * MUST use the actual per-cell surface (v.findSurfaceAt), not a single hardcoded z: a fixed z
+ * buries some cells fully underground (their sprite never appears) and leaves others floating,
+ * depending on each cell's local height. */
+function placeOnGround(v, c, r, markerBlock) {
+  const surf = v.findSurfaceAt(c, r);
+  if (!surf) return null; // water or unbuilt column — caller should pick another cell
+  const markerZ = surf.z - 1; // one cell below the visible top — stays hidden under it
+  const spriteZ = Math.round(surf.standZ); // real standing height for this cell
+  v.applyEdit(c, r, markerZ, markerBlock);
+  return { markerZ, spriteZ };
+}
+
+/** Real per-cell ground height for the hero (heroes have no destructible marker at all — nothing
+ * in this demo attacks them back, so there's nothing to hide/track; just a standing height). */
+function standHeight(v, c, r) {
+  const surf = v.findSurfaceAt(c, r);
+  return surf ? Math.round(surf.standZ) : null;
+}
+
+// billboardStore is keyed by exact (c,r,z) — two heroes converging on the same adjacent cell
+// next to the same target would silently overwrite each other (the second .set() clobbers the
+// first's entry, and the first hero just vanishes from the map). Track occupied cells so a
+// hero never steps onto — or finishes standing on — a cell another living hero already holds.
+const occupiedCells = new Set();
+const cellKey = (c, r) => `${c},${r}`;
+
+/** Walk a unit one grid cell at a time toward (targetC, targetR), stopping the moment it's
+ * ADJACENT (Chebyshev distance 1) rather than walking onto the target's own cell — real visible
+ * movement across the actual terrain height at each step, not a teleport. Steps around another
+ * hero already occupying the naive next cell instead of stacking on top of them. */
+async function walkTo(v, unit, spriteType, targetC, targetR) {
+  let guard = 40; // real terrain could theoretically dead-end into water; never loop forever
+  while (Math.max(Math.abs(unit.c - targetC), Math.abs(unit.r - targetR)) > 1 && guard-- > 0) {
+    const dc = Math.sign(targetC - unit.c), dr = Math.sign(targetR - unit.r);
+    const candidates = [[unit.c + dc, unit.r + dr], [unit.c + dc, unit.r], [unit.c, unit.r + dr]];
+    let next = null;
+    for (const [nc, nr] of candidates) {
+      if ((nc === unit.c && nr === unit.r) || occupiedCells.has(cellKey(nc, nr))) continue;
+      const z = standHeight(v, nc, nr);
+      if (z != null) { next = { nc, nr, z }; break; }
+    }
+    if (!next) break; // boxed in by water/other heroes — attack from current range instead
+    occupiedCells.delete(cellKey(unit.c, unit.r));
+    v.billboardStore.remove(unit.c, unit.r, unit.z);
+    unit.c = next.nc; unit.r = next.nr; unit.z = next.z;
+    occupiedCells.add(cellKey(unit.c, unit.r));
+    v.billboardStore.set(unit.c, unit.r, unit.z, spriteType);
+    await wait(110);
+  }
+}
+
+/** Crop the "facing down, idle" cell (row 0, col 0) out of a 4-row walk sheet — see
+ * dnd-character/sprites/SPRITE_PIPELINE.md. Cell size = sheet height / 4 (always square,
+ * robust to sheets with fewer than 4 walk-cycle columns, e.g. fighter.png is 3 cols wide). */
+function loadSpriteFrame(win, url) {
+  return new Promise((resolve, reject) => {
+    const img = new win.Image();
+    img.onload = () => {
+      const cell = img.naturalHeight / 4;
+      const canvas = win.document.createElement('canvas');
+      canvas.width = cell;
+      canvas.height = cell;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      resolve(canvas);
+    };
+    img.onerror = () => reject(new Error(`failed to load ${url}`));
+    img.src = url;
+  });
+}
+
+async function registerSprites(win) {
+  const v = win.__voxel;
+  const goblinFrame = await loadSpriteFrame(win, `${SPRITE_BASE}/monsters/goblin.png`);
+  const goblinType = v.registerSpriteBillboard('demo_goblin', goblinFrame, { size: 0.8 });
+  const heroTypes = [];
+  for (const cls of HERO_CLASSES) {
+    const frame = await loadSpriteFrame(win, `${SPRITE_BASE}/characters/${cls}.png`);
+    heroTypes.push(v.registerSpriteBillboard(`demo_${cls}`, frame, { size: 1.0 }));
+  }
+  return { goblinType, heroTypes };
+}
+
+// Mundane weapon attacks, one per class — every hero is pure melee/ranged martial, no magic
+// at all. Plain slashing/piercing/bludgeoning damage, no elemental theme, single-target radius.
+function buildMeleeMoves(v) {
+  return {
+    fighter: v.createSpell({ name: 'Sword Slash', effect: 'damage_blocks', radius: 0, damage: [{ dice: '2d6', type: 'slashing' }] }),
+    wizard: v.createSpell({ name: 'Quarterstaff Jab', effect: 'damage_blocks', radius: 0, damage: [{ dice: '1d6', type: 'bludgeoning' }] }),
+    cleric: v.createSpell({ name: 'Mace Bash', effect: 'damage_blocks', radius: 0, damage: [{ dice: '1d8', type: 'bludgeoning' }] }),
+    rogue: v.createSpell({ name: 'Dagger Stab', effect: 'damage_blocks', radius: 0, damage: [{ dice: '1d6', type: 'piercing' }] }),
+    ranger: v.createSpell({ name: 'Arrow Shot', effect: 'damage_blocks', radius: 0, damage: [{ dice: '1d8', type: 'piercing' }] }),
+    paladin: v.createSpell({ name: 'Longsword Strike', effect: 'damage_blocks', radius: 0, damage: [{ dice: '1d10', type: 'slashing' }] }),
+  };
+}
+
+// Rebuild the goblin sprite-billboard list from whichever marker cells are still alive, so a
+// destroyed goblin's sprite vanishes the instant its marker block is destroyed.
+function syncGoblins(v, goblins, goblinType) {
+  for (const g of goblins) {
+    if (g.alive && v.store.get(g.c, g.r, g.markerZ) === GOBLIN_BLOCK) v.billboardStore.set(g.c, g.r, g.z, goblinType);
+    else { v.billboardStore.remove(g.c, g.r, g.z); g.alive = false; }
+  }
+}
+
+async function runBattle() {
+  startBtn.disabled = true;
+  clearLog();
+  occupiedCells.clear();
+  log('Waiting for the voxel engine to boot…', 'info');
+  const win = await waitForReady();
+  const v = win.__voxel;
+  log('Engine ready. Loading sprites from Grimoire\'s art (goblin + 6 classes)…', 'info');
+  const sprites = await registerSprites(win);
+  const melee = buildMeleeMoves(v);
+
+  // Wide establishing view.
+  wheelZoom(win, 500);
+  await wait(300);
+
+  // Party of 6 real hero sprites (one per class), each on the ACTUAL local ground height. No
+  // magic anywhere in this demo — every class swings a mundane weapon (see buildMeleeMoves).
+  const partyCells = [[14, 16], [14, 20], [15, 16], [15, 20], [13, 18], [13, 20]];
+  const party = HERO_CLASSES.map((cls, i) => {
+    const [c, r] = partyCells[i];
+    return { cls, c, r, z: standHeight(v, c, r) };
+  });
+  for (const [i, hero] of party.entries()) {
+    v.billboardStore.set(hero.c, hero.r, hero.z, sprites.heroTypes[i]);
+    occupiedCells.add(cellKey(hero.c, hero.r));
+  }
+  v.moveKnightTo(party[0].c, party[0].r);
+  log('Party of 6 takes the field.', 'info');
+  await wait(200);
+
+  // 30 goblins (goblin sprites) swarming in a ring formation nearby, each on real ground height.
+  const goblinCells = [];
+  let n = 0;
+  for (let ring = 0; ring < 6 && n < 30; ring++) {
+    for (let a = 0; a < 8 && n < 30; a++) {
+      const ang = (a / 8) * Math.PI * 2;
+      const c = Math.round(20 + 2 + ring * 1.6 + Math.cos(ang) * ring * 1.1);
+      const r = Math.round(18 + Math.sin(ang) * ring * 1.1);
+      goblinCells.push([c, r]);
+      n++;
+    }
+  }
+  const goblins = [];
+  for (const [c, r] of goblinCells) {
+    const p = placeOnGround(v, c, r, GOBLIN_BLOCK);
+    if (p) goblins.push({ c, r, markerZ: p.markerZ, z: p.spriteZ, alive: true });
+  }
+  syncGoblins(v, goblins, sprites.goblinType);
+  log(`${goblins.length} goblins swarm in. The horde is here.`, 'info');
+
+  wheelZoom(win, -1700);
+  await wait(1800); // let the viewer take in the "before" shot
+
+  log('The party charges in — no magic, blades and fists only —', 'info');
+  await wait(400);
+
+  // Every hero WALKS (real step-by-step movement, not a teleport) to the nearest living
+  // goblin, strikes it with a silent, non-magical hit (no spell FX — the goblin vanishing IS
+  // the feedback), then moves on to a second target. A pure melee skirmish, no casters.
+  for (const hero of party) {
+    for (let kill = 0; kill < 2; kill++) {
+      const alive = goblins.filter((g) => g.alive);
+      const target = alive.sort((a, b) => Math.hypot(a.c - hero.c, a.r - hero.r) - Math.hypot(b.c - hero.c, b.r - hero.r))[0];
+      if (!target) break;
+      const heroType = sprites.heroTypes[HERO_CLASSES.indexOf(hero.cls)];
+      await walkTo(v, hero, heroType, target.c, target.r);
+      const move = melee[hero.cls];
+      const res = v.applySilentDamage(move, target.c, target.r, target.markerZ);
+      syncGoblins(v, goblins, sprites.goblinType);
+      log(`⚔️ ${hero.cls} ${move.name} → goblin at (${target.c},${target.r})${res.destroyed ? ' — down!' : ''}`, 'hit');
+      await wait(350);
+    }
+  }
+
+  const survivors = goblins.filter((g) => g.alive).length;
+  log(`Battle over. ${goblins.length - survivors}/${goblins.length} goblins destroyed, ${survivors} survivors.`, 'win');
+  startBtn.disabled = false;
+}
+
+startBtn.addEventListener('click', () => { runBattle(); });
+resetBtn.addEventListener('click', () => {
+  iframe.src = 'voxel.html?_=' + Date.now();
+  clearLog();
+  log('Map reset. Click Start to run the battle again.', 'info');
+  startBtn.disabled = false;
+});
+</script>
+</body>
+</html>

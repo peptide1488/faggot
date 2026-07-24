@@ -1,0 +1,226 @@
+- generic [active] [ref=f25e1]:
+  - banner [ref=f25e2]:
+    - generic [ref=f25e3]:
+      - generic [ref=f25e10]:
+        - generic [ref=f25e11]: Grimoire v120.183
+        - generic [ref=f25e12]: Fighter 1 · v120.183
+      - generic [ref=f25e13]:
+        - combobox "Switch character" [ref=f25e14]:
+          - option "SpriteTest" [selected]
+          - option "PreWarmTest"
+          - option "DiagBB"
+          - option "RevertCheck"
+          - option "DrawCheck"
+        - button "🔍" [ref=f25e15] [cursor=pointer]
+        - button "＋" [ref=f25e16] [cursor=pointer]
+        - button "⚙" [ref=f25e17] [cursor=pointer]
+  - main [ref=f25e18]:
+    - generic [ref=f25e359]:
+      - generic [ref=f25e360]:
+        - heading "🎲 DM Mode" [level=2] [ref=f25e361]
+        - button "Exit" [ref=f25e362] [cursor=pointer]
+      - paragraph [ref=f25e363]: "Players tap \"Join game\" and enter:"
+      - generic [ref=f25e364]: connecting…
+      - generic [ref=f25e365]: 0 player(s) connected
+    - generic [ref=f25e366]:
+      - heading "📜 Campaign" [level=2] [ref=f25e368]
+      - paragraph [ref=f25e369]: Save this session — map, monsters, party progress & log — to continue another night. Players join first, then you load.
+      - generic [ref=f25e370]:
+        - combobox [ref=f25e371]:
+          - option "— saved campaigns —" [selected]
+        - button "Load" [ref=f25e372] [cursor=pointer]
+        - button "💾 Save" [ref=f25e373] [cursor=pointer]
+    - generic [ref=f25e374]:
+      - generic [ref=f25e375]:
+        - heading "Battle" [level=2] [ref=f25e376]
+        - generic [ref=f25e377]:
+          - button "−" [ref=f25e378] [cursor=pointer]
+          - generic [ref=f25e379]: Round 1
+          - button "＋" [ref=f25e380] [cursor=pointer]
+      - button "▶ Start battle (places tokens & rolls initiative)" [ref=f25e381] [cursor=pointer]
+    - generic [ref=f25e382]:
+      - heading "Players" [level=2] [ref=f25e383]
+      - generic [ref=f25e384]: No players yet — share the code.
+    - generic [ref=f25e385]:
+      - heading [level=2] [ref=f25e386]:
+        - text: Monsters
+        - button "📖 Bestiary" [ref=f25e387] [cursor=pointer]
+        - button "🧑 New NPC" [ref=f25e388] [cursor=pointer]
+      - generic [ref=f25e389]:
+        - generic [ref=f25e390]: I
+        - generic [ref=f25e392]:
+          - generic [ref=f25e393]: Innkeeper Rosalind
+          - text: AC 10 · HP 10/10
+        - button "📋" [ref=f25e394] [cursor=pointer]
+        - button "⚔" [ref=f25e395] [cursor=pointer]
+        - button "📍" [ref=f25e396] [cursor=pointer]
+        - button "🎒 1" [ref=f25e397] [cursor=pointer]
+        - button "–" [ref=f25e398] [cursor=pointer]
+        - spinbutton [ref=f25e399]: "1"
+        - button "+" [ref=f25e400] [cursor=pointer]
+        - button "✕" [ref=f25e401] [cursor=pointer]
+      - generic [ref=f25e402]:
+        - textbox "Name" [ref=f25e403]
+        - spinbutton "HP" [ref=f25e404]
+        - spinbutton "AC" [ref=f25e405]
+        - button "Add" [ref=f25e406] [cursor=pointer]
+    - generic [ref=f25e407]:
+      - heading [level=2] [ref=f25e408]:
+        - text: Map — 8×8
+        - button "🔄 Rotate" [ref=f25e409] [cursor=pointer]
+      - generic [ref=f25e410]: I
+      - paragraph [ref=f25e413]: Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)
+      - generic [ref=f25e414]:
+        - button "Erase" [ref=f25e415] [cursor=pointer]
+        - button "Grass" [ref=f25e416] [cursor=pointer]
+        - button "Stone" [ref=f25e417] [cursor=pointer]
+        - button "Wood" [ref=f25e418] [cursor=pointer]
+        - button "Sand" [ref=f25e419] [cursor=pointer]
+        - button "Snow" [ref=f25e420] [cursor=pointer]
+        - button "Mud" [ref=f25e421] [cursor=pointer]
+        - button "Rubble" [ref=f25e422] [cursor=pointer]
+        - button "Water" [ref=f25e423] [cursor=pointer]
+        - button "Brush" [ref=f25e424] [cursor=pointer]
+        - button "Fog" [ref=f25e425] [cursor=pointer]
+        - button "Ice" [ref=f25e426] [cursor=pointer]
+        - button "Acid" [ref=f25e427] [cursor=pointer]
+        - button "Caltrops" [ref=f25e428] [cursor=pointer]
+        - button "Lava" [ref=f25e429] [cursor=pointer]
+        - button "🧱 Wall (full)" [ref=f25e430] [cursor=pointer]
+        - button "⛰ Cave wall" [ref=f25e431] [cursor=pointer]
+        - button "🧱 Low wall" [ref=f25e432] [cursor=pointer]
+        - button "▭ Window" [ref=f25e433] [cursor=pointer]
+        - button "🕳 Pit / chasm" [ref=f25e434] [cursor=pointer]
+        - button "🕳 Pit" [ref=f25e435] [cursor=pointer]
+        - button "Grease" [ref=f25e436] [cursor=pointer]
+        - button "Web" [ref=f25e437] [cursor=pointer]
+        - button "◆ Wall of Force" [ref=f25e438] [cursor=pointer]
+        - button "❄ Wall of Ice" [ref=f25e439] [cursor=pointer]
+        - button "🧱 Wall of Stone" [ref=f25e440] [cursor=pointer]
+        - button "💨 Wind Wall" [ref=f25e441] [cursor=pointer]
+      - generic [ref=f25e442]:
+        - generic [ref=f25e443]: "Elevation:"
+        - button "⬆ Raise" [ref=f25e444] [cursor=pointer]
+        - button "⬇ Lower" [ref=f25e445] [cursor=pointer]
+      - generic [ref=f25e446]:
+        - generic [ref=f25e447]: "Decorate:"
+        - button "Tree" [ref=f25e448] [cursor=pointer]
+        - button "Tree B" [ref=f25e449] [cursor=pointer]
+        - button "Dead tree" [ref=f25e450] [cursor=pointer]
+        - button "Snow tree" [ref=f25e451] [cursor=pointer]
+        - button "Jungle tree" [ref=f25e452] [cursor=pointer]
+        - button "Bush" [ref=f25e453] [cursor=pointer]
+        - button "Thicket" [ref=f25e454] [cursor=pointer]
+        - button "Snow bush" [ref=f25e455] [cursor=pointer]
+        - button "Rock" [ref=f25e456] [cursor=pointer]
+        - button "Stump" [ref=f25e457] [cursor=pointer]
+        - button "Log" [ref=f25e458] [cursor=pointer]
+        - button "Mushroom" [ref=f25e459] [cursor=pointer]
+        - button "Crystal" [ref=f25e460] [cursor=pointer]
+        - button "Torch" [ref=f25e461] [cursor=pointer]
+        - button "Campfire" [ref=f25e462] [cursor=pointer]
+        - button "Unlit torch" [ref=f25e463] [cursor=pointer]
+        - button "Door (closed)" [ref=f25e464] [cursor=pointer]
+        - button "Door (open)" [ref=f25e465] [cursor=pointer]
+        - button "Grate (closed)" [ref=f25e466] [cursor=pointer]
+        - button "Grate (open)" [ref=f25e467] [cursor=pointer]
+        - button "Loose plank" [ref=f25e468] [cursor=pointer]
+        - button "Loose rock" [ref=f25e469] [cursor=pointer]
+        - button "Lever" [ref=f25e470] [cursor=pointer]
+        - button "Switch" [ref=f25e471] [cursor=pointer]
+        - button "Pressure trap" [ref=f25e472] [cursor=pointer]
+        - button "Disarmed trap" [ref=f25e473] [cursor=pointer]
+        - button "Acid cauldron" [ref=f25e474] [cursor=pointer]
+        - button "Tipped cauldron" [ref=f25e475] [cursor=pointer]
+        - button "Bell" [ref=f25e476] [cursor=pointer]
+        - button "Chest" [ref=f25e477] [cursor=pointer]
+        - button "Drawbridge (up)" [ref=f25e478] [cursor=pointer]
+        - button "Drawbridge (down)" [ref=f25e479] [cursor=pointer]
+        - button "Oil barrel" [ref=f25e480] [cursor=pointer]
+        - button "Acid barrel" [ref=f25e481] [cursor=pointer]
+        - button "Powder keg" [ref=f25e482] [cursor=pointer]
+        - button "✕ Erase" [ref=f25e483] [cursor=pointer]
+      - button "🟥 Innkeeper Rosalind" [ref=f25e485] [cursor=pointer]
+      - generic [ref=f25e486]:
+        - combobox [ref=f25e487]:
+          - option "— load a map —" [selected]
+          - option "Open Field"
+          - option "Castle"
+          - option "Mechanics Lab"
+          - option "Cliff Run"
+          - option "Fireball Field"
+          - option "Sunset Ridge"
+          - option "Chasm Bridge"
+          - option "Swamp"
+          - option "Frozen Lake"
+          - option "Torchlit Crypt"
+          - option "Dungeon"
+          - option "Cave"
+          - option "Tavern"
+        - button "Load" [ref=f25e488] [cursor=pointer]
+        - button "💾 Save" [ref=f25e489] [cursor=pointer]
+      - button "📥 Import map JSON" [ref=f25e491] [cursor=pointer]
+      - paragraph [ref=f25e492]: "Voxel maps: export from iso3d-engine → Export for Grimoire, then import here (or Save → Grimoire library if both apps share the same origin)."
+      - button "Clear all terrain" [ref=f25e493] [cursor=pointer]
+      - generic [ref=f25e494]:
+        - generic [ref=f25e495]: Grid
+        - spinbutton [ref=f25e496]: "8"
+        - generic [ref=f25e497]: ×
+        - spinbutton [ref=f25e498]: "8"
+        - button "Resize" [ref=f25e499] [cursor=pointer]
+    - generic [ref=f25e500]:
+      - heading "Battle Log" [level=2] [ref=f25e501]
+      - generic [ref=f25e503]:
+        - generic [ref=f25e504]: ⚠
+        - generic [ref=f25e505]: Deployed NPC Innkeeper Rosalind
+  - generic:
+    - generic:
+      - generic: ⚠
+      - generic: Deployed NPC Innkeeper Rosalind
+    - generic:
+      - button "✕"
+  - generic [ref=f25e507]:
+    - heading "🎒 Innkeeper Rosalind's inventory" [level=2] [ref=f25e509]
+    - generic [ref=f25e510]:
+      - generic [ref=f25e511]: Rusty key
+      - button "✕" [ref=f25e513] [cursor=pointer]
+    - generic [ref=f25e514]:
+      - combobox [ref=f25e515]:
+        - option "— free text below, or pick —" [selected]
+        - option "Dagger"
+        - option "Club"
+        - option "Mace"
+        - option "Quarterstaff"
+        - option "Spear"
+        - option "Handaxe"
+        - option "Light Crossbow"
+        - option "Shortbow"
+        - option "Longsword"
+        - option "Shortsword"
+        - option "Rapier"
+        - option "Scimitar"
+        - option "Greatsword"
+        - option "Greataxe"
+        - option "Battleaxe"
+        - option "Warhammer"
+        - option "Maul"
+        - option "Glaive"
+        - option "Longbow"
+        - option "Hand Crossbow"
+        - option "Whip"
+        - option "Padded"
+        - option "Leather"
+        - option "Studded Leather"
+        - option "Hide"
+        - option "Chain Shirt"
+        - option "Scale Mail"
+        - option "Breastplate"
+        - option "Half Plate"
+        - option "Ring Mail"
+        - option "Chain Mail"
+        - option "Splint"
+        - option "Plate"
+      - textbox "or type a name" [ref=f25e516]
+      - spinbutton [ref=f25e517]: "1"
+      - button "Add" [ref=f25e518] [cursor=pointer]
+    - button "Close" [ref=f25e519] [cursor=pointer]

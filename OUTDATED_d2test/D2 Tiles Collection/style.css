@@ -1,0 +1,55 @@
+body { background-color: black; color: #afafaf; text-align: center; margin: 0; padding-bottom: 30px; }
+img { float: left; }
+div { width: 100%; }
+hr { max-width: 400px; border-bottom: 0; border-top: 1px solid #68644b; }
+.index hr { border-color: #B4AC92; }
+.inline-block { display: inline-block; width: auto; float: none; }
+.text1 { font-size: 40px; margin: 70px 0 20px 0; color: #ffef86; border-color: #68644b; }
+.text1:before { border-top: solid 1px; border-color: inherit; max-width: 400px; display: block; content: ""; width: 100%; margin: auto; padding-bottom: 10px; }
+.text1:after { border-bottom: solid 1px; border-color: inherit; max-width: 400px; display: block; content: ""; width: 100%; margin: auto; padding-top: 12px; }
+.text2 { font-size: 60px; margin: 40px 0 20px 0; color: #B4AC92; }
+.text2:before { border-top: solid 1px; border-color: inherit; max-width: 500px; display: block; content: ""; width: 100%; margin: auto; padding-bottom: 10px; }
+.text2:after { border-bottom: solid 1px; border-color: inherit; max-width: 500px; display: block; content: ""; width: 100%; margin: auto; padding-top: 12px; }
+.link1 { color: #B4AC92; font-size: 24px; line-height: 1.25; }
+.link1:hover { color: #fff; }
+.back-to-main { padding-top: 40px; }
+.back-to-main a { font-size: 20px; }
+.note { font-size: 16px; padding: 20px 0 10px 0; max-width: 500px; display: inline-block; }
+.tile { width: 450px; height: 225px; }
+.tile2 { width: 600px; height: 300px; }
+.tile3 { width: 500px; height: 300px; }
+.tile4 { width: 520px; height: 300px; }
+.tile5 { width: 500px; height: 250px; }
+.tile6 { width: 600px; height: 340px; }
+.tile7 { width: 510px; height: 285px; }
+.bigimage { max-width: 100%; padding: 40px; box-sizing: border-box; }
+.text-left { text-align: left; }
+.notes-btn { position: fixed; width: auto; right: 0; bottom: 0; padding: 5px; color: #b4ac92; border: 1px solid; z-index: 999; cursor: pointer; user-select: none; }
+.notes-btn:hover { background-color: rgba(180, 172, 146, 0.35); }
+.img-wrap { float: left; width: auto; position: relative; color: #b4ac92; }
+.img-note1 { display: block; position: absolute; top: 2px; right: 2px; text-align: right; border-top: 1px solid; border-right: 1px solid; padding: 5px 8px; }
+.img-note2 { display: block; position: absolute; top: 2px; left: 2px; text-align: left; border-top: 1px solid; border-left: 1px solid; padding: 5px 8px; }
+.img-note3 { display: block; position: absolute; bottom: 2px; right: 2px; text-align: right; border-bottom: 1px solid; border-right: 1px solid; padding: 5px 8px; }
+.img-note4 { display: block; position: absolute; bottom: 2px; left: 2px; text-align: left; border-bottom: 1px solid; border-left: 1px solid; padding: 5px 8px; }
+.img-note5 { display: block; position: absolute; top: 2px; left: 2px; right: 2px; text-align: left; border-top: 1px solid; border-left: 1px solid; border-right: 1px solid; padding: 5px 8px; }
+
+.notes-off,
+.notes-show .notes-on { display: initial; }
+.notes-on,
+.notes-hide .img-note1,
+.notes-hide .img-note2,
+.notes-hide .img-note3,
+.notes-hide .img-note4,
+.notes-hide .img-note5,
+.notes-show .notes-off { display: none; }
+
+
+@media only screen and (max-width: 1214px) {
+	.jungle .tile2,
+	.jungle .img-wrap { float: none; }
+	.jungle .img-note1,
+	.jungle .img-note2,
+	.jungle .img-note5 { top: 2px; right: 2px; left: 2px; text-align: center; border-top: 1px solid; border-left: none; border-right: none; }
+	.jungle .img-note3,
+	.jungle .img-note4 { bottom: 2px; right: 2px; left: 2px; text-align: center; border-bottom: 1px solid; border-left: none; border-right: none; }
+}

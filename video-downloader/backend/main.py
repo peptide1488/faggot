@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import shutil
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -13,6 +14,42 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+# Our bundled extractors for sites yt-dlp doesn't support out of the box
+# (e.g. the KVS/kt_player-based cumgloryhole/gloryholeswallow sites). Rather
+# than rely on yt-dlp's plugin auto-discovery - which is fragile across
+# versions and platforms - we import the classes directly and register them
+# ahead of the Generic extractor on every YoutubeDL we build (see make_ydl).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+CUSTOM_EXTRACTORS = []
+try:
+    from yt_dlp_plugins.extractor.cumgloryhole import CumgloryholeIE
+
+    CUSTOM_EXTRACTORS.append(CumgloryholeIE)
+except Exception as exc:  # pragma: no cover - best-effort, don't kill startup
+    print(f"Warning: could not load custom extractors: {exc}", flush=True)
+
+
+def make_ydl(opts):
+    """Build a YoutubeDL with our custom extractors checked BEFORE Generic.
+
+    yt-dlp iterates its extractor dict in order and uses the first whose
+    suitable() matches; Generic matches everything and sits last, so a
+    dedicated extractor only wins if it comes earlier. add_info_extractor()
+    appends after Generic, so instead we splice our extractors onto the front
+    of the instance's extractor map.
+    """
+    ydl = yt_dlp.YoutubeDL(opts)
+    customs = {}
+    for cls in CUSTOM_EXTRACTORS:
+        ie = cls()
+        ie.set_downloader(ydl)
+        customs[cls.ie_key()] = ie
+    if customs:
+        ydl._ies = {**customs, **ydl._ies}
+        ydl._ies_instances.update(customs)
+    return ydl
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
@@ -62,12 +99,6 @@ if PROXY:
 def extraction_attempts(opts):
     """Yield progressively more aggressive option sets for stubborn sites."""
     yield opts
-    # Twitter/X's default GraphQL API enforces the login/age-gate on
-    # "sensitive"/restricted tweets; its public syndication endpoint
-    # (cdn.syndication.twimg.com -- the same API Twitter's own embed
-    # widgets use) serves the same video without any auth. Harmless no-op
-    # for every other site since extractor_args are keyed by extractor name.
-    yield {**opts, "extractor_args": {"twitter": {"api": ["syndication"]}}}
     try:
         from yt_dlp.networking.impersonate import ImpersonateTarget
 
@@ -87,6 +118,9 @@ MIN_VALID_FILESIZE = 10 * 1024  # 10 KB
 
 
 def _has_dedicated_extractor(url: str) -> bool:
+    for ie in CUSTOM_EXTRACTORS:
+        if ie.suitable(url):
+            return True
     for ie in yt_dlp.extractor.gen_extractor_classes():
         if ie.ie_key() != "Generic" and ie.suitable(url):
             return True
@@ -217,7 +251,7 @@ def get_info(url: str):
     primary_error = None
     for attempt_opts in extraction_attempts(ydl_opts):
         try:
-            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+            with make_ydl(attempt_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             break
         except Exception as exc:
@@ -368,7 +402,7 @@ def run_download(job_id: str, req: DownloadRequest):
         return moved, reasons
 
     def do_download(opts):
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with make_ydl(opts) as ydl:
             # Extract first without format processing so missing heights can
             # be recovered before "best" is chosen, then download
             info = ydl.extract_info(req.url, download=False, process=False)

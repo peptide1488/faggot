@@ -20,7 +20,10 @@ import {
   allocateTexSlot,
   resetCustomTexAllocation,
   registerBlock,
+  isBottomOfTypeStack,
+  typeStackHeight,
 } from '../src/voxel/blocks.js';
+import { VoxelStore } from '../src/voxel/store.js';
 
 let passed = 0;
 let failed = 0;
@@ -61,13 +64,244 @@ console.log('resolveFace — simple materials');
   assert(resolveFace('bedrock', FACE.BOTTOM) === TEX.BEDROCK, 'bedrock bottom = BEDROCK (all)');
 }
 
-console.log('resolveFace — grass (top/side/bottom)');
+console.log('resolveFace — grass (top/side/bottom + 3-course stack)');
 {
-  assert(resolveFace('grass', FACE.TOP) === TEX.GRASS_TOP, 'grass top = GRASS_TOP');
+  assert(resolveFace('grass', FACE.TOP) === TEX.GRASS_TOP, 'lone/top-of-stack grass top = GRASS_TOP');
   assert(resolveFace('grass', FACE.BOTTOM) === TEX.DIRT, 'grass bottom = DIRT');
   for (const f of [FACE.NORTH, FACE.EAST, FACE.SOUTH, FACE.WEST]) {
-    assert(resolveFace('grass', f) === TEX.GRASS_SIDE, `grass ${f} = GRASS_SIDE`);
+    assert(resolveFace('grass', f, { depth: 0 }) === TEX.GRASS_SIDE, `grass ${f} depth0 = GRASS_SIDE (top course)`);
+    assert(resolveFace('grass', f, { depth: 1 }) === TEX.DIRT, `grass ${f} depth1 = DIRT (mid course)`);
+    // depth 2+ stays plain DIRT without a store — foot trim only via footByNeighbor on real bottoms
+    assert(resolveFace('grass', f, { depth: 2 }) === TEX.DIRT, `grass ${f} depth2 = DIRT (no baked foot in side[])`);
   }
+  assert(resolveFace('grass', FACE.TOP, { depth: 1 }) === TEX.DIRT, 'mid-stack grass top face = DIRT (not grass top)');
+}
+
+console.log('resolveFace — neighbor-aware grass foot transitions');
+{
+  // 3-high grass on stone → bottom sides use GRASS_FOOT_STONE
+  const onStone = new VoxelStore();
+  onStone.set(0, 0, 0, 'stone');
+  onStone.set(0, 0, 1, 'grass');
+  onStone.set(0, 0, 2, 'grass');
+  onStone.set(0, 0, 3, 'grass');
+  assert(isBottomOfTypeStack(onStone, 0, 0, 1, 'grass'), 'z=1 is bottom of grass stack');
+  assert(typeStackHeight(onStone, 0, 0, 1, 'grass') === 3, 'grass stack height is 3');
+  assert(
+    resolveFace('grass', FACE.NORTH, { depth: 2, store: onStone, c: 0, r: 0, z: 1 }) === TEX.GRASS_FOOT_STONE,
+    '3-high grass on stone: bottom side uses GRASS_FOOT_STONE',
+  );
+  assert(
+    resolveFace('grass', FACE.NORTH, { depth: 0, store: onStone, c: 0, r: 0, z: 3 }) === TEX.GRASS_SIDE,
+    'top of grass stack still GRASS_SIDE',
+  );
+
+  // On sand
+  const onSand = new VoxelStore();
+  onSand.set(1, 0, 0, 'sand');
+  onSand.set(1, 0, 1, 'grass');
+  onSand.set(1, 0, 2, 'grass');
+  assert(
+    resolveFace('grass', FACE.EAST, { depth: 1, store: onSand, c: 1, r: 0, z: 1 }) === TEX.GRASS_FOOT_SAND,
+    'grass on sand: foot = GRASS_FOOT_SAND',
+  );
+
+  // On mud
+  const onMud = new VoxelStore();
+  onMud.set(2, 0, 0, 'mud');
+  onMud.set(2, 0, 1, 'grass');
+  onMud.set(2, 0, 2, 'grass');
+  assert(
+    resolveFace('grass', FACE.SOUTH, { depth: 1, store: onMud, c: 2, r: 0, z: 1 }) === TEX.GRASS_FOOT_MUD,
+    'grass on mud: foot = GRASS_FOOT_MUD',
+  );
+
+  // On dirt/field → default grass base
+  const onDirt = new VoxelStore();
+  onDirt.set(3, 0, 0, 'dirt');
+  onDirt.set(3, 0, 1, 'grass');
+  onDirt.set(3, 0, 2, 'grass');
+  assert(
+    resolveFace('grass', FACE.WEST, { depth: 1, store: onDirt, c: 3, r: 0, z: 1 }) === TEX.GRASS_BASE,
+    'grass on dirt: foot = GRASS_BASE (field grass trim)',
+  );
+
+  // Lone 1-high grass never uses foot override (keeps GRASS_SIDE)
+  const lone = new VoxelStore();
+  lone.set(4, 0, 0, 'stone');
+  lone.set(4, 0, 1, 'grass');
+  assert(
+    resolveFace('grass', FACE.NORTH, { depth: 0, store: lone, c: 4, r: 0, z: 1 }) === TEX.GRASS_SIDE,
+    '1-high grass on stone still uses GRASS_SIDE (not foot override)',
+  );
+
+  // Beside: grass on dirt, sand under the north neighbor → north face sand foot
+  const shore = new VoxelStore();
+  shore.set(5, 0, 0, 'dirt');
+  shore.set(5, -1, 0, 'sand'); // under the north-adjacent cell
+  shore.set(5, 0, 1, 'grass');
+  shore.set(5, 0, 2, 'grass');
+  assert(
+    resolveFace('grass', FACE.NORTH, { depth: 1, store: shore, c: 5, r: 0, z: 1 }) === TEX.GRASS_FOOT_SAND,
+    'grass on dirt with sand under north neighbor: north foot = sand',
+  );
+  assert(
+    resolveFace('grass', FACE.SOUTH, { depth: 1, store: shore, c: 5, r: 0, z: 1 }) === TEX.GRASS_BASE,
+    'south face still dirt/default grass base (no sand that way)',
+  );
+
+  // Water under grass
+  const onWater = new VoxelStore();
+  onWater.set(6, 0, 0, 'water');
+  onWater.set(6, 0, 1, 'grass');
+  onWater.set(6, 0, 2, 'grass');
+  assert(
+    resolveFace('grass', FACE.NORTH, { depth: 1, store: onWater, c: 6, r: 0, z: 1 }) === TEX.GRASS_FOOT_WATER,
+    'grass on water: foot = GRASS_FOOT_WATER',
+  );
+}
+
+console.log('resolveFace — dungeon wall neighbor-aware feet');
+{
+  const onSand = new VoxelStore();
+  onSand.set(0, 0, 0, 'sand');
+  onSand.set(0, 0, 1, 'dungeon_wall');
+  onSand.set(0, 0, 2, 'dungeon_wall');
+  onSand.set(0, 0, 3, 'dungeon_wall');
+  assert(
+    resolveFace('dungeon_wall', FACE.NORTH, { depth: 2, store: onSand, c: 0, r: 0, z: 1 }) === TEX.WALL_FOOT_SAND,
+    '3-high wall on sand: bottom side = WALL_FOOT_SAND',
+  );
+  assert(
+    resolveFace('dungeon_wall', FACE.NORTH, { depth: 0, store: onSand, c: 0, r: 0, z: 3 }) === TEX.WALL_CAP,
+    'wall top course still WALL_CAP',
+  );
+
+  const onMud = new VoxelStore();
+  onMud.set(1, 0, 0, 'mud');
+  onMud.set(1, 0, 1, 'dungeon_wall');
+  onMud.set(1, 0, 2, 'dungeon_wall');
+  assert(
+    resolveFace('dungeon_wall', FACE.EAST, { depth: 1, store: onMud, c: 1, r: 0, z: 1 }) === TEX.WALL_FOOT_MUD,
+    'wall on mud: WALL_FOOT_MUD',
+  );
+
+  const onStone = new VoxelStore();
+  onStone.set(2, 0, 0, 'stone');
+  onStone.set(2, 0, 1, 'dungeon_wall');
+  onStone.set(2, 0, 2, 'dungeon_wall');
+  assert(
+    resolveFace('dungeon_wall', FACE.WEST, { depth: 1, store: onStone, c: 2, r: 0, z: 1 }) === TEX.WALL_FOOT_STONE,
+    'wall on stone: WALL_FOOT_STONE',
+  );
+
+  // Thin wall variant shares the same foot map
+  const thin = new VoxelStore();
+  thin.set(3, 0, 0, 'grass');
+  thin.set(3, 0, 1, 'dungeon_wall_thin:N');
+  thin.set(3, 0, 2, 'dungeon_wall_thin:N');
+  assert(
+    resolveFace('dungeon_wall_thin', FACE.SOUTH, { depth: 1, store: thin, c: 3, r: 0, z: 1 }) === TEX.WALL_BASE,
+    'thin wall on grass: default WALL_BASE (grass foot)',
+  );
+}
+
+console.log('resolveFace — stone neighbor-aware feet');
+{
+  const onGrass = new VoxelStore();
+  onGrass.set(0, 0, 0, 'grass');
+  onGrass.set(0, 0, 1, 'stone');
+  onGrass.set(0, 0, 2, 'stone');
+  onGrass.set(0, 0, 3, 'stone');
+  assert(
+    resolveFace('stone', FACE.NORTH, { depth: 2, store: onGrass, c: 0, r: 0, z: 1 }) === TEX.STONE_FOOT_GRASS,
+    '3-high stone on grass: bottom side = STONE_FOOT_GRASS',
+  );
+  assert(
+    resolveFace('stone', FACE.NORTH, { depth: 0, store: onGrass, c: 0, r: 0, z: 3 }) === TEX.STONE,
+    'stone top of stack still plain STONE',
+  );
+
+  const onSand = new VoxelStore();
+  onSand.set(1, 0, 0, 'sand');
+  onSand.set(1, 0, 1, 'stone');
+  onSand.set(1, 0, 2, 'stone');
+  assert(
+    resolveFace('stone', FACE.EAST, { depth: 1, store: onSand, c: 1, r: 0, z: 1 }) === TEX.STONE_FOOT_SAND,
+    'stone on sand: STONE_FOOT_SAND',
+  );
+
+  const onMud = new VoxelStore();
+  onMud.set(2, 0, 0, 'mud');
+  onMud.set(2, 0, 1, 'stone');
+  onMud.set(2, 0, 2, 'stone');
+  assert(
+    resolveFace('stone', FACE.WEST, { depth: 1, store: onMud, c: 2, r: 0, z: 1 }) === TEX.STONE_FOOT_MUD,
+    'stone on mud: STONE_FOOT_MUD',
+  );
+
+  const onWater = new VoxelStore();
+  onWater.set(3, 0, 0, 'water');
+  onWater.set(3, 0, 1, 'stone');
+  onWater.set(3, 0, 2, 'stone');
+  assert(
+    resolveFace('stone', FACE.SOUTH, { depth: 1, store: onWater, c: 3, r: 0, z: 1 }) === TEX.STONE_FOOT_WATER,
+    'stone on water: STONE_FOOT_WATER',
+  );
+
+  const lone = new VoxelStore();
+  lone.set(4, 0, 0, 'grass');
+  lone.set(4, 0, 1, 'stone');
+  assert(
+    resolveFace('stone', FACE.NORTH, { depth: 0, store: lone, c: 4, r: 0, z: 1 }) === TEX.STONE,
+    '1-high stone keeps plain STONE (no foot override)',
+  );
+}
+
+console.log('resolveFace — cliff grass foot only on bottom when connected to grass');
+{
+  // 3-high cliff on grass: bottom side → CLIFF_BASE (grass trim); mid/top → rock courses
+  const onGrass = new VoxelStore();
+  onGrass.set(0, 0, 0, 'grass');
+  onGrass.set(0, 0, 1, 'cliff');
+  onGrass.set(0, 0, 2, 'cliff');
+  onGrass.set(0, 0, 3, 'cliff');
+  assert(
+    resolveFace('cliff', FACE.NORTH, { depth: 2, store: onGrass, c: 0, r: 0, z: 1 }) === TEX.CLIFF_BASE,
+    'cliff bottom on grass → green grass foot (CLIFF_BASE)',
+  );
+  assert(
+    resolveFace('cliff', FACE.NORTH, { depth: 1, store: onGrass, c: 0, r: 0, z: 2 }) === TEX.CLIFF_MID,
+    'cliff mid course is pure rock (CLIFF_MID), no grass',
+  );
+  assert(
+    resolveFace('cliff', FACE.NORTH, { depth: 0, store: onGrass, c: 0, r: 0, z: 3 }) === TEX.CLIFF_SIDE,
+    'cliff top course is CLIFF_SIDE rock rim, no grass',
+  );
+
+  // Same stack on stone: bottom → stone foot / pure rock, never grass green
+  const onStone = new VoxelStore();
+  onStone.set(1, 0, 0, 'stone');
+  onStone.set(1, 0, 1, 'cliff');
+  onStone.set(1, 0, 2, 'cliff');
+  assert(
+    resolveFace('cliff', FACE.NORTH, { depth: 1, store: onStone, c: 1, r: 0, z: 1 }) === TEX.CLIFF_FOOT_STONE,
+    'cliff bottom on stone → CLIFF_FOOT_STONE (no green)',
+  );
+  assert(
+    resolveFace('cliff', FACE.NORTH, { depth: 1, store: onStone, c: 1, r: 0, z: 1 }) !== TEX.CLIFF_BASE,
+    'cliff on stone never uses grass-foot CLIFF_BASE',
+  );
+
+  // Dirt under cliff: pure rock mid, not green grass foot
+  const onDirt = new VoxelStore();
+  onDirt.set(2, 0, 0, 'dirt');
+  onDirt.set(2, 0, 1, 'cliff');
+  onDirt.set(2, 0, 2, 'cliff');
+  assert(
+    resolveFace('cliff', FACE.NORTH, { depth: 1, store: onDirt, c: 2, r: 0, z: 1 }) === TEX.CLIFF_MID,
+    'cliff bottom on dirt → CLIFF_MID rock (green only for grass)',
+  );
 }
 
 console.log('resolveFace — shelf (relative front vs everything else)');
@@ -85,17 +319,13 @@ console.log('resolveFace — shelf (relative front vs everything else)');
 
 console.log('resolveFace — per-elevation side arrays (dungeon_wall)');
 {
-  // 3-stack: depth 0 (top) = cap, depth 1 (mid) = mid, depth 2 (bottom) = base.
+  // Course array is [cap, mid, mid] — baked BASE removed; feet only via footByNeighbor.
   assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 0 }) === TEX.WALL_CAP, '3-stack depth0 = CAP');
   assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 1 }) === TEX.WALL_MID, '3-stack depth1 = MID');
-  assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 2 }) === TEX.WALL_BASE, '3-stack depth2 = BASE');
-  // 5-stack clamps to the last entry (BASE) for anything deeper than the array.
-  assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 3 }) === TEX.WALL_BASE, '5-stack depth3 clamps to BASE');
-  assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 4 }) === TEX.WALL_BASE, '5-stack depth4 clamps to BASE');
-  // Lone block (depth 0) still shows cap, and top face is unaffected by depth.
-  // Top face uses a dedicated top-down texture (STONE), not WALL_CAP — WALL_CAP is a
-  // side-view crop and looks wrong viewed straight down (found via live screenshot, 2026-07-12).
-  assert(resolveFace('dungeon_wall', FACE.TOP, { depth: 0 }) === TEX.STONE, 'lone block top = STONE (top-down texture, not a side-view crop)');
+  assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 2 }) === TEX.WALL_MID, '3-stack depth2 = MID (no baked foot in side[])');
+  assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 3 }) === TEX.WALL_MID, '5-stack depth3 clamps to MID');
+  assert(resolveFace('dungeon_wall', FACE.NORTH, { depth: 4 }) === TEX.WALL_MID, '5-stack depth4 clamps to MID');
+  assert(resolveFace('dungeon_wall', FACE.TOP, { depth: 0 }) === TEX.WALL_TOP, 'lone block top = WALL_TOP (top-down cap, not a side-view crop)');
 }
 
 console.log('atlas UV math');

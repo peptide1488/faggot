@@ -1,0 +1,1169 @@
+<html class="jungle">
+	<head>
+		<link rel="icon" href="./scroll.gif">
+		<link rel="stylesheet" href="./style.css">
+		<script src="./main.js"></script>
+		
+		<title>Jungle</title>
+	</head>
+	<body class="notes-show">
+		<div id="notes-btn" class="notes-btn">
+			<span class="notes-on">Turn off notes</span>
+			<span class="notes-off">Turn on notes</span>
+		</div>
+		
+		<div class="back-to-main">
+			<a class="link1" href="./index.html">Back to the main page</a>
+		</div>
+		<div class="text2">Jungle</div>
+		
+		<div class="">
+			<div class="note text-left">
+			As images are too zoomed-out and dark, open them in new tab to see up close.
+			<br>
+			<br>For now we are gonna assume map only generates towards the Kurast: up (topright,straight), left (topleft) and right (bottomright).
+			<br>Maybe go-through camps that end up behind shouldn't be a concern as well.
+			<br>
+			<br>Stone bridges tell a lot
+			<br>Torch near a stone bridge means a deadend on that side, but only going straight, not guaranteed deadend moving sideways.
+			<br>
+			<br>You can see a squares of water on the turns and crossroads
+			<br>Those sqares mean the river turns, with the square facing the turn direction
+			<br>If sqare is trying to tell you the river turns backwards, it mostly means it's a crossroad and you can either continue going right or turn up
+			<br>There's only one tile that goes straight while having a square on it, and that square is facing back anyway
+			<br>
+			<br>Another way to tell it's a turn are washed up boats. There's one boat turn on the way left, and one on the way right. All other boats belong to the exit tiles.
+			<br>
+			<br>When you go up to the left, expect to turn right and keep to the right side. Memorize the rules for the crossroads and camps, but in most cases you will just turn right.
+			<br>For sorcs: River on turns goes either in a very low arc or very big arc, but nothing close to the sqare (talking about inner arcs here). Whenever you see river sharp to the right it's a crossroad.
+			<br>It applies for the way down as well, whenever rivers inner arc turns in 0-1 jumps it's a crossroad. It's closer to a circle or a bubble for the turns.
+			<br>
+			<br>Any bubble-like (square without one corner) river turn is some sort of a turn. If you see it going straight it's a crossroad with a turn. If it's on the way left/right it means it's 100% a turn.
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">RIVER - STRAIGHT</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							???Log before fork - Left and zigzag
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNS.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							???Water fork no trees - go left
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNS2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Whenever there's a bridge on right river arc, there's nothing on the opposite side
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNS3.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							???Water fork no trees - go left
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNS4.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							???Water fork trees - go right
+							<br>Any non-blocked right path after the wooden bridge is good here
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNS5.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Bridge torches - camp
+							<br>Log torch deadend - camp on the right
+							<br>???Log = zigzag???
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNSoE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Bridge torches - camp
+							<br>Stone bridge torch deadend - camp on the left
+							<br>Late deadend on the right here is a good way for a sorc to know it's a camp
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNSoW.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Exception from the "sqare with stuff in the center" rule, no turn here
+							<br>But this type of straight tiles is super rare anyway
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivEW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Are these tiles commonly used for level change?
+						</span>
+					<img class="tile2" src=".\images\act3\jungle\rivEW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivEW3.PNG">
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Stone bridge torch deadend going up, camp
+							<br>The deadend / Trees touching the water means there's a camp
+							<br>Camp is always on the opposite side of the deadend
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivEWoN.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Stone bridge torch deadend going up, camp
+							<br>The deadend / Trees touching the zigzag water means there's a camp
+							<br>Camp is always on the opposite side of the deadend
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivEWoS.PNG">
+					</div>
+					
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">RIVER - TURNS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							If there's a sqare water after the wooden bridge it's a turn
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Boat on the way up means turn right
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Trees with a river arcing around them means it's a turn
+							<br>No deadend - no camp
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNE3.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Early deadend like this tries to throw you<br>right into the camp on the left
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNEoS.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Trees with a river arcing around them means it's a turn
+							<br>Deadend on the right means there's a camp on top
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNEoW.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivNW.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivNW2.PNG">
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Boat means it's a turn up
+							<br>The only [LEFT-UP] tile with a bridge on the turn
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNW3.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivNWoE.PNG">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Big tree near water here signals it's a deadend 
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNWoS.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivSE.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivSE2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivSE3.PNG">
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Stone bridge torch for camp
+							<br>Torch here is on the wrong side, right deadend
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivSEoN.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Stone bridge torch for camp
+							<br>Right deadend
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivSEoW.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivSW.PNG">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Some turns have wooden bridge with the torch<br>Split has such bridge too, but it doesn't turn as hard<br>It is safe to turn left every time, keeping split in mind
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivSW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							Some turns have wooden bridge with the torch<br>Split has such bridge too, but it doesn't turn as hard<br>It is safe to turn left every time, keeping split in mind
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivSW3.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Stone bridge torch deadend + opening
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivSWoE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Stone bridge torch deadend + opening
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivSWoN.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+				
+		<div class="">
+			<div class="text1">RIVER - CROSSROADS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivSEW2.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivSEW3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivSEW.PNG">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Opening here
+							<br>Look at the torch
+							<br>Another non-deadend stone bridge torch
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivSEWoN.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivNEW2.PNG">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from the right, trees without a river<br>arcing around them means it's not just a turn
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNEW3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Two river squares like that mean it's a crossroad
+							<br>Square like that in general means a turn, with the one exception
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNEW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Opening here
+							<br>Torch coming from the right
+							<br>More trees coming from the left
+							<br>Two river squares like that mean it's a crossroad
+							<br>The only non-deadend stone bridge torch???
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNEWoS.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							This crossroad has a square water no straight line has
+						</span>
+					<img class="tile2" src=".\images\act3\jungle\rivNSE3.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							This crossroad has first bridge a little further than straight tiles
+							<br>Bridges on it also have torches, but they aren't stone bridges
+							<br>No other tile has river going to the right from the arc like this
+							<br>River arc is also shorter than any other arc
+							<br>There's also a weird open field on top of the left side
+							<br>tldr: Wooden bridge with the torch without left turn is this tile
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNSE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							You can tell this is a crossroad tile compared to the straight one
+							<br>by the absence of the second bridge in it
+							<br>and trees near the first bridge 
+						</span>
+					<img class="tile2" src=".\images\act3\jungle\rivNSE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Opening here
+							<br>Coming from the left 2 torches on stone bridge and river goes left
+							<br>Deadend on the right
+							<br>Stone bridge on the river like this means it's a crossroad
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNSEoW.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Unique long bridge over a square water
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNSW.PNG">
+					</div>
+					<img class="tile2" src=".\images\act3\jungle\rivNSW2.PNG">
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							This crossroad has a late wooden bridge similar to the right crossroad
+							<br>Unlike right crossroad this tile has no torches
+							<br>River doesn't go right from the arc either and the arc is shorter
+							<br>Any backwards fork means a turn left
+							<br>Any short right arc (without trees) on the river means it's a crossroad
+						</span>
+					<img class="tile2" src=".\images\act3\jungle\rivNSW3.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Opening here
+							<br>Stone bridge with the torch and river goes right
+							<br>Any backwards fork means a turn left
+							<br>Any short right arc (without trees) on the river means it's a crossroad
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivNSWoE.PNG">
+					</div>
+				</div>
+				<hr>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivNSEW.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivNSEW2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivNSEW3.PNG">
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">RIVER - DEADENDS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivE.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivEoN.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivE2.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivEoS.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivE3.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivEoW.PNG">
+				</div>
+			</div>
+			<hr>
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivN.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivNoE.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivN2.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivNoS.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivN3.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivNoW.PNG">
+				</div>
+			</div>
+			<hr>
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivS.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivSoE.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivS2.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivSoN.PNG">
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							???Stone bridge without torches - deadend???
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\rivS3.PNG">
+					</div>
+					<img class="tile2" src=".\images\act3\jungle\rivSoW.PNG">
+				</div>
+			</div>
+			<hr>
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivW.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivWoE.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivW2.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivWoN.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\rivW3.PNG">
+					<img class="tile2" src=".\images\act3\jungle\rivWoS.PNG">
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">SPIDER FOREST CAMPS - DEADENDS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note3">
+							If the torch is far, it's a waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note3">
+							Torch aligned with the green patch = either good or go-through straight (or both)<br>First torch is close, same as for good camps<br>Check second torch for confirmation
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note3">
+							Torch not aligned with the green patch = bad<br>First torch is close, same as for good camps<br>Check second torch for confirmation
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidE3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Going from topright:<br>Whenever the torch is not aligned with the tree it's a waypoint<br>Otherwise indistinguishable 50/50 good
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidN.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note1">
+							Going from topright:<br>Torch aligned with the tree on top = 50/50 good
+						</span>
+						<span class="img-note4">
+							Entrance at the very bottom = no go-through
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidN2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							Same as good one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidN3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Torch is further and a little bit behind the tree = waypoint<br>No real way to tell go-through from deadend in this direction
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidS.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Early torch = 50/50 good<br>Makes sense to first check bottom entrance, then top one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidS2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Empty camps are indistinguishable from good ones so it's 50/50
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidS3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Torch and webbed body/trunk after means waypoint<br>Unique tree before torch
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Second door arc means no turn topright
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft there's no noticeable difference between empty and correct camps
+							<br>You can only know it's not a waypoint, but it's 50/50 after that
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidW3.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">SPIDER FOREST CAMPS - GO-THROUGH STRAIGHT</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Corner wall with torch means waypoint and go-though<br>Webbed body/trunk after
+						</span>
+						<span class="img-note3">
+							Going from bottomright torch is far
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidEW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>No stone doors, no webbed bodies = 50/50 good
+						</span>
+						<span class="img-note3">
+							Going from bottomright:<br>Torch aligned with the green patch = either good or go-through straight (or both)<br>First torch is close, same as for good camps<br>Check second torch for confirmation<br>Tree is away from the wall = go-through
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidEW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>No stone doors, no webbed bodies = 50/50 good
+						</span>
+						<span class="img-note3">
+							Going from bottomright:<br>Torch aligned with the green patch = either good or go-through straight (or both)<br>First torch is close, same as for good camps<br>Check second torch for confirmation<br>Tree is away from the wall = go-through
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidEW3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Torch is further and a little bit behind the tree = waypoint<br>No real way to tell go-through from deadend in this direction
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Torch misaligned with tree on top = waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNS.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topright:<br>Torch aligned with the tree on top = 50/50 good<br>Additional ruins topleft = go-through<br>Torch next to those ruins = straight
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>Early torch = 50/50 good<br>Wide entrance = go-through straight
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNS2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							Same as good one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNS3.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">SPIDER FOREST CAMPS - GO-THROUGH TURNS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Going from topright:<br>Torch misaligned with tree on top = waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from bottomright:<br>Close torch<br>Correct one and fake one look the same so it's 50/50 after the torch<br>Although spider forest often only has 2 camps cuz of splits
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Torch aligned with the tree on top = 50/50 good<br>Cave not at the bottom = go-through turn
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							Same as good one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNE3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Corner wall with torch means waypoint and go-though<br>Webbed body/trunk after
+						</span>
+						<span class="img-note3">
+							Going from topright:<br>Torch misaligned with tree on top = waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from topright:<br>Torch aligned with the tree on top = 50/50 good<br>Additional ruins topleft = go-through<br>No torch next to those ruins = turn
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							Same as good one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidNW3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Torch is further and a little bit behind the tree = waypoint<br>No real way to tell go-through from deadend in this direction
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidSE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from bottomright:<br>The first torch is closer than for waypoint
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>Early torch = 50/50 good
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidSE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							Same as good one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidSE3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Torch and webbed body/trunk after means waypoint
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>Torch is further and a little bit behind the tree = waypoint<br>No real way to tell go-through from deadend in this direction
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidSW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Early torch = 50/50 good
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidSW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note5">
+							Same as good one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\spidSW3.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">FLAYER CAMPS - DEADENDS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note3">
+							Long wall with greenery = bad<br>Also water<br>Torch next to it = waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from bottomright:<br>Tiny wall = good (with 1 rare exception)
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note3">
+							Long wall with greenery = bad<br>Also water
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygE3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Wall = bad<br>Impossible to tell if waypoint until it's too late
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygN.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from topright:<br>Early torch, aligned before the tree = good<br>No torches at the houses = good<br>Early torch = deadend<br>The only good tile with a single torch next to the house
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygN2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Wall = bad<br>Impossible to tell if waypoint until it's too late
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygN3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Late torch = bad<br>Bridge = waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygS.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>First torch aligned with the tree or before it = good<br>Wall without forest behind = good<br>Torch at the middle of the wall = deadend<br>
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygS2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Late torch = bad<br>Wall after that = deadend
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygS3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Whenever you see water it's not the right camp<br>Waypoint ones have torch next to a wall
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Torch really close to the wall signals the right one
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Whenever you see water it's not the right camp<br>Torch not next to the wall = no waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygW3.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">FLAYER CAMPS - GO-THROUGH STRAIGHT</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Water = bad<br>Waypoint ones have torch next to a wall
+						</span>
+						<span class="img-note3">
+							Going from bottomright:<br>Long wall with greenery = bad<br>Also water<br>No torch near wall here even tho it's a waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygEW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Early torch in the middle of the road for right one<br>No torches at the houses
+						</span>
+						<span class="img-note3">
+							Going from bottomright:<br>Tiny wall = good (with 1 rare exception)
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygEW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Torches near the houses
+						</span>
+						<span class="img-note3">
+							Going from bottomright:<br>Tiny wall here doesn't mean good, but it's a rare exception<br>Gidbinn is always in the first line of ruins<br>Usually you can tell the go-through is impossible and exclude this exception
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygEW3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Tree after the entrance = go-through straight
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Wall = bad<br>Impossible to tell if waypoint until it's too late<br>Torch away from wall = go-through
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNS.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>First torch aligned with the tree or before it = good<br>Wall with trees behind = go-through left or straight<br>Torch at the middle of the wall = good
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Torch is a bit far here<br>The only tile where road goes up like this<br>This weird passage is always good<br>It's always a go-through straight
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNS2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note4">
+							Going from bottomleft:<br>Tree after the entrance = go-through straight
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Wall = bad<br>Impossible to tell if waypoint until it's too late<br>Torch away from wall = go-through
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNS3.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">FLAYER CAMPS - GO-THROUGH TURNS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from bottomright:<br>Arc door = bad, but go-through
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Wall = bad<br>Impossible to tell if waypoint until it's too late
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from bottomright:<br>Wall without greenery = go-through, 50/50 good<br>Can run through and check torches on the houses<br>Torch near the gidbinn wall
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Parallel wall = go-through turn<br>No torches at the houses = good<br>Impossible to tell it's good before the houses
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from bottomright:<br>Wall without greenery = go-through, 50/50 good<br>Torches on the houses = bad<br>No torch near the gidbinn wall
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Parallel wall = go-through turn<br>Torches at the houses = bad<br>Impossible to tell it's bad before the houses
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNE3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Parallel wall = wrong<br>Also a waypoint and a go-through
+						</span>
+						<span class="img-note1">
+							Going from topright:<br>Wall = bad<br>Impossible to tell if waypoint until it's too late<br>Torch away from wall = go-through
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Torch offset from square green patch<br>No torches near houses
+						</span>
+						<span class="img-note3">
+							Going from topright:<br>Torch aligned before the tree = good<br>No torches at the houses = good<br>Not early torch and no walls = go-through turn
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Torch in the center of non-square green patch<br>Torches near houses
+						</span>
+						<span class="img-note3">
+							Going from topright:<br>Torch aligned with the tree = bad<br>Torches at the houses = bad<br>Not early torch and no walls = go-through turn
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygNW3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note3">
+							Going from bottomright:<br>Parallel wall = bad<br>All waypoints are in this general position
+						</span>
+						<span class="img-note5">
+							Waypoint camps pretty much indistinguishable from the empty camps from bottomright
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>Late torch = bad<br>Ruin wall after = go-through turn<br>Waypoint if there was a torch
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygSE.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note1">
+							Going from bottomright:<br>Tiny wall = good (with 1 rare exception)
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>First torch aligned with the tree or before it = good<br>Wall without forest behind = good<br>No torch at the middle of the wall = go-through turn<br>
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygSE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Going from bottomright:<br>Parallel wall = bad
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br> Ruin wall / No torch = go-through turn and no waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygSE3.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							Going from topleft:<br>Torch not close to the wall = bad<br>Any perpendicular wall without close torch = bad<br>Waypoint is indistinguishable from empty camp
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>Wall with trees behind = go-through left or straight<br>Torch not at the middle of the wall = bad<br>Torch midway as you go up = waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygSW.PNG">
+					</div>
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Torch close to the wall
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>First torch aligned with the tree or before it = ~good<br>Wall with trees behind = go-through left or straight<br>Torch at the middle of the wall = good
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygSW2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note2">
+							Going from topleft:<br>Torch not close to the wall = bad<br>50/50 waypoint
+						</span>
+						<span class="img-note4">
+							Going from bottomleft:<br>Late torch = ~bad<br>Wall with trees behind = go-through left or straight<br>Torch not at the middle of the wall = bad<br>No torch midway as you go up = no waypoint
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\pygSW3.PNG">
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">GREAT MARSH CAMPS - DEADENDS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogE.PNG">
+					<div class="img-wrap">
+						<span class="img-note2">
+							All of the left deadends like this have a bridge
+							<br>This bridge is located deeper than go-through bridges
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\bogE2.PNG">
+					</div>
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogE3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogN.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogN2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogN3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogS.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogS2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogS3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogW.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogW2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogW3.PNG">
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">GREAT MARSH CAMPS - GO-THROUGH STRAIGHT</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<div class="img-wrap">
+						<span class="img-note1">
+							For all of these:
+							<br>Going from the right, bridge starts earlier than for deadends
+							<br>Bridge means it's a straight go-through <br>
+						</span>
+						<img class="tile2" src=".\images\act3\jungle\bogEW.PNG">
+					</div>
+					<img class="tile2" src=".\images\act3\jungle\bogEW2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogEW3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogNS.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogNS2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogNS3.PNG">
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">GREAT MARSH CAMPS - GO-THROUGH TURNS</div>
+			
+			<div class="inline-block">
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogNE.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogNE2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogNE3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogNW.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogNW2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogNW3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogSE.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogSE2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogSE3.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogSW.PNG">
+					<img class="tile2" src=".\images\act3\jungle\bogSW2.PNG">
+				</div>
+				<div class="inline-block">
+					<img class="tile2" src=".\images\act3\jungle\bogSW3.PNG">
+				</div>
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">TOWN-JUNGLE TRANSITION</div>
+			
+			<div class="inline-block">
+				<img class="bigimage" src=".\images\act3\jungle\transL.PNG">
+			</div>
+			<div class="inline-block">
+				<img class="bigimage" src=".\images\act3\jungle\transU.PNG">
+			</div>
+		</div>
+		
+		<div class="">
+			<div class="text1">JUNGLE-TOWN TRANSITION</div>
+			
+			<div class="inline-block">
+				<img class="bigimage" src=".\images\act3\jungle\TravL.PNG">
+			</div>
+			<div class="inline-block">
+				<img class="bigimage" src=".\images\act3\jungle\TravU.PNG">
+			</div>
+		</div>
+	</body>
+</html>

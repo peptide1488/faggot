@@ -60,7 +60,19 @@ console.log('math');
 
   const m = getCameraMatrix(0, 1, 0, 0, 1);
   assert(m.matrix.length === 16, 'camera matrix is mat4');
-  assert(m.eye[1] > 0, 'camera eye above ground');
+  assert(m.eye[1] > m.target[1], 'camera eye above look-at target');
+  assert(m.near > 0 && m.far > m.near, 'near/far are a valid positive range');
+  assert(m.far / m.near < 80, 'default zoom keeps far/near ratio healthy for 24-bit depth');
+
+  // Zoomed far out used to clamp near≈2 with far hundreds — depth precision death.
+  const zoomedOut = getCameraMatrix(0.5, 0.1, 10, 10, 16 / 9);
+  assert(zoomedOut.far / zoomedOut.near < 80, 'zoomed-out far/near stays tight (no near=2 + huge far)');
+  assert(zoomedOut.near > 1, 'zoomed-out near is not crushed to a tiny floor');
+
+  // Zoomed in + tall elevation range must still produce a valid non-clipping depth band.
+  const zoomedIn = getCameraMatrix(0.5, 6, 10, 10, 1, undefined, undefined, { elevMin: 0, elevMax: 30 });
+  assert(zoomedIn.near > 0 && zoomedIn.far > zoomedIn.near, 'zoomed-in elevated scene has valid near/far');
+  assert(zoomedIn.far / zoomedIn.near < 80, 'zoomed-in elevated scene keeps depth ratio healthy');
 
   const id = createMat4();
   const inv = createMat4();

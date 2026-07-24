@@ -96,22 +96,63 @@ export function planMaterialLayout({ heightBlocks, hasAutotile = false, hasCusto
 const UV_INSET_PSEUDO_CELL_PX = 64;
 
 export function buildMaterialDef(spec) {
-  const { materialId, layout, properties, shape } = spec;
+  const { materialId, layout, properties, shape, wedge, gasFogColor, gasDensity, gasWeight, gasSpreadRadius } = spec;
   const uvFor = (index) => ({ materialId, ...computeGridUV(index, layout.cols, layout.rows, UV_INSET_PSEUDO_CELL_PX) });
 
-  const def = {
-    top: uvFor(layout.topIdx),
-    side: layout.sideIdx.length === 1 ? uvFor(layout.sideIdx[0]) : layout.sideIdx.map(uvFor),
-    bottom: uvFor(layout.bottomIdx),
-    solid: true,
-    opaque: true,
-  };
-  if (shape) def.shape = shape;
-  if (layout.autotileIdx) def.topAutotile = layout.autotileIdx.map(uvFor);
+  // Volumetric gas materials (see renderer.js's setGasVolumes/FS_SRC gas-volume loop) have NO
+  // real per-face texture at all and emit no geometry (mesher.js's buildMesh skips any
+  // `def.gas` block entirely) — skip the whole top/side/bottom UV-grid computation (there's no
+  // `layout` canvas backing it; the caller never even builds one, see voxel.html's Material
+  // Maker gas branch) and start from a bare def instead.
+  const isGas = !!(properties && properties.gas);
+  const def = isGas
+    ? { solid: false, opaque: false }
+    : {
+        top: uvFor(layout.topIdx),
+        side: layout.sideIdx.length === 1 ? uvFor(layout.sideIdx[0]) : layout.sideIdx.map(uvFor),
+        bottom: uvFor(layout.bottomIdx),
+        solid: true,
+        opaque: true,
+      };
+  // Shape/wedge/autotile are all texture/geometry concepts that don't apply to a gas volume (no
+  // faces to texture-map a shape onto, no top face to autotile, no geometry at all) — skip
+  // entirely for gas rather than accepting inputs that would silently do nothing.
+  if (!isGas) {
+    if (shape) def.shape = shape;
+    // Mutually exclusive with `shape` (mesher.js's buildMesh branches on def.shape vs
+    // def.wedge, caller's job not to set both) — see blocks.js WEDGES for the wedge/ramp
+    // primitive itself.
+    if (wedge) def.wedge = wedge;
+    if (layout.autotileIdx) def.topAutotile = layout.autotileIdx.map(uvFor);
+  } else {
+    // The data a gas material's rendering/simulation actually needs — read directly off
+    // BLOCKS[type] by voxel.html whenever it rebuilds the current gas-volume list
+    // (recomputeGasVolumes) or steps the spread simulation (stepGas), same "just data on the
+    // def" pattern `light` already uses. gasWeight/gasSpreadRadius default to 0/undefined when
+    // omitted (spread.js's own fallback to GAS_SPREAD_RADIUS), so a material that never touches
+    // those sliders behaves exactly like the plain built-in gas/fog types.
+    def.gasFogColor = gasFogColor;
+    def.gasDensity = gasDensity;
+    if (gasWeight) def.gasWeight = gasWeight;
+    if (gasSpreadRadius != null) def.gasSpreadRadius = gasSpreadRadius;
+  }
   if (properties && Object.keys(properties).length) {
-    const { translucent, light, ...gameplayOnly } = properties;
+    const { translucent, light, gas, ...gameplayOnly } = properties;
     if (translucent !== undefined) def.translucent = translucent;
     if (light !== undefined) def.light = light;
+    if (gas) {
+      // Promoted to the top level for the same reason translucent/light are (see this
+      // function's own doc comment) — spread.js's isGasType reads BLOCKS[type].gas directly,
+      // not a nested properties bag. A gas material can never be solid/opaque (it must be
+      // walkable-through and spreadable-through — see spread.js's isOpenCell/stepGas), so
+      // checking "Gas" forces the same solid:false/opaque:false/translucent:true shape the
+      // built-in `fog` material already hardcodes, regardless of whatever the "Light passes
+      // through" checkbox was separately set to — a "solid gas" or "opaque gas" makes no sense.
+      def.gas = true;
+      def.solid = false;
+      def.opaque = false;
+      def.translucent = true;
+    }
     if (Object.keys(gameplayOnly).length) def.properties = { ...gameplayOnly };
   }
   return def;
@@ -120,15 +161,16 @@ export function buildMaterialDef(spec) {
 /** Register a fully-specified custom material (after its texture images have been drawn into
  * the material's own canvas by the caller, and that canvas uploaded to the renderer via
  * setMaterialAtlas) and return the library entry to persist. */
-export function createCustomMaterial({ name, heightBlocks, layout, properties, shape }) {
+export function createCustomMaterial({ name, heightBlocks, layout, properties, shape, wedge, gasFogColor, gasDensity, gasWeight, gasSpreadRadius }) {
   const materialId = slugify(name);
-  const def = buildMaterialDef({ materialId, layout, properties, shape });
+  const def = buildMaterialDef({ materialId, layout, properties, shape, wedge, gasFogColor, gasDensity, gasWeight, gasSpreadRadius });
   registerBlock(materialId, def);
   return {
     id: materialId,
     name,
     heightBlocks,
     layout,
+    wedge,
     shape,
     def,
     createdAt: Date.now(),

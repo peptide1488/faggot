@@ -4155,6 +4155,7 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn block" data-usea="grapple" style="margin-bottom:8px;text-align:left">🤼 Grapple<small style="display:block;opacity:.75">Grappled: speed 0 until it escapes</small></button>
         <button class="btn block" data-usea="taunt" style="margin-bottom:8px;text-align:left">😠 Taunt<small style="display:block;opacity:.75">Intimidation vs Insight — success: Frightened of you</small></button>
         <button class="btn block" data-study="1" style="margin-bottom:8px;text-align:left">📖 Recall Knowledge<small style="display:block;opacity:.75">Arcana/History/Nature/Religion vs DC 10+CR — uses your action</small></button>`;
+      if(hasAction(c)) body+=`<button class="btn block" data-usea="help" style="margin-bottom:8px;text-align:left">🤝 Help — aid an ally<small style="display:block;opacity:.75">Action — the next ally to attack ${esc(mo.name)} before your next turn has advantage</small></button>`;
       if(c.frenzied && isRaging(c)) body+=`<button class="btn block" data-usea="frenzy" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.bonus?' disabled style="opacity:.5"':''}>🩸 Frenzy Attack<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':'A melee attack as your bonus action'}</small></button>`;
       if(isBerserker(c,14)) body+=`<button class="btn block" data-usea="retaliate" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.reaction?' disabled style="opacity:.5"':''}>🩸 Retaliation<small style="display:block;opacity:.75">${c.battle&&c.battle.reaction?'Reaction already used':'Reaction — a melee attack against this adjacent foe'}</small></button>`;
       if(c.cls==='Monk' && (Number(c.level)||1)>=2) body+=`<button class="btn block" data-usea="flurry" style="margin-bottom:8px;text-align:left"${(c.battle&&c.battle.bonus)||(c.kiLeft||0)<=0?' disabled style="opacity:.5"':''}>🥋 Flurry of Blows — 1 ki<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':(c.kiLeft||0)<=0?'No ki left':'Bonus action — two unarmed strikes'}</small></button>`;
@@ -4634,6 +4635,19 @@ function openAdjacentUseUI(c, s, me){
             log('🏹 '+c.name+' strikes back with Giant Killer at '+mo.name+' — '+(ev.hit?'hit for '+ev.dmg:'miss'));
             return null;
           }});
+        }
+        else if(actId==='help'){
+          if(!hasAction(c)){ flashBanner('No action left'); return; }
+          spendAction(c);
+          // Advantage lives on the target as a ~1-round condition attackAdvantage reads (T('Helped')),
+          // so it benefits whichever ally strikes next — the RAW "chosen ally" is simplified to
+          // "next attacker," same treatment Distracting Strike gets. addCond routes through the
+          // active adapter, so this syncs to the DM/other players in net play automatically.
+          ad.addCond(mo,'Helped',1);
+          log('🤝 '+c.name+' takes the Help action — the next ally to attack '+mo.name+' has advantage');
+          flashBanner('🤝 Helping — next ally attack on '+mo.name+' has advantage');
+          afterManeuver();
+          return;
         }
         else if(actId==='hordebreaker') draw({kind:'hordeBreakerPick', mo});
         return;
