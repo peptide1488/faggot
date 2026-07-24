@@ -3393,3 +3393,55 @@ was re-confirmed unaffected; the DM's new ambient-light chips actually flip
 `net.session.map.light.mode` and highlight correctly on click; and the Shield flow end-to-end —
 the real modal text, the real Yes button, reaction/slot spent, AC genuinely 10→15 through
 `computeAC`, all inside the actual running page, not just the test harness.
+
+## Shield reaction — DM-hosted (v120.227)
+
+v120.226 shipped Shield in Quick Battle only, and scoped DM-hosted out with a note that it "needs
+a network round-trip." User pushed back — correctly — that DM-hosted already HAS working
+multiplayer that syncs. Right: the transport (`dmSend`/`conn.send`/`dmBroadcast`) and even the
+exact reaction-readiness sync pattern (`shadowMartyrArmed`/`cuttingWordsArmed`, advertised in
+`playerHello`, stored on the DM's mirror) were all already there. The only genuinely missing
+piece was a **pause-and-resume shape** in the DM's monster-attack resolver — `dmMonsterAttack`'s
+roll handler resolved hit→damage→apply synchronously in one go, with no "stop here, wait for a
+message back, then continue" step. That's a much smaller lift than a from-scratch design pass,
+and it reuses the `maneuverCheck`→`maneuverResult` round-trip this app already runs for a
+monster's Shove/Grapple against a player.
+
+The flow: `playerHello` now advertises `shieldReady: shieldEligible(c)` (same channel as the two
+existing armed-reaction flags). When the DM rolls a monster's attack that HITS a real connected
+player (never an echo redirect / dominated ally) whose mirror says `shieldReady`, AND +5 AC could
+actually flip that specific roll to a miss (never against a crit — AC can't stop one, same gate
+Sanctuary uses), the resolver sends a `reactionOffer` and PAUSES into a `waitReaction` phase
+(`net._pendingReaction` holds the resume closure; the modal shows "Waiting for <player>'s Shield
+decision…" with a "Resolve without waiting" button). The player's own device — the only one that
+holds their real spell list/slots/reaction — gets the SAME `openShieldPrompt` QB uses, casts via
+the SAME `addEffect(c,'Shield')` pipeline, and reports back a `reactionChoice` with its new AC
+(or auto-declines instantly if it's somehow no longer eligible, so the DM never hangs). The DM's
+`reactionChoice` handler resumes the held attack against the possibly-raised AC — which, since
+`sessionAdapter.ac` reads the mirror and the mirror's AC was just updated, correctly re-resolves
+the hit/miss (and the later damage `Engine.attack` too) against the new AC. A 15-second safety
+timeout auto-resolves as "no reaction" if the player is away/offline.
+
+**One shared eligibility function across all three modes:** QB checks `shieldEligible(c)` directly
+(it has the real `c`); DM-hosted checks the synced `shieldReady` boolean that IS
+`shieldEligible(c)` computed on the player's device — never a second copy of the rule. Only the
+trigger plumbing differs (synchronous modal in QB, async round-trip in DM-hosted), exactly
+because of the device-boundary reality, not a parallel reimplementation.
+
+**Still out of scope, stated plainly:** player-net (a player watching ANOTHER player get attacked
+can't Shield them — Shield only ever protects yourself anyway, so this is a non-issue for Shield
+specifically); other reaction spells (Hellish Rebuke, Counterspell, Absorb Elements) — the
+machinery built here (`reactionOffer`/`reactionChoice`/`net._pendingReaction`/the `waitReaction`
+phase) is deliberately reusable for them, but each has its own targeting/timing questions and
+isn't wired yet; and monster-side reactions. This pass does Shield, the most common and highest-
+value reaction, across QB and DM-hosted both.
+
+Tests: 10 new assertions — `playerHello` advertising `shieldReady`, the player-side
+`reactionOffer` handler (eligible → casts + reports back with new AC; ineligible → auto-declines
+with no prompt so the DM never hangs), and the DM-side `reactionChoice` handler (resumes the held
+attack, clears the pending state, ignores a choice from a different player than the one being
+awaited). Also live-verified via Playwright across both simulated devices in one page: the player
+side (real modal, real Yes button, AC 9→14, `reactionChoice` reported back) AND the full DM side —
+a real Ogre attack rolled into the flip window actually paused (`reactionOffer` sent, modal showed
+"Waiting for…"), and the player's `reactionChoice` with a raised AC resumed it and correctly
+flipped the shown result from a hit to a MISS, mirror AC updated, `shieldReady` consumed.

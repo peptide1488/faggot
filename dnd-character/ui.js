@@ -3412,7 +3412,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent,shieldReady:!!d.char.shieldReady});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; checkMountDeaths(net.session, ()=>{}); dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -3480,6 +3480,12 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
   // a push sends its own 'move'); this is purely so the DM's UI can show what happened.
   else if(d.t==='maneuverResult'){ const mo=net.session.monsters.find(m=>m.id===d.mon); const who=net.session.players.find(p=>p.id===conn.peer);
     flashBanner((who?who.name:'The player')+(d.hit?' is hit by ':' resists ')+(mo?mo.name:'the monster')+"'s "+(d.kind==='grapple'?'grapple':'shove')); render(); }
+  // Shield reaction (DM-hosted) — the targeted player's own device decided whether to cast
+  // Shield (only their device holds the real spell list/slots), and reports back here so the
+  // paused monster-attack resolution (see dmMonsterAttack's maRoll → net._pendingReaction) can
+  // continue with the possibly-raised AC. Matches the maneuverCheck→maneuverResult round-trip
+  // pattern exactly, just resuming a held modal instead of only flashing a result.
+  else if(d.t==='reactionChoice'){ if(net._pendingReaction && net._pendingReaction.playerId===conn.peer){ const r=net._pendingReaction; net._pendingReaction=null; r.resume(d); } }
 }
 
 function dmOpportunityAttack(mo,p){
@@ -3653,6 +3659,27 @@ function playerOnData(d){ if(!d) return;
     } else flashBanner('You resist '+(d.monName||'the monster')+"'s "+(d.kind==='grapple'?'grapple':'shove')+'!');
     if(net.conn){ try{ net.conn.send({t:'maneuverResult', kind:d.kind, mon:d.mon, hit}); }catch(e){} }
     render();
+  }
+  // Shield reaction (DM-hosted) — the DM's monster rolled a hit that +5 AC could flip, and this
+  // device's synced shieldReady flag said we could react. The real spell list/slots/reaction
+  // live only here, so the actual cast happens on this device (same "DM can't roll our side"
+  // reasoning as 'hazard'/'maneuverCheck'), then we report the choice — and our new AC if we
+  // cast — back so the DM can finish resolving. Auto-declines if we're somehow no longer
+  // eligible (slot spent since the offer, etc.) so the DM never hangs waiting.
+  else if(d.t==='reactionOffer'){
+    const c=playerChar();
+    const decline=()=>{ if(net.conn){ try{ net.conn.send({t:'reactionChoice', shield:false}); }catch(e){} } };
+    if(!c || d.reaction!=='shield' || !shieldEligible(c)){ decline(); return; }
+    openShieldPrompt(c, {total:d.total, ac:d.ac}, ()=>{
+      c.battle.reaction=true;
+      if(!c.slots[1]) c.slots[1]={total:0,used:0};
+      c.slots[1].used=Math.min(spellSlots(c)[1]||0,(c.slots[1].used||0)+1);
+      addEffect(c,'Shield');
+      logChange(c,'🛡️ Shield — +5 AC until the start of your next turn (reaction vs '+(d.monName||'an attack')+')');
+      save(); render(); playerHello();
+      if(net.conn){ try{ net.conn.send({t:'reactionChoice', shield:true, newAC:computeAC(c)}); }catch(e){} }
+      flashBanner('🛡️ Shield cast — +5 AC');
+    }, decline);
   }
 }
 
@@ -5037,6 +5064,9 @@ function dmMonsterAttack(mo){
         else body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:30px;font-weight:700;color:var(--bad)">${st.dmg}</div></div><div class="row2"><button class="btn bad" id="maFull">Apply ${st.dmg} (fail)</button><button class="btn ghost" id="maHalf">Apply ${Math.floor(st.dmg/2)} (save)</button></div>`; }
     } else if(st.phase==='aim'){
       body+= outOfAttacks?`<div class="empty" style="padding:8px 0">No attacks left this turn — ▶ Next turn to reset.</div>`:`<button class="btn block" id="maRoll">🎲 Roll to hit (+${st.atk.hit||0}) vs AC ${t.ac}</button>`;
+    } else if(st.phase==='waitReaction'){
+      body+=`<div class="card" style="text-align:center;margin:0 0 8px">🛡️ ${esc(mo.name)} rolled <b>${st.pendingRoll}</b> — a hit ${esc(t.name)} could block.<br><span class="muted" style="font-size:12px">Waiting for ${esc(t.name)}'s Shield decision…</span></div>
+        <button class="btn ghost block" id="maReactSkip">Resolve without waiting</button>`;
     } else {
       const ac=st.ac!=null?st.ac:t.ac, crit=st.crit||st.d20===20, isHit=st.total>=ac||crit;
       body+=`<div class="card" style="text-align:center;margin:0 0 8px"><div style="font-family:Georgia,serif;font-size:32px;font-weight:700;color:${isHit?'var(--good)':'var(--bad)'}">${st.total}</div><div class="muted">d20(${st.d20}) +${st.atk.hit||0} vs AC ${ac}${st.cover?' (+'+st.cover+' cover)':''} — ${crit?'💥 CRIT':isHit?'HIT':'MISS'}</div></div>`;
@@ -5064,7 +5094,30 @@ function dmMonsterAttack(mo){
       const cwAtk={toHit:st.atk.hit||0, tiles:st.atk.tiles};
       const cwDie=!dominated ? cuttingWordsReduce(net.session, mo, cwAtk, net.session.players) : 0;
       if(cwDie) flashBanner('🎵 Cutting Words — the attack roll is reduced by '+cwDie);
-      const res=Engine.hitResult(sessionAdapter, mo.id, rollTargetId, cwAtk); st.d20=res.d20; st.total=res.total; st.ac=res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:st.total, detail:'d20('+st.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':st.d20===1?'fumble':null, kind:'check'}); draw(); }; }
+      const res=Engine.hitResult(sessionAdapter, mo.id, rollTargetId, cwAtk); const advTag=res.adv?((res.adv>0?' · ADV':' · DIS')+' — '+(res.advWhy||[]).join(', ')):''; sfx(res.crit?'crit':res.hit?'hit':'miss'); attackFx(res.crit?'crit':res.hit?'hit':'miss'); pushRoll({label:mo.name+' '+st.atk.name, total:res.total, detail:'d20('+res.d20+') +'+(st.atk.hit||0)+' vs AC '+res.ac+advTag, crit:res.crit?'crit':res.d20===1?'fumble':null, kind:'check'});
+      // Finalize into the HIT/MISS phase — deferred behind the Shield round-trip below when one
+      // is offered, so the AC the DM sees reflects the player's actual reaction choice.
+      const finalize=acOverride=>{ st.d20=res.d20; st.total=res.total; st.ac=acOverride!=null?acOverride:res.ac; st.cover=res.cover; st.crit=res.crit; st.phase='res'; draw(); };
+      // Shield reaction offer: only when +5 AC could actually flip THIS hit to a miss, against a
+      // real connected player (never an echo redirect / dominated ally) whose device told us
+      // it's Shield-ready. Never against a crit (AC can't stop one — same reasoning Sanctuary's
+      // gate uses). Pauses this modal; net._pendingReaction resumes it when their choice lands
+      // (or the 15s safety timeout fires, so an away player can't hang the DM's turn).
+      const p=tgt();
+      if(!dominated && !st.echoRedirect && res.hit && !res.crit && res.total < res.ac+5 && p && p.shieldReady){
+        st.phase='waitReaction'; st.reactionTarget=p.id; st.pendingRoll=res.total;
+        dmSend(p.id, {t:'reactionOffer', reaction:'shield', mon:mo.id, monName:mo.name, total:res.total, ac:res.ac});
+        flashBanner('🛡️ Offering '+p.name+' a Shield reaction…');
+        net._pendingReaction={ playerId:p.id, resume:choice=>{
+          clearTimeout(st.reactionTimer);
+          if(choice && choice.shield){ const pp=tgt(); if(pp){ pp.ac=choice.newAC; pp.shieldReady=false; } flashBanner('🛡️ '+p.name+' casts Shield — AC '+choice.newAC); dmBroadcast(); finalize(choice.newAC); }
+          else { if(choice&&choice.timedOut) flashBanner('⏱️ No reaction from '+p.name+' — resolving'); finalize(); }
+        }};
+        st.reactionTimer=setTimeout(()=>{ if(net._pendingReaction && net._pendingReaction.playerId===st.reactionTarget){ const r=net._pendingReaction; net._pendingReaction=null; r.resume({shield:false, timedOut:true}); } }, 15000);
+        draw();
+        return;
+      }
+      finalize(); }; }
     { const mm=$('#maManeuver'); if(mm) mm.onclick=()=>{ if(!commitAttack()) return; sfx('swing');
       const bonus=monsterCheckBonus(mo), d20=rnd(20); st.total=d20+bonus; st.maneuverSent=true;
       dmSend(t.id, {t:'maneuverCheck', kind:st.atk.maneuver, monTotal:st.total, mon:mo.id, monName:mo.name});
@@ -5098,6 +5151,7 @@ function dmMonsterAttack(mo){
     { const f=$('#maFull'); if(f) f.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(false)); flashBanner(tgt().name+' takes '+ev.dmg+(ev.cond?' — 🌀 '+ev.cond:'')); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const hf=$('#maHalf'); if(hf) hf.onclick=()=>{ const ev=Engine.castApply(sessionAdapter, mo.id, st.targetId, saveSp(true)); flashBanner(tgt().name+' takes '+ev.dmg+' (saved)'); $('#modalRoot').innerHTML=''; useAtk(); }; }
     { const rs=$('#maReset'); if(rs) rs.onclick=()=>{ st.phase='aim'; st.dmg=0; st.crit=false; st.consumed=false; draw(); }; }
+    { const rk=$('#maReactSkip'); if(rk) rk.onclick=()=>{ if(net._pendingReaction && net._pendingReaction.playerId===st.reactionTarget){ const r=net._pendingReaction; net._pendingReaction=null; clearTimeout(st.reactionTimer); r.resume({shield:false, skipped:true}); } }; }
   }
   draw();
 }

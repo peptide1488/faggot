@@ -3302,5 +3302,63 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   openShieldPrompt=origPrompt;
 }
 
+/* ---- Reactions — Shield in DM-hosted (v120.227): the transport (dmSend/conn.send/dmBroadcast)
+   and the reaction-readiness sync pattern (shadowMartyrArmed/cuttingWordsArmed) already existed;
+   the missing piece was a pause-and-resume shape in the DM's monster-attack resolver plus a
+   reactionOffer→reactionChoice round-trip. The player's own device decides eligibility and casts
+   (the DM never sees their spell list/slots), reporting back only the choice + new AC. ---- */
+{
+  const origPrompt2=openShieldPrompt;
+
+  // playerHello now advertises shieldReady so the DM knows whether to even offer — same
+  // reaction-readiness channel shadowMartyrArmed/cuttingWordsArmed already use.
+  const caster=newCharacter('Net Shield Sorc'); caster.cls='Sorcerer'; caster.level=3; applyClassDefaults(caster);
+  caster.spells=[{name:'Shield',level:1,prepared:true}];
+  caster.hp={max:20,cur:20,temp:0}; caster.armor='none';
+  caster.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setDB(getDB().concat([caster]));
+  const helloSends=[];
+  setNet({role:'player', charId:caster.id, peer:{id:'me1'}, conn:{send:m=>helloSends.push(m)},
+    session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[], order:[], turn:0, players:[{id:'me1',name:caster.name,x:0,y:0}]}});
+  playerHello();
+  T('playerHello: advertises shieldReady:true when the player can react with Shield', helloSends.some(m=>m.t==='hello' && m.char.shieldReady===true));
+
+  // Player receives a reactionOffer and is eligible → casts Shield, reports back shield:true + new AC.
+  const acBefore=computeAC(caster);
+  const netSends=[];
+  getNet().conn.send=m=>netSends.push(m);
+  openShieldPrompt=(c,pre,onAccept)=>onAccept();   // auto-accept
+  playerOnData({t:'reactionOffer', reaction:'shield', mon:'m1', monName:'Goblin', total:12, ac:acBefore});
+  T('reactionOffer (player): an eligible player casts Shield — spends the reaction', caster.battle.reaction===true);
+  T('reactionOffer (player): casting Shield raises the real AC by 5', computeAC(caster)===acBefore+5);
+  T('reactionOffer (player): reports the choice back to the DM with the new AC', netSends.some(m=>m.t==='reactionChoice' && m.shield===true && m.newAC===acBefore+5));
+
+  // A second offer now auto-declines — reaction already spent this round (shieldEligible false).
+  netSends.length=0;
+  let promptShown=false; openShieldPrompt=()=>{ promptShown=true; };
+  playerOnData({t:'reactionOffer', reaction:'shield', mon:'m1', monName:'Goblin', total:12, ac:acBefore});
+  T('reactionOffer (player): auto-declines when no longer eligible (reaction already spent) — no prompt shown', promptShown===false);
+  T('reactionOffer (player): still sends a decline so the DM never hangs waiting', netSends.some(m=>m.t==='reactionChoice' && m.shield===false));
+  setNet(null);
+  setDB(getDB().filter(x=>x.id!==caster.id));
+
+  // DM side: a reactionChoice resumes the held attack (net._pendingReaction) and clears it.
+  let resumed=null;
+  setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, monsters:[], players:[{id:'p1',name:'PC'}], order:[], turn:0}});
+  getNet()._pendingReaction={playerId:'p1', resume:choice=>{ resumed=choice; }};
+  dmOnData({peer:'p1'}, {t:'reactionChoice', shield:true, newAC:15});
+  T('reactionChoice (DM): resumes the paused attack with the player\'s choice', resumed && resumed.shield===true && resumed.newAC===15);
+  T('reactionChoice (DM): clears the pending reaction so it can\'t fire twice', getNet()._pendingReaction===null);
+
+  // A reactionChoice from the WRONG player (not the one we're waiting on) is ignored — no
+  // cross-talk if two attacks were somehow in flight.
+  getNet()._pendingReaction={playerId:'p1', resume:choice=>{ resumed='WRONG'; }};
+  resumed=null;
+  dmOnData({peer:'someone-else'}, {t:'reactionChoice', shield:false});
+  T('reactionChoice (DM): a choice from a different player than we\'re awaiting is ignored', resumed===null && getNet()._pendingReaction!==null);
+  setNet(null);
+  openShieldPrompt=origPrompt2;
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
