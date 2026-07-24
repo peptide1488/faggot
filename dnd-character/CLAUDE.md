@@ -1,15 +1,37 @@
 # Grimoire — D&D 5e Character Keeper
 
-Single-file PWA (deliberate design for the rules/UI — do NOT split *that* up): all game logic
-and data live in the `<script>` block of **index.html** (~4,600 lines). `sw.js` is the offline
-cache, `AUDIT.md` is the 5e-rules baseline, `rules-test.js` is the test harness.
+The single-file rule is **retired** (per VISION.md's 2026-07-21 alignment — "single-file
+index.html is no longer sacred, proactively modularize"). Modularization is staged, not a
+big-bang rewrite: **Stage 1 (done) split out `data.js`** — every pure content table (spells,
+monsters, classes, items, terrain, maps, sprites — ~90 tables, no logic) — leaving all game
+*rules/UI logic* still in index.html's `<script>` block (~11,800 lines now, was ~13,200).
+`sw.js` is the offline cache (both `index.html` and `data.js` are in its `ASSETS` list — **any
+new module file must be added there too, or offline breaks silently**), `AUDIT.md` is the
+5e-rules baseline, `rules-test.js` is the test harness.
 
-**Exception: the isometric battle-map renderer is its own file, `iso-renderer.js`**, loaded via
+**`data.js` is loaded via `<script src>` before the main inline `<script>`** — classic (non-
+module) script tags share one lexical scope, so `data.js`'s top-level `const`/`let` tables are
+plain globals the main script already reads by name, zero call-site changes needed anywhere.
+`rules-test.js` reproduces this by concatenating `data.js` + the extracted `<script>` content
+into ONE `eval()` call (`eval()`'s `let`/`const` don't leak across *separate* eval calls the way
+they do across script tags in a real page — this is a real gotcha, not a stylistic choice, if
+you ever add a third module file: keep it in the same concatenated eval, don't eval it alone).
+**Ordering matters inside data.js**: a few tables reference an earlier one in the same file
+(`MAP_PRESETS` syncs against `INTERACT_TYPES`; `SPRITE_MANIFEST` uses the `_SV`/`_s4` helpers
+declared just above it) — if you add a new data table, check it doesn't reference something
+declared later in the same file, and if it references a *function*, that function must stay in
+the main script and the table can't be pure data (don't move it to data.js).
+
+**The isometric battle-map renderer is its own file, `iso-renderer.js`**, loaded via
 `<script src>` — split out deliberately (v118) after three straight live-deploy rounds fixing
 one rendering bug at a time. It knows nothing about D&D rules; index.html's `mapGridHTML` hands
 it plain data via a `<canvas class="isocanvas" data-cols/rows/rot/tiles/height/palette>` tag and
 `iso-renderer.js`'s own `MutationObserver` paints it — no direct function call between the two.
 Its tests live in `iso-renderer-test.js`, separate from `rules-test.js`. See AUDIT.md v117–v118.
+
+**Next modularization stages (not yet done, per VISION.md's ordering):** rules logic, then net/
+multiplayer code, then UI — each its own staged pass with tests green after every step, same
+discipline as Stage 1. Don't attempt them all at once.
 
 ## Efficiency protocol — read this before reading code
 
@@ -48,7 +70,7 @@ usage burns tokens fast. Follow this order:
 
 ## Section map (grep anchors → what lives there)
 
-Data tables (all near the top of the script):
+Data tables (all live in `data.js` now, not index.html — see the modularization note above):
 - `CLASS_FEATURES` — per-class feature text by level; `RACE_TRAITS`, `RACE_ASI`, `RACE_SPEED`
 - `FIGHTING_STYLES`, `FIGHTING_STYLE_LEVEL`, `SUBCLASSES`, `CLASS_SAVES`, `CLASS_HITDIE`
 - `const WEAPONS=` — weapon catalog; `const ARMOR =` — armor table; `WEAPON_COST`, `ADV_GEAR`

@@ -6,7 +6,12 @@
 // declarations leaking into this scope so tests can call the app's functions directly.
 const fs=require('fs'), path=require('path');
 const html=fs.readFileSync(path.join(__dirname,'index.html'),'utf8');
-const src=html.match(/<script>([\s\S]*)<\/script>/)[1];
+// data.js (Stage 1 of the index.html modularization — pure data tables, no logic) is loaded
+// via <script src> in the real page, which shares one lexical scope across script tags; eval()
+// doesn't do that across SEPARATE calls (its let/const are scoped per-call), so the two source
+// strings are concatenated into ONE eval to reproduce the same sharing the browser gives for free.
+const dataSrc=fs.readFileSync(path.join(__dirname,'data.js'),'utf8');
+const src=dataSrc+'\n'+html.match(/<script>([\s\S]*)<\/script>/)[1];
 
 /* ---- stub DOM (just enough for the app to load; rendering is a no-op) ---- */
 function fakeEl(){ return { addEventListener(){}, remove(){}, click(){}, focus(){}, select(){},

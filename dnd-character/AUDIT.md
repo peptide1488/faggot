@@ -2935,3 +2935,77 @@ test forgetting to reset action economy between casts, not app code, confirmed b
 `canCast`'s real return value directly before concluding anything) correctly restores the same
 wounded steed to full HP with no duplicate spawned, while dismounting confirmed the unit
 vanishing from the live map.
+
+## Modularization Stage 1: data.js (v120.219)
+
+User called out that the roadmap's own stated order — modularize *before* combat depth/
+multiclassing "so the big systems land in clean modules" — got skipped: this session built
+magic items, traps, encounters, homebrew monsters, and multiclassing straight into the single
+file, which kept growing (13,179 lines by the time it was flagged). Fixed by executing Stage 1
+of the documented staged plan: extract every pure content table into `data.js`, leave all rules/
+UI logic in index.html. Not a big-bang rewrite — VISION.md is explicit that staged-with-tests-
+green-after-each-step is the only acceptable way to do this, and Stage 1 (data only, zero logic)
+is the lowest-risk possible slice to go first.
+
+**89 top-level tables moved** — the full content layer: every spell/monster/class/race/feat/
+item/terrain/map-preset/sprite table (`SPELL_SRC`, `SPELL_DESC`, `SPELL_EFFECTS`, `MONSTERS_5E`,
+`MAP_PRESETS`, `CLASS_FEATURES`, `FEAT_GRANTS`, `TERRAIN`, `SPRITE_MANIFEST`, etc.) — leaving
+`index.html`'s script at ~11,800 lines (was ~13,200) and creating a new 126KB `data.js`.
+`index.html` shed 1,345 lines net.
+
+**Mechanical extraction, not manual line-by-line edits**: given 89 separate cut targets across a
+live 13K-line file, hand-editing each with the Edit tool would be slow and genuinely
+error-prone (miscounting a brace, dropping a trailing comma). Wrote a one-off Node script
+instead: find each target's exact `[startLine, endLine]` by locating the next top-level
+`const`/`let`/`function` declaration after it, verify no two ranges overlap, concatenate them
+into `data.js` in a dependency-respecting order, then splice the same ranges out of `index.html`
+bottom-to-top (so earlier line numbers stay valid mid-removal). Deleted after the run — this
+was a migration tool, not a permanent part of the codebase.
+
+**Real bug caught before it shipped, not after**: a first extraction pass moved `SPRITE_MANIFEST`
+without also moving `_s4`/`_SV`, two tiny helper constants declared immediately above it that its
+own template-literal file paths (`` `...png?${_SV}` ``) depend on — `data.js` would have thrown
+`ReferenceError: Cannot access '_SV' before initialization` on load, since it executes before
+those helpers (still in index.html at that point) were even declared. Caught by actually running
+the test suite against the first attempt rather than assuming a clean extraction — restored from
+a backup and re-ran with both added. A second, broader verification pass (a small static-analysis
+script flagging any all-caps identifier referenced inside a target range that isn't itself
+another target, a JS builtin, or the table's own name) turned up dozens of matches, but manual
+inspection confirmed every one was a false positive — spell class-letter codes and monster
+`DC 15`-style save text living inside STRING content, and `// PHB`/`// AUDIT.md`-style code
+comments — not real cross-file references. No other real dependency issues found.
+
+**Why this works with zero call-site changes anywhere in the ~11,800 remaining lines**:
+`data.js` loads via `<script src>` *before* the main inline `<script>` — classic (non-module)
+script tags share one lexical global scope in a real page, so `data.js`'s top-level `const`/
+`let` tables are just plain globals the main script already reads by name. `iso-renderer.js`
+already proved this exact multi-script-tag pattern works in production. The one place this
+DIDN'T carry over for free: `rules-test.js` uses `eval()` to load the script under test, and
+direct `eval()` scopes `let`/`const` per-call (unlike separate `<script>` tags) — so two
+*separate* `eval(dataSrc)` then `eval(mainSrc)` calls would NOT have shared `data.js`'s bindings
+with the main script. Fixed by concatenating both source strings into one `eval()` call instead,
+documented as a real gotcha (not a stylistic choice) in CLAUDE.md for whoever adds a third module
+file later.
+
+`sw.js`'s `ASSETS` cache list updated to include `data.js` — the exact hazard VISION.md's "Known
+risks" section already named ("every new file must be added to sw.js's cache list or offline
+breaks silently"). `CLAUDE.md` rewritten to match (VISION.md: "CLAUDE.md's single-file rule gets
+rewritten as part of that") — documents the new architecture, the eval-concatenation gotcha for
+`rules-test.js`, and the ordering constraint inside `data.js` itself (`MAP_PRESETS` syncs against
+`INTERACT_TYPES`; both must stay in dependency order).
+
+**Deliberately NOT done in this pass** (staged, not big-bang, per VISION.md's own instruction):
+rules logic, net/multiplayer code, and UI all remain in index.html's `<script>` block. Each is
+its own future stage.
+
+Tests: no new assertions (this is a structural move, not a rules change — the existing 876
+`rules-test.js` assertions plus the `iso-renderer-test.js` suite are exactly what verify nothing
+broke, and they're the reason the `_SV` bug was caught before shipping instead of after). Also
+live-verified via Playwright: fresh page load with zero console errors, character creation and
+`computeAC`/`spellSlots` resolving correctly (proving `SPELL_SRC`/class tables load correctly),
+`monsterDef('Goblin')` resolving from the moved `MONSTERS_5E`, the two trickiest dependency
+chains specifically stress-tested (`MAP_PRESETS`'s IIFE correctly cross-referencing the
+also-moved `INTERACT_TYPES`; `SPRITE_MANIFEST`'s file paths correctly using the moved `_SV`/`_s4`
+helpers), and a full live Quick Battle started and rendered end-to-end (the single heaviest
+consumer of moved data tables at once — bestiary, terrain, sprites, spell data all exercised
+together).
