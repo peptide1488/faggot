@@ -2618,6 +2618,16 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   checkMountDeaths(getQB(), ()=>{});
   T('checkMountDeaths: a mount hitting 0 HP forces the rider off (QB)', rider.mountedOn===null);
   setQB(null);
+
+  // Ownership gate (a real reported bug: mounting was offered with no ownership check at all).
+  // mountUp itself deliberately stays ungated (a future Find Steed-style spell should be able
+  // to summon one regardless of ownership) — the gate belongs at the UI layer (Use-menu button/
+  // picker), backed by ensureFields defaulting every character to owning none by default.
+  const fresh=newCharacter('Fresh'); ensureFields(fresh);
+  T('ensureFields: a character owns no mounts by default (the actual reported bug)', Array.isArray(fresh.ownedMounts) && fresh.ownedMounts.length===0);
+  fresh.ownedMounts=['warhorse'];
+  ensureFields(fresh);
+  T('ensureFields: does not clobber an already-set ownedMounts list', fresh.ownedMounts.length===1 && fresh.ownedMounts[0]==='warhorse');
 }
 
 /* ---- "make the systems": multiclassing v1 ----

@@ -2857,3 +2857,37 @@ just whenever a snapshot object happens to exist), then simulated a full turn's 
 log changes and clicked the real button — HP, position, remaining movement, monster HP, and the
 log all reverted correctly, with the reference-identity fix confirmed live (the post-undo
 `QB.players[0].c` really is `cur()`, and `cur().hp.cur` really is what got persisted).
+
+## Fix: mounting had no ownership check at all (v120.217)
+
+Real bug report: the in-combat "Mount Up" option was offered to every character regardless of
+whether they owned a mount — `MOUNT_CATALOG` was the full 3-entry list with no gate, so anyone
+could climb onto a Warhorse out of thin air. Added `c.ownedMounts` (an array of `MOUNT_CATALOG`
+ids, defaulted empty by `ensureFields`) and a new "🐴 Mounts" card on the character sheet
+(Equipment tab) with tap-to-toggle ownership chips. The Use-menu's "Mount Up" button now only
+shows when `ownedMounts.length>0`, and the mount picker itself only lists the specific mounts
+that character actually owns, not the whole catalog.
+
+`mountUp()` itself deliberately stays ungated — the ownership check lives at the UI layer
+(Use-menu button + picker filtering), not inside the mechanic, because a Find Steed-style spell
+(see below) should be able to summon a mount regardless of what's ticked on the sheet. Gating
+inside `mountUp` would have meant either duplicating the function for a spell-summoned path or
+threading a bypass flag through it — cleaner to keep the mechanic itself permissive and let each
+caller decide whether ownership applies.
+
+**Not built this pass, flagged for the user during triage**: D&D 5e has real mount-summoning
+spells — Find Steed (Paladin, 2nd level) and Find Greater Steed (Tasha's, 4th level) summon a
+bonded spirit mount that vanishes at 0 HP rather than dying for real; Phantom Steed (3rd level)
+is a travel-only illusory mount that can't fight. None of these exist in this app yet. They'd
+reuse `mountUp()`/`dismountRider()` directly (same mechanic, just spell-triggered instead of
+sheet-gated) — a natural, cheap follow-up given the mechanic and UI are both already built, but
+out of scope for this specific bug-fix pass since it wasn't what was reported broken.
+
+Tests: 2 new assertions — `ensureFields` defaults a fresh character to owning no mounts (the
+actual bug: nothing was ever declared "owned" because the app never asked), and doesn't clobber
+an already-set `ownedMounts` list on repeated calls (the same self-healing-migration idempotency
+every other `ensureFields` field gets tested for). Also live-verified via Playwright: the sheet's
+Mounts card renders the 3 catalog toggles, tapping one persists to `c.ownedMounts`, the Use-menu
+correctly hides "Mount Up" with zero owned mounts and shows it once one is owned, the mount
+picker correctly lists ONLY the owned mount (not Pony/Riding Horse when only Warhorse is owned),
+and mounting itself still works end-to-end through the real gated flow.

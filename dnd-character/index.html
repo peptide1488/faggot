@@ -4122,6 +4122,7 @@ function ensureFields(c){
   syncPrimaryClass(c);
   if(c.race==null) c.race=''; if(c.subclass==null) c.subclass=''; if(c.background==null) c.background='';
   if(c.xp==null) c.xp=0;
+  if(!c.ownedMounts) c.ownedMounts=[];
   if(!c.abilities) c.abilities={str:10,dex:10,con:10,int:10,wis:10,cha:10};
   if(!c.conditions) c.conditions={};
   if(c.exhaustion==null) c.exhaustion=0;
@@ -5960,6 +5961,12 @@ function renderItems(c){
   </div>
 
   <div class="card">
+    <h2>🐴 Mounts <span class="muted" style="text-transform:none;font-size:11px">— which ones you actually own</span></h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Tap to mark a mount as owned — the in-combat "Mount Up" option only offers mounts you own here (a real Find Steed/similar spell can still summon one regardless).</p>
+    <div class="chips">${MOUNT_CATALOG.map(m=>`<button class="chip ${(c.ownedMounts||[]).includes(m.id)?'on':''}" data-ownmount="${m.id}">${m.label}</button>`).join('')}</div>
+  </div>
+
+  <div class="card">
     <h2>${chev('items')}Inventory ${(()=>{const g=c.items.filter(it=>!it.kind||it.kind==='gear');return g.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${g.length}</span>`:'';})()}</h2>
     <div id="itemList">
       ${(()=>{ const g=c.items.map((it,i)=>({it,i})).filter(o=>!o.it.kind||o.it.kind==='gear');
@@ -6007,6 +6014,13 @@ function renderItems(c){
     c.items.push({name, kind:'wondrous', qty:1, equipped:false, mods: ac?{ac}:{}});
     save(); render();
   });
+  app.querySelectorAll('[data-ownmount]').forEach(el=>el.addEventListener('click',()=>{
+    const id=el.dataset.ownmount; c.ownedMounts=c.ownedMounts||[];
+    const i=c.ownedMounts.indexOf(id);
+    if(i>=0) c.ownedMounts.splice(i,1); else c.ownedMounts.push(id);
+    logChange(c, (i>=0?'No longer owns a ':'Now owns a ')+(MOUNT_CATALOG.find(m=>m.id===id)||{}).name);
+    save(); render();
+  }));
   { const mp=$('#mi_pick'), tRow=$('#mi_targetRow'), tSel=$('#mi_target'), desc=$('#mi_desc'), addBtn=$('#miAdd');
     function refresh(){
       const idx=mp.value; const m=idx!==''?MAGIC_ITEMS[Number(idx)]:null;
@@ -8926,7 +8940,7 @@ function openAdjacentUseUI(c, s, me){
       if(preserveLifeTargets.length && (c.channelDivinityLeft||0)>0) body+=`<button class="btn block" id="usePreserveLife" style="margin-bottom:8px;text-align:left">✝️ Channel Divinity: Preserve Life<small style="display:block;opacity:.75">Action — distribute ${preserveLifePool(c)} HP among creatures within 30 ft, ½ max HP cap each (${c.channelDivinityLeft} use${c.channelDivinityLeft===1?'':'s'} left)</small></button>`;
       if(inspiringLeaderTargets.length) body+=`<button class="btn block" id="useInspiringLeader" style="margin-bottom:8px;text-align:left">🎺 Inspiring Leader<small style="display:block;opacity:.75">10 min — ${inspiringLeaderAmount(c)} temp HP to ${inspiringLeaderTargets.length} ${inspiringLeaderTargets.length===1?'creature':'creatures'} within 30 ft</small></button>`;
       if(mode && hasFeat(c,'Charger') && c.battle.dashed && !c.battle.bonus && foes.length) body+=`<button class="btn block" data-use="charger" style="margin-bottom:8px;text-align:left">🏃 Charger<small style="display:block;opacity:.75">Bonus action — melee attack (+5 damage) or shove (10 ft)</small></button>`;
-      if(mode && !c.mountedOn) body+=`<button class="btn block" data-use="mountup" style="margin-bottom:8px;text-align:left">🐴 Mount Up<small style="display:block;opacity:.75">Half your speed — climb onto a mount (baseline PHB action, no feat needed)</small></button>`;
+      if(mode && !c.mountedOn && (c.ownedMounts||[]).length) body+=`<button class="btn block" data-use="mountup" style="margin-bottom:8px;text-align:left">🐴 Mount Up<small style="display:block;opacity:.75">Half your speed — climb onto a mount you own (baseline PHB action, no feat needed)</small></button>`;
       if(mode && c.mountedOn) body+=`<button class="btn ghost block" id="useDismount" style="margin-bottom:8px;text-align:left">🐴 Dismount ${esc(c.mountedOn.name)}<small style="display:block;opacity:.75">Half your speed</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Whirlwind Attack' && foes.length) body+=`<button class="btn block" id="useWhirlwind" style="margin-bottom:8px;text-align:left">🏹 Whirlwind Attack<small style="display:block;opacity:.75">Action — one melee attack against every adjacent foe (${foes.length} in reach)</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Volley'){ const rangedAtk=qbPcAttacks(c).find(a=>!a.melee); if(rangedAtk){ const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk.tiles||1)); if(near.length) body+=`<button class="btn block" id="useVolley" style="margin-bottom:8px;text-align:left">🏹 Volley<small style="display:block;opacity:.75">Action — ranged attack against every foe within 10 ft of a target foe (pick one)</small></button>`; } }
@@ -9023,8 +9037,8 @@ function openAdjacentUseUI(c, s, me){
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='mountPick'){
-      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Mount up — half your speed.</p>`;
-      body+=MOUNT_CATALOG.map((m,i)=>`<div class="spell"><div class="nm"><b>${esc(m.label)}</b><small>AC ${m.ac} · HP ${m.hp} · ${m.spd} ft speed</small></div>
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Mount up — half your speed. Only mounts you've marked as owned on your sheet (Equipment tab) show here.</p>`;
+      body+=MOUNT_CATALOG.map((m,i)=>({m,i})).filter(({m})=>(c.ownedMounts||[]).includes(m.id)).map(({m,i})=>`<div class="spell"><div class="nm"><b>${esc(m.label)}</b><small>AC ${m.ac} · HP ${m.hp} · ${m.spd} ft speed</small></div>
         <button class="btn sm" data-mounttgt="${i}">Mount</button></div>`).join('');
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
@@ -13035,7 +13049,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.216';
+const APP_VERSION='v120.217';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
