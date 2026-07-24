@@ -3500,3 +3500,36 @@ Warlock pact-slot fix, `parseMonsterAttacks` dtype extraction, and the full DM-h
 rolled retaliation). Also live-verified via Playwright: the QB menu offering all three for an
 elemental would-flip hit and Absorb setting its resist+rider, and Hellish Rebuke end-to-end — a
 L5 Warlock spending a pact slot to deal 6 fire back to the attacker (half, on a successful save).
+
+## Dodge & Disengage as general combat actions (v120.229)
+
+Two core PHB actions that were reachable only through Monk subclass shortcuts — Patient Defense
+(Dodge, bonus action + ki) and Step of the Wind (Disengage, bonus action + ki) — but had no
+plain "any character, as your Action" version. A Fighter who wanted to Dodge, or anyone who
+wanted to Disengage before retreating past a foe, simply couldn't. Added both to the Use menu
+(`openAdjacentUseUI`, the shared action hub for Quick Battle and player-net), each costing the
+Action, offered only in combat when you still have your Action and aren't already Dodging/
+Disengaged.
+
+**Dodge** reuses the exact same Dodge effect Patient Defense already grants — `addEffect(c,
+'Dodge',{cond:'Dodge'})` sets `c.conditions.Dodge`, which `attackAdvantage` already reads to give
+attackers disadvantage until the start of your next turn. One shared mechanic, not a parallel
+copy. **Disengage** sets a new per-turn `c.battle.disengaged` flag (added to `freshTurnState`, so
+it clears every turn like every other per-turn flag) that both PC-movement opportunity-attack
+provocation points — Quick Battle's `qbMovePc` and player-net's move handler — now check and skip
+when set. The DM-hosted side needs nothing new: a connected player Disengages on their own device,
+and the flag suppresses the `provoke` message that would otherwise reach the DM.
+
+**Scope:** Dodge's secondary RAW clause (advantage on Dex saving throws) isn't modeled — matching
+Patient Defense, which never claimed it either; the button text only promises the attack-
+disadvantage half this app actually enforces. Help and Ready (the other two "missing" basic
+actions) are NOT included: Help needs ally targeting and a "next attack has advantage" grant, and
+Ready is really a reaction-interrupt system of its own — both are separate future work, not a
+silent omission.
+
+Tests: 5 new assertions — `freshTurnState` defaulting `disengaged` false, the Dodge action
+setting the condition AND a monster attacking a Dodging PC rolling at disadvantage through the
+real `Engine.hitResult`, the Disengage flag setting, and `resetTurnState` clearing it at the
+start of your next turn. Also live-verified via Playwright: both buttons render in a real Use
+menu, clicking Dodge sets the condition + drops the attacker to disadvantage (adv −1) + spends
+the Action, and clicking Disengage sets the flag + spends the Action.

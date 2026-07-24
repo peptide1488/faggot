@@ -302,7 +302,7 @@ function weaponItems(c){ const out=[]; (c.items||[]).forEach((it,i)=>{ if(it.kin
 
 function weaponAbil(c,w){ if(w.type==='ranged') return 'dex'; if(/finesse/.test(w.props||'')) return mod(abil(c,'dex'))>=mod(abil(c,'str'))?'dex':'str'; return 'str'; }
 
-function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, colossusSlayerUsed:false, hordeBreakerUsed:false, castBonusSpell:false, castLeveledSpell:false, dashed:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
+function freshTurnState(c,opts){ return {action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, sneakUsed:false, savageUsed:false, divineStrikeUsed:false, colossusSlayerUsed:false, hordeBreakerUsed:false, castBonusSpell:false, castLeveledSpell:false, dashed:false, disengaged:false, attacksLeft:extraAttacks(c)+1, move:speedBlocked(c)?0:effSpeed(c,opts), moveUsed:0}; }
 
 function resetTurnState(c,opts){ Object.assign(c.battle, freshTurnState(c,opts)); c.absorbResist=null; }   // Absorb Elements resistance lasts "until the start of your next turn" (RAW) — expire it here. The +1d6 melee rider (c.absorbRider) intentionally survives into this turn and is consumed on the first melee hit (applyAttackRiders); if never used it lingers, a minor documented simplification.
 

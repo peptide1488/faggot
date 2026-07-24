@@ -3851,7 +3851,7 @@ function renderPlayerBattle(c){
       if(!dashAvail){ flashBanner('Too far — Dash needs your action (already used)'); return; }
       b.move=(b.move||0)+effSpeed(c); spendAction(c); b.dashed=true; logChange(c,'🏃 Dash (action) — extra movement'); }
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; net.moveMode=false;
-    const provokers=(s.battle&&s.battle.active)?s.monsters.filter(mo=>mo.hp>0 && leavesReach(me.x,me.y,x,y,mo.x,mo.y,1)):[];
+    const provokers=(s.battle&&s.battle.active&&!(c.battle&&c.battle.disengaged))?s.monsters.filter(mo=>mo.hp>0 && leavesReach(me.x,me.y,x,y,mo.x,mo.y,1)):[];   // Disengage: no opportunity attacks this turn
     animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 200, ()=>{ save();
       if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
       if(provokers.length && net.conn){ try{ net.conn.send({t:'provoke', cid:clientId(), who:c.name, mons:provokers.map(m=>m.id)}); }catch(e){} logChange(c,'⚔ Provoked opportunity attack'+(provokers.length>1?'s':'')+' from '+provokers.map(m=>m.name).join(', ')); }
@@ -3970,6 +3970,11 @@ function openAdjacentUseUI(c, s, me){
     if(!pick){
       if(grappled) body+=`<button class="btn block" id="useEscape" style="margin-bottom:8px;text-align:left">🤸 Escape Grapple<small style="display:block;opacity:.75">Athletics/Acrobatics (your choice) vs the grappler's Athletics</small></button>`;
       if(canHide) body+=`<button class="btn block" id="useHide" style="margin-bottom:8px;text-align:left">🫥 Hide<small style="display:block;opacity:.75">Needs darkness, full cover, or (Skulker) dim light</small></button>`;
+      // Dodge & Disengage — core PHB actions any character can take (were previously reachable
+      // only via a subclass shortcut: Monk's Patient Defense / Step of the Wind). Both cost the
+      // Action here; the bonus-action versions still live on those subclass buttons.
+      if(mode && c.battle && hasAction(c) && !(c.conditions&&c.conditions.Dodge)) body+=`<button class="btn block" id="useDodge" style="margin-bottom:8px;text-align:left">🛡 Dodge<small style="display:block;opacity:.75">Action — attacks against you have disadvantage until the start of your next turn</small></button>`;
+      if(mode && c.battle && hasAction(c) && !c.battle.disengaged) body+=`<button class="btn block" id="useDisengage" style="margin-bottom:8px;text-align:left">🏃 Disengage<small style="display:block;opacity:.75">Action — your movement won't provoke opportunity attacks this turn</small></button>`;
       if(servant) body+=`<button class="btn block" data-use="servant" style="margin-bottom:8px;text-align:left">👻 Command Servant<small style="display:block;opacity:.75">Move it up to 15 ft / interact with an object — bonus action</small></button>`;
       if(canManifestEcho) body+=`<button class="btn block" id="useManifestEcho" style="margin-bottom:8px;text-align:left">👤 Manifest Echo<small style="display:block;opacity:.75">${echo?'Replaces your current echo — ':''}Bonus action, within 15 ft</small></button>`;
       if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
@@ -4394,6 +4399,24 @@ function openAdjacentUseUI(c, s, me){
     { const rg=$('#useRollGo'); if(rg) rg.onclick=()=>{ const out=pick.run(); if(out) showManeuverResult(out.label, out.res); else afterManeuver(); }; }
     { const es=$('#useEscape'); if(es) es.onclick=()=>{ draw({kind:'confirmRoll', desc:'Escape the grapple — Athletics/Acrobatics (your choice) vs the grappler\'s Athletics.', skillLabel:'Athletics/Acrobatics', backTo:null, run:()=>({label:'Escape Grapple', res:maneuverEscape(ad, me, true, log)})}); }; }
     { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ draw({kind:'confirmRoll', desc:'Attempt to Hide — needs darkness, full cover, or (Skulker) dim light.', skillLabel:'Stealth', backTo:null, run:()=>{ maneuverHide(ad, me, log); return null; }}); }; }
+    { const dg=$('#useDodge'); if(dg) dg.onclick=()=>{
+      if(!hasAction(c)){ flashBanner('No action left'); return; }
+      spendAction(c);
+      // Same Dodge effect Monk's Patient Defense grants — attackAdvantage already reads the Dodge
+      // condition to give attackers disadvantage. rounds:1 = "until the start of your next turn".
+      addEffect(c,'Dodge',{rounds:1, cond:'Dodge', note:'Attack rolls against you have disadvantage.'});
+      log('🛡 '+c.name+' takes the Dodge action');
+      flashBanner('🛡 Dodging — attacks against you have disadvantage');
+      afterManeuver();
+    }; }
+    { const di=$('#useDisengage'); if(di) di.onclick=()=>{
+      if(!hasAction(c)){ flashBanner('No action left'); return; }
+      spendAction(c);
+      c.battle.disengaged=true;   // checked at every PC-move opportunity-attack provocation point (QB + player-net)
+      log('🏃 '+c.name+' takes the Disengage action — no opportunity attacks this turn');
+      flashBanner('🏃 Disengage — your movement won\'t provoke opportunity attacks');
+      afterManeuver();
+    }; }
     { const stb=$('#useStabilize'); if(stb) stb.onclick=()=>{
       const al=pick.al;
       const kb=$('#useStabKit'); const useKit=!!(kb&&kb.checked);
@@ -5998,7 +6021,7 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
     opts=opts||{};
     if(cost>(b.move||0)){ if(!dashAvail){ flashBanner('Too far — Dash needs your action'); return; } b.move=(b.move||0)+effSpeed(c); spendAction(c); b.dashed=true; qbLog('🏃 '+c.name+' dashes'); }
     const fromX=pc.x, fromY=pc.y; b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; s.moveMode=false;
-    const provokers=s.monsters.filter(m=>m.hp>0 && !m.reactionUsed && leavesReach(fromX,fromY,x,y,m.x,m.y,1));
+    const provokers=(b.disengaged)?[]:s.monsters.filter(m=>m.hp>0 && !m.reactionUsed && leavesReach(fromX,fromY,x,y,m.x,m.y,1));   // Disengage: movement provokes no opportunity attacks this turn
     const riseFt=Math.max(0,(heightAt(s,x,y)-heightAt(s,fromX,fromY))*5);
     const dropFt=Math.max(0,(heightAt(s,fromX,fromY)-heightAt(s,x,y))*5);
     const jumpMax=runningHighJumpFt(pc);

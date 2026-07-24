@@ -3429,5 +3429,30 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('castPcReaction(rebuke): a Warlock spends their pact slot (level 3), proving reactions aren\'t level-1-locked', wl.battle.reaction===true && wl.slots[3] && wl.slots[3].used===1);
 }
 
+/* ---- Dodge & Disengage as general combat actions (v120.229) — core PHB actions previously
+   reachable only via Monk subclass shortcuts (Patient Defense / Step of the Wind). ---- */
+{
+  const c=newCharacter('Tactician'); c.cls='Fighter'; c.level=3; c.abilities={str:14,dex:14,con:14,int:10,wis:10,cha:10};
+  c.battle=freshTurnState(c);
+  T('freshTurnState: disengaged starts false each turn', c.battle.disengaged===false);
+
+  // Dodge: grants attackers disadvantage via the same Dodge condition Monk's Patient Defense uses
+  // (so the mechanic is shared, not a parallel copy). addEffect(cond:'Dodge') → c.conditions.Dodge.
+  c.conditions={}; c.effects=[];
+  addEffect(c,'Dodge',{rounds:1, cond:'Dodge', note:'Attack rolls against you have disadvantage.'});
+  T('Dodge action: sets the Dodge condition that drives attacker disadvantage', !!(c.conditions&&c.conditions.Dodge));
+  setQB({active:true, map:{cols:10,rows:10,tiles:{}}, monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:1,y:1,hp:7,max:7,ac:12,attacksLeft:1}], players:[{id:'pc',side:'pc',name:c.name,c,x:1,y:2,hpCur:c.hp.cur,hpMax:c.hp.max}]});
+  const r=Engine.hitResult(qbAdapter,'m1','pc',{toHit:5,dmg:'1d6',tiles:1});
+  T('Dodge action: a monster attacking a Dodging PC rolls at disadvantage (Engine.hitResult)', r.adv===-1 && r.advWhy.some(w=>/dodg/i.test(w)));
+  setQB(null);
+
+  // Disengage: a per-turn flag the movement handlers check to skip opportunity-attack provocation;
+  // it lives on c.battle and expires at the start of your next turn like every other per-turn flag.
+  c.battle.disengaged=true;
+  T('Disengage: the flag can be set on the turn state', c.battle.disengaged===true);
+  resetTurnState(c);
+  T('resetTurnState: Disengage clears at the start of your next turn', c.battle.disengaged===false);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
