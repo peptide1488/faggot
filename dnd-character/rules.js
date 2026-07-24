@@ -287,7 +287,14 @@ function enchantWeapon(c, itemIdx, bonus){ const it=c.items[itemIdx]; if(!it||it
 
 function enchantArmorLike(c, itemIdx, acBonus){ const it=c.items[itemIdx]; if(!it||(it.kind!=='armor'&&it.kind!=='shield')) return false; it.mods=Object.assign({}, it.mods, {ac:((it.mods&&it.mods.ac)||0)+(acBonus||0)}); save(); return true; }
 
-function addWondrousItem(c, m){ if(!m || magicItemTargetKind(m)) return false; c.items.push({name:m.name, kind:'wondrous', qty:1, equipped:false, requiresAttunement:!!m.requiresAttunement, mods:Object.assign({},m.mods), notes:m.desc}); save(); return true; }
+// Consumables (a drinkable potion, a one-shot keg) go in the Inventory list (kind:'gear'),
+// same as any other consumable item — not Equipment, which implies something worn/carried
+// permanently. Everything else (Cloak of Protection, Decanter — reusable, not used up) is
+// 'wondrous', matching the existing convention.
+function addWondrousItem(c, m){ if(!m || magicItemTargetKind(m)) return false;
+  const consumable=!!m.potionHeal || m.special==='keg';   // one-shot items: potions and the keg (thrown/detonated, then gone) — the Decanter is reusable, stays 'wondrous'
+  c.items.push({name:m.name, kind:consumable?'gear':'wondrous', qty:1, equipped:false, requiresAttunement:!!m.requiresAttunement, mods:Object.assign({},m.mods), notes:m.desc, potionHeal:m.potionHeal, special:m.special});
+  save(); return true; }
 
 function equippedWeapons(c){ const out=[]; (c.items||[]).forEach((it,i)=>{ if(it.kind==='weapon'&&it.equipped) out.push({it,i}); }); return out; }
 
@@ -2019,12 +2026,57 @@ function fallDamageTotal(feet){ const dice=Math.min(20, Math.floor(Math.max(0,fe
 // moment), not every incapacitating condition (Paralyzed/Stunned from a failed save mid-someone
 // -else's-turn) — a real, named simplification, not a silently-missed mechanic. Mutates c.hp.cur
 // directly rather than recursing through applyHp (which is what CALLS this in the first place).
+// Ring of Feather Falling: immune to fall damage while attuned (mods.noFallDamage, the same
+// equipped+attuned gate gearBonus already uses — a boolean flag, not an additive number, so it
+// can't route through gearBonus itself, which only sums numeric mods).
+function hasNoFallDamage(c){ return (c.items||[]).some(it=>it.equipped&&(!it.requiresAttunement||it.attuned)&&it.mods&&it.mods.noFallDamage); }
 function checkFallDamage(c, log){
   if(!(c.altitude>0)) return;
   const feet=c.altitude; c.altitude=0;
+  if(hasNoFallDamage(c)){ log('🪶 '+(c.name||'You')+' drifts safely to the ground — Ring of Feather Falling'); return; }
   const fd=fallDamageTotal(feet);
   if(fd>0){ c.hp.cur=Math.max(0,c.hp.cur-fd); log('💥 '+(c.name||'You')+' falls '+feet+' ft out of the sky — '+fd+' bludgeoning'); }
   else log('🕊️ '+(c.name||'You')+' drifts down '+feet+' ft to the ground');
+}
+// Drinking a potion (Potion of Healing and its tiers) — same one-line "consume a resource,
+// heal, log it" shape Goodberries already established (see eatBerry).
+function drinkPotion(c, idx){
+  const it=c.items[idx]; if(!it || !it.potionHeal) return false;
+  const healed=(rollNotation(it.potionHeal)||{total:0}).total;
+  applyHp(c, healed);
+  logChange(c, '🧪 Drank '+it.name+' — regained '+healed+' HP');
+  it.qty=(it.qty||1)-1; if(it.qty<=0) c.items.splice(idx,1);
+  save();
+  return true;
+}
+// QB-only AOE resolver for item mechanics (Decanter's Geyser, Powder Keg) that aren't spells
+// and so don't route through Engine.castApply — same "QB first, DM-hosted/player-net deferred"
+// scope this session already established for combat undo. Applies to monsters AND the PC
+// within radiusTiles of ctr (an explosion/geyser doesn't care about allegiance); opts:
+// {dmg, dtype, dc, saveAbility ('str'/'dex'/…), cond, condRounds}. Returns per-target results
+// for the caller to log (monsters have no auto-log the way applyHp gives the PC).
+function itemAoeQB(s, ctr, radiusTiles, opts){
+  opts=opts||{};
+  const results=[];
+  (s.monsters||[]).filter(m=>m.hp>0 && inBlast(ctr.x,ctr.y,m.x,m.y,radiusTiles)).forEach(m=>{
+    const bonus=monsterSaveBonus(m);
+    const roll=rnd(20)+bonus, saved=opts.dc?roll>=opts.dc:true;
+    let dmg=0;
+    if(opts.dmg){ const total=(rollNotation(opts.dmg)||{total:0}).total; dmg=saved?Math.floor(total/2):total; m.hp=Math.max(0,m.hp-dmg); }
+    if(!saved && opts.cond){ m.conds=m.conds||[]; if(!m.conds.some(x=>x.name===opts.cond)) m.conds.push({name:opts.cond, rounds:opts.condRounds||10}); }
+    results.push({unit:m, name:m.name, saved, dmg});
+  });
+  const pc=s.players&&s.players[0];
+  if(pc && pc.c && pc.c.hp.cur>0 && inBlast(ctr.x,ctr.y,pc.x,pc.y,radiusTiles)){
+    const c=pc.c;
+    const bonus=saveMod(c, opts.saveAbility||'dex');
+    const roll=rnd(20)+bonus, saved=opts.dc?roll>=opts.dc:true;
+    let dmg=0;
+    if(opts.dmg){ const total=(rollNotation(opts.dmg)||{total:0}).total; dmg=saved?Math.floor(total/2):total; if(dmg>0) applyHp(c,-dmg); }
+    if(!saved && opts.cond){ c.conditions=c.conditions||{}; c.conditions[opts.cond]=true; }
+    results.push({unit:c, name:c.name, saved, dmg, isPc:true});
+  }
+  return results;
 }
 
 function dijkstra(s, sx, sy, maxFeet, fly, mover){

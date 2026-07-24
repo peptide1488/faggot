@@ -2849,6 +2849,7 @@ function renderItems(c){
         <div class="spell">
           <div class="nm"><b>${esc(it.name)}</b>${it.notes?`<small>${esc(it.notes)}</small>`:''}</div>
           <span class="tag">×${it.qty||1}</span>
+          ${it.potionHeal?`<button class="btn sm" data-drinkpotion="${i}">🧪 Drink</button>`:''}
           <button class="del" data-delitem="${i}">✕</button>
         </div>`).join(''); })()}
     </div>
@@ -2931,6 +2932,9 @@ function renderItems(c){
     const i=Number(el.dataset.delitem); const it=c.items[i];
     if(it && it.equipped){ setEquipped(c, i, false); }
     c.items.splice(i,1); save(); render();
+  }));
+  app.querySelectorAll('[data-drinkpotion]').forEach(el=>el.addEventListener('click',()=>{
+    if(drinkPotion(c, Number(el.dataset.drinkpotion))){ render(); if(net&&net.role==='player') playerHello(); }
   }));
 }
 
@@ -3919,6 +3923,8 @@ function openAdjacentUseUI(c, s, me){
           <button class="btn ghost sm" id="useAltDown" ${!(c.altitude>0)?'disabled style="opacity:.5"':''}>⬇ Descend 5 ft</button>
         </div>
       </div>`;
+      if(mode && (c.items||[]).some(it=>it.name==='Decanter of Endless Water')) body+=`<button class="btn block" data-use="decanter" style="margin-bottom:8px;text-align:left">🪣 Decanter of Endless Water<small style="display:block;opacity:.75">Command word — Stream, Fountain, or Geyser</small></button>`;
+      if(mode && (c.items||[]).some(it=>it.name==='Powder Keg')) body+=`<button class="btn block" data-use="keg" style="margin-bottom:8px;text-align:left">💣 Powder Keg<small style="display:block;opacity:.75">Throw it, or detonate it where you (or your echo) stand</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Whirlwind Attack' && foes.length) body+=`<button class="btn block" id="useWhirlwind" style="margin-bottom:8px;text-align:left">🏹 Whirlwind Attack<small style="display:block;opacity:.75">Action — one melee attack against every adjacent foe (${foes.length} in reach)</small></button>`;
       if(isHunter(c,11) && c.hunterMultiattack==='Volley'){ const rangedAtk=qbPcAttacks(c).find(a=>!a.melee); if(rangedAtk){ const near=s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=(rangedAtk.tiles||1)); if(near.length) body+=`<button class="btn block" id="useVolley" style="margin-bottom:8px;text-align:left">🏹 Volley<small style="display:block;opacity:.75">Action — ranged attack against every foe within 10 ft of a target foe (pick one)</small></button>`; } }
       if(mode && isLoreBard(c,3)) body+=`<button class="btn ${c.cuttingWordsArmed?'':'ghost'} block" id="useCuttingWords" style="margin-bottom:8px;text-align:left"${(c.bardicInspLeft||0)<=0?' disabled style="opacity:.5"':''}>🎵 ${c.cuttingWordsArmed?'Cutting Words — ARMED (tap to cancel)':'Ready Cutting Words'}<small style="display:block;opacity:.75">${(c.bardicInspLeft||0)<=0?'No Bardic Inspiration left — rest to recharge':'Reaction — reduce a monster attack roll within 60 ft ('+(c.bardicInspLeft||0)+' use'+((c.bardicInspLeft||0)===1?'':'s')+' left)'}</small></button>`;
@@ -4017,6 +4023,22 @@ function openAdjacentUseUI(c, s, me){
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Mount up — half your speed. Only mounts you've marked as owned on your sheet (Equipment tab) show here.</p>`;
       body+=MOUNT_CATALOG.map((m,i)=>({m,i})).filter(({m})=>(c.ownedMounts||[]).includes(m.id)).map(({m,i})=>`<div class="spell"><div class="nm"><b>${esc(m.label)}</b><small>AC ${m.ac} · HP ${m.hp} · ${m.spd} ft speed</small></div>
         <button class="btn sm" data-mounttgt="${i}">Mount</button></div>`).join('');
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='decanterPick'){
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Decanter of Endless Water — command word item.</p>
+        <button class="btn block" data-decanter="stream" style="margin-bottom:8px;text-align:left">💧 Stream<small style="display:block;opacity:.75">1 gallon/round — fills a container, douses a small flame. Flavor only.</small></button>
+        <button class="btn block" data-decanter="fountain" style="margin-bottom:8px;text-align:left">⛲ Fountain<small style="display:block;opacity:.75">5 gallons/round in a 30-ft cone. Flavor only.</small></button>
+        <button class="btn block" data-decanter="geyser" style="margin-bottom:8px;text-align:left">🌊 Geyser<small style="display:block;opacity:.75">30 gallons/round — every foe within 10 ft of you makes a Str save (DC 13) or is knocked Prone.</small></button>`;
+      body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
+        <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
+    } else if(pick.kind==='kegPick'){
+      const kegTargets=(s.monsters||[]).filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=12);
+      const hasEcho=(s.monsters||[]).some(m=>m.echo && m.controllerId===(mode==='qb'?'pc':net.peer.id));
+      body+=`<p class="muted" style="font-size:12px;margin:0 0 8px">Powder Keg — 4d6 fire in a 5-ft burst (Dex save DC 15 for half), hits anyone caught in it, allies included. One-shot — consumed on use.</p>`;
+      body+=kegTargets.map((mo,i)=>`<div class="spell"><div class="nm"><b>${esc(mo.name)}</b><small>(${mo.x},${mo.y})</small></div><button class="btn sm" data-kegtgt="${i}">💣 Throw</button></div>`).join('');
+      body+=`<button class="btn ghost block" id="useKegHere" style="margin:8px 0">🔥 Detonate where you stand<small style="display:block;opacity:.75">Hits you too</small></button>`;
+      if(hasEcho) body+=`<button class="btn ghost block" id="useKegEcho" style="margin-bottom:8px">👤 Detonate at your Echo<small style="display:block;opacity:.75">Your echo takes the blast, not you</small></button>`;
       body+=`<button class="btn ghost block" id="useBack" style="margin-top:8px">← Back</button>
         <button class="btn ghost block" id="useClose" style="margin-top:6px">Cancel</button>`;
     } else if(pick.kind==='servant'){
@@ -4215,6 +4237,42 @@ function openAdjacentUseUI(c, s, me){
       log('🕊️ '+c.name+' descends to '+c.altitude+' ft');
       $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
     }; }
+    document.querySelectorAll('[data-decanter]').forEach(b=>b.onclick=()=>{
+      const setting=b.dataset.decanter;
+      if(setting==='stream'){ log('💧 '+c.name+' pours a steady stream from the Decanter'); flashBanner('💧 Stream — 1 gallon/round'); }
+      else if(setting==='fountain'){ log('⛲ '+c.name+' calls forth a fountain from the Decanter'); flashBanner('⛲ Fountain — 5 gal/round, 30-ft cone'); }
+      else if(setting==='geyser'){
+        const res=itemAoeQB(s, {x:me.x,y:me.y}, 2, {dc:13, saveAbility:'str', cond:'Prone'});
+        res.filter(r=>!r.isPc).forEach(r=>log('🌊 '+r.name+' — '+(r.saved?'braces against the geyser':'knocked Prone by the geyser')));
+        if(!res.length) log('🌊 '+c.name+' unleashes a geyser — nothing nearby to knock over');
+        flashBanner('🌊 Geyser! '+res.filter(r=>!r.saved).length+' knocked prone');
+      }
+      $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+    });
+    { const consumeKeg=()=>{ const idx=c.items.findIndex(it=>it.name==='Powder Keg'); if(idx>=0){ c.items[idx].qty=(c.items[idx].qty||1)-1; if(c.items[idx].qty<=0) c.items.splice(idx,1); } };
+      const detonate=(ctr, note)=>{
+        const res=itemAoeQB(s, ctr, 1, {dmg:'4d6', dtype:'fire', dc:15, saveAbility:'dex'});
+        consumeKeg();
+        res.forEach(r=>{ if(r.isPc){ /* applyHp already logged the damage itself */ if(r.saved) log(r.name+' dives clear of the blast — half damage'); }
+          else log('💥 '+r.name+' — '+(r.saved?'saved, '+r.dmg+' fire':'failed, '+r.dmg+' fire')); });
+        if(!res.length) log('💣 The keg detonates — nothing caught in the blast');
+        flashBanner('💥 Powder Keg detonates'+note);
+        $('#modalRoot').innerHTML=''; save(); render(); if(mode==='player') playerHello();
+      };
+      document.querySelectorAll('[data-kegtgt]').forEach(b=>b.onclick=()=>{
+        const targets=(s.monsters||[]).filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=12);
+        const mo=targets[Number(b.dataset.kegtgt)]; if(!mo) return;
+        log('💣 '+c.name+' throws a Powder Keg at '+mo.name);
+        detonate({x:mo.x,y:mo.y}, ' at '+mo.name);
+      });
+      const kh=$('#useKegHere'); if(kh) kh.onclick=()=>{ log('🔥 '+c.name+' detonates the Powder Keg at their own feet'); detonate({x:me.x,y:me.y}, ' right where '+c.name+' stands'); };
+      const ke=$('#useKegEcho'); if(ke) ke.onclick=()=>{
+        const echo=(s.monsters||[]).find(m=>m.echo && m.controllerId===(mode==='qb'?'pc':net.peer.id));
+        if(!echo){ flashBanner('No active echo'); return; }
+        log('👤 '+c.name+"'s echo cradles the Powder Keg and detonates it");
+        detonate({x:echo.x,y:echo.y}, " at "+c.name+"'s echo");
+      };
+    }
     { const uw=$('#useWhirlwind'); if(uw) uw.onclick=()=>{
       if(c.battle && !hasAction(c)){ flashBanner('No action left this turn'); return; }
       if(c.battle) spendAction(c);
@@ -4287,6 +4345,7 @@ function openAdjacentUseUI(c, s, me){
       draw(kind==='foe' ? {kind:'foe', mo:foes[Number(idx)]} : kind==='ally' ? {kind:'ally', al:allies[Number(idx)]}
         : kind==='heal' ? {kind:'healTarget', t:healerHealTargets[Number(idx)]}
         : kind==='charger' ? {kind:'chargerPick'} : kind==='mountup' ? {kind:'mountPick'}
+        : kind==='decanter' ? {kind:'decanterPick'} : kind==='keg' ? {kind:'kegPick'}
         : kind==='servant' ? {kind:'servant'} : kind==='echo' ? {kind:'echo'} : kind==='intimidate' ? {kind:'intimidatePick'} : Object.assign({kind:'obj'}, items[Number(idx)]));
     });
     // Commanding the servant spends the BONUS action resource, independent of the shared

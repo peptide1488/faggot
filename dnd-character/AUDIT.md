@@ -3165,3 +3165,67 @@ live-verified via Playwright: a real QB battle with a flying PC confirmed a guar
 (`toHit:99`) monster attack was still fully blocked with zero HP lost and the correct log
 message, and the player's own attack flow confirmed the roll modal never opens at all when the
 target is out of reach.
+
+## More magic items — potions, Ring of Feather Falling, Decanter, Powder Keg (v120.223)
+
+User request to expand the magic item catalog beyond the original 10 entries, with two specific
+asks: Decanter of Endless Water (real DMG item) and a homebrew "Powder Keg" explosive with an
+Echo Knight angle. Added 6 items total — the two requested plus 4 more chosen for genuine value
+and clean fit with existing infrastructure rather than padding the list.
+
+**Potion of Healing / Greater / Superior** (2d4+2 / 4d4+4 / 8d4+8) — a new `potionHeal` field on
+a `MAGIC_ITEMS` entry, and a matching `drinkPotion(c, idx)` that rolls the formula, heals via the
+real `applyHp` (so it correctly interacts with everything HP already does — temp HP, death
+saves, Wild Shape's separate pool), and consumes the item, same one-line "consume a resource,
+heal, log it" shape `eatBerry`/Goodberries already established. Shows as a "🧪 Drink" button
+directly on the Inventory item, not buried in the Use-menu. **Caught a real bug before shipping
+here**: an early version of `addWondrousItem`'s consumable-detection logic accidentally made
+NEW WONDROUS ITEMS default to `equipped:true` instead of the established `false` — caught
+immediately by an existing test (`addWondrousItem: adds a new unequipped item to inventory`)
+that would have silently started failing for every future magic item added this way.
+
+**Ring of Feather Falling** (attunement) — a direct, deliberate synergy with the altitude/fall-
+damage system shipped two entries ago: `mods.noFallDamage`, checked by a new `hasNoFallDamage(c)`
+(the same equipped+attuned gate every other attunement mod already uses) inside `checkFallDamage`
+— getting knocked unconscious mid-flight while wearing this ring means drifting down safely
+instead of taking real fall damage. A boolean flag, not an additive number, so it couldn't route
+through the existing `gearBonus` (which only sums numeric mods) — a small, dedicated check
+instead, same pattern as any other non-additive item effect this app has needed before.
+
+**Decanter of Endless Water** (no attunement, real DMG item) — Stream and Fountain are flavor-
+only (no combat mechanic, matching RAW's non-combat intent for those settings); Geyser is the
+real one: every hostile creature within 10 ft of the caster makes a Str save (DC 13, PHB) or is
+knocked Prone — no damage, matching RAW exactly. Simplified from RAW's full 30-ft line (aim a
+direction, push 10 ft, then keep sweeping victims further away each of your turns) to a burst
+around the caster with Prone only, no push/sweep — a real, named simplification rather than
+building full line-targeting UI and multi-round tracking for a non-damaging control effect.
+
+**Powder Keg** (homebrew, no attunement) — 4d6 fire in a 5-ft burst, Dex save DC 15 for half,
+consumed on any use. Three trigger modes sharing one `detonate()` helper: throw it at a visible
+hostile within 60 ft (centers the blast on them), detonate it where you stand (hits you too —
+the actual risk/reward, not just flavor text), or — the Echo Knight synergy the user specifically
+asked for — detonate it at your active echo's position instead, so the echo (1 HP, meant to be
+disposable) eats the blast instead of your real body. Damage is intentionally identical across
+all three modes (same keg, same explosion — only *where* you choose to set it off differs) to
+avoid an arbitrary balance decision between them.
+
+**New shared mechanic**: `itemAoeQB(s, ctr, radiusTiles, opts)` — a QB-only AOE resolver for
+non-spell item effects (Geyser, the keg) that don't route through `Engine.castApply` the way a
+real spell does. Applies to monsters AND the PC within radius (an explosion doesn't care about
+allegiance — friendly fire is real here, matching how spell AOEs already work), returns per-
+target results for the caller to log. **QB-only, matching the same scope this session already
+established for combat undo** — DM-hosted/player-net item-AOE is a real, documented gap, not
+silently promised.
+
+Tests: 17 new assertions — a potion's real heal formula and consumption, `hasNoFallDamage`'s
+full equipped/attuned gate proven step by step (absent → equipped-only → attuned → both), the
+Ring actually canceling fall damage end-to-end through `checkFallDamage`, and `itemAoeQB`'s core
+behavior (in-radius vs. out-of-radius, hits the PC too, a forced-fail deals full not half damage,
+a no-damage save-or-condition effect applies the condition without any HP loss) using the same
+"force a DC that always fails" determinism trick this session's other AOE tests already rely on.
+Also live-verified via Playwright: all 6 new items appear in the real Bestiary-style picker,
+drinking a potion through the actual Inventory button heals and removes the item, and — the full
+combat loop — a real QB battle confirmed the keg's "detonate here" hitting both a monster AND
+the player character (with the player correctly saving for half), the keg being consumed
+afterward, and the Decanter's Geyser knocking a monster Prone while the Decanter itself stayed
+in inventory (reusable, unlike the one-shot keg).

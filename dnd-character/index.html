@@ -667,6 +667,12 @@ const MAGIC_ITEMS = [
   {name:'+1 Armor', rarity:'Rare', requiresAttunement:false, mods:{ac:1}, desc:'+1 AC while worn.'},
   {name:'+2 Armor', rarity:'Very Rare', requiresAttunement:false, mods:{ac:2}, desc:'+2 AC while worn.'},
   {name:'+1 Shield', rarity:'Uncommon', requiresAttunement:false, mods:{ac:1}, desc:'+1 AC on top of the shield\'s own +2 while worn.'},
+  {name:'Potion of Healing', rarity:'Common', requiresAttunement:false, potionHeal:'2d4+2', desc:'Drink (an action) to regain 2d4+2 HP.'},
+  {name:'Potion of Greater Healing', rarity:'Uncommon', requiresAttunement:false, potionHeal:'4d4+4', desc:'Drink (an action) to regain 4d4+4 HP.'},
+  {name:'Potion of Superior Healing', rarity:'Rare', requiresAttunement:false, potionHeal:'8d4+8', desc:'Drink (an action) to regain 8d4+8 HP.'},
+  {name:'Ring of Feather Falling', rarity:'Rare', requiresAttunement:true, mods:{noFallDamage:1}, desc:'Immune to fall damage while attuned — including falling out of the sky if knocked unconscious mid-flight.'},
+  {name:'Decanter of Endless Water', rarity:'Uncommon', requiresAttunement:false, special:'decanter', desc:'Command word item — Stream, Fountain, or a Geyser that can knock nearby foes prone (Str save).'},
+  {name:'Powder Keg', rarity:'Uncommon', requiresAttunement:false, special:'keg', desc:'A volatile keg of alchemical powder — throw it at a foe, or detonate it where you (or your echo) stand.'},
 ];
 // Which existing inventory item a catalog entry needs picked (a +1 Weapon enchants a weapon you
 // already own, RAW-style — it isn't a second item you carry alongside a mundane one); null for
@@ -2322,7 +2328,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.222';
+const APP_VERSION='v120.223';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

@@ -3018,5 +3018,49 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- "make the systems": more magic items — potions, Ring of Feather Falling, Decanter,
+   Powder Keg ---- */
+{
+  const potion=MAGIC_ITEMS.find(m=>m.name==='Potion of Healing');
+  T('MAGIC_ITEMS: Potion of Healing exists with a real heal formula', !!potion && potion.potionHeal==='2d4+2');
+
+  const c=newCharacter('Potion Drinker'); c.hp={max:20,cur:5,temp:0};
+  T('addWondrousItem: a potion is added UNEQUIPPED (existing convention — items start unequipped)', addWondrousItem(c,potion) && c.items[0].equipped===false && c.items[0].kind==='gear');
+  const before=c.hp.cur;
+  T('drinkPotion: heals via the real potionHeal formula and consumes the item', drinkPotion(c,0)===true && c.hp.cur>before && c.hp.cur<=20 && c.items.length===0);
+  T('drinkPotion: refuses an item with no potionHeal (not a potion)', (()=>{ c.items.push({name:'Rope',kind:'gear',qty:1}); return drinkPotion(c,0)===false; })());
+
+  // Ring of Feather Falling: cancels fall damage entirely, same equipped+attuned gate every
+  // other attunement item already uses.
+  const ring=MAGIC_ITEMS.find(m=>m.name==='Ring of Feather Falling');
+  const flyer=newCharacter('Feather Flyer'); flyer.hp={max:20,cur:20,temp:0}; flyer.altitude=50;
+  T('hasNoFallDamage: false with no ring at all', hasNoFallDamage(flyer)===false);
+  addWondrousItem(flyer,ring);
+  T('hasNoFallDamage: still false — equipped but not yet attuned', hasNoFallDamage(flyer)===false);
+  setEquipped(flyer,0,true);
+  T('hasNoFallDamage: still false — equipped but NOT attuned (attunement required)', hasNoFallDamage(flyer)===false);
+  toggleAttune(flyer,0);
+  T('hasNoFallDamage: true once equipped AND attuned', hasNoFallDamage(flyer)===true);
+  checkFallDamage(flyer, ()=>{});
+  T('checkFallDamage: Ring of Feather Falling cancels fall damage entirely (50 ft, still full HP)', flyer.hp.cur===20 && flyer.altitude===0);
+
+  // itemAoeQB — the shared QB-only AOE resolver for Decanter's Geyser and the Powder Keg.
+  const pc2=newCharacter('Blast Radius Test'); pc2.hp={max:20,cur:20,temp:0}; pc2.abilities={str:10,dex:14,con:12,int:10,wis:10,cha:10};
+  pc2.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, log:[], map:{cols:10,rows:10,tiles:{}}, order:[], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Near Goblin',x:1,y:0,hp:50,max:50,ac:15,conds:[]},
+              {id:'m2',side:'mon',base:'Goblin',name:'Far Goblin',x:9,y:9,hp:7,max:7,ac:15,conds:[]}],
+    players:[{id:'pc',side:'pc',name:pc2.name,c:pc2,x:0,y:0,hpCur:pc2.hp.cur,hpMax:pc2.hp.max}] });
+  const res=itemAoeQB(getQB(), {x:0,y:0}, 1, {dmg:'4d6', dtype:'fire', dc:999, saveAbility:'dex'});   // DC 999 → always fails, deterministic
+  T('itemAoeQB: hits a monster within radius', res.some(r=>r.name==='Near Goblin'));
+  T('itemAoeQB: leaves a monster OUTSIDE radius untouched', !res.some(r=>r.name==='Far Goblin') && getQB().monsters.find(m=>m.id==='m2').hp===7);
+  T('itemAoeQB: hits the PC too when within radius (explosions don\'t care about allegiance)', res.some(r=>r.isPc));
+  T('itemAoeQB: a failed save (forced via DC 999) deals full damage, not half', getQB().monsters.find(m=>m.id==='m1').hp<50 && pc2.hp.cur<20);
+
+  const res2=itemAoeQB(getQB(), {x:0,y:0}, 1, {dc:999, saveAbility:'str', cond:'Prone'});   // DC 999 → always fails, no dmg key = no damage
+  T('itemAoeQB: a no-damage save-or-condition effect (Geyser) applies the condition on a fail without any HP loss', getQB().monsters.find(m=>m.id==='m1').conds.some(x=>x.name==='Prone'));
+  setQB(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
