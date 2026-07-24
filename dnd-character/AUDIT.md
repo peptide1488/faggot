@@ -3122,3 +3122,46 @@ clicking the real Climb button spends movement and updates `c.altitude` with the
 "Airborne at N ft" note appearing, and the full `applyHp` fall-on-unconscious flow confirmed
 end-to-end through the real function (not a mock) with the fall message landing in the
 character's own log.
+
+## Altitude vs. melee reach (v120.222)
+
+User's direct follow-up to flying altitude — the deferred RAW consideration from that entry's
+own writeup: a ground-bound attacker with 5-ft reach genuinely cannot melee something hovering
+20 ft up. Wired straight into `Engine.hitResult`/`Engine.attack` — the one shared resolver every
+mode (QB/DM-hosted/player-net) already routes every attack through — rather than a QB-only
+special case, so this is correct everywhere attacks resolve, automatically.
+
+`hitResult` now computes `altitudeBlocked`: true when the attack is melee AND the vertical gap
+between attacker and target (`|attackerAlt − targetAlt|`) exceeds the weapon's reach (5 ft
+normal, 10 ft for a reach weapon — read off the same `atk.tiles>1` signal `weaponRangeTiles`
+already sets). Symmetric by construction: a flying PC swinging at a grounded target is equally
+gated by its OWN altitude, not just when it's the one being attacked. `Engine.attack` checks the
+flag before applying any damage — a blocked attack is a guaranteed miss (`hit:false, dmg:0`)
+regardless of the roll, and the event always carries `altitudeBlocked` as an explicit boolean
+(a real inconsistency caught by a failing test: the non-blocked path originally left the field
+`undefined` instead of `false`, which would have made `ev.altitudeBlocked` an unreliable check
+for any future caller — fixed to always be present).
+
+**UI wired at both ends of combat, not just the mechanic**: a blocked monster-vs-PC attack in QB
+now logs a clear reason ("can't reach — out of melee range (altitude)") instead of reading as a
+plain miss with no explanation; the player's own interactive attack flow checks the same flag
+*before* opening the dice-roll modal at all, so a blocked attack never wastes the player's time
+rolling for an outcome `Engine.attack` was always going to force to a miss.
+
+**Deliberately scoped to PCs, matching the flying-altitude entry's own boundary**: monster-side
+altitude isn't tracked in this app, so a flying monster's actor/target altitude always reads 0
+(via `checkSubject` returning null for monster sides) — meaning altitude-vs-reach only actually
+gates attacks involving a PC who's chosen to climb, not monster-vs-monster or a hypothetical
+flying-monster case this app has no data model for. A real, named simplification, not silently
+narrower than it looks.
+
+Tests: 11 new assertions — the reach math across both weapon types (5 ft vs. 10 ft) and both
+directions of the height gap (attacker airborne, target airborne), confirming ranged attacks are
+never gated (reach only applies to melee), and confirming `Engine.attack` actually enforces the
+gate rather than just flagging it (zero HP mutation on a blocked attack, on EITHER side, even
+against a guaranteed-hit roll) — plus the explicit-`false` consistency fix proven directly (a
+back-in-reach guaranteed hit correctly reports `altitudeBlocked:false`, not `undefined`). Also
+live-verified via Playwright: a real QB battle with a flying PC confirmed a guaranteed-hit
+(`toHit:99`) monster attack was still fully blocked with zero HP lost and the correct log
+message, and the player's own attack flow confirmed the roll modal never opens at all when the
+target is out of reach.

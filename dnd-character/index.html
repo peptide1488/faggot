@@ -1813,10 +1813,21 @@ const Engine = {
     // (a monster can never be mounted in this engine, so this is always true against them).
     const targetSubj=ad.checkSubject&&ad.checkSubject(t);
     const mountedAdv=!!(armorSubj && armorSubj.mountedOn && hasFeat(armorSubj,'Mounted Combatant') && melee && !(targetSubj && targetSubj.mountedOn));
+    // Altitude vs. reach (PHB): a melee attack needs the target within your weapon's reach
+    // (5 ft, 10 ft for a reach weapon) counting the VERTICAL gap too — a ground-bound 5-ft-
+    // reach attacker genuinely cannot melee something hovering 20 ft up. Only PCs track
+    // altitude (see checkFallDamage's own doc comment on why monster-side altitude is out of
+    // scope) — checkSubject returns null for a monster actor/target, so its altitude
+    // contribution correctly defaults to 0 (a flying monster isn't gated by this check either
+    // way, a documented simplification, not silently wrong: this app has no way to know how
+    // high a monster is flying since it never tracks it).
+    const attackerAlt=(armorSubj&&armorSubj.altitude)||0, targetAlt=(targetSubj&&targetSubj.altitude)||0;
+    const reachFt=(atk.tiles||1)>1?10:5;
+    const altitudeBlocked = melee && Math.abs(attackerAlt-targetAlt)>reachFt;
     const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv, goadedDisadv, mountedAdv});
     const r=Engine.roll(atk.toHit, ac, face, cx.adv);
     if(cx.autoCrit && r.hit) r.crit=true;
-    return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why}, r);
+    return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why, altitudeBlocked}, r);
   },
   rollDamage(atk, crit){ const base=atk.dmg||'1d6'; const note=crit?critNotation(base):base; return (rollNotation(note)||{total:0}).total; },
   // resolve one attack atomically → returns an event {type,actorId,targetId,hit,crit,dmg,total,ac,void?}
@@ -1834,8 +1845,13 @@ const Engine = {
       if(sanctuary.blocked){ const ev={type:'attack', actorId, targetId, name:atk.name, hit:false, dmg:0, sanctuary};
         Events.emit(ev); return ev; } } }
     const r=Engine.hitResult(ad, actorId, targetId, atk, opts.face);
+    // Blocked before any roll counts — same "gate before rolling" shape Sanctuary already uses
+    // above, just discovered a beat later since hitResult is what actually knows the altitude
+    // gap (it already resolves both sides' real character sheets for armorDis/mountedAdv).
+    if(r.altitudeBlocked){ const ev={type:'attack', actorId, targetId, name:atk.name, hit:false, dmg:0, altitudeBlocked:true, ac:r.ac};
+      Events.emit(ev); return ev; }
     let dmg=0, mult=1; if(r.hit){ dmg=(opts.dmgTotal!=null)?opts.dmgTotal:Engine.rollDamage(atk, r.crit); mult=ad.damageMult?ad.damageMult(t, atk.dtype||atk.dt):1; dmg=Math.max(0,Math.round(dmg*mult)); if(opts.apply!==false) ad.hurt(t,dmg,atk.dtype||atk.dt); }
-    const ev={type:'attack', actorId, targetId, name:atk.name, from:a&&{x:a.x,y:a.y}, to:t&&{x:t.x,y:t.y}, ranged:(atk.tiles||1)>1, dtype:atk.dtype||atk.dt||'', d20:r.d20, total:r.total, ac:r.ac, cover:r.cover, hit:r.hit, crit:r.crit, dmg, mult, sanctuary, adv:r.adv, advWhy:r.advWhy};
+    const ev={type:'attack', actorId, targetId, name:atk.name, from:a&&{x:a.x,y:a.y}, to:t&&{x:t.x,y:t.y}, ranged:(atk.tiles||1)>1, dtype:atk.dtype||atk.dt||'', d20:r.d20, total:r.total, ac:r.ac, cover:r.cover, hit:r.hit, crit:r.crit, dmg, mult, sanctuary, altitudeBlocked:false, adv:r.adv, advWhy:r.advWhy};
     if(opts.sneak) ev.sneak=opts.sneak;
     // Holy Aura: reactive — a hostile attacker who HITS a warded creature rolls a Con save or is
     // blinded. Only checked on an actual hit, since that's the trigger (PHB).
@@ -2306,7 +2322,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.221';
+const APP_VERSION='v120.222';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

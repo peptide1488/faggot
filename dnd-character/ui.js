@@ -5597,7 +5597,7 @@ function qbResolveAttack(att, tgt, atk, done){
     const redirected=shadowMartyrRedirect(QB, tgt);
     if(redirected){ qbLog('👤 Shadow Martyr — the echo steps into the attack meant for '+qbName(tgt)); tgt=redirected; }
     const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});
-    const blocked=ev.sanctuary&&ev.sanctuary.blocked;
+    const blocked=(ev.sanctuary&&ev.sanctuary.blocked)||ev.altitudeBlocked;
     if(!blocked){
       const ranged=(atk.tiles||1)>1, dtype=atk.dtype||'';
       const pk=ranged?(/fire/i.test(dtype)?'firebolt':/pierce|arrow|bow/i.test(dtype+(atk.name||''))?'arrow':'bolt'):'slash';
@@ -5606,6 +5606,7 @@ function qbResolveAttack(att, tgt, atk, done){
     }
     setTimeout(()=>{
       if(ev.sanctuary) qbLog(blocked?'🛡️ '+qbName(att)+' can’t bring itself to attack '+qbName(tgt)+' — Sanctuary holds':'🛡️ '+qbName(att)+' fights through Sanctuary');
+      if(ev.altitudeBlocked) qbLog('🕊️ '+qbName(att)+' can’t reach '+qbName(tgt)+' — out of melee range (altitude)');
       if(blocked){ /* noop */ }
       else if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit', tgt.x, tgt.y); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
         if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); }
@@ -5617,6 +5618,10 @@ function qbResolveAttack(att, tgt, atk, done){
   }
   // Player: interactive to-hit + damage with dice animation + flavor
   const pre=Engine.hitResult(qbAdapter, att.id, tgt.id, atk); // AC / cover / adv (no mutation)
+  // Altitude-blocked melee is a guaranteed miss no matter what the roll modal would show — gate
+  // it BEFORE opening the modal (same reasoning as checking Sanctuary early) rather than let the
+  // player roll dice for an attack Engine.attack was always going to force to a miss anyway.
+  if(pre.altitudeBlocked){ flashBanner('🕊️ Out of reach — the altitude gap is more than your weapon\'s reach'); done&&done(); return; }
   const ranged=(atk.tiles||1)>1;
   const dist=gridDist(att.x,att.y,tgt.x,tgt.y);
   const melee=dist<=1;

@@ -2967,5 +2967,56 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('applyHp: a grounded character dropping to 0 HP is unaffected by the fall-damage hook (no-op path)', grounded.altitude===0 && grounded.hp.cur===0);
 }
 
+/* ---- "make the systems": altitude vs. melee reach (Engine.hitResult/Engine.attack) ---- */
+{
+  const pc=newCharacter('Grounded Fighter'); pc.cls='Fighter'; pc.level=5; pc.abilities={str:16,dex:12,con:14,int:10,wis:10,cha:10};
+  pc.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:2,y:2,hp:7,max:7,ac:15,attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:pc.name,c:pc,x:2,y:2,hpCur:pc.hp.cur,hpMax:pc.hp.max}] });
+
+  const meleeAtk={toHit:5, dmg:'1d8', tiles:1};       // 5-ft reach
+  const reachAtk={toHit:5, dmg:'1d10', tiles:2};      // 10-ft reach (Glaive-style)
+  const rangedAtk={toHit:5, dmg:'1d6', tiles:12};     // ranged — never gated by altitude
+  // hitResult prefers real grid distance over the tiles-based guess whenever both units have
+  // real positions (same rule Mounted Combatant's own ranged-vs-melee test relies on) — a far
+  // monster is needed to actually exercise the "ranged" path, or same-tile distance (0) always
+  // reads as melee regardless of what atk.tiles claims.
+  const farFoe={id:'f2', side:'mon', base:'Goblin', name:'FarFoe', hp:7, max:7, ac:12, x:9,y:9, attacksLeft:1};
+  getQB().monsters.push(farFoe);
+
+  pc.altitude=0;
+  T('altitude 0 vs a grounded monster: melee is never blocked (baseline)', Engine.hitResult(qbAdapter,'m1','pc',meleeAtk).altitudeBlocked===false);
+
+  pc.altitude=20;
+  T('altitude 20, normal 5-ft reach: blocked — 20 ft is way past 5 ft of reach', Engine.hitResult(qbAdapter,'m1','pc',meleeAtk).altitudeBlocked===true);
+  T('altitude 20, a 10-ft reach weapon: STILL blocked — 20 ft is still past 10 ft', Engine.hitResult(qbAdapter,'m1','pc',reachAtk).altitudeBlocked===true);
+  T('altitude 20, a ranged attack at a distant target: never blocked — reach only gates melee', Engine.hitResult(qbAdapter,'f2','pc',rangedAtk).altitudeBlocked===false);
+
+  pc.altitude=8;
+  T('altitude 8, normal 5-ft reach: blocked (8 > 5)', Engine.hitResult(qbAdapter,'m1','pc',meleeAtk).altitudeBlocked===true);
+  T('altitude 8, a 10-ft reach weapon: NOT blocked (8 <= 10)', Engine.hitResult(qbAdapter,'m1','pc',reachAtk).altitudeBlocked===false);
+
+  // Symmetric: the FLYING PC attacking a grounded monster is equally gated by ITS OWN altitude.
+  pc.altitude=15;
+  T('a flying PC attacking a grounded target is gated by its OWN altitude too (symmetric)', Engine.hitResult(qbAdapter,'pc','m1',meleeAtk).altitudeBlocked===true);
+  pc.altitude=0;
+  T('back on the ground, the same attack resolves normally again', Engine.hitResult(qbAdapter,'pc','m1',meleeAtk).altitudeBlocked===false);
+
+  // Engine.attack actually enforces the gate (not just an advisory flag on hitResult) — a
+  // blocked attack must apply zero damage and never mutate the target's HP.
+  pc.altitude=20;
+  const hpBefore=getQB().monsters[0].hp;
+  const ev=Engine.attack(qbAdapter,'m1','pc',meleeAtk,{});
+  T('Engine.attack: a blocked attack reports altitudeBlocked and a guaranteed miss', ev.altitudeBlocked===true && ev.hit===false && ev.dmg===0);
+  T('Engine.attack: a blocked attack never mutates HP, win or lose the roll', pc.hp.cur===pc.hp.max);
+  T('Engine.attack: a blocked attack does not touch the ATTACKER either', getQB().monsters[0].hp===hpBefore);
+
+  pc.altitude=0;
+  const ev2=Engine.attack(qbAdapter,'m1','pc',{toHit:99, dmg:'1d1', tiles:1},{});
+  T('Engine.attack: back in reach, a real attack resolves normally (a guaranteed-hit +99 lands)', ev2.altitudeBlocked===false && ev2.hit===true);
+  setQB(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
