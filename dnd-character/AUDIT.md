@@ -3229,3 +3229,49 @@ combat loop — a real QB battle confirmed the keg's "detonate here" hitting bot
 the player character (with the player correctly saving for half), the keg being consumed
 afterward, and the Decanter's Geyser knocking a monster Prone while the Decanter itself stayed
 in inventory (reusable, unlike the one-shot keg).
+
+## Combat undo — DM-hosted side (v120.224)
+
+User's third and final ask alongside altitude-melee-blocking and the magic item expansion:
+extend combat undo (QB-only until now) to DM-hosted. Same "one deep-clone snapshot at turn
+start, restart the turn on demand" shape `qbSnapshotForUndo`/`qbUndoTurn` already established,
+now applied to `net.session` instead of `QB` — a new `dmSnapshotForUndo`/`dmUndoAvailable`/
+`dmUndoTurn` triple, an "↩ Undo turn" button next to Next Turn/Back in the DM's turn-order card,
+snapshot taken right after `dmRefreshActor()` inside `dmNextTurn` (the exact moment a new
+actor's resources refresh — same "after refresh, before render" timing QB's own hook uses), and
+reset to `null` whenever a fresh `dmHost()` session starts so a stale snapshot from a PREVIOUS
+hosted session can never let Undo revert into a game that no longer exists.
+
+**Actually simpler than QB's version in one real way, not just a port**: QB's `c` object is the
+SAME reference the character lives at inside `DB` (`startQuickBattle` captures the real
+character, not a copy), which meant a naive full-state swap on undo would have silently orphaned
+`save()` from what's displayed — the whole reason `qbUndoTurn` has to wipe-and-repopulate the
+real object in place instead of just reassigning. DM-hosted's `net.session.players[]` are
+lightweight MIRROR objects (`name`/`hpCur`/`hpMax`/`ac`/`conds`) — a connected player's REAL
+character sheet only ever exists on their own device, never referenced from the DM's session —
+so `net.session = <clone>` is a plain, safe, direct swap with no reference-identity landmine to
+work around at all.
+
+**Broadcasts the reverted state**, which QB never needed to (single device, nothing else to
+tell) — `dmUndoTurn` calls `dmBroadcast()` after restoring, so every connected player's own
+screen updates to match immediately, not just the DM's.
+
+**Scope, matching what's structurally possible, not everything "combat undo" could mean**: this
+reverts the DM's own session — monster HP/positions/conditions, and the DM's mirror of a
+connected player's HP/conditions — back to how it was when the current turn began. It does
+**not**, and cannot without a network round-trip and player-side cooperation this pass doesn't
+build, undo a connected player's own resources (spell slots spent, HP potions drunk, whatever
+they did on their own device) — those live entirely there, invisible to the DM's snapshot. A
+real, named limitation the button's own tooltip states plainly, not a silent gap.
+
+Tests: 8 new assertions — the full snapshot → mutate → undo → verify cycle against a fake
+DM-hosted session (monster HP, the player mirror's HP, and a mid-turn condition all correctly
+revert), confirming `dmBroadcast` actually fires with the reverted state reaching a connected
+player (not just that the DM's own local state looks right), and repeatability (a second undo
+before the next turn reverts to the same snapshot again, matching QB's own precedent). Also
+live-verified via Playwright: a real DM-hosted session (bypassing the actual PeerJS handshake,
+which isn't itself under test here) confirmed the button starts correctly disabled before any
+snapshot exists, `dmNextTurn()` makes it available, a full turn's worth of simulated combat
+(monster HP, a connected player's mirrored HP, a mid-turn condition) all correctly reverted
+through the real button click, and — the DM-hosted-specific behavior QB never needed — a
+connected player's simulated device actually received the reverted session via the broadcast.

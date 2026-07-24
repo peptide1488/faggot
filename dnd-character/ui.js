@@ -3393,6 +3393,7 @@ function dmHost(){
   loadPeer(()=>{
     const code=roomCode();
     let peer; try{ peer=new Peer('grimoire-dm-'+code,{debug:1}); }catch(e){ flashBanner('Could not start host'); return; }
+    dmTurnSnapshot=null;   // a stale snapshot from a PREVIOUS hosted session must never let Undo revert into a session that no longer exists
     net={role:'dm', code, peer, conns:[], sel:null, session:{battle:{active:false,round:1}, map:{cols:10,rows:8,tiles:{}}, monsters:[], players:[], order:[], turn:0}};
     peer.on('open',()=>render());
     peer.on('error',e=>flashBanner('Host error: '+(e.type||e.message||e)));
@@ -3505,11 +3506,33 @@ function rollInitiative(){ const s=net.session; const o=[];
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; tickMonsterConds(); tickGasHazards(s); expireHazards(s); dmBroadcast(); render(); return; }
   const oldR=s.battle.round; let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
   if(s.battle.round>oldR){ tickMonsterConds(); tickGasHazards(s); expireHazards(s); }
-  dmRefreshActor(); dmBroadcast(); render(); frameCameraOnActiveUnit(s, 1.55); }
+  dmRefreshActor(); dmSnapshotForUndo(); dmBroadcast(); render(); frameCameraOnActiveUnit(s, 1.55); }
 
 function dmPrevTurn(){ const s=net.session; if(!s.order||!s.order.length) return;
   let guard=0; do{ if((s.turn||0)===0){ s.turn=s.order.length-1; if(s.battle.round>1) s.battle.round--; } else s.turn--; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
   dmBroadcast(); render(); flashBanner('Back to '+(s.order[s.turn]?s.order[s.turn].name:'previous')); frameCameraOnActiveUnit(s, 1.55); }
+
+// Combat undo, DM-hosted side — the same "one deep-clone snapshot at turn start, restart the
+// turn on demand" shape QB's own qbSnapshotForUndo/qbUndoTurn already established, applied to
+// net.session instead of QB. Simpler than QB's version in one real way: net.session.players[]
+// are lightweight MIRROR objects (name/hpCur/hpMax/ac/conds), never a live reference to
+// anything DB/save() persists — a connected player's real character sheet only ever exists on
+// THEIR OWN device — so a full `net.session = <clone>` swap has no reference-identity landmine
+// to work around the way QB's shared c object did. Scope, matching what's actually possible:
+// this undoes the DM's own session (monster HP/positions/conditions, the DM's mirror of player
+// HP/conds) back to how it was when the current turn began — it does NOT, and structurally
+// cannot without a network round-trip and player-side cooperation, undo a connected player's
+// own resources (spell slots spent, etc.), which live entirely on their own device. A real,
+// named limitation, not silently promised — see AUDIT.md.
+let dmTurnSnapshot=null;
+function dmSnapshotForUndo(){ if(!net||net.role!=='dm') return; try{ dmTurnSnapshot=JSON.parse(JSON.stringify(net.session)); }catch(e){ dmTurnSnapshot=null; } }
+function dmUndoAvailable(){ return !!(net && net.role==='dm' && dmTurnSnapshot); }
+function dmUndoTurn(){
+  if(!dmUndoAvailable()) return false;
+  net.session=JSON.parse(JSON.stringify(dmTurnSnapshot));
+  dmBroadcast(); render(); flashBanner('↩ Turn undone — back to how it started');
+  return true;
+}
 
 function dmExit(){ if(net&&net.campaign) saveCampaign(net.campaign,true); try{ net.peer.destroy(); }catch(e){} net=null; render(); }
 
@@ -4785,6 +4808,7 @@ function renderDM(){
         ${curMon? `<div class="row2"><button class="btn" id="curAtk">⚔ ${esc(curMon.name)} attacks</button><button class="btn ghost" id="curMove">📍 Move it</button></div>`
           : `<p class="muted" style="font-size:12.5px;margin:0">It's <b>${esc(cur.name||'a player')}</b>'s turn — they act on their own device.</p>`}
         <div class="row2" style="margin-top:8px"><button class="btn ghost" id="dmPrevT">◀ Back</button><button class="btn" id="dmNextT">Next turn ▶</button></div>
+        <button class="btn ghost block" id="dmUndoT" style="margin-top:6px" ${dmUndoAvailable()?'':'disabled style="opacity:.5"'} title="Restart the current turn from how it began — monster HP/positions/conditions and your mirror of player HP/conds, not player-side resources like spell slots (those live on their own device)">↩ Undo turn</button>
       </div>
     </div>`; })() : (s.battle.active?'<div class="card"><div class="empty">No combatants. Deploy monsters and have players join, then ↻ re-roll.</div></div>':'')}
   <div class="card">
@@ -4843,6 +4867,7 @@ function renderDM(){
   });
   { const nt=$('#dmNextT'); if(nt) nt.onclick=dmNextTurn; }
   { const pt=$('#dmPrevT'); if(pt) pt.onclick=dmPrevTurn; }
+  { const ut=$('#dmUndoT'); if(ut) ut.onclick=dmUndoTurn; }
   { const ca=$('#curAtk'); if(ca) ca.onclick=()=>{ const cur=s.order[s.turn]; const mo=cur&&s.monsters.find(m=>m.id===cur.id); if(mo) dmMonsterAttack(mo); }; }
   { const cm=$('#curMove'); if(cm) cm.onclick=()=>{ const cur=s.order[s.turn]; if(cur){ net.sel='m'+cur.id; render(); flashBanner('Tap a map cell to move '+cur.name); } }; }
   app.querySelectorAll('[data-pdmg]').forEach(el=>el.onclick=()=>{ const id=el.dataset.pdmg, amt=Number((app.querySelector('[data-pamt="'+id+'"]')||{}).value)||1; dmSend(id,{t:'apply',delta:-Math.abs(amt)}); });

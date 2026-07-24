@@ -3062,5 +3062,36 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- "make the systems": combat undo, DM-hosted side ---- */
+{
+  setNet({role:'dm', code:'test', conns:[{peer:'p1', send(msg){ this._last=msg; }}], sel:null,
+    session:{battle:{active:true,round:1}, map:{cols:5,rows:5,tiles:{}}, order:[],
+      monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:1,y:0,hp:7,max:7,ac:15,conds:[]}],
+      players:[{id:'p1',name:'RemotePlayer',level:3,cls:'Fighter',hpCur:20,hpMax:20,ac:16,conds:[]}]}});
+
+  dmSnapshotForUndo();
+  T('dmSnapshotForUndo: makes a turn snapshot available', dmUndoAvailable()===true);
+
+  // Simulate a turn's worth of DM-hosted mutation: a monster takes damage, a connected
+  // player's MIRROR (not their real sheet — that's on their own device) takes damage too.
+  getNet().session.monsters[0].hp=1;
+  getNet().session.players[0].hpCur=5;
+  getNet().session.monsters[0].conds.push({name:'Prone',rounds:1});
+
+  const ok=dmUndoTurn();
+  T('dmUndoTurn: reports success', ok===true);
+  T('dmUndoTurn: restores the monster\'s HP to the turn-start snapshot', getNet().session.monsters[0].hp===7);
+  T('dmUndoTurn: restores the player MIRROR\'s HP to the turn-start snapshot', getNet().session.players[0].hpCur===20);
+  T('dmUndoTurn: the reverted monster no longer carries the mid-turn condition', getNet().session.monsters[0].conds.length===0);
+  T('dmUndoTurn: broadcasts the reverted state to connected players (dmBroadcast fired)', getNet().conns[0]._last && getNet().conns[0]._last.t==='session' && getNet().conns[0]._last.session.monsters[0].hp===7);
+
+  // Repeatable, same as QB's own undo — press it again after a second mistake.
+  getNet().session.monsters[0].hp=1;
+  dmUndoTurn();
+  T('dmUndoTurn: repeatable — a second undo before the next turn reverts to the same snapshot', getNet().session.monsters[0].hp===7);
+
+  setNet(null);
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
