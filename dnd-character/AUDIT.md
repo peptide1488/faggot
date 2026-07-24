@@ -3275,3 +3275,46 @@ snapshot exists, `dmNextTurn()` makes it available, a full turn's worth of simul
 (monster HP, a connected player's mirrored HP, a mid-turn condition) all correctly reverted
 through the real button click, and — the DM-hosted-specific behavior QB never needed — a
 connected player's simulated device actually received the reverted session via the broadcast.
+
+## Bug audit: `isFlying()` never checked a flying mount or a flying Wild Shape (v120.225)
+
+User asked to "look for bugs" after the rapid altitude/magic-items/undo work above. Found a real
+gap in the altitude system itself: `isFlying(c)` — the single gate every altitude feature
+(Climb/Descend Use-menu section, `checkFallDamage` on drop-to-0, movement pathing, terrain-hazard
+immunity) checks — only ever recognized the Fly/Levitate spell effects and a hardcoded flying-
+race set. It never checked `c.mountedOn` or `c.wildShape`, so a Ranger/Paladin riding a Griffon
+or Pegasus (Find Greater Steed's own RAW flying options) or a Druid Wild Shaped into an Air
+Elemental would never see the Altitude UI at all — despite legitimately being airborne. This
+compounded with a second, independent data gap: `FIND_STEED_CATALOG`'s Griffon/Pegasus/Peryton
+entries and `ELEMENTAL_SHAPES`' Air Elemental had no `fly` flag set on them in the first place,
+and `mountUp` never propagated a mount definition's `fly` flag onto the spawned unit or onto
+`c.mountedOn` even where the data existed (compare `spawnSummon`, which already did this
+correctly for summoned creatures) — so fixing only `isFlying` without also fixing the data and
+the propagation would have been a silent no-op.
+
+Fixed all three layers together: added `fly:true` to Griffon/Pegasus/Peryton (Find Greater
+Steed) and Air Elemental (Elemental Wild Shape); `mountUp` now sets `fly:!!mountDef.fly` on both
+the spawned mount unit and `c.mountedOn`; the Wild Shape transform now carries `fly:!!b.fly`
+onto `c.wildShape`; `isFlying(c)` now also returns true when `c.mountedOn.fly` or
+`c.wildShape.fly` is set. Every other caller of `isFlying` (movement pathing, terrain-hazard
+immunity, the Use-menu Altitude section) needed zero changes — they all already gate on this one
+function, exactly the "one shared function, not parallel per-mode copies" discipline this app
+already follows elsewhere.
+
+Considered and deliberately left alone: `applyHp`'s Wild Shape branch doesn't call
+`checkFallDamage` directly, which looked like a bug at first glance. It isn't — a beast form
+destroyed with overflow damage that also zeroes the real character's HP already recurses into
+`applyHp`'s normal branch (where `checkFallDamage` lives), and a beast form destroyed WITHOUT
+overflow leaves the character conscious, which is already the documented boundary of this app's
+"only unconsciousness triggers a fall, not every way you could stop flying" simplification
+(see `checkFallDamage`'s own doc comment) — consistent with how a Fly spell simply expiring
+while conscious and airborne is equally unmodeled. Not a new gap, just the same accepted one.
+
+Tests: 12 new assertions — data sanity checks (Griffon/Pegasus flagged `fly:true`, Air Elemental
+flagged `fly:true`, a ground mount like Warhorse is NOT flagged), `mountUp` propagating `fly`
+onto both the spawned unit and `c.mountedOn`, `isFlying` true while mounted on a flying steed and
+false again after dismounting, `isFlying` false on a ground mount throughout, and `isFlying` true
+for a flying Wild Shape / false for a non-flying one. Also live-verified via Playwright directly
+against the running page (not just the test harness): mounting a real character onto a Griffon
+through the actual `mountUp` function in the browser confirms `unit.fly`, `c.mountedOn.fly`, and
+`isFlying(c)` all come back true, exactly matching the test-harness result.

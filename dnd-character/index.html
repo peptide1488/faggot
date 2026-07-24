@@ -1095,9 +1095,9 @@ const FIND_STEED_CATALOG={
     {id:'mastiff', label:'🐕 Mastiff', name:'Mastiff', ac:12, hp:5, spd:40},
   ],
   'Find Greater Steed':[
-    {id:'griffon', label:'🦅 Griffon', name:'Griffon', ac:12, hp:59, spd:80},
-    {id:'pegasus', label:'🐴 Pegasus', name:'Pegasus', ac:12, hp:59, spd:90},
-    {id:'peryton', label:'🦌 Peryton', name:'Peryton', ac:13, hp:33, spd:60},
+    {id:'griffon', label:'🦅 Griffon', name:'Griffon', ac:12, hp:59, spd:80, fly:true},
+    {id:'pegasus', label:'🐴 Pegasus', name:'Pegasus', ac:12, hp:59, spd:90, fly:true},
+    {id:'peryton', label:'🦌 Peryton', name:'Peryton', ac:13, hp:33, spd:60, fly:true},
     {id:'direwolf', label:'🐺 Dire Wolf', name:'Dire Wolf', ac:14, hp:37, spd:50},
     {id:'rhino', label:'🦏 Rhinoceros', name:'Rhinoceros', ac:11, hp:45, spd:40},
     {id:'sabertooth', label:'🐅 Saber-Toothed Tiger', name:'Saber-Toothed Tiger', ac:12, hp:52, spd:40},
@@ -1622,7 +1622,7 @@ const BEAST_SHAPES=[
 // water elemental" — no CR gate in the RAW text), so this is a separate small catalog, not
 // filtered by moonMaxCR the way BEAST_SHAPES is.
 const ELEMENTAL_SHAPES=[
-  {n:'Air Elemental',cr:'5',ac:15,hp:90,speed:90,atk:'Slam +8 (2d8+5 bludgeoning)',desc:'A whirling vortex of wind given fury and shape.'},
+  {n:'Air Elemental',cr:'5',ac:15,hp:90,speed:90,fly:true,atk:'Slam +8 (2d8+5 bludgeoning)',desc:'A whirling vortex of wind given fury and shape.'},
   {n:'Earth Elemental',cr:'5',ac:17,hp:126,speed:30,atk:'Slam +8 (2d8+5 bludgeoning)',desc:'A lumbering giant of living stone and soil.'},
   {n:'Fire Elemental',cr:'5',ac:13,hp:102,speed:50,atk:'Touch +6 (2d6+3 fire + 2d6 fire, ignites flammables)',desc:'A roaring column of living flame.'},
   {n:'Water Elemental',cr:'5',ac:14,hp:114,speed:90,atk:'Slam +7 (2d8+4 bludgeoning, DC 14 Str or engulfed)',desc:'A crashing wave given sapient shape.'},
@@ -2328,7 +2328,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.224';
+const APP_VERSION='v120.225';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

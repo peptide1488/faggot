@@ -840,9 +840,9 @@ function mountUp(s, c, controllerId, mountDef, x, y, log){
   const id='mount_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,5);
   const unit={ id, side:'mon', ally:true, mount:true, controllerId, riderId:controllerId, riderName:c.name,
     base:mountDef.name, name:mountDef.name, x, y, hp:mountDef.hp, max:mountDef.hp, ac:mountDef.ac,
-    atk:'', attacks:0, attacksLeft:0, speed:mountDef.spd, moveLeft:mountDef.spd, reactionUsed:false, brain:'passive', conds:[], facing:'down' };
+    atk:'', attacks:0, attacksLeft:0, speed:mountDef.spd, moveLeft:mountDef.spd, fly:!!mountDef.fly, reactionUsed:false, brain:'passive', conds:[], facing:'down' };
   s.monsters.push(unit);
-  c.mountedOn={id, name:mountDef.name, speed:mountDef.spd};
+  c.mountedOn={id, name:mountDef.name, speed:mountDef.spd, fly:!!mountDef.fly};
   if(c.battle) c.battle.move=Math.max(0,(c.battle.move||0)-half);
   log('🐴 '+(c.name||'You')+' mounts a '+mountDef.name);
   return unit;
@@ -1961,7 +1961,7 @@ function effectiveHeight(s,x,y){
   return h;
 }
 
-function isFlying(c){ if(!c) return false; if((c.effects||[]).some(e=>e.name==='Fly'||e.name==='Levitate')) return true; return FLYING_RACES.has(c.race); }
+function isFlying(c){ if(!c) return false; if((c.effects||[]).some(e=>e.name==='Fly'||e.name==='Levitate')) return true; if(c.mountedOn&&c.mountedOn.fly) return true; if(c.wildShape&&c.wildShape.fly) return true; return FLYING_RACES.has(c.race); }
 
 function monsterFlies(mo){ return !!(mo&&mo.fly); }
 

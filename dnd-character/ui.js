@@ -125,7 +125,7 @@ function openWildShapeUI(c){
   const doTransform=(b, cost)=>{
     if(c.battle){ if(bonusAction) c.battle.bonus=true; else spendAction(c); }
     c.wildShapeLeft=Math.max(0,(c.wildShapeLeft||0)-cost);
-    c.wildShape={name:b.n, hpCur:b.hp, hpMax:b.hp, ac:b.ac, atk:b.atk, speed:b.speed};
+    c.wildShape={name:b.n, hpCur:b.hp, hpMax:b.hp, ac:b.ac, atk:b.atk, speed:b.speed, fly:!!b.fly};
     logChange(c,'🐾 Wild Shapes into a '+b.n);
     flashBanner('🐾 Wild Shape — you are now a '+b.n);
     $('#modalRoot').innerHTML=''; save(); render(); if(net&&net.role==='player') playerHello();

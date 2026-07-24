@@ -39,6 +39,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
+  'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
   'globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.dirFromDelta=dirFromDelta;globalThis.spriteTokenHTML=spriteTokenHTML;'+
   'globalThis.rotXY=rotXY;globalThis.rotDelta=rotDelta;'+
@@ -2965,6 +2966,42 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const grounded=newCharacter('Grounded Fighter'); grounded.hp={max:10,cur:10,temp:0}; grounded.altitude=0; grounded.conditions={}; grounded.death={succ:0,fail:0};
   applyHp(grounded, -10);
   T('applyHp: a grounded character dropping to 0 HP is unaffected by the fall-damage hook (no-op path)', grounded.altitude===0 && grounded.hp.cur===0);
+}
+
+/* ---- bug fix: isFlying() ignored a flying mount (Find Greater Steed) or a flying Wild Shape
+   form — a PC riding a Griffon or shaped into an Air Elemental never saw the Altitude UI at all. */
+{
+  const griffonDef=FIND_STEED_CATALOG['Find Greater Steed'].find(m=>m.id==='griffon');
+  T('data: Find Greater Steed\'s Griffon is flagged fly:true (RAW flying steed)', griffonDef.fly===true);
+  const pegasusDef=FIND_STEED_CATALOG['Find Greater Steed'].find(m=>m.id==='pegasus');
+  T('data: Find Greater Steed\'s Pegasus is flagged fly:true (RAW flying steed)', pegasusDef.fly===true);
+  T('data: Air Elemental (Elemental Wild Shape) is flagged fly:true', ELEMENTAL_SHAPES.find(b=>b.n==='Air Elemental').fly===true);
+  T('data: a ground mount (Warhorse) is NOT flagged fly', !MOUNT_CATALOG.find(m=>m.id==='warhorse').fly);
+
+  const rider=newCharacter('Skyrider'); rider.hp={max:20,cur:20,temp:0};
+  rider.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:effSpeed(rider),moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[], players:[{id:'pc', side:'pc', name:rider.name, c:rider, x:2,y:2, hpCur:rider.hp.cur, hpMax:rider.hp.max}] });
+  T('isFlying: not flying before mounting up', isFlying(rider)===false);
+  const gUnit=mountUp(getQB(), rider, 'pc', griffonDef, 2, 2, ()=>{});
+  T('mountUp: propagates fly:true onto the spawned mount unit', gUnit.fly===true);
+  T('mountUp: propagates fly:true onto c.mountedOn', rider.mountedOn.fly===true);
+  T('isFlying: a PC mounted on a flying steed is airborne-capable (the actual bug)', isFlying(rider)===true);
+  rider.battle.move=effSpeed(rider);   // fresh movement budget (needs half the MOUNT's speed to dismount)
+  dismountRider(rider, ()=>{});
+  T('isFlying: dismounting a flying steed removes airborne capability again', isFlying(rider)===false);
+  rider.battle.move=effSpeed(rider);   // fresh movement budget to mount up again
+  const warhorseUnit=mountUp(getQB(), rider, 'pc', MOUNT_CATALOG.find(m=>m.id==='warhorse'), 2, 2, ()=>{});
+  T('mountUp: a ground mount does NOT set fly on the unit', warhorseUnit.fly===false);
+  T('isFlying: a PC mounted on a ground mount is still grounded', isFlying(rider)===false);
+  setQB(null);
+
+  const druid=newCharacter('Sky Druid'); druid.hp={max:15,cur:15,temp:0};
+  T('isFlying: a Druid in normal form is grounded', isFlying(druid)===false);
+  druid.wildShape={name:'Air Elemental', hpCur:90, hpMax:90, ac:15, atk:'', speed:90, fly:true};
+  T('isFlying: a Druid Wild Shaped into a flying elemental is airborne-capable (the actual bug)', isFlying(druid)===true);
+  druid.wildShape={name:'Brown Bear', hpCur:34, hpMax:34, ac:11, atk:'', speed:40, fly:false};
+  T('isFlying: a Druid Wild Shaped into a non-flying beast is still grounded', isFlying(druid)===false);
 }
 
 /* ---- "make the systems": altitude vs. melee reach (Engine.hitResult/Engine.attack) ---- */
