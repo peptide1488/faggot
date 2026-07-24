@@ -6340,6 +6340,16 @@ function importData(e){
 /* ============ DM / MULTIPLAYER (WebRTC via PeerJS) ============ */
 let net=null;   // {role:'dm'|'player', ...}
 let QB=null;    // Quick Battle (solo vs AI) state, see the Quick Battle section
+// Combat undo (QB only — see qbSnapshotForUndo's own comment on why DM-hosted/player-net are
+// out of scope for this pass): a single deep-clone snapshot of the ENTIRE QB state, taken the
+// moment the PC's own turn begins, refreshed at the start of every subsequent PC turn. "Undo"
+// restores the whole thing — deliberately turn-granularity ("restart my turn"), not a per-click
+// history stack: instrumenting every individual action (attack/spell/move/reaction) across this
+// file's combat surface for surgical single-step undo would be a far larger, riskier change for
+// comparatively little extra value over "let me just redo the turn I botched." Not cleared after
+// one use — pressing it again before ending your turn keeps reverting to the same turn-start
+// point, in case the redo attempt goes wrong too.
+let qbTurnSnapshot=null;
 let isoView=true;   // always isometric — top-down/2D-iso toggle removed per user request
 let iso3dView=true; // always the WebGL Iso3D renderer
 let mapRotation=Number(localStorage.getItem('grimoire.maprot'))||0;   // 0-3, 90° steps, iso view only
@@ -11301,6 +11311,7 @@ function forgeRandomReturn(){ const before=DB.length; forgeRandom({style:rndPick
 
 function startQuickBattle(c, crMax, count, mapKey){
   curId=c.id; localStorage.setItem(LS_CUR,curId);   // so ⓘ breakdowns (data-bd → cur()) read the fighting character, not whatever was last open on the sheet
+  qbTurnSnapshot=null;   // a stale snapshot from the PREVIOUS battle must never let Undo revert into a fight that's already over
   // A monster's Web/grapple attack (see qbResolveAttack's atk.cond handling) sets a condition
   // like Restrained straight onto c.conditions with nothing that ever clears it when the fight
   // ends — so it silently carried into every future Quick Battle forever (live report: "in
@@ -11401,7 +11412,30 @@ function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
     let exp=[]; (c.effects||[]).forEach(e=>{ if(e.rounds!=null){ e.rounds--; if(e.rounds<=0) exp.push(e); } }); c.effects=(c.effects||[]).filter(e=>e.rounds==null||e.rounds>0);
     exp.forEach(e=>{ if(e.conc&&c.concentration&&c.concentration.spell===e.name) c.concentration={active:false,spell:''};
       if(e.cond && c.conditions && !(c.effects||[]).some(x=>x.cond===e.cond)) delete c.conditions[e.cond]; });   // e.g. Invisibility naturally timing out — endEffect() already does this for manual dismissal, this path covers the round-countdown expiry
-    QB.moveMode=false; save(); render(); }
+    QB.moveMode=false; qbSnapshotForUndo(); save(); render(); }
+}
+function qbSnapshotForUndo(){ try{ qbTurnSnapshot=JSON.parse(JSON.stringify(QB)); }catch(e){ qbTurnSnapshot=null; } }
+function qbUndoAvailable(){ return !!qbTurnSnapshot; }
+function qbUndoTurn(){
+  if(!qbTurnSnapshot) return false;
+  const restored=JSON.parse(JSON.stringify(qbTurnSnapshot));   // a FRESH clone, not the snapshot object itself — further mutation this turn must not corrupt the one snapshot undo can keep reverting to
+  // QB.players[0].c is the SAME object reference the character lives at in DB (see
+  // startQuickBattle: `const pc={...c...}` captures the real character, not a copy) — every
+  // battle mutation (HP, resources, conditions) writes straight through to what save()
+  // persists. A naive `QB=restored` would silently replace it with a disconnected clone: the
+  // screen would show the reverted HP, but save() would keep writing the character's PRE-undo
+  // state to localStorage forever after, and every subsequent battle action this turn would
+  // mutate the orphaned clone instead of the real character. Wipe the real object's fields and
+  // repopulate them from the snapshot IN PLACE instead, then re-point the restored QB at that
+  // same real object, so the reference DB already holds stays exactly what QB uses.
+  const realC=QB.players[0].c;
+  Object.keys(realC).forEach(k=>delete realC[k]);
+  Object.assign(realC, restored.players[0].c);
+  restored.players[0].c=realC;
+  QB=restored;
+  qbLog('↩️ Turn undone — back to how it started', QB);
+  save(); render();
+  return true;
 }
 function qbNextTurn(){ if(!QB) return; if(QB.paused){ setTimeout(qbNextTurn,200); return; } if(QB.over){ render(); return; }
   let guard=0; do{ QB.turn=(QB.turn+1)%QB.order.length; if(QB.turn===0){ QB.battle.round++; QB.monsters.forEach(m=>{ if(m.conds){ m.conds.forEach(x=>{ if(x.rounds!=null) x.rounds--; }); m.conds=m.conds.filter(x=>x.rounds==null||x.rounds>0); } }); tickGasHazards(QB); expireHazards(QB); tickSessionLights(QB); } guard++; const o=qbCurrent(); const u=qbUnitById(o.id); if(u&&qbAlive(u)) break; } while(guard<=QB.order.length+1);
@@ -11935,7 +11969,10 @@ function renderQuickBattle(){
       ${(isCaster(c)||c.spells.length)?`<button class="btn" id="qbCast" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>✨ Spells</button>`:''}
       <button class="btn ghost" id="qbUse" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'} title="Interact with adjacent objects, or Shove/Grapple an adjacent foe">🖐 Use</button>
     </div>
-    <button class="btn ghost block" id="qbEnd" style="margin-top:8px" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
+    <div class="row2" style="margin-top:8px">
+      <button class="btn ghost" id="qbEnd" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
+      <button class="btn ghost" id="qbUndo" title="Restart this turn from how it began — undoes everything since your turn started" ${(myTurn&&qbUndoAvailable())?'':'disabled style="opacity:.5"'}>↩ Undo turn</button>
+    </div>
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'Green: remaining speed (can still Attack). Red: Dash uses your Action. Jump/climb marked on path. Tap a tile.':'⚔ Attack a monster in range, ✨ cast a spell, or 🥾 Move. You can also tap a 🟥 monster directly.'):'⏳ Waiting for '+esc(o?o.name:'…')+'…'}</p>
   </div>
   <div class="card">
@@ -11958,6 +11995,7 @@ function renderQuickBattle(){
   { const ca=$('#qbCast'); if(ca&&myTurn) ca.onclick=()=>qbOpenSpells(c); }
   { const us=$('#qbUse'); if(us&&myTurn) us.onclick=()=>openAdjacentUseUI(c,s,pc); }
   { const en=$('#qbEnd'); if(en&&myTurn) en.onclick=qbEndPcTurn; }
+  { const un=$('#qbUndo'); if(un&&myTurn&&qbUndoAvailable()) un.onclick=qbUndoTurn; }
   if(myTurn) app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{
     const t=el.getAttribute('data-target'); if(t){ const mo=s.monsters.find(m=>m.id===t); if(mo&&mo.hp>0) qbPcAttack(mo); return; }
     const [x,y]=el.dataset.cell.split(',').map(Number); if(!s.moveMode){ flashBanner('Tap 🥾 Move first'); return; } qbMovePc(x,y);
@@ -12997,7 +13035,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.215';
+const APP_VERSION='v120.216';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

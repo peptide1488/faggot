@@ -2814,3 +2814,46 @@ correctly rating the encounter tougher against a real 2-player party than the is
 test's 4-player scenario, proving the party-size multiplier bump fires in the live UI too, not
 just in a hand-constructed test), and confirming Deploy spawns every pick into the real
 `net.session.monsters` with correct sequential naming.
+
+## Combat undo — QB only (v120.216)
+
+Closed the last item on this pass's VISION.md list, deliberately scoped down from "combat undo"
+in general to Quick Battle specifically. DM-hosted/player-net were left out on purpose, not
+overlooked: undoing a networked battle means reconciling three potentially-diverged copies of
+state across devices (the DM's authoritative session, the DM's own local UI, and whichever
+player's turn it was) — a materially different, harder problem than QB's single-device case,
+and not attempted half-built. Also deliberately turn-granularity ("restart my whole turn"), not
+a per-click undo stack: instrumenting every individual action type (attack/spell/move/reaction)
+across QB's combat surface for surgical single-step undo would be a much larger, riskier change
+for comparatively little extra value over "let me just redo the turn I botched" — the same
+"curated over exhaustive" scope call this session keeps making, applied to a mechanic instead of
+a content table this time.
+
+One deep-clone snapshot of the entire QB state, taken the moment the PC's own turn begins
+(`qbBeginTurn`'s PC branch) and refreshed at the start of every subsequent turn — not cleared
+after use, so pressing Undo again before ending the turn keeps reverting to that same
+turn-start point if the redo attempt goes wrong too. A new "↩ Undo turn" button sits next to
+End Turn, enabled only during the PC's own turn when a snapshot exists.
+
+**Found and fixed a real reference-identity bug before it shipped**, caught by reasoning through
+what `save()` actually persists rather than just eyeballing the restored state: `QB.players[0].c`
+is the *same object* the character lives at inside `DB` (`startQuickBattle` captures the real
+character, not a copy, so every battle mutation writes straight through to what gets saved). A
+naive `QB = <cloned snapshot>` would have silently swapped in a disconnected clone — the screen
+would show the reverted HP right after undo, but `save()` would keep persisting the character's
+*pre-undo* state to localStorage forever after, and every action taken for the rest of that
+turn would mutate the orphaned clone instead of the real character, permanently diverging what's
+displayed from what's saved. Fixed by wiping and repopulating the real character object's fields
+in place from the snapshot, then re-pointing the restored QB at that same real object, instead
+of replacing the reference outright.
+
+Tests: 7 new assertions — HP/monster-HP/log all correctly reverted, the reference-identity fix
+proven directly (`QB.players[0].c === ` the real DB object, not a clone, and localStorage
+reflects the reverted HP — not just that undo "looks" like it worked), and repeatability (a
+second undo before ending the turn reverts to the same snapshot again). Also live-verified via
+Playwright through a real `startQuickBattle` battle end-to-end: confirmed the button is
+correctly disabled during the monster's turn and enables once the PC's turn actually begins (not
+just whenever a snapshot object happens to exist), then simulated a full turn's damage/movement/
+log changes and clicked the real button — HP, position, remaining movement, monster HP, and the
+log all reverted correctly, with the reference-identity fix confirmed live (the post-undo
+`QB.players[0].c` really is `cur()`, and `cur().hp.cur` really is what got persisted).

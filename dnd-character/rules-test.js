@@ -46,7 +46,8 @@ eval(src.replace('"use strict";','')+
   'globalThis.INTERACT_TYPES=INTERACT_TYPES;globalThis.DECOR_TO_INTERACT=DECOR_TO_INTERACT;globalThis.WALL_LIKE_TERRAIN=WALL_LIKE_TERRAIN;globalThis.nextToWall=nextToWall;'+
   'globalThis.ABILITIES=ABILITIES;globalThis.playerNetAdapter=playerNetAdapter;'+
   'globalThis.DETECT_THOUGHTS_FALLBACK=DETECT_THOUGHTS_FALLBACK;'+
-  'globalThis.setNet=v=>{net=v;};globalThis.getNet=()=>net;');
+  'globalThis.setNet=v=>{net=v;};globalThis.getNet=()=>net;'+
+  'globalThis.getDB=()=>DB;globalThis.setDB=v=>{DB=v;};');
 
 let fails=0;
 function T(name,cond){ if(cond) console.log('  ok  '+name); else { fails++; console.log('FAIL  '+name); } }
@@ -2837,6 +2838,42 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('encounterDifficulty: a small party facing the same monsters rates far more dangerous', enc2.rating==='Deadly' && enc2.adjXP>enc1.adjXP);
 
   T('encounterDifficulty: zero monsters is Trivial, not a crash', encounterDifficulty([], [5,5]).rating==='Trivial');
+}
+
+/* ---- "make the systems": combat undo (QB only — "restart my turn", not a per-click history;
+   see qbTurnSnapshot's own doc comment for the scope reasoning) ---- */
+{
+  const c=newCharacter('Undo Tester'); c.hp={max:20,cur:20,temp:0}; c.battle=freshTurnState(c);
+  getDB().push(c); save();
+  const pc={id:'pc', side:'pc', name:c.name, c, x:0,y:0, hpCur:c.hp.cur, hpMax:c.hp.max, ac:12};
+  const goblin={id:'qm0', side:'mon', base:'Goblin', name:'Goblin', hp:7, max:7, ac:15, x:1,y:0};
+  setQB({active:true, over:null, map:{cols:5,rows:5,tiles:{}}, players:[pc], monsters:[goblin], order:[], turn:0, battle:{active:true,round:1}, moveMode:false, log:[]});
+
+  qbSnapshotForUndo();
+  T('qbSnapshotForUndo: makes a turn snapshot available', qbUndoAvailable()===true);
+
+  // Simulate a turn's worth of damage: the PC gets hurt, the goblin gets hurt, a log entry
+  // is added — then decide "that went badly" and undo.
+  const qb=getQB();
+  qb.players[0].c.hp.cur=6;
+  qb.monsters[0].hp=2;
+  qb.log.unshift({m:'test action', t:Date.now()});
+  const realCRefBeforeUndo=qb.players[0].c;
+
+  qbUndoTurn();
+  const after=getQB();
+  T('qbUndoTurn: restores the PC\'s HP to the turn-start snapshot', after.players[0].c.hp.cur===20);
+  T('qbUndoTurn: restores the monster\'s HP to the turn-start snapshot', after.monsters[0].hp===7);
+  T('qbUndoTurn: the reverted log no longer has the undone action', !after.log.some(l=>l.m==='test action'));
+  T('qbUndoTurn: preserves the SAME character object reference DB holds (not a disconnected clone)', after.players[0].c===realCRefBeforeUndo && after.players[0].c===c);
+  T('qbUndoTurn: because the reference is preserved, DB/localStorage reflects the reverted HP too', JSON.parse(localStorage.getItem('grimoire.characters.v1')).find(x=>x.id===c.id).hp.cur===20);
+
+  // Undo is repeatable (not single-use) — press it again after making the same mistake twice.
+  after.players[0].c.hp.cur=1;
+  qbUndoTurn();
+  T('qbUndoTurn: repeatable — a second undo before ending the turn reverts again to the same snapshot', getQB().players[0].c.hp.cur===20);
+
+  setDB(getDB().filter(x=>x.id!==c.id)); save(); setQB(null);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
