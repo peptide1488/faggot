@@ -2809,5 +2809,35 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   localStorage.removeItem('grimoire.homebrewMonsters');
 }
 
+/* ---- "make the systems": Encounter Builder (DMG 2014 XP-budget tables) ---- */
+{
+  T('crXP: known CR values match the DMG table', crXP('1/4')===50 && crXP('1')===200 && crXP('5')===1800 && crXP('10')===5900);
+  T('crXP: an unrecognized CR is 0, not a crash', crXP('nonsense')===0);
+
+  T('partyXPThresholds: sums per-character thresholds across the party', JSON.stringify(partyXPThresholds([3,3,3,3]))===JSON.stringify({easy:300,medium:600,hard:900,deadly:1600}));
+  T('partyXPThresholds: an empty party is all zeroes, not a crash', partyXPThresholds([]).medium===0);
+
+  T('encounterMultiplier: 1 monster is the baseline ×1', encounterMultiplier(1,4)===1);
+  T('encounterMultiplier: 3-6 monsters is ×2 for a normal-sized party', encounterMultiplier(4,4)===2);
+  T('encounterMultiplier: a small party (<3) bumps the multiplier UP one step (tougher)', encounterMultiplier(4,2)===2.5);
+  T('encounterMultiplier: a large party (>5) bumps the multiplier DOWN one step (easier)', encounterMultiplier(4,6)===1.5);
+  T('encounterMultiplier: never bumps below the ×1 floor even for a tiny 1-monster fight vs a huge party', encounterMultiplier(1,8)===1);
+
+  // 4 Goblins (CR 1/4 = 50 XP each = 200 raw) vs a level-3 party of 4 (thresholds ×4 above):
+  // 4 monsters → ×2 multiplier, party size 4 → no size adjustment. adjXP = 400, which clears
+  // the party's Easy threshold (300) but not Medium (600) → rated Easy.
+  const enc1=encounterDifficulty(['1/4','1/4','1/4','1/4'], [3,3,3,3]);
+  T('encounterDifficulty: raw XP is the straight CR sum', enc1.totalXP===200);
+  T('encounterDifficulty: adjusted XP applies the monster-count multiplier', enc1.adjXP===400);
+  T('encounterDifficulty: rates correctly against the party\'s own thresholds', enc1.rating==='Easy');
+
+  // Same 4 Goblins vs a single level-1 character: threshold easy=25/medium=50/hard=75/deadly=100
+  // (all far below 200 raw), and multiplier bumps up since party size 1 < 3 → adjXP even higher.
+  const enc2=encounterDifficulty(['1/4','1/4','1/4','1/4'], [1]);
+  T('encounterDifficulty: a small party facing the same monsters rates far more dangerous', enc2.rating==='Deadly' && enc2.adjXP>enc1.adjXP);
+
+  T('encounterDifficulty: zero monsters is Trivial, not a crash', encounterDifficulty([], [5,5]).rating==='Trivial');
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

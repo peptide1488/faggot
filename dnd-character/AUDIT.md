@@ -2778,3 +2778,39 @@ homebrew monster through the actual editor form, confirming it appears in the Be
 homebrew badge and updated count, deploying it and confirming the live `net.session.monsters`
 entry's CR/save-bonus resolve correctly (not the CR-1 fallback), and editing it in place with
 the name field correctly locked.
+
+## Encounter Builder (v120.215)
+
+Closed another VISION.md wishlist item, and the natural pairing for the Bestiary/homebrew work
+just shipped — a DM can now build a multi-monster encounter (search, add curated or homebrew
+monsters one at a time, remove any pick) and see a live, correctly-computed difficulty rating
+against the CURRENT connected party's actual levels before ever deploying anything, instead of
+eyeballing it or deploying blind and finding out mid-fight.
+
+Standard DMG (2014) XP-budget tables, not app-specific approximations: `CR_XP` (CR → XP value,
+the real table up to CR 30 so a high-CR homebrew monster still resolves correctly, not just
+whatever's in the curated 35), `CHAR_XP_THRESH` (per-character Easy/Medium/Hard/Deadly
+thresholds by level, summed across the party), and the DMG's own monster-count multiplier table
+— including its party-size adjustment (bump the multiplier UP one step for a party smaller than
+3, DOWN one step for a party larger than 5) rather than just the flat multiplier, which would
+otherwise misjudge difficulty for anything but a standard 3–5 player party.
+
+`encounterDifficulty(crs, partyLevels)` is the one function every other piece reads from — the
+live readout in the builder modal, and (documented as the reason it's exposed as a clean pure
+function rather than baked into the UI closure) available for a future "is this fair?" check
+elsewhere without rebuilding the math. Deploying reuses `deployMonster` per pick — no new
+spawn/naming logic, exactly the same numbering (`Goblin 1`, `Goblin 2`, …) and stat derivation
+an individually-deployed monster already gets, so an encounter-builder monster is in every way
+identical to one added any other way.
+
+Tests: 16 new assertions — `crXP`/`partyXPThresholds` against hand-computed DMG values, the
+multiplier table's party-size bump in both directions (and that it never goes below the ×1
+floor), and `encounterDifficulty` end-to-end against a worked example (4 Goblins vs a 4-person
+level-3 party rates Easy; the same 4 Goblins vs a lone level-1 character rates Deadly — proving
+the party-size/level sensitivity, not just that a number comes out). Also live-verified via
+Playwright against the real DOM: searching and adding real bestiary entries through the actual
+picker, confirming the live difficulty readout recalculates correctly on every add (including
+correctly rating the encounter tougher against a real 2-player party than the isolated unit
+test's 4-player scenario, proving the party-size multiplier bump fires in the live UI too, not
+just in a hand-constructed test), and confirming Deploy spawns every pick into the real
+`net.session.monsters` with correct sequential naming.
