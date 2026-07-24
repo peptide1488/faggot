@@ -7117,7 +7117,7 @@ function moverStrMod(mover){
   if(mover.c) return mod(abil(mover.c,'str'));
   if(mover.abilities) return mod(abil(mover,'str'));
   if(mover.str!=null) return mod(mover.str);
-  const base=mover.base, ent=base&&MONSTERS_5E.find(m=>m.n===base);
+  const base=mover.base, ent=base&&monsterDef(base);
   const cr=ent?crToNum(ent.cr):0;
   if(cr>=3) return 3; if(cr>=1) return 2; if(cr>=0.5) return 1; return 0;
 }
@@ -10360,10 +10360,22 @@ const MONSTER_RVI={
 };
 function monsterDmgMult(mo, dtype){ if(!mo||!dtype) return 1; const r=MONSTER_RVI[mo.base||mo.name]; if(!r) return 1; const d=String(dtype).toLowerCase();
   if((r.imm||[]).includes(d)) return 0; if((r.vuln||[]).includes(d)) return 2; if((r.res||[]).includes(d)) return 0.5; return 1; }
+// Homebrew monsters: DM-authored, MONSTERS_5E-shaped ({n,cr,ac,hp,spd,init,attacks,sprite,
+// atk,desc}) entries persisted in localStorage so they're reusable across encounters/sessions,
+// not just a one-off deploy — the gap deployNpc (a real, but transient, per-encounter NPC
+// creator) deliberately doesn't cover. monsterDef is the single lookup every per-monster stat
+// derivation (save bonus, CR, RVI, ability-mod fallback) should go through instead of querying
+// MONSTERS_5E directly, so a homebrew monster's own CR/stats are honored everywhere a curated
+// one's already are — the same "one shared source of truth" fix this app keeps applying.
+function loadHomebrewMonsters(){ try{ const v=JSON.parse(localStorage.getItem('grimoire.homebrewMonsters')); return Array.isArray(v)?v:[]; }catch(e){ return []; } }
+function saveHomebrewMonster(m){ const all=loadHomebrewMonsters(); const i=all.findIndex(x=>x.n===m.n); if(i>=0) all[i]=m; else all.push(m);
+  try{ localStorage.setItem('grimoire.homebrewMonsters', JSON.stringify(all)); }catch(e){ flashBanner('Could not save (storage full?)'); return false; } return true; }
+function deleteHomebrewMonster(name){ const all=loadHomebrewMonsters().filter(x=>x.n!==name); try{ localStorage.setItem('grimoire.homebrewMonsters', JSON.stringify(all)); }catch(e){} }
+function monsterDef(name){ if(!name) return null; return MONSTERS_5E.find(m=>m.n===name) || loadHomebrewMonsters().find(m=>m.n===name) || null; }
 // Monster saving-throw bonus, approximated from CR (tracks typical MM save spreads:
 // CR ¼ ≈ +1, CR 2 ≈ +2, CR 5 ≈ +3, CR 10 ≈ +6, CR 13 ≈ +7).
-function monsterSaveBonus(mo){ const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name)); const cr=crToNum(base?base.cr:1); return Math.min(9, 1+Math.floor(cr/2)); }
-function monsterCR(mo){ const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name)); return crToNum(base?base.cr:1); }
+function monsterSaveBonus(mo){ const base=monsterDef(mo.base||mo.name); const cr=crToNum(base?base.cr:1); return Math.min(9, 1+Math.floor(cr/2)); }
+function monsterCR(mo){ const base=monsterDef(mo.base||mo.name); return crToNum(base?base.cr:1); }
 // Detect Thoughts surface-thought flavor, keyed by monster name/type keyword (first match
 // wins). PHB says the spell can't read constructs/undead at all (no mind to touch) — this
 // project deliberately ignores that restriction and gives every creature a line instead,
@@ -10597,7 +10609,7 @@ function openQbSheet(c){
   $('#qbsModal').onclick=e=>{ if(e.target.id==='qbsModal') $('#modalRoot').innerHTML=''; };
 }
 function openMonsterSheet(mo){
-  const base=MONSTERS_5E.find(x=>x.n===(mo.base||mo.name))||{};
+  const base=monsterDef(mo.base||mo.name)||{};
   const atks=parseMonsterAttacks(mo.atk);
   const conds=(mo.conds&&mo.conds.length)?mo.conds.map(x=>'🌀 '+esc(x.name)+(x.rounds!=null?' ('+x.rounds+')':'')).join(', '):'None';
   const battle=net.session&&net.session.battle&&net.session.battle.active;
@@ -10691,22 +10703,67 @@ function openNpcBuilder(){
   };
 }
 function openBestiary(){
+  const hb=loadHomebrewMonsters();
   $('#modalRoot').innerHTML=`<div class="modal" id="bestModal"><div class="sheet"><div class="grip"></div>
-    <h2>📖 Bestiary <span class="muted" style="font-size:11px;text-transform:none">— ${MONSTERS_5E.length} monsters</span></h2>
+    <h2>📖 Bestiary <span class="muted" style="font-size:11px;text-transform:none">— ${MONSTERS_5E.length} monsters${hb.length?' + '+hb.length+' homebrew':''}</span></h2>
     <input id="bestSearch" placeholder="Search monsters…" autocomplete="off">
     <div id="bestList" style="margin-top:10px;max-height:60vh;overflow:auto"></div>
-    <button class="btn ghost block" id="bestClose" style="margin-top:10px">Close</button>
+    <button class="btn block" id="bestNewHomebrew" style="margin-top:10px">🛠 New homebrew monster</button>
+    <button class="btn ghost block" id="bestClose" style="margin-top:8px">Close</button>
   </div></div>`;
-  const draw=()=>{ const q=($('#bestSearch').value||'').toLowerCase(); const f=MONSTERS_5E.filter(m=>m.n.toLowerCase().includes(q));
+  const draw=()=>{ const q=($('#bestSearch').value||'').toLowerCase();
+    const all=MONSTERS_5E.concat(loadHomebrewMonsters().map(m=>Object.assign({},m,{homebrew:true})));
+    const f=all.filter(m=>m.n.toLowerCase().includes(q));
     $('#bestList').innerHTML = f.map(m=>`<div class="spell" style="align-items:flex-start">
       <span style="flex:none">${itemEmblem?'':''}<span class="emblem" style="padding:3px">${pixelArt(monsterSprite(m.sprite),4)}</span></span>
-      <div class="nm"><b>${esc(m.n)} <span class="sub">CR ${m.cr}</span></b><small>AC ${m.ac} · HP ${m.hp} · Speed ${m.spd} ft<br>${esc(m.atk)}<br><span style="opacity:.8">${esc(m.desc)}</span></small></div>
-      <button class="btn sm" data-deploy="${esc(m.n)}">Deploy</button></div>`).join('') || '<div class="empty">No matches.</div>';
-    $('#bestList').querySelectorAll('[data-deploy]').forEach(b=>b.onclick=()=>{ const m=MONSTERS_5E.find(x=>x.n===b.dataset.deploy); if(m) deployMonster(m); }); };
+      <div class="nm"><b>${esc(m.n)} <span class="sub">CR ${m.cr}</span></b>${m.homebrew?' <span class="sub" style="color:var(--gold)">🛠 homebrew</span>':''}<small>AC ${m.ac} · HP ${m.hp} · Speed ${m.spd} ft<br>${esc(m.atk)}<br><span style="opacity:.8">${esc(m.desc)}</span></small></div>
+      <button class="btn sm" data-deploy="${esc(m.n)}">Deploy</button>
+      ${m.homebrew?`<button class="btn ghost sm" data-edithb="${esc(m.n)}">Edit</button><button class="del" data-delhb="${esc(m.n)}">✕</button>`:''}
+      </div>`).join('') || '<div class="empty">No matches.</div>';
+    $('#bestList').querySelectorAll('[data-deploy]').forEach(b=>b.onclick=()=>{ const m=monsterDef(b.dataset.deploy); if(m) deployMonster(m); });
+    $('#bestList').querySelectorAll('[data-edithb]').forEach(b=>b.onclick=()=>{ const m=loadHomebrewMonsters().find(x=>x.n===b.dataset.edithb); if(m) openHomebrewMonsterEditor(m); });
+    $('#bestList').querySelectorAll('[data-delhb]').forEach(b=>b.onclick=()=>{ if(confirm('Delete homebrew monster "'+b.dataset.delhb+'"?')){ deleteHomebrewMonster(b.dataset.delhb); draw(); flashBanner('Deleted'); } }); };
   $('#bestSearch').addEventListener('input',draw);
+  $('#bestNewHomebrew').onclick=()=>openHomebrewMonsterEditor();
   $('#bestClose').onclick=()=>{ $('#modalRoot').innerHTML=''; };
   $('#bestModal').onclick=e=>{ if(e.target.id==='bestModal') $('#modalRoot').innerHTML=''; };
   draw();
+}
+// DM-authored, reusable across encounters/sessions (unlike openNpcBuilder's deployNpc, which is
+// a one-off per-encounter NPC, not saved anywhere) — same MONSTERS_5E shape, so once saved a
+// homebrew monster is completely indistinguishable from a curated one to every other system
+// that reads a bestiary entry (Deploy, monsterDef, the RVI table lookup by name, etc.).
+// `existing` (optional): editing an already-saved homebrew monster in place.
+function openHomebrewMonsterEditor(existing){
+  const isEdit=!!existing; const m=existing||{n:'',cr:'1',ac:12,hp:10,spd:30,init:0,attacks:1,sprite:'',atk:'',desc:''};
+  const spriteOpts=['','skeleton','zombie','ghost','wolf','bear','spider','snake','dragon','ogre','slime','demon','eye','goblin','orc','human'];
+  $('#modalRoot').innerHTML=`<div class="modal" id="hbModal"><div class="sheet"><div class="grip"></div>
+    <h2>🛠 ${isEdit?'Edit':'New'} homebrew monster</h2>
+    <div class="field"><label>Name</label><input id="hbName" value="${esc(m.n)}" ${isEdit?'disabled':''} placeholder="Bog Troll"></div>
+    <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div><div class="lab" style="font-size:11px">CR</div><input id="hbCr" value="${esc(String(m.cr))}" placeholder="1/4, 1/2, 1, 5…"></div>
+      <div><div class="lab" style="font-size:11px">AC</div><input type="number" id="hbAc" value="${m.ac}"></div>
+      <div><div class="lab" style="font-size:11px">HP</div><input type="number" id="hbHp" value="${m.hp}"></div>
+    </div>
+    <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+      <div><div class="lab" style="font-size:11px">Speed</div><input type="number" id="hbSpd" value="${m.spd}"></div>
+      <div><div class="lab" style="font-size:11px">Initiative</div><input type="number" id="hbInit" value="${m.init}"></div>
+      <div><div class="lab" style="font-size:11px">Attacks/turn</div><input type="number" id="hbAtkN" value="${m.attacks}" min="1"></div>
+    </div>
+    <div class="field"><label>Sprite</label><select id="hbSprite">${spriteOpts.map(s=>`<option value="${s}" ${m.sprite===s?'selected':''}>${s||'— default —'}</option>`).join('')}</select></div>
+    <div class="field"><label>Attack(s) <span class="muted" style="font-size:11px;text-transform:none">— same format as the bestiary, e.g. "Claw +5 (2d6+3)"</span></label><input id="hbAtk" value="${esc(m.atk)}" placeholder="Claw +5 (2d6+3)"></div>
+    <div class="field"><label>Description</label><input id="hbDesc" value="${esc(m.desc)}" placeholder="A one-line flavor summary"></div>
+    <button class="btn block" id="hbSave" style="margin-top:10px">💾 Save to bestiary</button>
+    <button class="btn ghost block" id="hbClose" style="margin-top:8px">Cancel</button>
+  </div></div>`;
+  $('#hbClose').onclick=()=>openBestiary();
+  $('#hbModal').onclick=e=>{ if(e.target.id==='hbModal') openBestiary(); };
+  $('#hbSave').onclick=()=>{
+    const n=$('#hbName').value.trim(); if(!n){ flashBanner('Needs a name'); return; }
+    if(!isEdit && (MONSTERS_5E.some(x=>x.n===n) || loadHomebrewMonsters().some(x=>x.n===n))){ flashBanner('A monster named "'+n+'" already exists'); return; }
+    const def={n, cr:$('#hbCr').value.trim()||'1', ac:Number($('#hbAc').value)||10, hp:Number($('#hbHp').value)||1, spd:Number($('#hbSpd').value)||30, init:Number($('#hbInit').value)||0, attacks:Math.max(1,Number($('#hbAtkN').value)||1), sprite:$('#hbSprite').value, atk:$('#hbAtk').value.trim(), desc:$('#hbDesc').value.trim()};
+    if(saveHomebrewMonster(def)){ flashBanner('Saved "'+n+'" to the bestiary'); openBestiary(); }
+  };
 }
 
 /* ---- player session map (modal) ---- */
@@ -12858,7 +12915,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.213';
+const APP_VERSION='v120.214';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

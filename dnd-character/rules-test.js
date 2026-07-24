@@ -2784,5 +2784,30 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setNet(null);
 }
 
+/* ---- "make the systems": homebrew monster editor ---- */
+{
+  localStorage.removeItem('grimoire.homebrewMonsters');
+  T('loadHomebrewMonsters: empty when nothing saved yet', loadHomebrewMonsters().length===0);
+  const bogTroll={n:'Bog Troll', cr:'5', ac:15, hp:84, spd:30, init:1, attacks:3, sprite:'ogre', atk:'Claw +7 (2d6+4)', desc:'A swamp-dwelling regenerating brute.'};
+  T('saveHomebrewMonster: persists a new monster', saveHomebrewMonster(bogTroll)===true && loadHomebrewMonsters().length===1);
+  T('monsterDef: finds a curated monster first', monsterDef('Goblin')&&monsterDef('Goblin').n==='Goblin');
+  T('monsterDef: falls back to a homebrew monster by the same lookup', monsterDef('Bog Troll')&&monsterDef('Bog Troll').cr==='5');
+  T('monsterDef: returns null for a name that exists nowhere', monsterDef('Nonexistent Beastie')===null);
+
+  const moBogTroll={id:'m1', base:'Bog Troll', name:'Bog Troll', hp:84, max:84};
+  T('monsterCR: resolves a homebrew monster\'s real CR, not the "unknown → CR 1" fallback', monsterCR(moBogTroll)===5);
+  T('monsterSaveBonus: derives from the homebrew monster\'s own CR (CR5 → 1+floor(5/2)=3)', monsterSaveBonus(moBogTroll)===3);
+
+  // Saving again with the same name updates in place rather than duplicating.
+  const updated=Object.assign({},bogTroll,{hp:90});
+  saveHomebrewMonster(updated);
+  T('saveHomebrewMonster: re-saving the same name updates in place (no duplicate)', loadHomebrewMonsters().length===1 && loadHomebrewMonsters()[0].hp===90);
+
+  deleteHomebrewMonster('Bog Troll');
+  T('deleteHomebrewMonster: removes it, and monsterDef stops finding it', loadHomebrewMonsters().length===0 && monsterDef('Bog Troll')===null);
+  T('monsterCR: falls back to CR 1 once the homebrew def is gone (matches an unrecognized monster\'s existing fallback)', monsterCR(moBogTroll)===1);
+  localStorage.removeItem('grimoire.homebrewMonsters');
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

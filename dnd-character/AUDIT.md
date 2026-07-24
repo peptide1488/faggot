@@ -2740,3 +2740,41 @@ against the real DOM: placing a trap through the actual palette+click-to-place U
 monster onto it through the DM's real move-token handler and confirming HP/condition/triggered
 state all update correctly with a real d20 roll, and confirming a simulated connected player's
 `dmBroadcast` payload only ever contains the now-triggered trap.
+
+## Homebrew monster editor (v120.214)
+
+Closed another VISION.md wishlist item. `openNpcBuilder`/`deployNpc` already let a DM improvise
+a one-off named NPC with real ability scores, but it was never reusable — every "New NPC" was a
+fresh, throwaway deploy, not saved anywhere. This builds the actual gap VISION.md named: a
+`MONSTERS_5E`-shaped custom monster, persisted (`localStorage.grimoire.homebrewMonsters`) and
+reusable across encounters and sessions, indistinguishable from a curated bestiary entry to
+every other system once saved — same fields (`n,cr,ac,hp,spd,init,attacks,sprite,atk,desc`), so
+`Deploy`, the RVI lookup, and every stat derivation just work without special-casing "is this
+homebrew" anywhere except display (a small 🛠 badge in the Bestiary list).
+
+**Found and fixed a real correctness gap while wiring this up**: `monsterSaveBonus`/`monsterCR`
+(the CR-derived save-bonus/threat-level approximation every monster in this app uses, since
+individual save modifiers aren't tracked) looked up a deployed monster's definition via
+`MONSTERS_5E.find(...)` directly — meaning a homebrew monster, once deployed, would silently
+fall back to "CR 1" for its own saving throws and CR-gated logic (Colossus Slayer's "not at max
+HP" check doesn't care, but Circle of the Moon's `moonMaxCR`-style CR comparisons elsewhere
+would have been wrong). Extracted one `monsterDef(name)` — curated bestiary first, homebrew
+second — and rewired the 3 real per-monster lookup call sites (`monsterSaveBonus`, `monsterCR`,
+`moverStrMod`'s "no real ability scores, guess from CR" fallback, and `openMonsterSheet`'s stat
+display) through it, the same "one shared lookup, not several copies that can drift" fix this
+session keeps finding and applying.
+
+The Bestiary modal (`openBestiary`) now merges homebrew monsters into the same searchable,
+deployable list as the curated 35, with Edit (locks the name field — renaming would silently
+orphan any already-deployed instance's `mo.base` lookup) and Delete actions that only appear on
+homebrew entries; a "🛠 New homebrew monster" button opens the editor directly from there.
+
+Tests: 12 new assertions — `monsterDef` resolving curated-first-then-homebrew and returning null
+for neither, `monsterCR`/`monsterSaveBonus` correctly deriving from a homebrew monster's real CR
+(proving the bug fix, not just the lookup), save-in-place on a re-save with the same name (no
+duplicate entries), and delete correctly removing both the storage entry and `monsterDef`'s
+ability to find it afterward. Also live-verified via Playwright against the real DOM: creating a
+homebrew monster through the actual editor form, confirming it appears in the Bestiary with the
+homebrew badge and updated count, deploying it and confirming the live `net.session.monsters`
+entry's CR/save-bonus resolve correctly (not the CR-1 fallback), and editing it in place with
+the name field correctly locked.
