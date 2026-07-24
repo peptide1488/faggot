@@ -656,6 +656,17 @@ function sorcCur(c){ const m=sorcMax(c); if(!m) return 0; return Math.max(0, Mat
 function spellPrepared(c, name){ const s=(c.spells||[]).find(x=>x.name.toLowerCase()===String(name||'').toLowerCase()); return s? !!s.prepared : true; }
 
 function castableSpells(c){ return (c.spells||[]).filter(s=> (s.level||0)===0 || !isPrepCaster(c) || s.prepared); }
+// Shield reaction eligibility — deliberately NOT reusing canCast(c,'Shield',1) here: canCast has
+// UI side effects (flashBanner on every reason it'd refuse), which is correct when a player
+// actively tries to cast but wrong for a passive "could they?" check run on every incoming
+// attack. A quieter, narrower re-check of the same three gates (known/prepared, reaction free,
+// slot available) — see openShieldPrompt's caller for where this actually offers the choice.
+function shieldEligible(c){
+  if(!c||!c.battle||c.battle.reaction) return false;
+  if(!castableSpells(c).some(s=>s.name==='Shield')) return false;
+  const tot=spellSlots(c)[1]||0, used=Math.min(tot,(c.slots[1]&&c.slots[1].used)||0);
+  return tot-used>0;
+}
 
 function applyClassDefaults(c){
   const sv=CLASS_SAVES[c.cls];
@@ -3711,11 +3722,21 @@ function trapAt(s,x,y){ return (s.traps||[]).find(t=>t.x===x&&t.y===y)||null; }
 
 function checkTrapTrigger(s, unit, x, y, isPc){
   const trap=(s.traps||[]).find(t=>!t.triggered && t.x===x && t.y===y); if(!trap) return null;
+  // A hidden trap is spotted (RAW: passive Perception vs. the trap's DC), not always stepped
+  // right into. Dungeon Delver (PHB: "advantage to detect traps") is exactly +5 to a passive
+  // check (PHB's own advantage-on-passive-checks rule) — monsters have no tracked skills in
+  // this app, so they default to a flat 10 passive (a named simplification, same shape as
+  // monsterSaveBonus elsewhere). Spotting doesn't remove the trap or halt movement (this app
+  // has no path-interruption model to hook into) — it just skips the trigger this one time; the
+  // SAME tile can still catch someone next time it's stepped on, an intentionally narrow scope.
+  const passive = isPc ? passiveScore(unit,'perception','wis')+(hasFeat(unit,'Dungeon Delver')?5:0) : 10;
+  if(passive>=trap.dc){ qbLog('👁️ '+(unit.name||'Someone')+' spots a '+trap.name+' before triggering it!', s); return {trap, spotted:true}; }
   trap.triggered=true;
   const bonus = isPc ? saveMod(unit, trap.ability) : monsterSaveBonus(unit);
   const roll=rnd(20)+bonus, saved=roll>=trap.dc;
   const dmgTotal=(rollNotation(trap.dmg)||{total:0}).total;
-  const applied=saved?Math.floor(dmgTotal/2):dmgTotal;
+  let applied=saved?Math.floor(dmgTotal/2):dmgTotal;
+  if(isPc && hasFeat(unit,'Dungeon Delver')) applied=Math.floor(applied/2);   // resistance to trap damage (PHB)
   if(isPc){ if(applied>0) applyHp(unit,-applied); if(!saved && trap.cond){ unit.conditions=unit.conditions||{}; unit.conditions[trap.cond]=true; } }
   else { if(applied>0) unit.hp=Math.max(0,(unit.hp||0)-applied); if(!saved && trap.cond){ unit.conds=unit.conds||[]; if(!unit.conds.some(c=>c.name===trap.cond)) unit.conds.push({name:trap.cond, rounds:10}); } }
   qbLog('🪤 '+(unit.name||'Someone')+' triggers a '+trap.name+'! ('+roll+' vs DC '+trap.dc+' — '+applied+' '+trap.dtype+(!saved&&trap.cond?', '+trap.cond:'')+')', s);

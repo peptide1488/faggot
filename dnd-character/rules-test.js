@@ -2814,10 +2814,16 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const res2=checkTrapTrigger(s, mo, 2, 2, false);
   T('checkTrapTrigger: a second trigger attempt on the same (now-sprung) tile is a no-op', res2===null);
 
-  // Guaranteed save (DC so low any roll succeeds) → half damage, no condition.
-  s.traps.push({x:3,y:3,name:'Fire Rune',dmg:'4d6',dtype:'fire',dc:-100,ability:'dex',cond:null,triggered:false});
+  // DC 13 (a real trap DC, not a trick value): this fixture's passive Perception is 10, so it
+  // never auto-spots the trap (see the Dungeon Delver block below for that check in isolation)
+  // — the save roll is what's forced deterministic here, via the same Math.random-mock pattern
+  // used elsewhere in this file, so the trap always fires and the save always succeeds.
+  s.traps.push({x:3,y:3,name:'Fire Rune',dmg:'4d6',dtype:'fire',dc:13,ability:'dex',cond:null,triggered:false});
   const c=newCharacter('Trap Tester'); c.abilities={str:10,dex:14,con:14,int:10,wis:10,cha:10}; c.hp={max:30,cur:30,temp:0};
+  T('sanity: this fixture\'s passive Perception (10) is below the trap\'s DC (13) — won\'t auto-spot it', passiveScore(c,'perception','wis')<13);
+  const origRandom3=Math.random; Math.random=()=>0.99;   // forces rnd(20)=20 on the save roll
   const res3=checkTrapTrigger(s, c, 3, 3, true);
+  Math.random=origRandom3;
   T('checkTrapTrigger: a PC succeeding the save takes half damage', res3 && res3.saved===true && c.hp.cur===30-res3.applied && res3.applied>0);
   T('checkTrapTrigger: a no-condition trap never sets one, even on a fail', !c.conditions || !c.conditions.Prone);
 
@@ -3128,6 +3134,172 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('dmUndoTurn: repeatable — a second undo before the next turn reverts to the same snapshot', getNet().session.monsters[0].hp===7);
 
   setNet(null);
+}
+
+/* ---- Dungeon Delver feat: trap detection (passive Perception vs. DC, +5 advantage-equivalent)
+   and resistance to trap damage ---- */
+{
+  const trap={name:'Fire Rune', dmg:'4d6', dtype:'fire', dc:15, ability:'dex', cond:null, triggered:false, x:3, y:3};
+
+  // A character with low passive Perception (no ranks, no Dungeon Delver) can't reliably beat DC 15.
+  const oblivious=newCharacter('Oblivious'); oblivious.hp={max:30,cur:30,temp:0}; oblivious.abilities={str:10,dex:10,con:14,int:10,wis:8,cha:10};
+  T('passiveScore: a low-Wis character with no Perception training is well under a DC 15 trap', passiveScore(oblivious,'perception','wis')<15);
+  let s={traps:[Object.assign({},trap)], log:[]};
+  const r1=checkTrapTrigger(s, oblivious, 3, 3, true);
+  T('checkTrapTrigger: a character who can\'t spot the trap (passive < DC) triggers it', r1 && !r1.spotted && s.traps[0].triggered===true);
+  T('checkTrapTrigger: triggering a fire trap actually deals damage', oblivious.hp.cur<30);
+
+  // Dungeon Delver: +5 to the passive check (PHB's own advantage-on-passive rule) is enough to clear DC 15
+  // for a character who was just barely short without it.
+  const delver=newCharacter('Delver'); delver.hp={max:30,cur:30,temp:0}; delver.abilities={str:10,dex:14,con:14,int:10,wis:14,cha:10};
+  delver.skillProf={perception:true}; delver.feats=[{name:'Dungeon Delver'}];
+  const basePassive=passiveScore(delver,'perception','wis');
+  T('sanity: this fixture\'s base passive Perception (no feat bonus baked in) is still short of DC 15', basePassive<15);
+  s={traps:[Object.assign({},trap)], log:[]};
+  const r2=checkTrapTrigger(s, delver, 3, 3, true);
+  T('checkTrapTrigger: Dungeon Delver\'s +5 (advantage-equivalent) clears a DC the base passive alone would miss', r2 && r2.spotted===true && s.traps[0].triggered===false && delver.hp.cur===30);
+
+  // Resistance to trap damage: same trap, but forced to trigger anyway (DC raised out of reach)
+  // via a failed Dex save, to isolate the resistance halving from the detection check.
+  const tank=newCharacter('Tank'); tank.hp={max:100,cur:100,temp:0}; tank.abilities={str:16,dex:8,con:16,int:8,wis:8,cha:8};
+  tank.feats=[{name:'Dungeon Delver'}];
+  const hardTrap=Object.assign({},trap, {dc:999});   // guarantees both the spot check AND the save fail — isolates resistance
+  s={traps:[Object.assign({},hardTrap)], log:[]};
+  const before=tank.hp.cur;
+  const r3=checkTrapTrigger(s, tank, 3, 3, true);
+  T('checkTrapTrigger: Dungeon Delver still gets caught by a trap it can\'t detect (DC 999)', r3 && !r3.spotted && s.traps[0].triggered===true);
+  T('checkTrapTrigger: Dungeon Delver halves the damage from a trap that DOES go off (resistance, PHB)', (before-tank.hp.cur)>0 && (before-tank.hp.cur)<=12);   // 4d6 max 24, resistance halves to 12
+
+  // Same fixture, no feat — confirms the halving above is actually attributable to the feat, not a fluke.
+  const noFeat=newCharacter('NoFeat'); noFeat.hp={max:100,cur:100,temp:0}; noFeat.abilities={str:16,dex:8,con:16,int:8,wis:8,cha:8};
+  s={traps:[Object.assign({},hardTrap)], log:[]};
+  const before2=noFeat.hp.cur;
+  checkTrapTrigger(s, noFeat, 3, 3, true);
+  T('checkTrapTrigger: without the feat, the same trap deals full (unhalved) damage', (before2-noFeat.hp.cur)>=4);
+}
+
+/* ---- Mode-parity fix: light-based attack disadvantage (tileLightLevel/hasDarkvision/
+   visionLevel — a real, already-fully-built system: per-tile ambient light by ${'day'|'sunset'|
+   'night'|'dungeon'} mode, dynamic point lights from torches/spells, darkvision) was computed
+   ad hoc ONLY inside Quick Battle's own interactive PC-attack UI, never threaded through
+   Engine.hitResult — the ONE shared resolver every mode routes through. That meant QB's own
+   monster-auto-resolve path, DM-hosted, and player-net never got any lighting effect on attack
+   rolls at all. Fixed by adding ad.session() to all three adapters and computing lighting
+   inside Engine.hitResult itself, so every mode gets it for free — the same "one Engine path"
+   fix altitude-blocking and armor-proficiency disadvantage already got. Also removed the now-
+   redundant ad hoc computation from qbResolveAttack (it was about to double-list the same
+   "can't see target" reason once Engine.hitResult covers it too). NOT built here (unchanged
+   from before): a DM control panel for point lights/torches (already covered by the decor
+   palette + this pass's new ambient-mode toggle), dim-light Perception-disadvantage (already
+   handled elsewhere via lightSkillMode — untouched), and per-player fog-of-war/exploration
+   memory (a separate, bigger, still-open feature). ---- */
+{
+  T('qbAdapter.session(): exposes the live QB state to Engine.hitResult', (()=>{ setQB({foo:'bar'}); const ok=qbAdapter.session()===getQB(); setQB(null); return ok; })());
+  T('sessionAdapter.session(): exposes the live DM session', (()=>{ setNet({role:'dm', session:{foo:'baz'}}); const ok=sessionAdapter.session()===getNet().session; setNet(null); return ok; })());
+  T('playerNetAdapter.session(): exposes the live session on a player device too', (()=>{ setNet({role:'player', session:{foo:'qux'}}); const ok=playerNetAdapter.session()===getNet().session; setNet(null); return ok; })());
+
+  // Engine.hitResult via qbAdapter: a dungeon-dark room (ambient mode 'dungeon', no torches) —
+  // a human attacker can't see the target at all (disadvantage); an elf's darkvision covers it.
+  const human=newCharacter('Torchless'); human.race='Human'; human.hp={max:20,cur:20,temp:0};
+  const elf=newCharacter('Nightsight'); elf.race='Elf'; elf.hp={max:20,cur:20,temp:0};
+  const mkQb=pcChar=>({active:true, map:{cols:10,rows:10,tiles:{},light:{mode:'dungeon'}}, monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:3,y:0,hp:7,max:7,ac:12,attacksLeft:1}], players:[{id:'pc',side:'pc',name:pcChar.name,c:pcChar,x:0,y:0,hpCur:pcChar.hp.cur,hpMax:pcChar.hp.max}]});
+  setQB(mkQb(human));
+  const rHuman=Engine.hitResult(qbAdapter,'pc','m1',{toHit:5,dmg:'1d6',tiles:1});
+  T('Engine.hitResult (QB): a human attacking blind into a dark dungeon room gets disadvantage', rHuman.adv===-1 && rHuman.advWhy.some(w=>/dark/i.test(w)));
+  setQB(mkQb(elf));
+  const rElf=Engine.hitResult(qbAdapter,'pc','m1',{toHit:5,dmg:'1d6',tiles:1});
+  T('Engine.hitResult (QB): an elf\'s darkvision covers the same dark room — no lighting penalty', rElf.advWhy.every(w=>!/dark/i.test(w)));
+  setQB(null);
+
+  // The actual mode-parity proof: the SAME dark-room scenario, but a monster attacking a
+  // connected player's mirror in a DM-hosted session (sessionAdapter) — this path had ZERO
+  // lighting logic before this fix, in any form, ad hoc or otherwise.
+  setNet({role:'dm', conns:[], session:{battle:{active:true,round:1}, map:{cols:10,rows:10,tiles:{},light:{mode:'dungeon'}},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:0,y:0,hp:7,max:7,ac:12,attacksLeft:1}],
+    players:[{id:'p1',name:'Mirror PC',hpCur:20,hpMax:20,ac:14,x:3,y:0,conds:[]}], order:[], turn:0}});
+  const rDm=Engine.hitResult(sessionAdapter,'m1','p1',{toHit:5,dmg:'1d6',tiles:1});
+  T('Engine.hitResult (DM-hosted): the same darkness now imposes disadvantage here too (the actual parity gap this closes)', rDm.adv===-1 && rDm.advWhy.some(w=>/dark/i.test(w)));
+  setNet(null);
+
+  // No session at all (a bare adapter stub, or a mode that genuinely has no map yet) — lighting
+  // silently contributes nothing rather than throwing, same "adapter can't supply it, skip it"
+  // shape Sanctuary/Holy Aura's own DC hooks already use.
+  const bareAdapter={unit:id=>({id, x:0,y:0}), ac:()=>12, checkSubject:()=>null};
+  let threw=false; try{ Engine.hitResult(bareAdapter,'a','b',{toHit:5,dmg:'1d6',tiles:1}); }catch(e){ threw=true; }
+  T('Engine.hitResult: an adapter with no session() at all doesn\'t throw (lighting quietly no-ops)', threw===false);
+}
+
+/* ---- Reactions — Shield, Quick Battle only (scoped: DM-hosted/player-net would need a network
+   round-trip to reach the connected player's own device, out of scope for this pass — see
+   openShieldPrompt's own doc comment). SPELL_EFFECTS already had a real 'Shield':{rounds:1,
+   mods:{ac:5}} entry with nothing ever calling addEffect(c,'Shield') — the missing piece was
+   purely the trigger, not the AC plumbing. ---- */
+{
+  const knowsShield=newCharacter('Shield Sorcerer'); knowsShield.cls='Sorcerer'; knowsShield.level=3;
+  knowsShield.spells=[{name:'Shield',level:1,prepared:true}]; knowsShield.slots={1:{total:3,used:0}};
+  knowsShield.battle={action:false,bonus:false,reaction:false};
+  T('shieldEligible: knows Shield, has a free slot and reaction — eligible', shieldEligible(knowsShield)===true);
+
+  const noSlots=Object.assign({},knowsShield); noSlots.slots={1:{total:3,used:99}};   // shieldEligible checks the real spellSlots(c) max, not this stored total — 99 guarantees "none left" regardless of the class formula
+  T('shieldEligible: no 1st-level slots left — not eligible', shieldEligible(noSlots)===false);
+
+  const usedReaction=Object.assign({},knowsShield,{battle:{action:false,bonus:false,reaction:true}});
+  T('shieldEligible: reaction already spent this round — not eligible', shieldEligible(usedReaction)===false);
+
+  const noShield=newCharacter('Non-Caster'); noShield.spells=[]; noShield.slots={}; noShield.battle={action:false,bonus:false,reaction:false};
+  T('shieldEligible: doesn\'t know Shield at all — not eligible', shieldEligible(noShield)===false);
+
+  // The actual mechanic: SPELL_EFFECTS already defines Shield's real +5 AC (rounds:1) — this
+  // pass's job was making something actually call addEffect for it.
+  T('SPELL_EFFECTS: Shield is +5 AC (already existed — the gap was purely the missing trigger)', SPELL_EFFECTS['Shield'] && SPELL_EFFECTS['Shield'].mods.ac===5);
+  const shielded=newCharacter('AC Test'); shielded.armor='none';
+  const acBefore=computeAC(shielded);
+  addEffect(shielded,'Shield');
+  T('addEffect(c,\'Shield\'): actually raises computeAC by 5 once triggered', computeAC(shielded)===acBefore+5);
+
+  // qbResolveAttack: a monster's attack against a Shield-eligible PC pauses for a prompt instead
+  // of auto-resolving immediately, ONLY when +5 AC would actually flip this specific roll from a
+  // hit to a miss. This harness's document.getElementById returns a fresh disconnected stub on
+  // every call (see fakeEl() at the top of this file), so DOM inspection can't verify the modal
+  // — swap out openShieldPrompt itself instead, the same "replace the boundary" pattern this
+  // file already uses for net.conn.send/Math.random.
+  const origPrompt=openShieldPrompt;
+  const pcShield=newCharacter('Shielded PC'); pcShield.cls='Sorcerer'; pcShield.level=3; pcShield.armor='none';
+  pcShield.abilities={str:10,dex:10,con:14,int:10,wis:10,cha:16};
+  pcShield.spells=[{name:'Shield',level:1,prepared:true}]; pcShield.slots={1:{total:3,used:0}};
+  pcShield.hp={max:20,cur:20,temp:0}; pcShield.conditions={};
+  pcShield.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'m',id:'m1'},{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:0,y:0,hp:7,max:7,ac:12,attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:pcShield.name,c:pcShield,x:1,y:0,hpCur:pcShield.hp.cur,hpMax:pcShield.hp.max}] });
+  const preAC=computeAC(pcShield);   // 10 (unarmored, dex mod 0) — asserted below so the mocked roll's math stays honest
+  T('sanity: this fixture\'s AC is the plain unarmored baseline the mocked roll below assumes', preAC===10);
+  let captured=null;
+  openShieldPrompt=(c,pre,onAccept,onDecline)=>{ captured={c,pre,onAccept,onDecline}; };
+  const origRandomShield=Math.random; Math.random=()=>0.57;   // rnd(20) = floor(0.57*20)+1 = 12
+  qbResolveAttack(getQB().monsters[0], getQB().players[0], {name:'Bite', toHit:0, dmg:'1d6', tiles:1});   // roll 12 + toHit 0 = 12, hits AC 10 but would miss AC 15 (10+5) — exactly the "Shield would flip it" case
+  Math.random=origRandomShield;
+  T('qbResolveAttack: a Shield-eligible PC facing a would-flip hit gets a reaction prompt (attack paused for a choice)', !!captured && captured.c===pcShield);
+  captured.onAccept();
+  T('qbResolveAttack: accepting Shield actually casts it — spends the reaction', getQB().players[0].c.battle.reaction===true);
+  T('qbResolveAttack: accepting Shield spends the 1st-level slot', getQB().players[0].c.slots[1].used===1);
+  T('qbResolveAttack: accepting Shield actually raises the PC\'s AC via the real effect pipeline', computeAC(getQB().players[0].c)===preAC+5);
+  setQB(null);
+
+  // A hit that would land even WITH +5 AC (overwhelming toHit) never bothers offering Shield —
+  // a rational player wouldn't burn the resource on an attack it can't stop anyway.
+  const pcShield2=newCharacter('Shielded PC 2'); pcShield2.cls='Sorcerer'; pcShield2.level=3; pcShield2.armor='none';
+  pcShield2.spells=[{name:'Shield',level:1,prepared:true}]; pcShield2.slots={1:{total:3,used:0}};
+  pcShield2.hp={max:20,cur:20,temp:0}; pcShield2.conditions={};
+  pcShield2.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:10,rows:10,tiles:{}}, order:[{k:'m',id:'m1'},{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:0,y:0,hp:7,max:7,ac:12,attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:pcShield2.name,c:pcShield2,x:1,y:0,hpCur:pcShield2.hp.cur,hpMax:pcShield2.hp.max}] });
+  captured=null;
+  qbResolveAttack(getQB().monsters[0], getQB().players[0], {name:'Bite', toHit:99, dmg:'1d6', tiles:1});   // +5 AC could never matter here
+  T('qbResolveAttack: no prompt when +5 AC wouldn\'t change the outcome anyway', captured===null);
+  setQB(null);
+  openShieldPrompt=origPrompt;
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

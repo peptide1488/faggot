@@ -3318,3 +3318,78 @@ for a flying Wild Shape / false for a non-flying one. Also live-verified via Pla
 against the running page (not just the test harness): mounting a real character onto a Griffon
 through the actual `mountUp` function in the browser confirms `unit.fly`, `c.mountedOn.fly`, and
 `isFlying(c)` all come back true, exactly matching the test-harness result.
+
+## Dungeon Delver, light/vision mode parity, and Shield reaction (v120.226)
+
+User's next three explicit asks in one message. Scoped each honestly rather than half-building
+all three — see below for what shipped vs. what's deliberately still out of scope.
+
+**Dungeon Delver.** The feat had nothing to hook into — traps just auto-triggered the instant a
+creature stepped on their tile, no detection step at all. Fixed at the root: `checkTrapTrigger`
+now rolls the RAW mechanic it was always missing (passive Perception vs. the trap's DC) before
+triggering, for everyone, not just Dungeon Delver holders — the feat itself is exactly PHB's own
+"+5 to a passive check" advantage-equivalent, added on top. A spotted trap doesn't trigger (and
+doesn't get removed — this app has no path-interruption model, so the same tile can still catch
+someone who walks into it again, a deliberately narrow scope). Resistance to trap damage (half,
+on top of any half-from-a-successful-save) is a straight `applied=Math.floor(applied/2)` gate.
+Monsters have no tracked skills anywhere in this bestiary, so they default to a flat passive 10
+— the same shape `monsterSaveBonus` already uses elsewhere for the same reason.
+
+**Light/vision mode parity.** Went looking for "vision, light, fog of war" and initially built a
+whole parallel per-tile light system before discovering — the hard way, after wiring half of it
+into `losClear` — that a full one already existed: `tileLightLevel`/`hasDarkvision`/
+`visionLevel`, with real ambient day/sunset/night/dungeon modes, dynamic point lights from
+torches/crystals/spell effects, and a stealth/Perception interaction (`lightSkillMode`), all
+pre-dating this session. Reverted the duplicate (`s.map.light` as a flat per-tile map directly
+conflicted with the real system's `s.map.light.mode`/`.points` shape) and found the actual gap
+instead: this real system's attack-roll disadvantage was computed **ad hoc, only inside Quick
+Battle's own interactive PC-attack UI** — never threaded through `Engine.hitResult`, the one
+shared resolver every mode routes through. QB's own monster-auto-resolve path, DM-hosted, and
+player-net got zero lighting effect on any attack roll, ever. Fixed by adding `session()` to all
+three adapters (qbAdapter/sessionAdapter/playerNetAdapter) and computing `seeTarget`/
+`attackerVision` inside `Engine.hitResult` itself — the same "one Engine path" fix altitude-
+blocking and armor-proficiency disadvantage already got. Also removed the now-redundant ad hoc
+computation from `qbResolveAttack` (left in place, it would have double-listed the same "fighting
+in darkness" reason in the roll modal's tooltip once `Engine.hitResult` covered it too). Added
+the one piece of DM tooling that was genuinely missing: an ambient-light-mode toggle in the map
+editor (day/sunset/night/dungeon chips) — the mode existed and was fully load-bearing, but
+nothing let a DM actually set it.
+
+**Not built, on purpose:** a visual darken/fog overlay on the map canvas (mechanically real now,
+but the tiles still render at full brightness on screen — a separate rendering task); the dim-
+light Perception-disadvantage nuance (already handled via `lightSkillMode`, untouched by this
+pass); and per-player fog-of-war/exploration memory (remembering which tiles a specific player
+has actually seen) — a genuinely separate, bigger feature, not a quiet scope-cut of this one.
+
+**Shield reaction — Quick Battle only.** `SPELL_EFFECTS['Shield']` already had the correct real
+effect (`{rounds:1, mods:{ac:5}}`) — the entire gap was that nothing ever called
+`addEffect(c,'Shield')`. Added `shieldEligible(c)` (knows/has-prepared Shield, reaction free, a
+1st-level slot available — deliberately NOT reusing `canCast` here, since `canCast` has UI side
+effects (`flashBanner` on every refusal reason) that are correct for an active cast attempt but
+wrong for a passive "could they?" check run on every incoming hit) and wired it into
+`qbResolveAttack`'s monster-attacks-PC path: a preview roll via `Engine.hitResult` decides
+whether +5 AC would actually flip this SPECIFIC attack from a hit to a miss (never offered
+against a natural 20 — a crit can't be prevented by AC, same reasoning Sanctuary's own gate
+already uses; never offered when the attack would land regardless — a rational player doesn't
+burn the resource for nothing), then a real Yes/No modal (`openShieldPrompt`) pauses resolution
+for the choice. Accepting spends the reaction and slot and calls the same `addEffect` pipeline
+every other buff spell already uses, so it protects against any OTHER attack that round too, not
+just this one — more correct than a one-off forced-miss hack.
+
+**Scope, stated plainly:** this is QB only. DM-hosted and player-net attacks don't offer Shield
+at all, same as before this feature existed — a real network round-trip is needed to let the
+choice reach a CONNECTED PLAYER'S own device (the DM resolving a monster's attack against
+someone else's character isn't the DM's decision to make), and that's exactly the "reactions
+need their own design pass first" item VISION.md already flagged, not something this pass
+attempts to fake.
+
+Tests: 24 new assertions across the three features (trap detection/resistance, the new
+`session()` accessor on all three adapters, `Engine.hitResult` lighting disadvantage proven
+in BOTH QB and DM-hosted from the identical fixture, `shieldEligible`'s three gates, and the
+full Shield accept/decline flow through the real `qbResolveAttack`, including the "wouldn't
+change the outcome" no-prompt case). Also live-verified via Playwright directly against the
+running page for all three: a Dungeon-Delver-adjacent flying-mount check from the prior version
+was re-confirmed unaffected; the DM's new ambient-light chips actually flip
+`net.session.map.light.mode` and highlight correctly on click; and the Shield flow end-to-end —
+the real modal text, the real Yes button, reaction/slot spent, AC genuinely 10→15 through
+`computeAC`, all inside the actual running page, not just the test harness.

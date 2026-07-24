@@ -1830,7 +1830,19 @@ const Engine = {
     const attackerAlt=(armorSubj&&armorSubj.altitude)||0, targetAlt=(targetSubj&&targetSubj.altitude)||0;
     const reachFt=(atk.tiles||1)>1?10:5;
     const altitudeBlocked = melee && Math.abs(attackerAlt-targetAlt)>reachFt;
-    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv, goadedDisadv, mountedAdv});
+    // Lighting (PHB: heavily obscured is the softer "disadvantage" approximation this app
+    // already uses, not a hard block on targeting — see visionLevel/tileLightLevel). This was
+    // previously computed ad hoc ONLY inside Quick Battle's own interactive PC-attack UI, never
+    // threaded through this shared resolver — so QB's own monster-auto-resolve path, DM-hosted,
+    // and player-net never got any lighting effect on attack rolls at all, a real mode-parity
+    // gap (v120.226). ad.session() gives the live map/lights state each mode already has handy.
+    let seeTarget=null, attackerVision=null;
+    const litSess=ad.session&&ad.session();
+    if(litSess && a && t && a.x!=null && t.x!=null){
+      seeTarget=visionLevel(armorSubj, litSess, t.x, t.y, a.x, a.y);
+      attackerVision=visionLevel(armorSubj, litSess, a.x, a.y, a.x, a.y);
+    }
+    const cx=attackAdvantage(unitConds(a), unitConds(t), melee, {seesInvisible:hasSeesInvisible(a), armorDisadvantage:armorDis, grapplerAdv, goadedDisadv, mountedAdv, seeTarget, attackerVision});
     const r=Engine.roll(atk.toHit, ac, face, cx.adv);
     if(cx.autoCrit && r.hit) r.crit=true;
     return Object.assign({ac, cover, adv:cx.adv, advWhy:cx.why, altitudeBlocked}, r);
@@ -1936,6 +1948,7 @@ const CONTROLLERS = {
 // Monsters carry .hp/.max; players carry .hpCur/.hpMax — that's how we tell them apart.
 const sessionAdapter = {
   unit:id=>{ const s=net&&net.session; if(!s) return null; return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id||p.cid===id); },
+  session:()=>net&&net.session,
   ac:u=>u.ac,
   hp:u=> u.hp!=null ? u.hp : u.hpCur,
   hurt:(u,dmg,dtype)=>{ if(u.hp!=null){ u.hp=Math.max(0,u.hp-dmg); if(dmg>0&&u.conds) u.conds=u.conds.filter(x=>x.name!=='Asleep'); } else { dmSend(u.id,{t:'apply',delta:-dmg,dtype}); u.hpCur=Math.max(0,(u.hpCur||0)-dmg); } },   // damage wakes sleepers
@@ -1975,6 +1988,7 @@ const playerNetAdapter = {
   unit:id=>{ const s=net&&net.session; if(!s) return null;
     if(id==='me'){ const c=playerChar(); return c?{me:true, c, id:'me'}:null; }
     return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id); },
+  session:()=>net&&net.session,
   ac:u=>{ if(!u.me) return u.ac||10; const s=net&&net.session; const me=s&&s.players&&net.peer&&s.players.find(p=>p.id===net.peer.id); return computeAC(u.c,{ignoreEffects:!!(me&&s&&inAntimagicField(s,me.x,me.y))}); },
   hp:u=> u.me ? u.c.hp.cur : (u.hp!=null?u.hp:u.hpCur),
   hurt:(u,dmg,dtype)=>{ if(u.me){ applyHp(u.c,-dmg,dtype); playerHello(); }
@@ -2005,7 +2019,7 @@ const playerNetAdapter = {
 // `crs`: array of CR values, one per monster in the encounter (duplicates listed individually —
 // two Goblins is ['1/4','1/4'], not one entry with a count). `partyLevels`: each PC's own level.
 // adapter binding the unified Engine to Quick Battle's state
-const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName,
+const qbAdapter = { unit:id=>qbUnitById(id), ac:qbAC, hp:qbHP, hurt:qbHurt, name:qbName, session:()=>QB,
   enemiesOf:u=> u.side==='pc' ? QB.monsters.filter(isHostile)
     : isPartyAlly(u) ? QB.monsters.filter(m=>m.id!==u.id&&isHostile(m))
     : QB.players.filter(p=>p.c.hp.cur>0).concat(QB.monsters.filter(m=>m.id!==u.id&&isPartyAlly(m))), map:()=>QB.map,
@@ -2328,7 +2342,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.225';
+const APP_VERSION='v120.226';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

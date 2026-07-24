@@ -4827,6 +4827,7 @@ function renderDM(){
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
     <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Elevation:</span><button class="chip ${net.sel==='t:elev+'?'on':''}" data-place="t:elev+">⬆ Raise</button><button class="chip ${net.sel==='t:elev-'?'on':''}" data-place="t:elev-">⬇ Lower</button></div>
+    <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">💡 Ambient light:</span>${Object.keys(LIGHT_MODE_AMBIENT).map(m=>`<button class="chip ${((s.map.light&&s.map.light.mode)||'day')===m?'on':''}" data-lightmode="${m}">${m[0].toUpperCase()+m.slice(1)}</button>`).join('')}</div>
     <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">Decorate:</span>${Object.keys(DECOR).map(k=>`<button class="chip ${net.sel==='d:'+k?'on':''}" data-place="d:${k}">${DECOR[k].name}</button>`).join('')}<button class="chip ${net.sel==='d:erase'?'on':''}" data-place="d:erase">✕ Erase</button></div>
     <div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:11px;align-self:center">🪤 Traps <span title="Hidden from players until triggered">(DM-only, hidden)</span>:</span>${TRAP_CATALOG.map(t=>`<button class="chip ${net.sel==='x:'+t.name?'on':''}" data-place="x:${esc(t.name)}">${esc(t.name)}</button>`).join('')}<button class="chip ${net.sel==='x:erase'?'on':''}" data-place="x:erase">✕ Erase</button></div>
     ${(s.traps||[]).length?`<p class="muted" style="font-size:11px;margin:0 0 6px">${s.traps.filter(t=>!t.triggered).length} armed, ${s.traps.filter(t=>t.triggered).length} sprung — only you can see trap tiles on this map.</p>`:''}
@@ -4886,6 +4887,7 @@ function renderDM(){
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
+  app.querySelectorAll('[data-lightmode]').forEach(el=>el.onclick=()=>{ if(!s.map.light) s.map.light={}; s.map.light.mode=el.dataset.lightmode; dmBroadcast(); render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2);
       if(key==='elev+'||key==='elev-'){ if(!s.map.height) s.map.height={}; const cur=s.map.height[x+','+y]||0; const nh=Math.max(-4,Math.min(4, cur+(key==='elev+'?1:-1))); if(nh) s.map.height[x+','+y]=nh; else delete s.map.height[x+','+y]; dmBroadcast(); render(); return; }
@@ -5670,6 +5672,24 @@ function openCombatRollModal(opts){
   draw();
 }
 
+// Reactions — Shield, Quick Battle only for now: QB is one device/one human, so pausing mid-
+// resolution for a Yes/No choice is a plain synchronous modal. DM-hosted/player-net would need
+// the SAME choice to reach a connected PLAYER'S own device (the DM resolving a monster's attack
+// doesn't get to decide their reaction for them) — a real network round-trip this pass doesn't
+// build, matching VISION.md's own note that a general reaction system needs its own design pass
+// first. Not silently narrower: DM-hosted/player-net attacks simply don't offer Shield at all
+// yet, same as before this feature existed.
+function openShieldPrompt(c, hitPreview, onAccept, onDecline){
+  $('#modalRoot').innerHTML=`<div class="modal" id="shieldModal"><div class="sheet"><div class="grip"></div>
+    <h2>🛡️ Cast Shield?</h2>
+    <p class="muted" style="font-size:12.5px;margin:0 0 10px">An attack targets ${esc(c.name)} — rolled ${hitPreview.total} vs AC ${hitPreview.ac} (currently <b>hits</b>). Shield is a reaction: +5 AC until the start of your next turn (uses a 1st-level slot). With Shield, this attack would miss.</p>
+    <div class="row2"><button class="btn ghost block" id="shieldNo">Take the hit</button><button class="btn block" id="shieldYes">🛡️ Cast Shield</button></div>
+  </div></div>`;
+  $('#shieldModal').onclick=e=>{ if(e.target.id==='shieldModal'){ $('#modalRoot').innerHTML=''; onDecline(); } };
+  $('#shieldNo').onclick=()=>{ $('#modalRoot').innerHTML=''; onDecline(); };
+  $('#shieldYes').onclick=()=>{ $('#modalRoot').innerHTML=''; onAccept(); };
+}
+
 function qbResolveAttack(att, tgt, atk, done){
   if(!att||!tgt||qbHP(tgt)<=0){ done&&done(); return; }
   const isPc=att.side==='pc'||att.id==='pc';
@@ -5680,24 +5700,48 @@ function qbResolveAttack(att, tgt, atk, done){
     if(cwDie) qbLog('🎵 Cutting Words — '+qbName(att)+"'s attack roll is reduced by "+cwDie);
     const redirected=shadowMartyrRedirect(QB, tgt);
     if(redirected){ qbLog('👤 Shadow Martyr — the echo steps into the attack meant for '+qbName(tgt)); tgt=redirected; }
-    const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});
-    const blocked=(ev.sanctuary&&ev.sanctuary.blocked)||ev.altitudeBlocked;
-    if(!blocked){
-      const ranged=(atk.tiles||1)>1, dtype=atk.dtype||'';
-      const pk=ranged?(/fire/i.test(dtype)?'firebolt':/pierce|arrow|bow/i.test(dtype+(atk.name||''))?'arrow':'bolt'):'slash';
-      if(pk==='arrow') sfx('arrow'); else if(pk==='firebolt') sfx('firebolt'); else sfx('swing');
-      mapProjectile(att.x,att.y,tgt.x,tgt.y, pk, dtype);
+    const finish=()=>{
+      const ev=Engine.applyAction(qbAdapter, {type:'attack', actorId:att.id, targetId:tgt.id, atk});
+      const blocked=(ev.sanctuary&&ev.sanctuary.blocked)||ev.altitudeBlocked;
+      if(!blocked){
+        const ranged=(atk.tiles||1)>1, dtype=atk.dtype||'';
+        const pk=ranged?(/fire/i.test(dtype)?'firebolt':/pierce|arrow|bow/i.test(dtype+(atk.name||''))?'arrow':'bolt'):'slash';
+        if(pk==='arrow') sfx('arrow'); else if(pk==='firebolt') sfx('firebolt'); else sfx('swing');
+        mapProjectile(att.x,att.y,tgt.x,tgt.y, pk, dtype);
+      }
+      setTimeout(()=>{
+        if(ev.sanctuary) qbLog(blocked?'🛡️ '+qbName(att)+' can’t bring itself to attack '+qbName(tgt)+' — Sanctuary holds':'🛡️ '+qbName(att)+' fights through Sanctuary');
+        if(ev.altitudeBlocked) qbLog('🕊️ '+qbName(att)+' can’t reach '+qbName(tgt)+' — out of melee range (altitude)');
+        if(blocked){ /* noop */ }
+        else if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit', tgt.x, tgt.y); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
+          if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); }
+          if(tgt.echo && tgt.hp<=0) reclaimPotential(QB.players[0].c, qbLog); }
+        else { sfx('miss'); attackFx('miss', tgt.x, tgt.y); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
+        qbCheckEnd(); save(); render(); done&&done(ev);
+      }, 280);
+    };
+    // Shield reaction: only worth offering when it would actually flip this specific attack
+    // from a hit to a miss (a rational player never burns the reaction + slot otherwise) — a
+    // preview roll via Engine.hitResult decides that; the real roll after accepting is fresh
+    // (Shield's +5 AC lands as a real 1-round effect via addEffect/SPELL_EFFECTS, so it also
+    // protects against any OTHER attack this round, not just this one — more correct than
+    // hard-coding a forced miss). A natural 20 can't be prevented by AC at all (crit), so it's
+    // never offered against one — same reasoning Sanctuary's own gate gives no false hope.
+    if(tgt.side==='pc' && tgt.c && shieldEligible(tgt.c)){
+      const pre=Engine.hitResult(qbAdapter, att.id, tgt.id, atk);
+      if(pre.hit && !pre.crit && pre.total<pre.ac+5){
+        openShieldPrompt(tgt.c, pre, ()=>{
+          tgt.c.battle.reaction=true;
+          if(!tgt.c.slots[1]) tgt.c.slots[1]={total:0,used:0};
+          tgt.c.slots[1].used=Math.min(spellSlots(tgt.c)[1]||0,(tgt.c.slots[1].used||0)+1);
+          addEffect(tgt.c,'Shield');
+          qbLog('🛡️ '+tgt.c.name+' casts Shield in response — +5 AC until the start of their next turn');
+          save(); finish();
+        }, finish);
+        return;
+      }
     }
-    setTimeout(()=>{
-      if(ev.sanctuary) qbLog(blocked?'🛡️ '+qbName(att)+' can’t bring itself to attack '+qbName(tgt)+' — Sanctuary holds':'🛡️ '+qbName(att)+' fights through Sanctuary');
-      if(ev.altitudeBlocked) qbLog('🕊️ '+qbName(att)+' can’t reach '+qbName(tgt)+' — out of melee range (altitude)');
-      if(blocked){ /* noop */ }
-      else if(ev.hit){ const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':''; sfx(ev.crit?'crit':'hit'); attackFx(ev.crit?'crit':'hit', tgt.x, tgt.y); qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
-        if(atk.cond && tgt.side==='pc'){ if(!tgt.c.conditions) tgt.c.conditions={}; tgt.c.conditions[atk.cond]=true; qbLog('🌀 '+tgt.name+' is '+atk.cond); }
-        if(tgt.echo && tgt.hp<=0) reclaimPotential(QB.players[0].c, qbLog); }
-      else { sfx('miss'); attackFx('miss', tgt.x, tgt.y); qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'); }
-      qbCheckEnd(); save(); render(); done&&done(ev);
-    }, 280);
+    finish();
     return;
   }
   // Player: interactive to-hit + damage with dice animation + flavor
@@ -5709,15 +5753,12 @@ function qbResolveAttack(att, tgt, atk, done){
   const ranged=(atk.tiles||1)>1;
   const dist=gridDist(att.x,att.y,tgt.x,tgt.y);
   const melee=dist<=1;
-  // Lighting: attacker vision on the target's tile
-  let lightOpts={};
-  if(QB&&QB.map){
-    const attC=att.c||(att.side==='pc'?cur():null);
-    const see=visionLevel(attC, QB, tgt.x, tgt.y, att.x, att.y);
-    const selfL=visionLevel(attC, QB, att.x, att.y, att.x, att.y);
-    lightOpts={seeTarget:see, attackerVision:selfL};
-  }
-  const cx=attackAdvantage(unitConds(att), unitConds(tgt), melee, lightOpts);
+  // Conditions-based adv/disadvantage (and now lighting too — v120.226) are already fully
+  // baked into `pre` via Engine.hitResult's own shared attackAdvantage call; this local call is
+  // ONLY still needed for Assassinate's autoCrit flag below, which Engine.hitResult has no
+  // concept of. Passing no opts here (used to also re-derive lighting ad hoc, redundantly with
+  // Engine.hitResult and — worse — double-listing the same "can't see target" reason in the UI).
+  const cx=attackAdvantage(unitConds(att), unitConds(tgt), melee, {});
   // Assassinate (Assassin 3rd): advantage vs a target that hasn't acted yet this combat;
   // auto-crit on a hit against a target flagged 'surprised' (a new manually-toggled flag — this
   // app has no ambush/surprise-round system to derive it from automatically).
@@ -5729,11 +5770,9 @@ function qbResolveAttack(att, tgt, atk, done){
   // grants for THIS attack, so clearing here doesn't affect it. Simplification: unlike
   // Skulker's real text, a missed ranged attack still reveals you in this pass.
   if(isPc && att.c && att.c.conditions && att.c.conditions.Hidden){ delete att.c.conditions.Hidden; att.c.hiddenDC=null; }
-  // Merge light into Engine adv if needed
   let useAdv=pre.adv, useWhy=(pre.advWhy||[]).slice();
   if(cx.adv&&!pre.adv){ useAdv=cx.adv; useWhy=cx.why; }
-  else if(cx.adv&&pre.adv){ /* both */ useWhy=useWhy.concat(cx.why||[]); }
-  else if(lightOpts.seeTarget===0||lightOpts.attackerVision===0){ useAdv=cx.adv||useAdv; useWhy=useWhy.concat(cx.why||[]); }
+  else if(cx.adv&&pre.adv){ useWhy=useWhy.concat(cx.why||[]); }
   const kind=/fire|bolt|ray|blast|spell/i.test(atk.name||'')||atk.spell?'spell':ranged?'ranged':'melee';
   openCombatRollModal({
     title: atk.name, attacker: qbName(att), target: qbName(tgt), weapon: atk.name,
