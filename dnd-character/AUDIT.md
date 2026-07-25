@@ -3533,3 +3533,35 @@ real `Engine.hitResult`, the Disengage flag setting, and `resetTurnState` cleari
 start of your next turn. Also live-verified via Playwright: both buttons render in a real Use
 menu, clicking Dodge sets the condition + drops the attacker to disadvantage (adv −1) + spends
 the Action, and clicking Disengage sets the flag + spends the Action.
+
+
+## v120.230–231 — Help and Ready, the last two basic PHB actions
+
+The prior entry left Help and Ready as "separate future work." Both are now in, still through
+the shared Use menu (`openAdjacentUseUI`), so Quick Battle and player-net get them identically and
+the DM-hosted side needs nothing new (players act on their own devices).
+
+**Help (v120.230)** — offered on any adjacent foe's maneuver menu, costs the Action. Implements the
+PHB "aid an ally attacking a creature within 5 ft of you" clause: the next ally to attack that foe
+has advantage. Modeled as a ~1-round `Helped` condition applied to the target via the active
+adapter's `addCond` (so it syncs to the DM / other players automatically), which `attackAdvantage`
+reads with a new `T('Helped')` check. **Simplification:** the exact same duration-based treatment
+Distracting Strike already gets — advantage persists for the condition's whole ~1-round life and
+benefits whichever ally strikes next, rather than being consumed by literally one chosen ally's
+first roll. The helper themselves could also benefit from a bonus-action attack after Helping (they
+spent their Action, so no Attack action), a minor over-generosity consistent with every other timed
+condition here.
+
+**Ready (v120.231)** — a general Use-menu action (next to Dodge/Disengage), costs the Action and sets
+a per-turn `c.battle.readied` flag (added to `freshTurnState`, so an unreleased readied attack is
+lost at the start of your next turn like every per-turn flag). While it's set, every adjacent foe's
+menu shows a ⚡ Release Readied Attack button that spends your reaction to make one attack (routed
+through `Engine.attack`, the same reaction-attack path Retaliation/Giant Killer use). **Simplification:**
+the trigger is left to the player's judgement, VTT-style, instead of the engine auto-detecting a
+declared trigger condition — the player releases it whenever they judge the trigger has occurred.
+Release is also gated to adjacent foes (the Use menu's reach), so a readied *ranged* attack against a
+distant foe isn't expressible through this path yet; readied melee is exact.
+
+Tests: 3 new assertions — `attackAdvantage` giving advantage against a `Helped` target, and
+`freshTurnState` defaulting `readied` false + `resetTurnState` clearing an unreleased readied attack
+at the start of your next turn.
