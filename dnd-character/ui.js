@@ -3975,6 +3975,11 @@ function openAdjacentUseUI(c, s, me){
       // Action here; the bonus-action versions still live on those subclass buttons.
       if(mode && c.battle && hasAction(c) && !(c.conditions&&c.conditions.Dodge)) body+=`<button class="btn block" id="useDodge" style="margin-bottom:8px;text-align:left">🛡 Dodge<small style="display:block;opacity:.75">Action — attacks against you have disadvantage until the start of your next turn</small></button>`;
       if(mode && c.battle && hasAction(c) && !c.battle.disengaged) body+=`<button class="btn block" id="useDisengage" style="margin-bottom:8px;text-align:left">🏃 Disengage<small style="display:block;opacity:.75">Action — your movement won't provoke opportunity attacks this turn</small></button>`;
+      // Ready action (PHB): spend your Action now to hold an attack; release it later as your
+      // reaction (before your next turn) against any foe — the "trigger" is left to the player's
+      // judgement, VTT-style, rather than auto-detected. Released via the ⚡ button on any foe.
+      if(mode && c.battle && hasAction(c) && !c.battle.readied) body+=`<button class="btn block" id="useReady" style="margin-bottom:8px;text-align:left">⚡ Ready an attack<small style="display:block;opacity:.75">Action — hold your attack, then release it as a reaction before your next turn</small></button>`;
+      if(mode && c.battle && c.battle.readied) body+=`<div class="card" style="margin:0 0 8px;padding:8px 10px"><div class="nm"><b>⚡ Attack readied</b><small style="display:block;opacity:.75">${c.battle.reaction?'Reaction already spent — the readied attack is lost':'Tap ⚡ Release on a foe below to strike'}</small></div></div>`;
       if(servant) body+=`<button class="btn block" data-use="servant" style="margin-bottom:8px;text-align:left">👻 Command Servant<small style="display:block;opacity:.75">Move it up to 15 ft / interact with an object — bonus action</small></button>`;
       if(canManifestEcho) body+=`<button class="btn block" id="useManifestEcho" style="margin-bottom:8px;text-align:left">👤 Manifest Echo<small style="display:block;opacity:.75">${echo?'Replaces your current echo — ':''}Bonus action, within 15 ft</small></button>`;
       if(echo) body+=`<button class="btn block" data-use="echo" style="margin-bottom:8px;text-align:left">👤 Command Echo<small style="display:block;opacity:.75">Move it up to 30 ft (free) or teleport-swap (bonus action)</small></button>`;
@@ -4156,6 +4161,7 @@ function openAdjacentUseUI(c, s, me){
         <button class="btn block" data-usea="taunt" style="margin-bottom:8px;text-align:left">😠 Taunt<small style="display:block;opacity:.75">Intimidation vs Insight — success: Frightened of you</small></button>
         <button class="btn block" data-study="1" style="margin-bottom:8px;text-align:left">📖 Recall Knowledge<small style="display:block;opacity:.75">Arcana/History/Nature/Religion vs DC 10+CR — uses your action</small></button>`;
       if(hasAction(c)) body+=`<button class="btn block" data-usea="help" style="margin-bottom:8px;text-align:left">🤝 Help — aid an ally<small style="display:block;opacity:.75">Action — the next ally to attack ${esc(mo.name)} before your next turn has advantage</small></button>`;
+      if(c.battle && c.battle.readied) body+=`<button class="btn block" data-usea="release-ready" style="margin-bottom:8px;text-align:left"${c.battle.reaction?' disabled style="opacity:.5"':''}>⚡ Release Readied Attack<small style="display:block;opacity:.75">${c.battle.reaction?'Reaction already used':'Your reaction — make your held attack against '+esc(mo.name)+' now'}</small></button>`;
       if(c.frenzied && isRaging(c)) body+=`<button class="btn block" data-usea="frenzy" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.bonus?' disabled style="opacity:.5"':''}>🩸 Frenzy Attack<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':'A melee attack as your bonus action'}</small></button>`;
       if(isBerserker(c,14)) body+=`<button class="btn block" data-usea="retaliate" style="margin-bottom:8px;text-align:left"${c.battle&&c.battle.reaction?' disabled style="opacity:.5"':''}>🩸 Retaliation<small style="display:block;opacity:.75">${c.battle&&c.battle.reaction?'Reaction already used':'Reaction — a melee attack against this adjacent foe'}</small></button>`;
       if(c.cls==='Monk' && (Number(c.level)||1)>=2) body+=`<button class="btn block" data-usea="flurry" style="margin-bottom:8px;text-align:left"${(c.battle&&c.battle.bonus)||(c.kiLeft||0)<=0?' disabled style="opacity:.5"':''}>🥋 Flurry of Blows — 1 ki<small style="display:block;opacity:.75">${c.battle&&c.battle.bonus?'Bonus action already used':(c.kiLeft||0)<=0?'No ki left':'Bonus action — two unarmed strikes'}</small></button>`;
@@ -4418,6 +4424,14 @@ function openAdjacentUseUI(c, s, me){
       flashBanner('🏃 Disengage — your movement won\'t provoke opportunity attacks');
       afterManeuver();
     }; }
+    { const rd=$('#useReady'); if(rd) rd.onclick=()=>{
+      if(!hasAction(c)){ flashBanner('No action left'); return; }
+      spendAction(c);
+      c.battle.readied=true;   // cleared by freshTurnState at the start of your next turn if never released
+      log('⚡ '+c.name+' readies an attack — held until released as a reaction');
+      flashBanner('⚡ Attack readied — release it on a foe as your reaction');
+      afterManeuver();
+    }; }
     { const stb=$('#useStabilize'); if(stb) stb.onclick=()=>{
       const al=pick.al;
       const kb=$('#useStabKit'); const useKit=!!(kb&&kb.checked);
@@ -4648,6 +4662,19 @@ function openAdjacentUseUI(c, s, me){
           flashBanner('🤝 Helping — next ally attack on '+mo.name+' has advantage');
           afterManeuver();
           return;
+        }
+        else if(actId==='release-ready'){
+          const atk=qbPcAttacks(c).find(a=>a.melee) || qbPcAttacks(c)[0];
+          if(!atk){ flashBanner('No attack available'); return; }
+          draw({kind:'confirmRoll', desc:'Release your readied attack at '+esc(mo.name)+' with '+esc(atk.name)+'. Your reaction.', skillLabel:atk.name, backTo:pick, run:()=>{
+            if(c.battle && c.battle.reaction){ flashBanner('Reaction already used'); return null; }
+            if(!(c.battle && c.battle.readied)){ flashBanner('No attack readied'); return null; }
+            if(c.battle){ c.battle.reaction=true; c.battle.readied=false; }
+            const ev=Engine.attack(ad, me.id, mo.id, {name:'Readied '+atk.name, toHit:atk.toHit, dmg:atk.dmg, dtype:atk.dt, tiles:atk.tiles||1});
+            if(ev.hit) flashBanner('⚡ Readied attack hits '+mo.name+' for '+ev.dmg); else flashBanner('⚡ Readied attack misses '+mo.name);
+            log('⚡ '+c.name+' releases a readied attack at '+mo.name+' — '+(ev.hit?'hit for '+ev.dmg:'miss'));
+            return null;
+          }});
         }
         else if(actId==='hordebreaker') draw({kind:'hordeBreakerPick', mo});
         return;

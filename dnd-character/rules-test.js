@@ -2357,6 +2357,11 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   chgc.battle=freshTurnState(chgc); chgc.battle.dashed=true;
   resetTurnState(chgc);
   T('resetTurnState: dashed clears on a fresh turn', chgc.battle.dashed===false);
+  // Ready action: a held attack starts unarmed and is dropped at the start of your next turn if unreleased
+  T('freshTurnState: readied starts false', freshTurnState(chgc).readied===false);
+  chgc.battle=freshTurnState(chgc); chgc.battle.readied=true;
+  resetTurnState(chgc);
+  T('resetTurnState: an unreleased readied attack is lost on your next turn', chgc.battle.readied===false);
 
   // Crossbow Expert: (a) "no disadvantage firing in melee" has nothing to hook — confirmed
   // by inspection this app never modeled that disadvantage anywhere (Engine.hitResult,
