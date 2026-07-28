@@ -131,6 +131,15 @@ usage burns tokens fast. Follow this order:
 
 ## Section map (grep anchors → what lives there)
 
+> **Which FILE a symbol is in: ask, don't guess — `node tools/whereis.js <symbol>`.**
+> It prints `file:line` for the declaration in one call. The headings below group anchors by
+> *topic*, and topic does NOT predict file: the split was made by a heuristic, so `applyHp`,
+> `castSpell` and `attackFlow` are core rules that live in **ui.js**, `canCast` lives in
+> **net.js**, and `Engine`, `BRAINS`, `CONTROLLERS` and all three adapters never left
+> **index.html** (they're top-level statements whose execution order matters). This section's
+> file attributions were wrong on exactly those symbols until 2026-07-28 and cost real greps —
+> trust `whereis.js` over any prose here, and treat a mismatch as a bug in this file.
+
 Data tables (all live in `data.js` now, not index.html — see the modularization note above):
 - `CLASS_FEATURES` — per-class feature text by level; `RACE_TRAITS`, `RACE_ASI`, `RACE_SPEED`
 - `FIGHTING_STYLES`, `FIGHTING_STYLE_LEVEL`, `SUBCLASSES`, `CLASS_SAVES`, `CLASS_HITDIE`
@@ -155,17 +164,17 @@ Data tables (all live in `data.js` now, not index.html — see the modularizatio
 - `MONSTERS_5E` — bestiary {n,cr,ac,hp,spd,init,attacks,atk,…}; `MONSTER_RVI` — resist/vuln/imm
 - `TERRAIN` — tile properties (solid/opaque/diff/dmg/deadly); `MAP_PRESETS` — battle maps
 
-Rules logic (lives in `rules.js` now, not index.html):
-- `function canCast` / `function castSpell` — action economy + slots + bonus-action-spell
-  rule + concentration entry point
+Rules logic (**mostly** `rules.js`, but see the warning above — several of these are not):
+- `function canCast` (**net.js**) / `function castSpell` (**ui.js**) — action economy + slots +
+  bonus-action-spell rule + concentration entry point
 - `function parseSpellMechanics` — prose→mechanics parser; `scaleCantrip`/`cantripTier` —
   cantrip damage scaling; `spellSeeks` — always false (LoS required, see AUDIT.md)
 - `function addEffect` / `endEffect` / `advanceRound` — effect lifecycle, no same-name stacking
 - `function concentrationCheck` — CON save on damage (DC max(10, dmg/2))
 - `function computeAC` — armor + Mage Armor + Barkskin + Defense style + shield + effects
-- `function applyHp` — damage/heal, temp HP, death saves, instant death, conc trigger
-- `function attackFlow` — the attack modal state machine; Sneak Attack & Divine Smite riders
-  live in its `rollDmg`/dmg-phase UI
+- `function applyHp` (**ui.js**) — damage/heal, temp HP, death saves, instant death, conc trigger
+- `function attackFlow` (**ui.js**) — the attack modal state machine; Sneak Attack & Divine
+  Smite riders live in its `rollDmg`/dmg-phase UI
 - `weaponToHit`/`weaponDmgBonus` — includes Archery/Dueling styles, rage
 - `extraAttacks`, `actionsPerTurn` (Haste), `hasActionSurge`, `toggleRage`
 - `spellSlots`/`SLOTS_FULL|HALF|ARTI`/`warlockSlots`, `maxSpellLevel`, `preparedMax`,
@@ -173,8 +182,10 @@ Rules logic (lives in `rules.js` now, not index.html):
 - `skillBonus` (Jack of All Trades), `initiative`, `passiveScore` (Observant), `profBonus`
 - `function levelUp` — level-up modal; `pendingChoiceSpecs`/`applyFeat` — choice flows
 
-Combat / grid / multiplayer (grid math + Engine + BRAINS + QB live in `rules.js`; `dmHost`/
-`dmOnData`/`renderDM`/`playerJoin`/campaign persistence live in `net.js`):
+Combat / grid / multiplayer — **file attribution corrected 2026-07-28**: grid math is in
+`rules.js`, but `Engine`, its three adapters, `BRAINS` and `CONTROLLERS` are all still in
+**index.html** (top-level `const`s, never moved by Stage 2), and `dmHost`/`renderDM` are in
+**ui.js**, not net.js. `net.js` is only ~237 lines. Confirm with `tools/whereis.js`:
 - `function dijkstra` / `losClear` / `coverBetween` / `leavesReach` — grid math
   (Chebyshev distance, 1 tile = 5 ft, no diagonal corner-cutting)
 - **Isometric battle-map rendering lives in `iso-renderer.js`, not index.html** — `mapGridHTML`
@@ -183,13 +194,15 @@ Combat / grid / multiplayer (grid math + Engine + BRAINS + QB live in `rules.js`
   actual `<canvas>` pixels (diamond tiles, elevation walls) are painted entirely by
   `iso-renderer.js`'s own `paint()`/`MutationObserver`. Grep anchors there, not here, for
   anything about how the iso view actually looks.
-- `const Engine =` — unified resolver: `Engine.attack` (weapons) + `Engine.castApply`
-  (spells: save → half dmg / no condition on success → resist/vuln/imm). Adapters bind it
-  to each mode: `qbAdapter`, `sessionAdapter` (DM authoritative), `playerNetAdapter`
+- `const Engine =` (**index.html:1782**) — unified resolver: `Engine.attack` (weapons) +
+  `Engine.castApply` (spells: save → half dmg / no condition on success → resist/vuln/imm).
+  `Engine.roll` implements the nat-20-crit / **nat-1-always-misses** rule (`d20!==1`) — which is
+  why `toHit:99` is not a guaranteed hit in a test. Adapters bind it to each mode, all also in
+  index.html: `qbAdapter`, `sessionAdapter` (DM authoritative), `playerNetAdapter`
   (player device — mutates by net message; DM applies RVI to incoming raw damage)
-- `BRAINS.tactical` — monster AI; `CONTROLLERS` — human/tactical/agent switch
-- `function dmHost` / `dmOnData` / `renderDM` — DM mode; `playerJoin`/`renderPlayerBattle` —
-  player netplay; `openSpellTarget` — net spell targeting
+- `BRAINS.tactical` — monster AI; `CONTROLLERS` — human/tactical/agent switch (**index.html**)
+- `function dmHost` / `dmOnData` / `renderDM` (**ui.js**) — DM mode; `playerJoin`/
+  `renderPlayerBattle` — player netplay; `openSpellTarget` — net spell targeting
 - `function saveCampaign` / `loadCampaign` / `mergeCampaignPlayers` / `campaignSnapshot` —
   DM campaign persistence (localStorage `grimoire.campaigns`: map, monsters, party progress,
   battle state, log). Join-then-pick: players connect first, load re-binds them by `cid`;
