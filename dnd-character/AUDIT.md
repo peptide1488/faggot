@@ -275,14 +275,18 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   bonus dice per the description).
 - Monster save bonus is CR-derived, not per-ability.
 - Great Weapon Fighting rerolls and Protection-style reactions are table-adjudicated.
-- **Three rules are missing from `playerNetAdapter` and may be real mode-parity gaps** (found
-  2026-07-28 by the new parity harness in `rules-test.js`). `Engine` treats every adapter method
-  as optional, so a missing one silently yields the neutral default rather than an error:
-  - `cover` → a player device resolves its own to-hit with **cover 0**, so it can disagree with
-    the DM's answer for the same shot (proven: with a wall between them, QB/DM see AC 14, an
-    adapter without `cover` sees AC 9).
-  - `sanctuaryDC` → a player casting at a Sanctuary-warded target skips the ward entirely.
-  - `holyAuraDC` → Holy Aura's blind-on-hit never triggers for player-side attacks.
+- **Three rules are missing from `playerNetAdapter`. All three are CONFIRMED live** — found by
+  the parity harness, then reproduced against the deployed v120.233 site in a real browser via
+  Playwright (not inferred from reading code, and not a node stub). `Engine` treats every adapter
+  method as optional, so a missing one silently yields the neutral default instead of erroring:
+  - `cover` → **the player's device and the DM's device disagree about whether a shot hit.**
+    Same session state, same map, same pre-rolled d20: with a wall between attacker and target,
+    the DM resolves against AC 20 (base 15 + 5 three-quarters cover) and the player's device
+    against AC 15. Sweeping all 20 faces, **5 of 20 rolls (25% of attacks) flip the result** —
+    the player's screen reads HIT while the DM's reads miss, for d20 10–14.
+  - `sanctuaryDC` → against a Sanctuary-warded target the DM **blocks the attack outright**,
+    while the player's device never evaluates the ward and reports a clean hit.
+  - `holyAuraDC` → the DM blinds the attacker per Holy Aura; the player's device never checks it.
 
   Three *other* absences on that adapter are deliberate and are recorded as such: `damageMult`
   (the DM is authoritative for resist/vuln/imm), `enemiesOf` and `findGrappler` (no local AI /

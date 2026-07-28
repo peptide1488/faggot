@@ -3532,13 +3532,14 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
       damageMult:'intentional — DM is authoritative and applies resist/vuln/imm to raw damage',
       enemiesOf:'intentional — no local AI on a player device',
       findGrappler:'intentional — grapple bookkeeping is resolved DM-side',
-      // The three below are NOT clearly intentional. They are recorded so the guard passes
-      // today, but each means a rule the player device silently skips; see the notes in
-      // AUDIT.md. Flagged for a decision rather than silently "fixed" here, because changing
-      // them alters live combat resolution across a networked mode.
-      cover:'SUSPECTED GAP — player-side to-hit gets cover 0, so it can disagree with the DM',
-      sanctuaryDC:'SUSPECTED GAP — a player casting at a Sanctuary-warded target skips the ward',
-      holyAuraDC:'SUSPECTED GAP — Holy Aura\'s blind-on-hit never triggers player-side',
+      // The three below are NOT intentional. Each was reproduced against the DEPLOYED site in a
+      // real browser (Playwright, 2026-07-28) — see AUDIT.md for the numbers. They stay listed
+      // so the guard passes today, but they are open bugs awaiting a decision, not design:
+      // changing them alters live combat resolution across a networked mode, so they want a
+      // deliberate call plus real multi-device testing rather than a speculative patch.
+      cover:'CONFIRMED BUG — player device resolves with cover 0; 5 of 20 d20 faces flip HIT vs miss against the DM',
+      sanctuaryDC:'CONFIRMED BUG — DM blocks the attack outright, player device never evaluates the ward',
+      holyAuraDC:'CONFIRMED BUG — DM blinds the attacker, player device never checks Holy Aura',
     },
   };
 
