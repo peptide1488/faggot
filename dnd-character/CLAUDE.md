@@ -19,7 +19,8 @@ from ~13,200 lines to **~2,300 lines**. The code now lives across 5 files:
 
 `sw.js` is the offline cache — `index.html`, `data.js`, `rules.js`, `net.js`, and `ui.js` are
 ALL in its `ASSETS` list — **any new module file must be added there too, or offline breaks
-silently**. `AUDIT.md` is the 5e-rules baseline, `rules-test.js` is the test harness.
+silently**. `AUDIT.md` is the 5e-rules baseline (current rulings + a post-v94 systems index),
+`AUDIT_HISTORY.md` is its per-version archive, `rules-test.js` is the test harness.
 
 **All four extracted files load via `<script src>` before the main inline `<script>`**, in
 that order (data → rules → net → ui → main) — classic (non-module) script tags share one
@@ -78,11 +79,11 @@ further; this pass's bar was "correct and shippable," not "semantically perfect.
 
 ## Efficiency protocol — read this before reading code
 
-index.html is dense (~5,200 lines, but each line is long/minified-style), so naive Read/Grep
+index.html is dense (2,375 lines, but each line is long/minified-style), so naive Read/Grep
 usage burns tokens fast. Follow this order:
 
 1. **Run `node rules-test.js` first** (5e rules) **and `node iso-renderer-test.js`** if touching
-   the battle map. 190+ assertions covering slots, action economy, concentration, AC, death
+   the battle map. ~1000 assertions covering slots, action economy, concentration, AC, death
    rules, fighting styles, parsing, monster data. If it passes, the rules core is sound — only
    read code relevant to the actual task. **For any battle-map rendering change, also render the
    canonical scenes with `node tools/iso-preview.js` and `Read` the resulting PNGs yourself
@@ -92,8 +93,15 @@ usage burns tokens fast. Follow this order:
    the exact line, prefer editing that line directly over a `Read` of a wide surrounding
    range — reserve `Read` for cases where you genuinely need the neighboring logic to
    understand control flow, not as a reflex after every grep.
-3. `AUDIT.md` records every 5e ruling and known simplification — consult it before
-   re-deriving rules ("is X intentional?" is usually answered there).
+3. **`AUDIT.md` (21 KB) = what the rules do TODAY** — consult it before re-deriving rules
+   ("is X intentional?" is usually answered there). It ends with a **systems index** mapping
+   every post-v94 system (maneuvers, reactions, traps, mounts, multiclassing, subclasses, …) to
+   its verified grep anchor — use that table instead of hunting for a function name.
+   **`AUDIT_HISTORY.md` (260 KB) = why it was built that way**, per version, with a heading
+   index at its top. It is 12× the size of AUDIT.md and deliberately preserves *superseded*
+   approaches (v114–v118 document four isometric rewrites, one of which was reverted in full),
+   so **never quote it as current behaviour and never grep it as a first move.** Splitting the
+   two is what took the every-session rules reference from ~70k tokens to ~5k.
 4. **Every rules change gets a test** appended to `rules-test.js` (pattern: `T('name', cond)`).
    Keep new tests to one line where the existing style already does that; don't add a
    multi-line comment block per test when fixing several similar/repetitive spells in one
@@ -106,10 +114,20 @@ usage burns tokens fast. Follow this order:
    landed vs. a stale cache, and "still shows the same version" reads as "my fix didn't
    deploy" even when it did.
 6. **Test-run hygiene:** after an edit, run `node rules-test.js 2>&1 | tail -3` for a
-   pass/fail summary — don't dump the full ~190-line test log into context. Only widen to
-   `| grep -B2 FAIL` (or read the file) when something actually fails. Batch related edits
-   for one task and verify once at the end, rather than re-running the whole suite after
-   every micro-edit.
+   pass/fail summary — don't dump the full ~1000-line test log into context. Only widen to
+   `| grep -vE "^  ok "` (which strips the passing lines and leaves the failure) when something
+   actually fails. Batch related edits for one task and verify once at the end, rather than
+   re-running the whole suite after every micro-edit. **Beware stubbed randomness:** tests that
+   resolve a real attack must pre-roll the d20 (`{face:20}`, or stub `Math.random`) — `toHit:99`
+   is NOT a guaranteed hit, because a natural 1 always misses, and one test flaked ~5% of runs
+   on exactly that (fixed 2026-07-28).
+7. **Deploying takes TWO pushes.** Work happens on `iso3d-engine`; GitHub Pages serves
+   `claude/elegant-bohr-zx67jk` (verified via the Pages API — `build_type: legacy`, path `/`).
+   A push to `iso3d-engine` alone changes nothing the user can see:
+   `git push origin iso3d-engine && git push origin iso3d-engine:claude/elegant-bohr-zx67jk`
+   Then verify: `curl -s https://peptide1488.github.io/faggot/dnd-character/sw.js | grep -m1 CACHE`.
+   If the live version is stale, check `git rev-parse origin/claude/elegant-bohr-zx67jk` **before**
+   blaming build lag — a 3-day "publish lag" in July 2026 was really just the unpushed branch.
 
 ## Section map (grep anchors → what lives there)
 
