@@ -3463,6 +3463,89 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('resetTurnState: Disengage clears at the start of your next turn', c.battle.disengaged===false);
 }
 
+/* ---- MODE-PARITY HARNESS (VISION roadmap #3) ----
+   The user's stated #1 friction is "systems applied to quick battle but not DM battle/hosted".
+   Every parity pass so far (v120.208, v120.209) was manual archaeology that goes stale the
+   moment new code lands. This turns it into a build failure instead.
+
+   How it works: the three adapters are the ONLY thing standing between the shared Engine and
+   each mode, and Engine treats every adapter method as optional — `ad.cover ? ad.cover(a,t) : 0`,
+   `ad.damageMult ? ... : 1`, and so on. That's what makes divergence silent: a mode that simply
+   lacks a method quietly gets the neutral default instead of the rule. So an adapter's method
+   SET is a precise, cheap proxy for "which rules exist in this mode", and it's introspectable
+   at runtime rather than by parsing. */
+{
+  const iface=a=>Object.keys(a).sort();
+  const QB=iface(qbAdapter), SESS=iface(sessionAdapter), PNET=iface(playerNetAdapter);
+  const missing=(base,other)=>base.filter(k=>!other.includes(k));
+
+  // Every KNOWN delta, with why. A delta that is NOT listed here fails the test — that's the
+  // whole point: new divergence has to be justified in writing, not discovered a version later.
+  const KNOWN={
+    sessionAdapter:{
+      // Intentional: enemy selection is Quick Battle's AI concern. In DM-hosted play a human
+      // picks targets, so there is no "who are my enemies" question for the Engine to ask.
+      enemiesOf:'intentional — QB AI target selection only; DM-hosted has a human choosing',
+    },
+    playerNetAdapter:{
+      damageMult:'intentional — DM is authoritative and applies resist/vuln/imm to raw damage',
+      enemiesOf:'intentional — no local AI on a player device',
+      findGrappler:'intentional — grapple bookkeeping is resolved DM-side',
+      // The three below are NOT clearly intentional. They are recorded so the guard passes
+      // today, but each means a rule the player device silently skips; see the notes in
+      // AUDIT.md. Flagged for a decision rather than silently "fixed" here, because changing
+      // them alters live combat resolution across a networked mode.
+      cover:'SUSPECTED GAP — player-side to-hit gets cover 0, so it can disagree with the DM',
+      sanctuaryDC:'SUSPECTED GAP — a player casting at a Sanctuary-warded target skips the ward',
+      holyAuraDC:'SUSPECTED GAP — Holy Aura\'s blind-on-hit never triggers player-side',
+    },
+  };
+
+  for(const [label, other] of [['sessionAdapter',SESS], ['playerNetAdapter',PNET]]){
+    const gaps=missing(QB, other), known=Object.keys(KNOWN[label]);
+    const undocumented=gaps.filter(k=>!known.includes(k));
+    const stale=known.filter(k=>!gaps.includes(k));
+    T(`mode parity: ${label} has no UNDOCUMENTED gap vs qbAdapter`
+      +(undocumented.length?` — new divergence: ${undocumented.join(', ')} (add it to KNOWN with a reason, or implement it)`:''),
+      undocumented.length===0);
+    T(`mode parity: ${label}'s documented-gap list has no stale entries`
+      +(stale.length?` — now implemented, delete from KNOWN: ${stale.join(', ')}`:''), stale.length===0);
+  }
+  // An adapter gaining a method the others don't know about is divergence too, in the other
+  // direction — it means a rule that only the non-QB mode applies.
+  T('mode parity: no adapter has a method qbAdapter lacks (reverse divergence)',
+    missing(SESS,QB).length===0 && missing(PNET,QB).length===0);
+
+  /* Behavioural parity, not just structural: the same geometry must produce the same to-hit
+     in Quick Battle and DM-hosted. A wall between attacker and target is three-quarters cover
+     (+5 AC), and this is exactly the class of rule that used to be wired into one mode only. */
+  {
+    const pcC=newCharacter('ParityPC'); pcC.hp.cur=pcC.hp.max=30;
+    const geom={cols:5,rows:1,tiles:{'1,0':'wall'}};
+    const atk={name:'Bow', toHit:5, dmg:'1d6', tiles:6};
+
+    setQB({active:true, over:null, log:[], map:geom, battle:{active:true,round:1},
+      players:[{id:'pc', side:'pc', name:'ParityPC', c:pcC, x:2,y:0}],
+      monsters:[{id:'m1', side:'mon', name:'Orc', base:'Orc', hp:20, max:20, ac:13, x:0,y:0, conds:[]}]});
+    const qbRes=Engine.hitResult(qbAdapter,'m1','pc',atk,12);
+    const qbAC=qbRes.ac, qbCover=qbRes.cover;
+    setQB(null);
+
+    setNet({role:'dm', session:{ map:geom,
+      monsters:[{id:'m1', name:'Orc', base:'Orc', hp:20, max:20, ac:13, x:0,y:0, conds:[]}],
+      players:[{id:'pc', cid:'pc', name:'ParityPC', ac:computeAC(pcC), hpCur:30, hpMax:30, x:2,y:0}] }});
+    const sessRes=Engine.hitResult(sessionAdapter,'m1','pc',atk,12);
+    const sessAC=sessRes.ac, sessCover=sessRes.cover;
+    setNet(null);
+
+    T('mode parity: three-quarters cover from a wall applies in BOTH Quick Battle and DM-hosted',
+      qbCover===5 && sessCover===5);
+    T('mode parity: identical geometry + identical d20 gives the identical to-hit outcome in both modes'
+      +(qbAC===sessAC?'':` — QB saw AC ${qbAC}, DM-hosted saw AC ${sessAC}`),
+      qbAC===sessAC && qbRes.hit===sessRes.hit);
+  }
+}
+
 /* ---- offline-cache drift guard ----
    sw.js's ASSETS list is precached on install; anything the page loads that ISN'T listed only
    reaches the cache opportunistically, on a successful online fetch. That failure is silent —

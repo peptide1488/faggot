@@ -275,6 +275,22 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   bonus dice per the description).
 - Monster save bonus is CR-derived, not per-ability.
 - Great Weapon Fighting rerolls and Protection-style reactions are table-adjudicated.
+- **Three rules are missing from `playerNetAdapter` and may be real mode-parity gaps** (found
+  2026-07-28 by the new parity harness in `rules-test.js`). `Engine` treats every adapter method
+  as optional, so a missing one silently yields the neutral default rather than an error:
+  - `cover` → a player device resolves its own to-hit with **cover 0**, so it can disagree with
+    the DM's answer for the same shot (proven: with a wall between them, QB/DM see AC 14, an
+    adapter without `cover` sees AC 9).
+  - `sanctuaryDC` → a player casting at a Sanctuary-warded target skips the ward entirely.
+  - `holyAuraDC` → Holy Aura's blind-on-hit never triggers for player-side attacks.
+
+  Three *other* absences on that adapter are deliberate and are recorded as such: `damageMult`
+  (the DM is authoritative for resist/vuln/imm), `enemiesOf` and `findGrappler` (no local AI /
+  DM-side bookkeeping). The suspected three are **documented, not fixed** — implementing them
+  changes live combat resolution in a networked mode, which wants a deliberate decision and a
+  round of real multi-device testing, not a speculative patch. The harness pins all six so the
+  list can't rot: an undocumented gap fails the build, and so does an entry that gets fixed
+  without being removed from the list.
 - **Offline-first has one hole: the `iso3d/` 3D battle map (18 module files) is not precached.**
   `sw.js`'s `ASSETS` covers index.html + data/rules/net/ui/iso-renderer + icons, so the whole app
   works offline *except* the WebGL map, which is only cached opportunistically the first time it
