@@ -3463,6 +3463,35 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('resetTurnState: Disengage clears at the start of your next turn', c.battle.disengaged===false);
 }
 
+/* ---- coverBetween's line walk (v120.235) ----
+   The Bresenham y-step added dy instead of dx, so with dx=0 the error term never settled and the
+   walk drifted diagonally off the grid — (0,7)->(0,4) sampled 0,6 then -1,6, -2,5, -3,4 ... to
+   -10,-3 before the guard stopped it. Consequences: cover was only ever found when an obstruction
+   sat in the first step or two, and the SAME wall gave +5 in one direction and 0 in the other.
+   Every mode used this, since Engine reads cover through each adapter. */
+{
+  const s={ map:{cols:10, rows:10, tiles:{'0,5':'wall'}}, monsters:[], players:[] };
+  T('coverBetween: a wall directly between two squares gives three-quarters cover (+5)',
+    coverBetween(s, 0,4, 0,7)===5);
+  T('coverBetween: ...and gives the SAME answer shot the other way (was 5 vs 0)',
+    coverBetween(s, 0,7, 0,4)===coverBetween(s, 0,4, 0,7));
+  T('coverBetween: an open lane between two squares is still no cover', coverBetween(s, 3,0, 3,9)===0);
+  T('coverBetween: a wall NOT on the line is not counted', coverBetween(s, 4,4, 4,7)===0);
+  // The drift was only visible because the walk left the map; assert it stays on the line at all.
+  {
+    const wide={ map:{cols:20, rows:20, tiles:{}}, monsters:[], players:[] };
+    let offGrid=false;
+    const probe=new Proxy({}, { get(_,k){ if(typeof k==='string'&&/-/.test(k)) offGrid=true; return undefined; } });
+    wide.map.tiles=probe;
+    coverBetween(wide, 0,7, 0,4); coverBetween(wide, 0,0, 4,1); coverBetween(wide, 9,9, 1,3);
+    T('coverBetween: the walk never samples a negative coordinate (it used to run to -10,-3)', offGrid===false);
+  }
+  // Diagonals were always fine (dx===dy), so they must not regress.
+  { const d={ map:{cols:8,rows:8,tiles:{'3,3':'wall'}}, monsters:[], players:[] };
+    T('coverBetween: 45° diagonals still see a wall on the line (unchanged by the fix)',
+      coverBetween(d, 2,2, 5,5)===5); }
+}
+
 /* ---- Search action (PHB) — the PC-side half of an action only monsters had ----
    monsterSearchRoll let a DM's monster hunt for a hidden player, but a PC couldn't take the
    Search action at all. maneuverSearch is the shared, adapter-driven counterpart. */

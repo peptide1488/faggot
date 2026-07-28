@@ -2393,7 +2393,14 @@ function buildAttackPreviewTags(s, from, rangeTiles, opts){
 
 function coverBetween(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{};
   let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy,x=x0,y=y0,guard=0,cover=0;
-  while(!(x===x1&&y===y1)&&guard++<999){ const e2=2*err; if(e2>-dy){err-=dy;x+=sx;} if(e2<dx){err+=dy;y+=sy;}
+  // Bresenham. The y-step MUST add dx, not dy (v120.235 — it said `err+=dy` for a long time,
+  // which is the classic transcription slip and is not a subtle one: with dx=0 the error term
+  // never settles, so the walk drifts diagonally off the grid. Walking (0,7)->(0,4) sampled
+  // 0,6 then -1,6, -2,5, -3,4 ... down to -10,-3 until the 999 guard stopped it. Only the first
+  // step or two of ANY line were ever real cells, so cover was found only when an obstruction
+  // happened to sit right next to the attacker, and the same wall gave +5 one way and 0 the
+  // other. Found by driving a real two-tab DM/player session, not by reading this line.
+  while(!(x===x1&&y===y1)&&guard++<999){ const e2=2*err; if(e2>-dy){err-=dy;x+=sx;} if(e2<dx){err+=dx;y+=sy;}
     if(x===x1&&y===y1) break;
     const tk=tiles[x+','+y], td=TERRAIN[tk], dd=DECOR[decorAt(s,x,y)];
     if(isFullWall(tk)||(td&&td.solid&&td.opaque&&!td.climbable)){ cover=Math.max(cover,5); continue; } // full wall

@@ -329,6 +329,29 @@ deterministic mechanics. Each is embedded in the in-app spell description.
 
 ---
 
+## Cover was broken in every mode (fixed v120.235)
+
+`coverBetween`'s Bresenham line walk added **`dy` instead of `dx`** in its y-step. That is not a
+subtle off-by-one: with `dx === 0` the error term never settles, so the walk drifts diagonally off
+the grid. Walking (0,7)→(0,4) sampled `0,6`, then `-1,6`, `-2,5`, `-3,4` … down to `-10,-3` before
+the 999-iteration guard stopped it.
+
+Consequences, which had been live for a long time and in **all three modes** (Engine reads cover
+through every adapter):
+- Only the first step or two of any line were real cells, so **cover was found only when an
+  obstruction sat essentially next to the attacker** — a wall halfway down a corridor did nothing.
+- The **same wall gave +5 one way and 0 the other**, because whether the drift started before or
+  after the obstruction depended on direction.
+- 45° diagonals were unaffected (`dx === dy`), which is part of why it went unnoticed.
+
+Found by driving a real two-tab DM + player session over live PeerJS and comparing the two
+devices' answers for the same shot — not by reading the line. `losClear` does **not** share the
+bug: it samples a continuous ray through cell centres, a different and symmetric approach.
+
+Residual, accepted: Bresenham still picks one side on non-45° ties, so a shallow diagonal can
+sample `2,0` one way and `2,1` the other. That's inherent tie-breaking, not the drift bug, and it
+only matters if exactly one of those two cells is an obstruction.
+
 ## Search (v120.232)
 
 The Search action was **half-built, not missing**: `monsterSearchRoll` let a DM's monster hunt
