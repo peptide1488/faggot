@@ -3532,14 +3532,9 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
       damageMult:'intentional — DM is authoritative and applies resist/vuln/imm to raw damage',
       enemiesOf:'intentional — no local AI on a player device',
       findGrappler:'intentional — grapple bookkeeping is resolved DM-side',
-      // The three below are NOT intentional. Each was reproduced against the DEPLOYED site in a
-      // real browser (Playwright, 2026-07-28) — see AUDIT.md for the numbers. They stay listed
-      // so the guard passes today, but they are open bugs awaiting a decision, not design:
-      // changing them alters live combat resolution across a networked mode, so they want a
-      // deliberate call plus real multi-device testing rather than a speculative patch.
-      cover:'CONFIRMED BUG — player device resolves with cover 0; 5 of 20 d20 faces flip HIT vs miss against the DM',
-      sanctuaryDC:'CONFIRMED BUG — DM blocks the attack outright, player device never evaluates the ward',
-      holyAuraDC:'CONFIRMED BUG — DM blinds the attacker, player device never checks Holy Aura',
+      // cover / sanctuaryDC / holyAuraDC were listed here as confirmed bugs and are now
+      // IMPLEMENTED (v120.234) — removed from this list, which is exactly what the
+      // "no stale entries" assertion below forces you to do once a gap is closed.
     },
   };
 
@@ -3585,6 +3580,60 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     T('mode parity: identical geometry + identical d20 gives the identical to-hit outcome in both modes'
       +(qbAC===sessAC?'':` — QB saw AC ${qbAC}, DM-hosted saw AC ${sessAC}`),
       qbAC===sessAC && qbRes.hit===sessRes.hit);
+  }
+
+  /* ---- Regression tests for the three gaps closed in v120.234 ----
+     The DM's device and the player's device must agree about the same shot. Both adapters read
+     the same net.session, so one shared state can be handed to each — any divergence is the
+     adapter, not the scenario. These are written as a d20 SWEEP rather than one lucky face,
+     because the original bug was invisible at most faces: it only flipped the outcome in the
+     window between the two ACs (5 of 20 faces), which is exactly how it survived unnoticed. */
+  {
+    const savedNet=getNet();
+    const shared=()=>({ map:{cols:6,rows:1,tiles:{'1,0':'wall'}},
+      monsters:[{id:'m1',name:'Orc',base:'Orc',hp:20,max:20,ac:13,x:0,y:0,conds:[]}],
+      players:[{id:'p1',name:'Hero',ac:15,hpCur:30,hpMax:30,x:3,y:0,conds:[]}] });
+    const atk={name:'Longbow', toHit:5, dmg:'1d8', tiles:12};
+    let mismatches=0, coverSeen=null;
+    for(let face=1; face<=20; face++){
+      setNet({role:'dm', session:shared(), peer:{id:'other'}});
+      const dm=Engine.hitResult(sessionAdapter,'m1','p1',atk,face);
+      setNet({role:'player', session:shared(), peer:{id:'other'}});
+      const pl=Engine.hitResult(playerNetAdapter,'m1','p1',atk,face);
+      coverSeen=pl.cover;
+      if(dm.hit!==pl.hit || dm.ac!==pl.ac) mismatches++;
+    }
+    setNet(null);
+    T('v120.234: the player device now applies three-quarters cover from a wall (was 0)', coverSeen===5);
+    T('v120.234: DM and player devices agree on every one of the 20 d20 faces for the same shot'
+      +(mismatches?` — ${mismatches}/20 still disagree`:''), mismatches===0);
+
+    // Sanctuary: a ward that blocks the attack DM-side must block it player-side too.
+    const warded=()=>({ map:{cols:6,rows:1,tiles:{}},
+      monsters:[{id:'m1',name:'Orc',base:'Orc',hp:20,max:20,ac:13,x:0,y:0,conds:[]}],
+      players:[{id:'p1',name:'Hero',ac:10,hpCur:30,hpMax:30,x:1,y:0,conds:[],sanctuaryDC:999,holyAuraDC:null}] });
+    setNet({role:'dm', session:warded(), peer:{id:'other'}});
+    const dmS=Engine.attack(sessionAdapter,'m1','p1',{name:'Club',toHit:99,dmg:'1',tiles:1},{face:15,apply:false});
+    setNet({role:'player', session:warded(), peer:{id:'other'}});
+    const plS=Engine.attack(playerNetAdapter,'m1','p1',{name:'Club',toHit:99,dmg:'1',tiles:1},{face:15,apply:false});
+    setNet(null);
+    T('v120.234: a Sanctuary ward blocks the attack on the player device too, not just the DM\'s',
+      dmS.hit===false && plS.hit===false && !!plS.sanctuary && plS.sanctuary.blocked===true);
+
+    // Holy Aura: tested in isolation, because Sanctuary short-circuits before it is reached.
+    const haloed=()=>({ map:{cols:6,rows:1,tiles:{}},
+      monsters:[{id:'m1',name:'Orc',base:'Orc',hp:20,max:20,ac:13,x:0,y:0,conds:[]}],
+      players:[{id:'p1',name:'Hero',ac:10,hpCur:30,hpMax:30,x:1,y:0,conds:[],holyAuraDC:999}] });
+    setNet({role:'player', session:haloed(), peer:{id:'other'}});
+    const plH=Engine.attack(playerNetAdapter,'m1','p1',{name:'Club',toHit:99,dmg:'1',tiles:1},{face:15,apply:false});
+    setNet(null);
+    T('v120.234: Holy Aura blinds the attacker on the player device too', !!plH.holyAura && plH.holyAura.blinded===true);
+
+    // A player device that somehow has no position mirror must degrade to 0 cover, never crash.
+    setNet({role:'player', session:{map:{cols:6,rows:1,tiles:{'1,0':'wall'}},monsters:[],players:[]}, peer:{id:'ghost'}});
+    const safe=(()=>{ try{ return playerNetAdapter.cover({me:true,c:newCharacter('Nowhere')},{x:3,y:0})===0; }catch(e){ return 'threw: '+e.message; } })();
+    setNet(savedNet);
+    T('v120.234: cover degrades to 0 (no crash) when this device has no position mirror yet', safe===true);
   }
 }
 

@@ -275,18 +275,30 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   bonus dice per the description).
 - Monster save bonus is CR-derived, not per-ability.
 - Great Weapon Fighting rerolls and Protection-style reactions are table-adjudicated.
-- **Three rules are missing from `playerNetAdapter`. All three are CONFIRMED live** — found by
-  the parity harness, then reproduced against the deployed v120.233 site in a real browser via
-  Playwright (not inferred from reading code, and not a node stub). `Engine` treats every adapter
-  method as optional, so a missing one silently yields the neutral default instead of erroring:
-  - `cover` → **the player's device and the DM's device disagree about whether a shot hit.**
+- **FIXED in v120.234 — three rules were missing from `playerNetAdapter`.** Found by the parity
+  harness, then reproduced against the deployed v120.233 site in a real browser via Playwright
+  (not inferred from reading code, and not a node stub). `Engine` treats every adapter method as
+  optional, so their absence silently applied the neutral default instead of the rule:
+  - `cover` → **the player's device and the DM's device disagreed about whether a shot hit.**
     Same session state, same map, same pre-rolled d20: with a wall between attacker and target,
-    the DM resolves against AC 20 (base 15 + 5 three-quarters cover) and the player's device
-    against AC 15. Sweeping all 20 faces, **5 of 20 rolls (25% of attacks) flip the result** —
-    the player's screen reads HIT while the DM's reads miss, for d20 10–14.
-  - `sanctuaryDC` → against a Sanctuary-warded target the DM **blocks the attack outright**,
-    while the player's device never evaluates the ward and reports a clean hit.
-  - `holyAuraDC` → the DM blinds the attacker per Holy Aura; the player's device never checks it.
+    the DM resolved against AC 20 (base 15 + 5 three-quarters cover) and the player's device
+    against AC 15. Sweeping all 20 faces, **5 of 20 rolls (25% of attacks into cover) flipped the
+    result** — the player's screen read HIT while the DM's read miss, on d20 10–14.
+  - `sanctuaryDC` → against a Sanctuary-warded target the DM **blocked the attack outright**,
+    while the player's device never evaluated the ward and reported a clean hit.
+  - `holyAuraDC` → the DM blinded the attacker per Holy Aura; the player's device never checked.
+
+  The fix adds all three. One wrinkle worth knowing: `playerNetAdapter`'s own unit is
+  `{me:true,c,id:'me'}` and carries **no x/y**, so `cover` resolves its position off the
+  DM-broadcast mirror via the same `players.find(p=>p.id===net.peer.id)` lookup `ac` already
+  used, and returns 0 if that mirror isn't there yet — it can never resolve *worse* than the old
+  behaviour. Regression-tested as a full 20-face sweep rather than one roll, because the bug was
+  invisible at 15 of 20 faces, which is precisely how it survived unnoticed.
+
+  **Still open, related:** `Engine.hitResult` computes melee distance from `a.x`/`t.x` directly
+  rather than through the adapter, so for the `'me'` unit that distance is `null` and melee-vs-
+  ranged falls back to `atk.tiles`. Pre-existing, unchanged here, and not currently known to
+  cause a wrong result — but it's the same class of blind spot.
 
   Three *other* absences on that adapter are deliberate and are recorded as such: `damageMult`
   (the DM is authoritative for resist/vuln/imm), `enemiesOf` and `findGrappler` (no local AI /

@@ -2008,7 +2008,28 @@ const playerNetAdapter = {
   map:()=> net.session&&net.session.map,
   allMonsters:()=> (net.session&&net.session.monsters)||[],
   moveUnit:(u,x,y)=>{ u.x=x; u.y=y; if(net.conn){ try{ net.conn.send({t:'shove',mon:u.id,x,y}); }catch(e){} } },
-  solePc:()=> null   // this device only ever fully knows its own PC ('me'), not "the" party PC
+  solePc:()=> null,   // this device only ever fully knows its own PC ('me'), not "the" party PC
+  // ---- v120.234: these three were MISSING, and Engine treats every adapter method as optional
+  // (`ad.cover ? ad.cover(a,t) : 0`), so their absence silently applied the neutral default
+  // instead of the rule. Confirmed against the live site before fixing: with a wall between
+  // attacker and target the DM resolved against AC 20 and this device against AC 15, flipping
+  // HIT vs miss on 5 of 20 d20 faces; a Sanctuary ward that blocked the attack DM-side was
+  // ignored here entirely; Holy Aura never blinded anyone. See AUDIT.md.
+  //
+  // `me` is the one unit whose object carries no x/y (it's {me:true,c,id:'me'}), so its position
+  // has to be looked up on the DM-broadcast mirror — the same `players.find(p=>p.id===net.peer.id)`
+  // lookup `ac` above already does. Unknown position still yields 0, so this can never resolve
+  // *worse* than the old behaviour.
+  cover:(a,t)=>{ const s=net&&net.session; if(!s||!a||!t) return 0;
+    const pos=u=> u.me ? ((s.players&&net.peer&&s.players.find(p=>p.id===net.peer.id))||null) : u;
+    const A=pos(a), B=pos(t);
+    return (A&&B&&A.x!=null&&B.x!=null) ? coverBetween(s, A.x,A.y, B.x,B.y) : 0; },
+  // Own wards come off the real sheet (like qbAdapter); another player's come off the DM mirror,
+  // where they're synced by playerHello (like sessionAdapter). Monsters carry .hp and get null.
+  sanctuaryDC:u=> u.me ? ((((u.c||{}).effects||[]).find(e=>e.name==='Sanctuary')||{}).dc||null)
+    : (u.hp==null ? (u.sanctuaryDC||null) : null),
+  holyAuraDC:u=> u.me ? ((((u.c||{}).effects||[]).find(e=>e.name==='Holy Aura')||{}).dc||null)
+    : (u.hp==null ? (u.holyAuraDC||null) : null)
 };
 /* ---- Encounter Builder: DMG 2014 XP-budget tables (standard values, not app-specific) ---- */
 // Per-character XP thresholds by level (index = level, 1-20) — summed across the party for the
@@ -2342,7 +2363,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.233';
+const APP_VERSION='v120.234';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
