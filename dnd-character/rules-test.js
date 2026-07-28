@@ -3463,5 +3463,33 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('resetTurnState: Disengage clears at the start of your next turn', c.battle.disengaged===false);
 }
 
+/* ---- offline-cache drift guard ----
+   sw.js's ASSETS list is precached on install; anything the page loads that ISN'T listed only
+   reaches the cache opportunistically, on a successful online fetch. That failure is silent —
+   the app looks fine until someone opens it offline — so CLAUDE.md's "add every new module to
+   ASSETS" rule needs an actual check behind it rather than a reminder nobody reads.
+
+   Known, deliberate exemption: the iso3d/ module graph (18 files) is loaded by a versioned
+   `import` (`./src/host.js?v=…`). Precaching wouldn't even help without more work, because the
+   fetch handler's `caches.match(req)` is query-string-sensitive, so a bare `iso3d/src/host.js`
+   entry would never match a `?v=0.6.16` request. It's opportunistically cached today; see the
+   AUDIT note. This guard pins that as a CHOICE — if the exemption list and reality drift, this
+   fails and someone re-reads the reasoning. */
+{
+  const swSrc=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
+  const assets=(swSrc.match(/const ASSETS\s*=\s*\[([\s\S]*?)\]/)||[])[1]||'';
+  const listed=(assets.match(/'([^']+)'/g)||[]).map(s=>s.replace(/'/g,'').replace(/^\.\//,''));
+  const EXEMPT=[/^iso3d\//];
+  const loaded=[...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map(m=>m[1])
+    .map(s=>s.replace(/^\.\//,'').replace(/\?.*$/,''))
+    .filter(s=>!/^https?:/.test(s));
+  const unlisted=loaded.filter(s=>!listed.includes(s) && !EXEMPT.some(re=>re.test(s)));
+  T('sw.js ASSETS covers every local <script src> in index.html (offline-cache drift guard)'
+    +(unlisted.length?' — MISSING: '+unlisted.join(', '):''), unlisted.length===0);
+  // The exemption must stay honest too: if iso3d ever IS added to ASSETS, delete the exemption.
+  T('the iso3d exemption still matches reality (not silently precached behind the guard\'s back)',
+    !listed.some(a=>/^iso3d\//.test(a)));
+}
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

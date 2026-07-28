@@ -275,6 +275,17 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   bonus dice per the description).
 - Monster save bonus is CR-derived, not per-ability.
 - Great Weapon Fighting rerolls and Protection-style reactions are table-adjudicated.
+- **Offline-first has one hole: the `iso3d/` 3D battle map (18 module files) is not precached.**
+  `sw.js`'s `ASSETS` covers index.html + data/rules/net/ui/iso-renderer + icons, so the whole app
+  works offline *except* the WebGL map, which is only cached opportunistically the first time it
+  loads online. A first-run user who goes offline before ever opening the 3D view gets a broken
+  one. Precaching it is not a one-line fix: the modules are imported with a `?v=` cache-buster and
+  the service worker's `caches.match(req)` is query-sensitive, so bare paths in `ASSETS` would
+  never match the real requests — it needs either exact versioned URLs (which then must be bumped
+  in lockstep with `boot.js`) or `{ignoreSearch:true}` on the non-shell match. Deliberately left
+  alone for now because service-worker changes can brick installed PWAs until the cache clears.
+  `rules-test.js` has a drift guard pinning this as a choice: it fails if any *other* script goes
+  unlisted, and also fails if iso3d quietly gets added, so the exemption can't rot unnoticed.
 
 ---
 
