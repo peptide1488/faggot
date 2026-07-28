@@ -3490,6 +3490,26 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   { const d={ map:{cols:8,rows:8,tiles:{'3,3':'wall'}}, monsters:[], players:[] };
     T('coverBetween: 45° diagonals still see a wall on the line (unchanged by the fix)',
       coverBetween(d, 2,2, 5,5)===5); }
+
+  /* v120.236: Bresenham breaks ties to one side on non-45° lines, so A→B and B→A could sample
+     different cells and disagree when exactly one was an obstruction. Endpoints are now
+     canonicalised, which makes cover symmetric for EVERY pair, not just the easy ones. */
+  {
+    const grid={ map:{cols:12,rows:12,tiles:{}}, monsters:[], players:[] };
+    // Seed an irregular scatter of walls so shallow diagonals hit the tie-breaking cases.
+    ['2,0','2,1','5,3','6,4','3,7','8,2','4,4','7,9','1,6','9,5'].forEach(k=>{ grid.map.tiles[k]='wall'; });
+    let asymmetric=0, checked=0, differing=0;
+    for(let ax=0; ax<12; ax+=1) for(let ay=0; ay<12; ay+=3)
+      for(let bx=0; bx<12; bx+=3) for(let by=0; by<12; by+=1){
+        if(ax===bx && ay===by) continue;
+        const f=coverBetween(grid, ax,ay, bx,by), r=coverBetween(grid, bx,by, ax,ay);
+        checked++; if(f!==r) asymmetric++; if(f>0) differing++;
+      }
+    T(`coverBetween: symmetric across ${checked} ordered square pairs on a wall-scattered map`
+      +(asymmetric?` — ${asymmetric} still disagree`:''), asymmetric===0);
+    // Guard against the test passing because nothing ever found cover at all.
+    T('coverBetween: that sweep actually exercised cover (not vacuously all-zero)', differing>0);
+  }
 }
 
 /* ---- Search action (PHB) — the PC-side half of an action only monsters had ----

@@ -2392,6 +2392,14 @@ function buildAttackPreviewTags(s, from, rangeTiles, opts){
 }
 
 function coverBetween(s, x0,y0,x1,y1){ const tiles=s.map.tiles||{};
+  // Cover is a property of the LINE between two squares, so it must not depend on which end you
+  // start from. Bresenham breaks ties to one side on any non-45° line, so walking A→B and B→A can
+  // sample different cells (e.g. 2,0 one way, 2,1 the other) and disagree whenever exactly one of
+  // them is an obstruction. Canonicalising the endpoints — always walk from the lexicographically
+  // smaller one — makes the result provably identical in both directions, without changing which
+  // cells a given line samples. (v120.236; the drift bug fixed in v120.235 was a separate, much
+  // larger problem in the same function.)
+  if(x0>x1 || (x0===x1 && y0>y1)){ const tx=x0, ty=y0; x0=x1; y0=y1; x1=tx; y1=ty; }
   let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy,x=x0,y=y0,guard=0,cover=0;
   // Bresenham. The y-step MUST add dx, not dy (v120.235 — it said `err+=dy` for a long time,
   // which is the classic transcription slip and is not a subtle one: with dx=0 the error term

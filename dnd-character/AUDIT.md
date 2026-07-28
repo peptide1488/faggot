@@ -348,9 +348,16 @@ Found by driving a real two-tab DM + player session over live PeerJS and compari
 devices' answers for the same shot — not by reading the line. `losClear` does **not** share the
 bug: it samples a continuous ray through cell centres, a different and symmetric approach.
 
-Residual, accepted: Bresenham still picks one side on non-45° ties, so a shallow diagonal can
-sample `2,0` one way and `2,1` the other. That's inherent tie-breaking, not the drift bug, and it
-only matters if exactly one of those two cells is an obstruction.
+**The residual asymmetry is also fixed (v120.236), and it was not as small as first assumed.**
+Bresenham breaks ties to one side on any non-45° line, so A→B and B→A could sample different
+cells (`2,0` one way, `2,1` the other) and disagree whenever exactly one was an obstruction. I
+originally documented this as accepted; measuring it showed **128 of 2,288 ordered square pairs
+(5.6%) disagreeing** on a wall-scattered map. Cover is a property of the line between two squares
+and must not depend on which end you start from, so `coverBetween` now canonicalises its
+endpoints (always walks from the lexicographically smaller one). That makes the result provably
+identical in both directions without changing which cells a given line samples. The test sweeps
+all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
+at all).
 
 ## Search (v120.232)
 
