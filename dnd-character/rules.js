@@ -3707,6 +3707,54 @@ function maneuverStudy(ad, pcUnit, mo, skillKey, log){
   return {ok:true, success:ok};
 }
 
+/**
+ * The Search action (PHB): "you devote your attention to finding something", resolved with a
+ * Wisdom (Perception) or Intelligence (Investigation) check at the DM's discretion — hence
+ * skillKey/abilKey rather than one hardcoded skill.
+ *
+ * Search already existed, but ONLY for monsters and only DM-side (`monsterSearchRoll`, wired to
+ * the DM attack modal's #maSearch): a monster could hunt for a hidden player, while a PC had no
+ * way to take the action at all. That asymmetry is the exact shape of the mode-parity problem
+ * the harness in rules-test.js guards, so this is the shared PC-side half, adapter-driven like
+ * every other maneuver and therefore identical in Quick Battle, DM-hosted and player-net.
+ *
+ * On finding: any hostile whose Stealth DC the check beats is revealed. Note that nothing in the
+ * app currently gives a MONSTER a hiddenDC (only characters get one, via maneuverHide), so in
+ * practice this usually finds nothing today and resolves as a logged Perception check for the
+ * DM to adjudicate — which is what the PHB action actually is. It's written against hiddenDC
+ * generally so it starts working the moment monsters can hide, rather than needing a rewrite.
+ */
+function maneuverSearch(ad, pcUnit, skillKey, log){
+  const c=ad.checkSubject(pcUnit);
+  if(!hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
+  const key=skillKey==='investigation'?'investigation':'perception';
+  const abilKey=key==='investigation'?'int':'wis';
+  spendAction(c);
+  const adv=skillCheckAdvantage(c,key,abilKey);
+  const r=rollSkillCheck(c,key,abilKey,{adv:adv.adv, flatBonus:skillCheckBonus(c,key)});
+  const label=key==='investigation'?'Investigation':'Perception';
+  // Only creatures that are actually hidden are candidates; a hiddenDC of null means "not hiding".
+  const hidden=(ad.allMonsters?ad.allMonsters():[]).filter(mo=>mo.hp>0 && isHostile(mo) && mo.hiddenDC!=null);
+  const found=hidden.filter(mo=>r.total>=mo.hiddenDC);
+  found.forEach(mo=>{
+    mo.hiddenDC=null;
+    if(mo.conds) mo.conds=mo.conds.filter(x=>x.name!=='Hidden');
+  });
+  const name=ad.name(pcUnit);
+  if(found.length){
+    const who=found.map(mo=>ad.name(mo)).join(', ');
+    log('🔍 '+name+' searches ('+label+' '+r.total+') and spots '+who+'!');
+    flashBanner('🔍 Spotted '+who+'!');
+  } else if(hidden.length){
+    log('🔍 '+name+' searches ('+label+' '+r.total+') — finds nothing');
+    flashBanner('🔍 You find nothing ('+label+' '+r.total+')');
+  } else {
+    log('🔍 '+name+' searches ('+label+' '+r.total+') — nothing is hidden nearby');
+    flashBanner('🔍 '+label+' '+r.total+' — nothing hidden nearby (the DM may call for more)');
+  }
+  return {ok:true, success:found.length>0, total:r.total, found:found.length, skill:key};
+}
+
 function needsStabilizing(p){ return (p.hpCur||0)<=0 && !p.stable && (p.deathFail||0)<3; }
 
 function maneuverStabilize(ad, pcUnit, targetName, log, opts){

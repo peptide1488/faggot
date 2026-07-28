@@ -3911,6 +3911,10 @@ function openAdjacentUseUI(c, s, me){
     if(!pick){
       if(grappled) body+=`<button class="btn block" id="useEscape" style="margin-bottom:8px;text-align:left">🤸 Escape Grapple<small style="display:block;opacity:.75">Athletics/Acrobatics (your choice) vs the grappler's Athletics</small></button>`;
       if(canHide) body+=`<button class="btn block" id="useHide" style="margin-bottom:8px;text-align:left">🫥 Hide<small style="display:block;opacity:.75">Needs darkness, full cover, or (Skulker) dim light</small></button>`;
+      // Search — the PC-side half of an action monsters already had (the DM modal's #maSearch).
+      // Perception or Investigation is the DM's call per the PHB, so both are offered.
+      if(mode) body+=`<button class="btn block" id="useSearch" style="margin-bottom:8px;text-align:left">🔍 Search<small style="display:block;opacity:.75">Spot a hidden creature — Wis (Perception)</small></button>`
+        +`<button class="btn block" id="useSearchInv" style="margin-bottom:8px;text-align:left">🔎 Search (Investigation)<small style="display:block;opacity:.75">Same action, Int (Investigation) instead — DM's call</small></button>`;
       // Dodge & Disengage — core PHB actions any character can take (were previously reachable
       // only via a subclass shortcut: Monk's Patient Defense / Step of the Wind). Both cost the
       // Action here; the bonus-action versions still live on those subclass buttons.
@@ -4347,6 +4351,8 @@ function openAdjacentUseUI(c, s, me){
     { const rg=$('#useRollGo'); if(rg) rg.onclick=()=>{ const out=pick.run(); if(out) showManeuverResult(out.label, out.res); else afterManeuver(); }; }
     { const es=$('#useEscape'); if(es) es.onclick=()=>{ draw({kind:'confirmRoll', desc:'Escape the grapple — Athletics/Acrobatics (your choice) vs the grappler\'s Athletics.', skillLabel:'Athletics/Acrobatics', backTo:null, run:()=>({label:'Escape Grapple', res:maneuverEscape(ad, me, true, log)})}); }; }
     { const hd=$('#useHide'); if(hd) hd.onclick=()=>{ draw({kind:'confirmRoll', desc:'Attempt to Hide — needs darkness, full cover, or (Skulker) dim light.', skillLabel:'Stealth', backTo:null, run:()=>{ maneuverHide(ad, me, log); return null; }}); }; }
+    { const se=$('#useSearch'); if(se) se.onclick=()=>{ draw({kind:'confirmRoll', desc:'Search for a hidden creature. Costs your action.', skillLabel:'Perception', backTo:null, run:()=>{ maneuverSearch(ad, me, 'perception', log); return null; }}); }; }
+    { const si=$('#useSearchInv'); if(si) si.onclick=()=>{ draw({kind:'confirmRoll', desc:'Search, resolved with Intelligence (Investigation) instead of Perception — the DM decides which fits.', skillLabel:'Investigation', backTo:null, run:()=>{ maneuverSearch(ad, me, 'investigation', log); return null; }}); }; }
     { const dg=$('#useDodge'); if(dg) dg.onclick=()=>{
       if(!hasAction(c)){ flashBanner('No action left'); return; }
       spendAction(c);

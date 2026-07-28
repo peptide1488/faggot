@@ -305,7 +305,25 @@ deterministic mechanics. Each is embedded in the in-app spell description.
 
 ---
 
-## Systems built after the original audit (v95–v120.231) — where to look
+## Search (v120.232)
+
+The Search action was **half-built, not missing**: `monsterSearchRoll` let a DM's monster hunt
+for a hidden player (the DM attack modal's `#maSearch`), but a PC had no way to take the action
+at all — an asymmetry of exactly the kind the parity harness now guards. `maneuverSearch(ad,
+pcUnit, skillKey, log)` is the shared PC-side half, adapter-driven so it behaves identically in
+Quick Battle, DM-hosted and player-net.
+
+- Costs the action. Rolls **Wis (Perception)** or, at the DM's discretion per the PHB,
+  **Int (Investigation)** — both are offered as separate buttons in the Use menu.
+- Any hostile whose `hiddenDC` the check meets or beats is revealed (its `hiddenDC` is cleared
+  and the Hidden condition stripped).
+- **Nothing in the app currently gives a monster a `hiddenDC`** — only characters get one, via
+  `maneuverHide`. So today Search usually finds nothing and resolves as a logged Perception
+  check for the DM to adjudicate, which is what the PHB action actually is. It is written
+  against `hiddenDC` generally, so it starts working the moment monsters can hide, with no
+  rewrite. *Monster-side hiding is the natural follow-up that would make this fully live.*
+
+## Systems built after the original audit (v95–v120.232) — where to look
 
 The topical sections above were written around v83–v94 and do **not** cover anything built
 since. Those systems were only ever documented as per-version changelog entries, which is why

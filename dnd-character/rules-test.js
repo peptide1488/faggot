@@ -3463,6 +3463,47 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('resetTurnState: Disengage clears at the start of your next turn', c.battle.disengaged===false);
 }
 
+/* ---- Search action (PHB) — the PC-side half of an action only monsters had ----
+   monsterSearchRoll let a DM's monster hunt for a hidden player, but a PC couldn't take the
+   Search action at all. maneuverSearch is the shared, adapter-driven counterpart. */
+{
+  const seeker=newCharacter('Seeker'); seeker.abilities={str:10,dex:10,con:10,int:16,wis:16,cha:10};
+  seeker.skillProf.perception=true;
+  const freshBattle=()=>({action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0});
+  seeker.battle=freshBattle();
+  setQB({active:true, over:null, paused:false, log:[], map:{cols:6,rows:6,tiles:{},light:{mode:'day'}},
+    order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',base:'Goblin',name:'Goblin',x:3,y:0,hp:7,max:7,ac:15,conds:[],attacksLeft:1}],
+    players:[{id:'pc',side:'pc',name:seeker.name,c:seeker,x:0,y:0,hpCur:seeker.hp.cur,hpMax:seeker.hp.max}] });
+  const sk=getQB().players[0];
+
+  // Nothing hidden: the action still resolves as a logged Perception check (that IS the PHB
+  // action — "devote your attention", DM adjudicates), and it still costs the action.
+  { const o=Math.random; Math.random=()=>0.99; var nothing=maneuverSearch(qbAdapter, sk, 'perception', qbLog); Math.random=o; }
+  T('Search resolves even when nothing is hidden (PHB: a DM-adjudicated Perception check)', nothing.ok===true && nothing.found===0);
+  T('Search spends the action', seeker.battle.actionsUsed>0);
+  T('Search with no action left is refused', maneuverSearch(qbAdapter, sk, 'perception', qbLog).ok===false);
+
+  // A hidden foe whose Stealth the check beats is revealed; one it can't beat stays hidden.
+  seeker.battle=freshBattle();
+  getQB().monsters[0].hiddenDC=5; getQB().monsters[0].conds=[{name:'Hidden',rounds:10}];
+  { const o=Math.random; Math.random=()=>0.99; var got=maneuverSearch(qbAdapter, sk, 'perception', qbLog); Math.random=o; }
+  T('Search reveals a hidden creature when the check beats its Stealth DC', got.found===1 && getQB().monsters[0].hiddenDC===null);
+  T('Search strips the Hidden condition off the creature it found', !(getQB().monsters[0].conds||[]).some(x=>x.name==='Hidden'));
+
+  seeker.battle=freshBattle();
+  getQB().monsters[0].hiddenDC=99; getQB().monsters[0].conds=[{name:'Hidden',rounds:10}];
+  { const o=Math.random; Math.random=()=>0.01; var miss=maneuverSearch(qbAdapter, sk, 'perception', qbLog); Math.random=o; }
+  T('Search leaves a creature hidden when the check misses its Stealth DC', miss.found===0 && getQB().monsters[0].hiddenDC===99);
+
+  // PHB allows Investigation (Int) instead of Perception (Wis) at the DM's discretion.
+  seeker.battle=freshBattle();
+  { const o=Math.random; Math.random=()=>0.5; var inv=maneuverSearch(qbAdapter, sk, 'investigation', qbLog); Math.random=o; }
+  T('Search accepts the Investigation (Int) variant the PHB allows', inv.skill==='investigation');
+  T('Search logs which skill was used, so the DM can see the ruling', /Investigation/.test(getQB().log[0].m));
+  setQB(null);
+}
+
 /* ---- MODE-PARITY HARNESS (VISION roadmap #3) ----
    The user's stated #1 friction is "systems applied to quick battle but not DM battle/hosted".
    Every parity pass so far (v120.208, v120.209) was manual archaeology that goes stale the
