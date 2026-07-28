@@ -3062,8 +3062,11 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('Engine.attack: a blocked attack does not touch the ATTACKER either', getQB().monsters[0].hp===hpBefore);
 
   pc.altitude=0;
-  const ev2=Engine.attack(qbAdapter,'m1','pc',{toHit:99, dmg:'1d1', tiles:1},{});
-  T('Engine.attack: back in reach, a real attack resolves normally (a guaranteed-hit +99 lands)', ev2.altitudeBlocked===false && ev2.hit===true);
+  // face:10 is pre-rolled, not left to chance: +99 is NOT a guaranteed hit, because a natural 1
+  // always misses (Engine.roll's `d20!==1`) — leaving this unrolled made the assertion below
+  // fail ~5% of runs. A mid face also keeps this a normal hit rather than a nat-20 crit.
+  const ev2=Engine.attack(qbAdapter,'m1','pc',{toHit:99, dmg:'1d1', tiles:1},{face:10});
+  T('Engine.attack: back in reach, a real attack resolves normally (a +99 to-hit lands)', ev2.altitudeBlocked===false && ev2.hit===true && ev2.crit!==true);
   setQB(null);
 }
 
