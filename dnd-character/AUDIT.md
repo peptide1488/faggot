@@ -291,17 +291,25 @@ deterministic mechanics. Each is embedded in the in-app spell description.
   round of real multi-device testing, not a speculative patch. The harness pins all six so the
   list can't rot: an undocumented gap fails the build, and so does an entry that gets fixed
   without being removed from the list.
-- **Offline-first has one hole: the `iso3d/` 3D battle map (18 module files) is not precached.**
-  `sw.js`'s `ASSETS` covers index.html + data/rules/net/ui/iso-renderer + icons, so the whole app
-  works offline *except* the WebGL map, which is only cached opportunistically the first time it
-  loads online. A first-run user who goes offline before ever opening the 3D view gets a broken
-  one. Precaching it is not a one-line fix: the modules are imported with a `?v=` cache-buster and
-  the service worker's `caches.match(req)` is query-sensitive, so bare paths in `ASSETS` would
-  never match the real requests — it needs either exact versioned URLs (which then must be bumped
-  in lockstep with `boot.js`) or `{ignoreSearch:true}` on the non-shell match. Deliberately left
-  alone for now because service-worker changes can brick installed PWAs until the cache clears.
-  `rules-test.js` has a drift guard pinning this as a choice: it fails if any *other* script goes
-  unlisted, and also fails if iso3d quietly gets added, so the exemption can't rot unnoticed.
+- **The `iso3d/` 3D battle map is now precached (fixed v120.233).** It previously wasn't in
+  `sw.js`'s `ASSETS` at all, so the WebGL map was only cached opportunistically and silently
+  degraded to the 2D renderer offline until it had been loaded online once (`syncIso3DHost`
+  returns false when `window.Iso3D` is missing — graceful, but invisible). The entries carry the
+  **exact `?v=` query strings** the browser requests, because the fetch handler's
+  `caches.match(req)` is query-sensitive and bare paths would precache URLs nothing asks for.
+  Only the **12 modules reachable from `boot.js`** are cached; `src/{combat,game,main,movement,
+  turn,units}.js` are the standalone demo and are deliberately excluded. `rules-test.js` walks
+  the real import graph and fails if the list drifts, if a demo module leaks in, or if any listed
+  file doesn't exist (which would make `cache.addAll` reject and kill offline caching entirely).
+- **Multiplayer still is not offline-capable, and that's inherent.** PeerJS is fetched from
+  `https://unpkg.com/peerjs@1.5.4/...` when hosting or joining, so DM-hosted and player-net can't
+  start without a connection. P2P needs a signalling server regardless; the app just shouldn't
+  imply otherwise.
+- **`iso3d/src/{map,math,renderer,version}.js` are imported both with and without `?v=`.** ES
+  module identity is by resolved URL, so those are two separate instances of each module. It is
+  harmless *today* — every bare import comes from the demo-only subgraph, which Grimoire never
+  loads, and the one module-level value involved (`renderer.js`'s `WALL_SIDE_TEX_KEYS`) is an
+  immutable Set. Worth fixing if that subgraph is ever wired in.
 
 ---
 

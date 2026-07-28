@@ -3593,26 +3593,52 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
    the app looks fine until someone opens it offline — so CLAUDE.md's "add every new module to
    ASSETS" rule needs an actual check behind it rather than a reminder nobody reads.
 
-   Known, deliberate exemption: the iso3d/ module graph (18 files) is loaded by a versioned
-   `import` (`./src/host.js?v=…`). Precaching wouldn't even help without more work, because the
-   fetch handler's `caches.match(req)` is query-string-sensitive, so a bare `iso3d/src/host.js`
-   entry would never match a `?v=0.6.16` request. It's opportunistically cached today; see the
-   AUDIT note. This guard pins that as a CHOICE — if the exemption list and reality drift, this
-   fails and someone re-reads the reasoning. */
+   The iso3d/ ES-module graph is checked the same way, but it can't be read off a <script src>:
+   it's reached by `import` chains carrying a `?v=` cache-buster, and the fetch handler matches
+   with a query-SENSITIVE caches.match(req), so ASSETS has to list the exact requested URLs. This
+   walks the real graph from boot.js and compares, which also keeps the list honest about scope —
+   src/{combat,game,main,movement,turn,units}.js are the standalone demo, unreachable from
+   boot.js, and must NOT be shipped to the cache. */
 {
   const swSrc=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
-  const assets=(swSrc.match(/const ASSETS\s*=\s*\[([\s\S]*?)\]/)||[])[1]||'';
-  const listed=(assets.match(/'([^']+)'/g)||[]).map(s=>s.replace(/'/g,'').replace(/^\.\//,''));
-  const EXEMPT=[/^iso3d\//];
+  // Strip // comments first — prose inside them contains apostrophes ("iso3d's ?v="), which a
+  // naive quote scan happily reads as a cache entry.
+  const assets=((swSrc.match(/const ASSETS\s*=\s*\[([\s\S]*?)\n\]/)||[])[1]||'').replace(/\/\/[^\n]*/g,'');
+  const rawListed=(assets.match(/'([^']+)'/g)||[]).map(s=>s.replace(/'/g,''));
+  const listed=rawListed.map(s=>s.replace(/^\.\//,''));
   const loaded=[...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map(m=>m[1])
-    .map(s=>s.replace(/^\.\//,'').replace(/\?.*$/,''))
-    .filter(s=>!/^https?:/.test(s));
-  const unlisted=loaded.filter(s=>!listed.includes(s) && !EXEMPT.some(re=>re.test(s)));
+    .filter(s=>!/^https?:/.test(s)).map(s=>s.replace(/^\.\//,''));
+  const plain=loaded.filter(s=>!/\?/.test(s));
+  const unlisted=plain.filter(s=>!listed.includes(s));
   T('sw.js ASSETS covers every local <script src> in index.html (offline-cache drift guard)'
     +(unlisted.length?' — MISSING: '+unlisted.join(', '):''), unlisted.length===0);
-  // The exemption must stay honest too: if iso3d ever IS added to ASSETS, delete the exemption.
-  T('the iso3d exemption still matches reality (not silently precached behind the guard\'s back)',
-    !listed.some(a=>/^iso3d\//.test(a)));
+
+  // Walk iso3d's import graph exactly as the browser would, preserving each request's query.
+  const seen=new Set(), want=new Set();
+  const bootSpec=(html.match(/src="(iso3d\/boot\.js[^"]*)"/)||[])[1];
+  if(bootSpec) want.add(bootSpec);
+  (function walk(file){
+    const norm=file.replace(/\?.*$/,'').split(path.sep).join('/');
+    if(seen.has(norm)||!fs.existsSync(path.join(__dirname,norm))) return; seen.add(norm);
+    const src=fs.readFileSync(path.join(__dirname,norm),'utf8');
+    for(const m of src.matchAll(/from\s+'([^']+)'/g)){
+      const spec=m[1]; if(!spec.startsWith('.')) continue;
+      const rel=path.join(path.dirname(norm), spec).split(path.sep).join('/');
+      want.add(rel); walk(path.join(path.dirname(norm), spec.replace(/\?.*$/,'')).split(path.sep).join('/'));
+    }
+  })(bootSpec ? bootSpec.replace(/\?.*$/,'') : 'iso3d/boot.js');
+
+  const isoWanted=[...want], isoMissing=isoWanted.filter(u=>!listed.includes(u));
+  T('sw.js ASSETS precaches the whole iso3d module graph, with exact ?v= query strings'
+    +(isoMissing.length?' — MISSING: '+isoMissing.join(', '):''), isoMissing.length===0);
+  // The demo-only subgraph must stay OUT: shipping it would cache code the app never loads.
+  const demoLeak=listed.filter(a=>/^iso3d\/src\/(combat|game|main|movement|turn|units)\.js/.test(a));
+  T('sw.js ASSETS does not cache the demo-only iso3d modules (unreachable from boot.js)'
+    +(demoLeak.length?' — LEAKED: '+demoLeak.join(', '):''), demoLeak.length===0);
+  // Everything listed must actually exist, or install() rejects and NOTHING gets cached.
+  const ghosts=rawListed.filter(a=>a!=='./' && !fs.existsSync(path.join(__dirname, a.replace(/^\.\//,'').replace(/\?.*$/,''))));
+  T('every file listed in sw.js ASSETS exists (a missing one makes cache.addAll reject and kills offline entirely)'
+    +(ghosts.length?' — NOT FOUND: '+ghosts.join(', '):''), ghosts.length===0);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
