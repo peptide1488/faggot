@@ -35,28 +35,51 @@ Battle / DM-hosted / player-net, an AI DM-assistant (and solo-AI-DM option), and
 
 ## Roadmap (ordered, with rationale)
 
-1. **Finish the in-flight feat backlog** (see HANDOFF_2026-07-21.md): small-feat batch →
-   Battle Master maneuvers → mount system. Don't leave it half-done.
-2. **Backup export/import** — download/restore all data as a file. Cheap insurance before
-   everything else piles into localStorage.
-3. **Mode-parity audit + parity test harness** — sweep every `hasFeat`/system hook for
-   QB/DM-hosted/player-net coverage, fix gaps, and build a harness that runs the same
-   scenario through all three adapters so divergence is caught by tests forever. Comes
-   *before* new systems so new code can't repeat the sin.
-4. **Modularization** — staged split of index.html (data tables → rules → net → UI), tests
-   green after each stage, never a big-bang rewrite. Must precede reactions and multiclass
-   so the big systems land in clean modules.
-5. **Combat depth** — reactions system (own design pass first: it's an interrupt across
-   three modes), legendary/lair actions, magic items + attunement, traps/hazards
-   (traps also unblock the Dungeon Delver feat).
-6. **Multiclassing + content expansion passes** — multiclass touches slots/proficiencies/
-   level-up everywhere; that's exactly why it waits for modularization + parity harness.
-7. **Map as primary surface** — fog of war, per-player vision, shared TV overview mode,
-   better map-building tools.
-8. **DM tools + AI** — encounter builder (CR/XP budget), homebrew monster editor, combat
-   undo (undo is cheap — may slot in earlier), then AI DM-assistant and solo-AI-DM.
-9. **1.0 store push** — native wrapper (Capacitor or similar), onboarding, empty states,
-   polish, and the content/legal audit below.
+*Status pass 2026-07-28 — most of items 1–6 shipped between v120.205 and v120.231. Version
+numbers below are the real ones; see `AUDIT_HISTORY.md` for each write-up.*
+
+1. ✅ **In-flight feat backlog** — small-feat batch (v120.205), Battle Master maneuvers
+   (v120.206), mount system (v120.210).
+2. ✅ **Backup export/import** (v120.207).
+3. ⚠️ **Mode-parity audit + parity test harness** — the *audit* passes are done (v120.208,
+   v120.209 `pcAttackList` unification), but **the harness itself was never built**, so parity
+   is still enforced by hand. This remains the highest-value open item: it's the user's stated
+   #1 friction, and every audit pass so far has been manual archaeology that decays the moment
+   new code lands.
+4. ✅ **Modularization** — Stage 1 `data.js` (v120.219), Stage 2 `rules.js`/`net.js`/`ui.js`
+   (v120.220). Note the split was heuristic, so a symbol's file doesn't follow from its job —
+   use `node tools/whereis.js <symbol>` rather than guessing.
+5. ⚠️ **Combat depth** — reactions (v120.226–228), Dodge/Disengage/Help/Ready (v120.229–231),
+   magic items + attunement (v120.212), traps/hazards (v120.213) all shipped.
+   **Legendary/lair actions are still not implemented** — the only trace is prose in one
+   monster block telling the DM to adjudicate it.
+6. ✅/🔄 **Multiclassing v1** (v120.211); content expansion is ongoing rather than "done".
+7. 🔄 **Map as primary surface** — light/vision landed (v120.226); fog of war, per-player
+   vision and the shared TV overview mode are still open.
+8. ✅/🔄 **DM tools + AI** — encounter builder (v120.215), homebrew monsters (v120.214), combat
+   undo (v120.216 QB, v120.224 DM). **AI DM-assistant and solo-AI-DM not started.**
+9. ⬜ **1.0 store push** — native wrapper, onboarding, empty states, polish, content/legal audit.
+
+### Still-open 5e gaps (carried over from the retired MASTER_PLAN.md, re-verified 2026-07-28)
+
+- **Legendary / lair actions** — boss fights have no mechanical support (see item 5).
+- **Generic "advantage on saves" layer** — War Caster etc. are special-cased; there's no
+  general mechanism, which is why Holy Aura's ally-save-advantage clause is a documented
+  simplification in `AUDIT.md`.
+- **True Strike target scoping** — RAW grants advantage against *that* creature; simplified here.
+- **AoE cones/lines** — equal-area burst approximations, not true templates (in AUDIT.md).
+- **5/10/5 diagonal movement** — deliberately not implemented; current rule is Chebyshev with no
+  corner-cutting. Would be a table-preference toggle, not a fix.
+- **2024 PHB ruleset** — out of scope; if ever added it must be a flag, never mixed into 2014.
+
+### Decision filter (carried over from MASTER_PLAN.md — it's the part worth keeping)
+
+Prefer the change that: **closes a 5e lie** (something the UI pretends works but doesn't) →
+**unifies QB and table play** (one Engine path) → **improves the fight you can see** →
+**reduces index.html surface area** → **adds a test**.
+
+Reject: a feature that only works in one battle mode forever; a second damage calculator inside
+the renderer; a framework rewrite; chasing Roll20 parity.
 
 ## Graphics direction (aligned 2026-07-21, executed LATER — after core roadmap items)
 
@@ -157,7 +180,14 @@ phase (roadmap #4) must cut seams along engine ↔ grid-combat framework ↔ 5e 
   further in the key-in-localStorage pattern than necessary.
 - **Modularization hazards.** Every new file must be added to `sw.js`'s cache list or
   offline breaks silently. Refactor ships zero visible features — do it in stages between
-  feature phases.
+  feature phases. *(2026-07-28: this is now enforced by a drift guard in `rules-test.js`
+  rather than by remembering — it fails if a local `<script src>` isn't in `ASSETS`.)*
+- **"Offline-first" has two real holes, both verified 2026-07-28.** (a) **Multiplayer is not
+  offline at all** — PeerJS is loaded from `https://unpkg.com/peerjs@1.5.4/...` at host/join
+  time, so DM-hosted and player-net simply cannot start without internet. That's inherent to
+  P2P signalling, so it may be acceptable, but the app shouldn't imply otherwise. (b) The
+  `iso3d/` WebGL map (18 modules) isn't precached, so it degrades to the 2D renderer offline
+  until it's been loaded online once. See AUDIT.md's known-simplifications for the fix options.
 - **localStorage ceilings.** Growing campaigns/content/homebrew will eventually hit quota.
   Export/import (roadmap #2) is the safety net; IndexedDB is the eventual fix — decide
   when it actually pinches.

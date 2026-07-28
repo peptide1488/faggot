@@ -1769,15 +1769,6 @@ function autoPrepare(c, s){ if(!isPrepCaster(c) || (s.level||0)===0) return '';
   if(cap!=null && preparedCount(c)>=cap) return ' — ⚠ not prepared (at cap '+preparedCount(c)+'/'+cap+')';
   s.prepared=true; return ' (prepared)'; }
 
-function slotPips(l,sl){
-  if(!sl.total) return '<span class="muted" style="font-size:12px">—</span>';
-  let h='';
-  // Available slots glow; spent slots are dimmed. Click a pip to set used count.
-  for(let i=1;i<=sl.total;i++){
-    h+=`<button class="pip ${i<=sl.total-sl.used?'on':''}" data-slotpip="${l}" data-n="${i}" title="${i<=sl.total-sl.used?'available':'spent'}"></button>`;
-  }
-  return h;
-}
 
 function slotPipsAuto(l,total,used){
   let h=''; const avail=total-used;

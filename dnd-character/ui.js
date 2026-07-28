@@ -2126,65 +2126,6 @@ function renderSheet(c){
   if(skillEdit) bindSkillHandlers(c);
 }
 
-function renderAbil(c){
-  const pb = profBonus(c);
-  app.innerHTML = `
-  <div class="card">
-    <div class="row between" style="margin-bottom:8px">
-      <h2 style="margin:0">Ability Scores ${abilEdit?'<span class="muted" style="text-transform:none;font-size:11px">— editing</span>':''}</h2>
-      <button class="btn ghost sm" id="abilEditBtn">${abilEdit?'✓ Done':'✎ Edit'}</button>
-    </div>
-    ${abilEdit?abilCard(c,true):abilCard(c)}
-  </div>
-
-  <div class="card">
-    <h2>Saving Throws <span class="muted" style="text-transform:none;font-size:11px">— ● = proficient (from ${esc(c.cls)})</span></h2>
-    ${ABILITIES.map(([k,nm])=>{
-      const prof=!!c.saveProf[k];
-      const b = saveMod(c,k);
-      return `<div class="listrow">
-        <span class="profdot ${prof?'on':''}"></span>
-        <div class="nm">${nm}</div>
-        <button class="val rollbtn" data-rollcheck data-label="${nm} save" data-bonus="${b}" title="Roll ${nm} save">${sgn(b)}</button>
-      </div>`;
-    }).join('')}
-  </div>
-
-  <div class="card">
-    <div class="row between" style="margin-bottom:8px">
-      <h2 style="margin:0">Skills <span class="muted" style="text-transform:none;font-size:11px">— ${skillCount(c)}/${skillBudget(c)}${skillEdit?' · tap ◇ for expertise':''}</span></h2>
-      <button class="btn ghost sm" id="skillEditBtn">${skillEdit?'✓ Done':'✎ Edit'}</button>
-    </div>
-    ${SKILLS.map(([key,nm,ab])=>{
-      const b = skillBonus(c,key,ab,true), prof=!!c.skillProf[key], exp=!!c.skillExp[key];
-      if(skillEdit) return `<div class="listrow">
-        <input type="checkbox" class="chk" data-skill="${key}" ${prof?'checked':''}>
-        <button class="del" data-exp="${key}" title="Expertise" style="color:${exp?'var(--gold)':'var(--mut)'}">${exp?'◆':'◇'}</button>
-        <div class="nm">${nm} <span class="sub">(${ab})</span></div>
-        <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
-      </div>`;
-      return `<div class="listrow">
-        <span class="profdot ${prof?'on':''}"></span>
-        <span style="width:14px;text-align:center;color:var(--gold)">${exp?'◆':''}</span>
-        <div class="nm">${nm} <span class="sub">(${ab})</span></div>
-        <button class="val rollbtn" data-rollcheck data-label="${nm}" data-bonus="${b}" title="Roll ${nm}">${sgn(b)}</button>
-      </div>`;
-    }).join('')}
-  </div>
-
-  <div class="card">
-    <h2>Passive senses</h2>
-    <div class="tiles">
-      <div class="tile"><div class="lab">Passive Perception</div><div class="big" id="pp">${passiveScore(c,'perception','wis')}</div></div>
-      <div class="tile"><div class="lab">Passive Investigation</div><div class="big" id="pi">${passiveScore(c,'investigation','int')}</div></div>
-    </div>
-  </div>`;
-
-  $('#abilEditBtn').addEventListener('click',()=>{ abilEdit=!abilEdit; render(); });
-  $('#skillEditBtn').addEventListener('click',()=>{ skillEdit=!skillEdit; render(); });
-  if(abilEdit) bindAbilHandlers(c);
-  if(skillEdit) bindSkillHandlers(c);
-}
 
 function bindAbilHandlers(c){
   ABILITIES.forEach(([k])=>{

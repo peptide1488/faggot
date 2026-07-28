@@ -463,7 +463,6 @@ const ARMOR_PROF = {
 
 const RACE_SPEED = {'Dwarf':25,'Halfling':25,'Gnome':25,'Kobold':30,'Tortle':30,'Aarakocra':25,'Centaur':40,'Minotaur':40,'Elf':30};
 
-const RACE_SPEED_FAST = {'Wood Elf':35,'Tabaxi':30};
 
 const CLASS_LETTER = {Artificer:'A',Bard:'B',Cleric:'C',Druid:'D',Paladin:'P',Ranger:'R',Sorcerer:'S',Warlock:'K',Wizard:'W'};
 // entries: "Name:classes:school"  · schools A C D E V I N T (Evocation=V)
