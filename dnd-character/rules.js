@@ -1107,6 +1107,19 @@ function parseSpellMechanics(name){
   if(eff&&eff.rounds!=null) out.duration=fmtDuration(eff.rounds);
   else if(out.conc) out.duration='Concentration';
   if(eff) return out;   // self/ally buff — its dice (e.g. Bless +1d4) are described in the effect note
+  // Structured mechanics win over the prose (v120.242). For a listed spell we return here and the
+  // regexes below never run, so rewording a description can no longer change what the spell does.
+  // Unlisted spells still fall through to prose parsing, so this migration is incremental rather
+  // than a flag day — see SPELL_MECH in data.js.
+  const mech=SPELL_MECH[name];
+  if(mech){
+    out.attack=!!mech.attack;
+    out.save=mech.save||null;
+    out.dmg=mech.dmg||null;
+    out.dtype=mech.dtype||'';
+    out.heal=mech.heal||null;
+    return out;
+  }
   const sv=d.match(/\b(Str|Dex|Con|Int|Wis|Cha)\s+save/i); if(sv) out.save=sv[1].toLowerCase();
   // collect EVERY dice group (Ice Storm "2d8 bludgeoning + 4d6 cold" → 2d8+4d6); type from the first typed group
   const groups=[...d.matchAll(/(\d+d\d+(?:\s*\+\s*\d+)?)\s*([a-z]+)?/gi)];

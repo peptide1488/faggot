@@ -359,6 +359,35 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Spell mechanics are structured data now, not prose (v120.242 — strategy Pillar 1)
+
+`SPELL_DESC` was **load-bearing English**: `parseSpellMechanics` regex-mined player-facing
+descriptions for save ability, damage dice, damage type, heal dice and whether an attack roll was
+involved. Rewording a description silently changed the game, and it misfired repeatedly — 87 spells
+(Fireball among them) sharing one wrong range, three dealing untyped damage so resistance never
+applied, and Guidance / Resistance / Shillelagh having a bonus die or a weapon die counted as
+damage the spell deals.
+
+**`SPELL_MECH` is now authoritative.** For a listed spell the parser returns the table's values and
+the regexes never run. Only **89 of 257** spells need an entry; the rest are narrative. The table
+was *generated from the parser's own output*, so behaviour was byte-identical on introduction —
+then corrected for the three known-bad entries. Range, concentration and duration are deliberately
+NOT here: `SPELL_RANGE`, `CONC_SPELLS` and `SPELL_EFFECTS` already own those.
+
+The prose parser survives as the fallback for unlisted spells, so the migration is incremental
+rather than a flag day. A **ratchet test** counts spells still deriving mechanics from prose and
+fails if it ever rises; it currently reads **0**.
+
+**A trap found during the migration, worth remembering:** deleting a wrong spell from the table
+does not fix it — *absent* means "ask the prose", and the prose is what was wrong. Guidance,
+Resistance and Shillelagh needed explicit **empty** entries to suppress their phantom damage. The
+ratchet test caught this immediately, which is the entire argument for writing the guard before
+trusting the change.
+
+The load-bearing test is the one that reproduces the original bug class directly: it rewrites
+Fire Bolt's description to nonsense ("99d99 cold and a Wis save") and asserts the mechanics do not
+move.
+
 ## Fog of war (v120.241)
 
 The player's own battle map now shows only what their character can see. Three states:

@@ -34,7 +34,7 @@ eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_DESC=SPELL_DESC;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
@@ -3639,6 +3639,59 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const ok=Engine.hitResult(qbAdapter,'m1','m1',atk,10);
   T('a resolvable attack is unaffected by the null guards', typeof ok==='object' && ok.ac!=null);
   setQB(null);
+}
+
+/* ---- Structured spell mechanics beat the prose (v120.242, Pillar 1) ----
+   SPELL_DESC was load-bearing English: parseSpellMechanics mined it for save, dice, damage type
+   and attack-roll, so rewording a description silently changed the game. SPELL_MECH is now the
+   authoritative source for the 89 spells that have mechanics; the prose parser survives only as
+   the fallback for anything not yet listed. */
+{
+  // 1. The table wins. Take a listed spell and check the parser returns the table's values.
+  const fb=SPELL_MECH['Fire Bolt'];
+  T('SPELL_MECH: a listed spell parses to exactly its table entry',
+    fb && parseSpellMechanics('Fire Bolt').dmg===fb.dmg && parseSpellMechanics('Fire Bolt').dtype===fb.dtype
+      && parseSpellMechanics('Fire Bolt').attack===!!fb.attack);
+
+  // 2. THE POINT OF THE WHOLE EXERCISE: rewriting the description must no longer change mechanics.
+  {
+    const orig=SPELL_DESC['Fire Bolt'];
+    SPELL_DESC['Fire Bolt']='A completely rewritten description with 99d99 cold and a Wis save.';
+    const after=parseSpellMechanics('Fire Bolt');
+    SPELL_DESC['Fire Bolt']=orig;
+    T('SPELL_MECH: rewording a listed spell\'s prose does NOT change its mechanics (was the bug class)',
+      after.dmg==='1d10' && after.dtype==='fire' && after.save===null);
+  }
+
+  // 3. Spells whose "dice" were never damage — the parser used to offer a damage roll for them.
+  //    They must be listed with an EMPTY entry, not omitted: omitting a spell means "ask the
+  //    prose", and the prose is exactly what gets these wrong. (The ratchet below caught this
+  //    during the migration — the first attempt deleted them from the table and the fallback
+  //    promptly re-introduced the bogus damage.)
+  for(const n of ['Guidance','Resistance','Shillelagh'])
+    T(`SPELL_MECH: ${n} deals no damage (its die is a bonus/weapon die), via an explicit empty entry`,
+      !parseSpellMechanics(n).dmg && !!SPELL_MECH[n] && !SPELL_MECH[n].dmg);
+
+  // 4. Spells that legitimately DO deal damage must not have been dropped by that correction.
+  T('SPELL_MECH: Acid Splash and Spiritual Weapon still deal damage (they are real damage spells)',
+    parseSpellMechanics('Acid Splash').dmg==='1d6' && parseSpellMechanics('Spiritual Weapon').dmg==='1d8');
+
+  // 5. Unlisted spells still work via the prose fallback — the migration is incremental.
+  T('SPELL_MECH: an unlisted spell still parses from prose (fallback intact)',
+    !SPELL_MECH['Prestidigitation'] && typeof parseSpellMechanics('Prestidigitation')==='object');
+
+  // 6. Ratchet: count spells still relying on prose for mechanics. This may only ever go DOWN.
+  //    If it rises, someone added a mechanical spell without a SPELL_MECH entry.
+  {
+    let proseOnly=0;
+    for(const n of Object.keys(SPELL_DESC)){
+      if(SPELL_MECH[n]||SPELL_EFFECTS[n]) continue;
+      const m=parseSpellMechanics(n);
+      if(m.dmg||m.heal||m.save||m.attack) proseOnly++;
+    }
+    T(`SPELL_MECH ratchet: ${proseOnly} spells still derive mechanics from prose (must not increase; was 0 at migration)`,
+      proseOnly<=0);
+  }
 }
 
 /* ---- Monster attack damage types (v120.239) ----

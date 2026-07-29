@@ -566,6 +566,123 @@ const MONSTER_ATK_DTYPE={
   'Fireball':'fire', 'Magic Missile':'force'
 };
 
+
+// Structured spell mechanics — the authoritative source, ahead of the prose (v120.242).
+//
+// WHY: parseSpellMechanics regex-mines SPELL_DESC, plain English written for players to read, for
+// save ability, damage dice, damage type, heal dice and whether there's an attack roll. That made
+// the prose load-bearing: rewording a description silently changed the game. It has misfired
+// repeatedly and expensively — 87 spells (including Fireball) once shared one wrong range, three
+// dealt untyped damage so no resistance applied, and Guidance/Resistance/Shillelagh had their
+// "add 1d4 to a roll" / weapon die counted as damage the spell deals.
+//
+// This table wins whenever a spell appears in it; the prose parser remains only as the fallback
+// for anything not yet listed. Editing a description can no longer change mechanics for a listed
+// spell — which is the whole point.
+//
+// Only 89 of 257 spells need an entry: the rest are narrative and carry no parsed mechanics.
+// Generated from the parser's own output so behaviour was IDENTICAL on introduction, then
+// corrected for the three known-bad entries above (they now carry no damage, because they never
+// dealt any). Range/concentration/duration are NOT here — SPELL_RANGE, CONC_SPELLS and
+// SPELL_EFFECTS already own those.
+//
+// attack:1 = there's an attack roll. Omitted keys mean "this spell has none of that".
+const SPELL_MECH={
+  // Explicitly listed with NO mechanics. These must be present, not absent: an absent spell
+  // falls through to the prose parser, which reads their "add 1d4 to a roll" / weapon die as
+  // damage the spell deals. Listing them empty is what actually suppresses that.
+  'Guidance':{}, 'Resistance':{}, 'Shillelagh':{},
+  'Absorb Elements':{attack:1,dmg:'1d6'},
+  'Acid Splash':{save:'dex',dmg:'1d6',dtype:'acid'},
+  'Animal Friendship':{save:'wis'},
+  'Banishment':{save:'cha'},
+  'Blight':{save:'con',dmg:'8d8',dtype:'necrotic'},
+  'Blindness/Deafness':{save:'con'},
+  'Burning Hands':{save:'dex',dmg:'3d6',dtype:'fire'},
+  'Call Lightning':{save:'dex',dmg:'3d10',dtype:'lightning'},
+  'Calm Emotions':{save:'cha'},
+  'Chain Lightning':{save:'dex',dmg:'10d8',dtype:'lightning'},
+  'Charm Person':{save:'wis'},
+  'Chill Touch':{attack:1,dmg:'1d8',dtype:'necrotic'},
+  'Circle of Death':{save:'con',dmg:'8d6',dtype:'necrotic'},
+  'Cloud of Daggers':{dmg:'4d4',dtype:'slashing'},
+  'Cloudkill':{save:'con',dmg:'5d8',dtype:'poison'},
+  'Command':{save:'wis'},
+  'Compulsion':{save:'wis'},
+  'Cone of Cold':{save:'con',dmg:'8d8',dtype:'cold'},
+  'Confusion':{save:'wis'},
+  'Cure Wounds':{heal:'1d8'},
+  'Delayed Blast Fireball':{save:'dex',dmg:'12d6',dtype:'fire'},
+  'Disintegrate':{dmg:'10d6+40',dtype:'force'},
+  'Dominate Beast':{save:'wis'},
+  'Dominate Monster':{save:'wis'},
+  'Dominate Person':{save:'wis'},
+  'Eldritch Blast':{attack:1,dmg:'1d10',dtype:'force'},
+  'Entangle':{save:'str'},
+  'Eyebite':{save:'wis',dmg:'3d6',dtype:'psychic'},
+  'Faerie Fire':{save:'dex'},
+  'Fear':{save:'wis'},
+  'Feeblemind':{save:'int',dmg:'4d6',dtype:'psychic'},
+  'Finger of Death':{save:'con',dmg:'7d8+30',dtype:'necrotic'},
+  'Fire Bolt':{attack:1,dmg:'1d10',dtype:'fire'},
+  'Fire Storm':{save:'dex',dmg:'7d10',dtype:'fire'},
+  'Fireball':{save:'dex',dmg:'8d6',dtype:'fire'},
+  'Flame Strike':{save:'dex',dmg:'4d6+4d6',dtype:'fire'},
+  'Flaming Sphere':{dmg:'2d6',dtype:'fire'},
+  'Forcecage':{save:'cha'},
+  'Grease':{save:'dex'},
+  'Guiding Bolt':{attack:1,dmg:'4d6',dtype:'radiant'},
+  'Harm':{save:'con',dmg:'14d6',dtype:'necrotic'},
+  'Heal':{heal:'70'},
+  'Healing Word':{heal:'1d4'},
+  'Heat Metal':{dmg:'2d8',dtype:'fire'},
+  'Hellish Rebuke':{save:'dex',dmg:'2d10',dtype:'fire'},
+  'Hold Monster':{save:'wis'},
+  'Hold Person':{save:'wis'},
+  'Hypnotic Pattern':{save:'wis'},
+  'Ice Storm':{save:'dex',dmg:'2d8+4d6',dtype:'bludgeoning'},
+  'Inflict Wounds':{attack:1,dmg:'3d10',dtype:'necrotic'},
+  'Insect Plague':{save:'con',dmg:'4d10',dtype:'piercing'},
+  'Lightning Bolt':{save:'dex',dmg:'8d6',dtype:'lightning'},
+  'Magic Missile':{dmg:'3d4+3',dtype:'force'},
+  'Mass Cure Wounds':{heal:'3d8'},
+  'Mass Heal':{heal:'700'},
+  'Mass Healing Word':{heal:'1d4'},
+  'Mass Suggestion':{save:'wis'},
+  'Meteor Swarm':{save:'dex',dmg:'20d6+20d6',dtype:'fire'},
+  'Moonbeam':{save:'con',dmg:'2d10',dtype:'radiant'},
+  'Phantasmal Killer':{save:'wis',dmg:'4d10',dtype:'psychic'},
+  'Poison Spray':{save:'con',dmg:'1d12',dtype:'poison'},
+  'Polymorph':{save:'wis'},
+  'Prayer of Healing':{heal:'2d8'},
+  'Prismatic Spray':{attack:1},
+  'Produce Flame':{attack:1,dmg:'1d8',dtype:'fire'},
+  'Ray of Frost':{attack:1,dmg:'1d8',dtype:'cold'},
+  'Ray of Sickness':{save:'con',dmg:'2d8',dtype:'poison'},
+  'Regenerate':{heal:'4d8+15'},
+  'Reverse Gravity':{save:'dex',dmg:'4d6',dtype:'bludgeoning'},
+  'Sacred Flame':{save:'dex',dmg:'1d8',dtype:'radiant'},
+  'Scorching Ray':{attack:1,dmg:'2d6',dtype:'fire'},
+  'Shatter':{save:'con',dmg:'3d8',dtype:'thunder'},
+  'Shocking Grasp':{attack:1,dmg:'1d8',dtype:'lightning'},
+  'Sleet Storm':{save:'dex'},
+  'Spike Growth':{dmg:'2d4',dtype:'piercing'},
+  'Spirit Guardians':{save:'wis',dmg:'3d8',dtype:'radiant'},
+  'Spiritual Weapon':{attack:1,dmg:'1d8',dtype:'force'},
+  'Suggestion':{save:'wis'},
+  'Sunbeam':{save:'con',dmg:'6d8',dtype:'radiant'},
+  'Sunburst':{save:'con',dmg:'12d6',dtype:'radiant'},
+  'Tasha\'s Hideous Laughter':{save:'wis'},
+  'Thorn Whip':{attack:1,dmg:'1d6',dtype:'piercing'},
+  'Thunderwave':{save:'con',dmg:'2d8',dtype:'thunder'},
+  'Vampiric Touch':{attack:1,dmg:'3d6',dtype:'necrotic'},
+  'Vicious Mockery':{save:'wis',dmg:'1d4',dtype:'psychic'},
+  'Wall of Fire':{save:'dex',dmg:'5d8',dtype:'fire'},
+  'Web':{save:'dex'},
+  'Witch Bolt':{attack:1,dmg:'1d12',dtype:'lightning'},
+  'Zone of Truth':{save:'cha'}
+};
+
 const SPELL_DTYPE={
   'Sacred Flame':'radiant',        // PHB: radiant, Dex save, ignores cover
   'Spike Growth':'piercing',       // PHB: 2d4 piercing per 5 ft moved
