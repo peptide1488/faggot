@@ -359,6 +359,28 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## SRD risk register (v120.246 — strategy Pillar 3)
+
+`NON_SRD` in `data.js` records content flagged as outside SRD 5.1 (CC-BY-4.0), so the App Store
+content audit this project has carried as its #1 risk since 2026-07-21 starts from a list instead
+of from nothing.
+
+**Read the caveat before trusting it: absence from the register means NOT YET REVIEWED, never
+"verified safe".** It is a risk surface, not a compliance certificate, and it is not legal advice.
+A store build still needs a real audit against the SRD 5.1 document. Tests enforce that the helpers
+never imply safety for unreviewed content.
+
+Flagged so far, from a pass over 35 monsters, 257 spells and the implemented subclasses:
+- **Monsters** — `Beholder` (Product Identity, among the creatures WotC most explicitly protects)
+  and `Gazer` (Volo's Guide). The other 33 look like ordinary SRD fare but are unreviewed.
+- **Subclasses** — `Echo Knight` (Explorer's Guide to Wildemount), `Circle of the Moon` (SRD ships
+  Circle of the Land), `Assassin` (SRD ships Thief).
+- **Spells** — only one hit across all 257: `Tasha's Hideous Laughter`. The spell *is* in SRD 5.1,
+  renamed plain **"Hideous Laughter"** — so this is a rename, not a removal. Cheapest fix on the list.
+
+Tests keep the register from rotting: every flagged monster and spell must still exist in the data,
+so deleting content without updating the register fails the build.
+
 ## Mode-parity scenario matrix (v120.245 — strategy Pillar 2)
 
 The parity harness compared adapter **interfaces**, which catches a *missing* method. It could not

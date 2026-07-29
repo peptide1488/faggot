@@ -34,7 +34,7 @@ eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.NON_SRD=NON_SRD;globalThis.isNonSrd=isNonSrd;globalThis.nonSrdReason=nonSrdReason;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
@@ -3708,6 +3708,33 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     T(`SPELL_MECH ratchet: ${proseOnly} spells still derive mechanics from prose (must not increase; was 0 at migration)`,
       proseOnly<=0);
   }
+}
+
+/* ---- SRD risk register (v120.246, Pillar 3) ----
+   A register of content flagged as outside SRD 5.1, so the App Store content audit starts from a
+   list rather than from nothing. These tests keep it HONEST rather than merely present: every
+   flagged name must still exist in the data (or the register has rotted), and the helpers must not
+   claim anything about content nobody has reviewed. */
+{
+  T('NON_SRD: the register is populated (a silently empty one would read as "all clear")',
+    Object.keys(NON_SRD.monsters).length + Object.keys(NON_SRD.subclasses).length + Object.keys(NON_SRD.spells).length >= 6);
+
+  // Every flagged monster must actually be in the bestiary, or the entry is stale.
+  { const ghosts=Object.keys(NON_SRD.monsters).filter(n=>!MONSTERS_5E.some(m=>m.n===n));
+    T('NON_SRD: every flagged monster still exists in MONSTERS_5E'+(ghosts.length?' — stale: '+ghosts.join(', '):''),
+      ghosts.length===0); }
+  // Same for flagged spells.
+  { const ghosts=Object.keys(NON_SRD.spells).filter(n=>!SPELL_DESC[n]);
+    T('NON_SRD: every flagged spell still exists in SPELL_DESC'+(ghosts.length?' — stale: '+ghosts.join(', '):''),
+      ghosts.length===0); }
+
+  T('NON_SRD: Beholder and Gazer are flagged (the clearest Product-Identity exposure)',
+    isNonSrd('monsters','Beholder') && isNonSrd('monsters','Gazer'));
+  T('NON_SRD: a plainly-SRD monster is NOT flagged', !isNonSrd('monsters','Goblin'));
+  T('NON_SRD: the reason is recorded, not just the fact', /SRD 5\.1/.test(nonSrdReason('monsters','Beholder')));
+  // The important semantic: unflagged means UNREVIEWED, so the helper must not imply safety.
+  T('NON_SRD: an unknown name simply returns false/empty — the register never asserts "safe"',
+    isNonSrd('monsters','Some Homebrew Thing')===false && nonSrdReason('spells','Fireball')==='');
 }
 
 /* ---- Structured monster attacks (v120.243, Pillar 1 continued) ----

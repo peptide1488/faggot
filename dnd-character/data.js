@@ -623,6 +623,37 @@ const MONSTER_ATK_DTYPE={
 };
 
 
+
+// ---------------------------------------------------------------------------------------------
+// Content flagged as NOT covered by SRD 5.1 (CC-BY-4.0). Strategy Pillar 3 / the App Store risk
+// this project has carried since the 2026-07-21 alignment.
+//
+// READ THIS BEFORE TRUSTING IT: absence from this register means "NOT YET REVIEWED", never
+// "verified safe". It is a risk surface, not a compliance certificate, and it is not legal
+// advice. A store build needs a real audit against the actual SRD 5.1 document; this exists so
+// that audit starts from a list instead of from nothing, and so new content has somewhere to
+// record a decision.
+//
+// Fine for a personal/friends web app either way. The exposure is publishing to an app store.
+const NON_SRD={
+  monsters:{
+    'Beholder':'Product Identity — one of the creatures WotC most explicitly protects; not in SRD 5.1',
+    'Gazer':"Volo's Guide to Monsters — not in SRD 5.1"
+  },
+  subclasses:{
+    'Echo Knight':"Explorer's Guide to Wildemount — not in SRD 5.1",
+    'Circle of the Moon':'PHB — SRD 5.1 ships Circle of the Land as the druid subclass',
+    'Assassin':'PHB — SRD 5.1 ships Thief as the rogue subclass'
+  },
+  spells:{
+    "Tasha's Hideous Laughter":'The spell IS in SRD 5.1, but renamed "Hideous Laughter" — the attribution is the unlicensed part, so this is a rename, not a removal'
+  }
+};
+/** Is this named content flagged as outside SRD 5.1? kind: 'monsters' | 'subclasses' | 'spells'. */
+function isNonSrd(kind, name){ return !!(NON_SRD[kind] && NON_SRD[kind][name]); }
+/** Why it was flagged, or '' when it isn't (or hasn't been reviewed — see the caveat above). */
+function nonSrdReason(kind, name){ return (NON_SRD[kind] && NON_SRD[kind][name]) || ''; }
+
 // Structured spell mechanics — the authoritative source, ahead of the prose (v120.242).
 //
 // WHY: parseSpellMechanics regex-mines SPELL_DESC, plain English written for players to read, for
