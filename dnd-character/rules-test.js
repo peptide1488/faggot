@@ -3952,6 +3952,60 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('mode parity: no adapter has a method qbAdapter lacks (reverse divergence)',
     missing(SESS,QB).length===0 && missing(PNET,QB).length===0);
 
+  /* ---- SCENARIO MATRIX (v120.245) ----
+     Interface comparison catches a MISSING method. It cannot catch two modes computing the same
+     rule differently, which is the failure that actually reached production (cover applied on one
+     device and not the other). So: build equivalent state in Quick Battle and DM-hosted, run the
+     same shot through both with a fixed d20, and require identical ac/cover/hit/adv across a
+     matrix of conditions. Every row here is a rule that already shipped broken in one mode or is
+     the same shape as one that did. */
+  {
+    const mkPC=()=>{ const c=newCharacter('Matrix'); c.abilities={str:14,dex:14,con:12,int:10,wis:10,cha:10};
+      c.armor='none'; c.conditions={}; c.hp.cur=c.hp.max=30; return c; };
+    const atkMelee={name:'Sword', toHit:5, dmg:'1d8', tiles:1};
+    const atkRanged={name:'Bow', toHit:5, dmg:'1d8', tiles:12};
+
+    // Each row: how to decorate the shared world, and which attack to make.
+    const SCENARIOS=[
+      {n:'baseline, open ground',            tiles:{}, mConds:[], pConds:[], atk:atkMelee, light:'day'},
+      {n:'wall between (3/4 cover)',         tiles:{'1,0':'wall'}, mConds:[], pConds:[], atk:atkRanged, light:'day'},
+      {n:'target prone, melee',              tiles:{}, mConds:[{name:'Prone',rounds:5}], pConds:[], atk:atkMelee, light:'day'},
+      {n:'target prone, ranged',             tiles:{}, mConds:[{name:'Prone',rounds:5}], pConds:[], atk:atkRanged, light:'day'},
+      {n:'target restrained',                tiles:{}, mConds:[{name:'Restrained',rounds:5}], pConds:[], atk:atkMelee, light:'day'},
+      {n:'attacker poisoned',                tiles:{}, mConds:[], pConds:[{name:'Poisoned',rounds:5}], atk:atkMelee, light:'day'},
+      {n:'target invisible',                 tiles:{}, mConds:[{name:'Invisible',rounds:5}], pConds:[], atk:atkMelee, light:'day'},
+      {n:'darkness (lighting parity)',       tiles:{}, mConds:[], pConds:[], atk:atkRanged, light:'night'},
+      {n:'target paralyzed (auto-crit path)',tiles:{}, mConds:[{name:'Paralyzed',rounds:5}], pConds:[], atk:atkMelee, light:'day'},
+    ];
+
+    let mismatches=[];
+    for(const sc of SCENARIOS){
+      const pcQB=mkPC(), pcDM=mkPC();
+      const geom={cols:6, rows:1, tiles:sc.tiles, light:{mode:sc.light}};
+
+      // Quick Battle: the monster attacks the PC.
+      setQB({active:true, over:null, log:[], map:JSON.parse(JSON.stringify(geom)), battle:{active:true,round:1}, lights:[],
+        players:[{id:'pc', side:'pc', name:'Matrix', c:pcQB, x:3,y:0, conds:sc.pConds.slice()}],
+        monsters:[{id:'m1', side:'mon', name:'Orc', base:'Orc', hp:20,max:20, ac:13, x:0,y:0, conds:sc.mConds.slice()}]});
+      // Conditions on a QB PC live on the character, not the unit.
+      sc.pConds.forEach(c0=>{ pcQB.conditions[c0.name]=true; });
+      const q=Engine.hitResult(qbAdapter,'m1','pc',sc.atk,11);
+
+      // DM-hosted: identical geometry, mirror shapes.
+      setNet({role:'dm', peer:{id:'x'}, session:{ map:JSON.parse(JSON.stringify(geom)), lights:[],
+        players:[{id:'pc', cid:'pc', name:'Matrix', ac:computeAC(pcDM), hpCur:30, hpMax:30, x:3,y:0,
+                  conds:sc.pConds.map(c0=>c0.name)}],
+        monsters:[{id:'m1', name:'Orc', base:'Orc', hp:20,max:20, ac:13, x:0,y:0, conds:sc.mConds.slice()}] }});
+      const d=Engine.hitResult(sessionAdapter,'m1','pc',sc.atk,11);
+
+      setQB(null); setNet(null);
+      if(q.ac!==d.ac || q.cover!==d.cover || q.hit!==d.hit || q.adv!==d.adv)
+        mismatches.push(`${sc.n}: QB{ac:${q.ac},cov:${q.cover},adv:${q.adv},hit:${q.hit}} vs DM{ac:${d.ac},cov:${d.cover},adv:${d.adv},hit:${d.hit}}`);
+    }
+    T(`mode parity matrix: all ${SCENARIOS.length} scenarios resolve identically in QB and DM-hosted`
+      +(mismatches.length?' — '+mismatches.join(' | '):''), mismatches.length===0);
+  }
+
   /* Behavioural parity, not just structural: the same geometry must produce the same to-hit
      in Quick Battle and DM-hosted. A wall between attacker and target is three-quarters cover
      (+5 AC), and this is exactly the class of rule that used to be wired into one mode only. */

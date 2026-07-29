@@ -359,6 +359,25 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Mode-parity scenario matrix (v120.245 — strategy Pillar 2)
+
+The parity harness compared adapter **interfaces**, which catches a *missing* method. It could not
+catch two modes computing the same rule **differently** — and that is the failure that actually
+reached production: cover applied on the DM's device and not the player's, disagreeing on 25% of
+shots.
+
+The matrix builds equivalent state in Quick Battle and DM-hosted, runs the same shot through both
+with a fixed d20, and requires identical `ac` / `cover` / `hit` / `adv` across 9 scenarios: open
+ground, a wall (three-quarters cover), prone target in melee *and* at range (the two directions
+resolve oppositely, which is what caught the `'me'` position bug), restrained target, poisoned
+attacker, invisible target, darkness, and a paralyzed target (the auto-crit path).
+
+Mutation-tested: forcing `qbAdapter.cover` to return 0 fails the matrix with
+`wall between (3/4 cover): QB{ac:12,cov:0,hit:true} vs DM{ac:17,cov:5,hit:false}` — note the two
+modes disagreeing on **hit**, exactly the production bug's shape.
+
+Adding a scenario is one line in the `SCENARIOS` array. New shared rules should get a row.
+
 ## DM "view as player" — per-player vision (v120.244)
 
 The DM map can now be rendered through one player's eyes (👁 View as), so the DM can check what a
