@@ -4822,7 +4822,9 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
     if(fogSeen){
       const key=x+','+y;
       if(fogSeen.has(key)) extra+=' fogSeen';
-      else if(fogKnown && fogKnown.has(key)){ extra+=' fogRemembered'; fogTok=elevBadge?'':''; }
+      // Remembered: you recall the terrain, not who is standing there now — so the token goes,
+      // but the tile keeps its terrain class and elevation badge.
+      else if(fogKnown && fogKnown.has(key)){ extra+=' fogRemembered'; fogTok=''; }
       else { extra+=' fogUnseen'; fogTok=''; }
     }
     const inner=iso?`<div class="isoContent">${decorHTML}${fogTok}${elevBadge}</div>`:`${fogTok}${elevBadge}`;
