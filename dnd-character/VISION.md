@@ -81,6 +81,77 @@ Prefer the change that: **closes a 5e lie** (something the UI pretends works but
 Reject: a feature that only works in one battle mode forever; a second damage calculator inside
 the renderer; a framework rewrite; chasing Roll20 parity.
 
+## Engineering strategy (derived from the 2026-07-28/29 bug hunt)
+
+**The premise: quality is now limited by verification, not by features.** In one session, eight
+real bugs were found in *shipped, live* code that ~1,000 passing assertions had never caught —
+because the suite tests rules in isolation and every one of those bugs lived somewhere else:
+
+| Bug | Class it belongs to |
+|---|---|
+| Fireball's wrong range (87 spells), 3 spell damage types, 41 untyped monster attacks | **prose-as-data** |
+| cover / Sanctuary / Holy Aura absent on player devices | **cross-mode divergence** |
+| `dmLog()` that never existed | **UI wiring** |
+| `coverBetween` walking off the grid | **shared math nobody re-derives** |
+
+None were random. They are four repeatable classes, so the work should attack classes, not
+instances. That is what this strategy is for.
+
+### Pillar 1 — Kill prose-as-data (the biggest bug factory)
+
+`SPELL_DESC` and the bestiary's `atk` strings are English that regexes mine for mechanics.
+Track record: 87 spells with a silently wrong range, 3 with no damage type, 41 monster attacks
+untyped — every one of them invisible in play until measured. It gets *worse* as the content
+library grows, and this doc calls the library itself a feature.
+
+Move mechanics into structured fields; keep the prose for display only. Do it **incrementally,
+with a coverage test per field** — the `SPELL_DTYPE` / `MONSTER_ATK_DTYPE` work is the template:
+a documented exception list, and any new entry missing the field fails the build rather than
+regressing quietly.
+
+### Pillar 2 — Make verification match the failure modes
+
+- **Cross-mode:** the parity harness exists (adapter interfaces + one behavioural probe). Grow it
+  into a scenario matrix — the same fight through all three adapters, asserting identical outcomes.
+- **UI wiring:** `rules-test.js` executes no click handler, so a handler calling a function that
+  doesn't exist passes the whole suite. Build `tools/smoke.js`: boot headless, click every
+  registered handler, assert zero console errors. A *static* "is every identifier defined?" check
+  was tried and abandoned — regex-stripping comments and template literals produced 195 false
+  positives. Use the browser; it solves this trivially.
+- **Real sessions:** script the two-tab DM+player test (host in one tab, `playerJoin` in another
+  over real PeerJS). It found the worst bug of the session. Nothing else exercises the netplay path.
+
+### Pillar 3 — Pay the 1.0 tax while it is still cheap
+
+SRD content tagging is the only item here with a real deadline. It is already flagged below as the
+#1 App Store risk. Tagging entries as they're touched costs almost nothing; retrofitting 257 spells
+and 35 monsters the week before submission is miserable.
+
+### Pillar 4 — Depth where Grimoire is differentiated
+
+Legendary/lair actions (the last real combat gap), then per-player vision on the DM side, then the
+AI DM. The differentiator is the **combat-management layer** — turn order, HP, targeting,
+multi-combatant state — which is exactly what the voxel downgrade note below identified as the
+thing Grimoire owns and a renderer swap would have to rebuild.
+
+### Cadence
+
+**Alternate one hardening pass with one feature pass.** Hardening currently returns far more value
+per token than features, and will until Pillars 1 and 2 are done.
+
+### Do not
+
+Split files further (a big file costs nothing if you never read it whole — grep the anchor, or use
+`tools/whereis.js`). Retry the static identifier guard. Chase Roll20 parity.
+
+### The meta-lesson, worth keeping
+
+**Every genuine bug that session came from *executing* something — a real two-tab session, parsing
+the whole bestiary, sweeping all 20 d20 faces. Reading the code found none of them**, including a
+function that had been read earlier the same day. And *measuring* was consistently harder than
+fixing: three scenarios were wrecked by their own setup errors before one bug was even visible, and
+two audits reported 195 and 44 phantom findings before they were corrected. Audits need auditing.
+
 ## Graphics direction (aligned 2026-07-21, executed LATER — after core roadmap items)
 
 - **Problem:** AI pixel-art tilesets are a consistency nightmare (tiling/perspective/palette
