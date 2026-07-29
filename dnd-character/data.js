@@ -541,6 +541,31 @@ const SPELL_RANGE={
 // spells and flagging any with damage but no type. Sacred Flame says "Radiant flame" up front,
 // never "1d8 radiant"; the other two never name their type at all.
 // NOT listed here, deliberately: Absorb Elements, whose rider type mirrors whatever triggered it.
+// Damage types for monster attacks whose bestiary `atk` prose never states one. Only 11 of 56
+// parsed attacks carried a type before v120.239 (20%): a Goblin's scimitar wasn't slashing, an
+// Orc's greataxe wasn't slashing, and a Mage's Fireball wasn't fire — so a target's resistance,
+// vulnerability or immunity could never apply to almost any monster hit, and Absorb Elements
+// could not tell the damage was elemental.
+//
+// Manufactured weapons are NOT listed here on purpose — parseMonsterAttacks looks the attack name
+// up in the WEAPONS catalog first, which already carries `dt` for Scimitar, Greataxe, Longsword,
+// Dagger, Spear, Shortbow and the rest. This table is only what a weapon catalog can't know:
+// natural weapons and the handful of spell-shaped attacks.
+//
+// 'Eye Rays' is deliberately ABSENT: a beholder's rays are each a different type, so any single
+// answer here would be wrong more often than the empty string is. It stays untyped until the
+// bestiary can express per-ray data.
+const MONSTER_ATK_DTYPE={
+  'Bite':'piercing', 'Claw':'slashing', 'Claws':'slashing', 'Slam':'bludgeoning',
+  'Constrict':'bludgeoning', 'Rock':'bludgeoning', 'Greatclub':'bludgeoning',
+  'Gore':'piercing', 'Sting':'piercing', 'Tentacle':'bludgeoning', 'Hooves':'bludgeoning',
+  'Tail':'bludgeoning', 'Pseudopod':'bludgeoning', 'Talons':'slashing',
+  'Life Drain':'necrotic', 'Withering Touch':'necrotic',
+  'Crossbow':'piercing',                 // plain "Crossbow"; WEAPONS only lists Hand/Light/Heavy
+  'Morningstar':'piercing',              // PHB morningstar is piercing; absent from WEAPONS entirely
+  'Fireball':'fire', 'Magic Missile':'force'
+};
+
 const SPELL_DTYPE={
   'Sacred Flame':'radiant',        // PHB: radiant, Dex save, ignores cover
   'Spike Growth':'piercing',       // PHB: 2d4 piercing per 5 ft moved

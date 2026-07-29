@@ -359,6 +359,31 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Monster attacks were 80% untyped (fixed v120.239)
+
+The bestiary writes `"Scimitar +4 (1d6+2)"` and never says "slashing", and `parseMonsterAttacks`
+only picked up a damage type when the prose spelled one out. Measured: **only 11 of 56 parsed
+attacks (20%) carried a type.** An untyped hit can't match any resistance, vulnerability or
+immunity, so in practice:
+- a Goblin's scimitar wasn't slashing, an Orc's greataxe wasn't slashing, a Kobold's dagger
+  wasn't piercing;
+- **a Mage's Fireball wasn't fire** — a fire-resistant target took full damage;
+- a Skeleton's bludgeoning vulnerability never triggered off a monster's club;
+- Absorb Elements couldn't tell an incoming hit was elemental.
+
+Fix: when the prose states no type, fall back to the attack **name** — the `WEAPONS` catalog
+first, so manufactured weapons stay single-sourced there rather than duplicated, then
+`MONSTER_ATK_DTYPE` for natural weapons (Bite/Claw/Slam/Life Drain/…) and the few spell-shaped
+attacks. Explicit prose still wins over both. Coverage went **20% → 96% (50/52 damaging attacks)**.
+
+Deliberately still untyped: **Eye Rays** (Beholder, Gazer). A beholder's rays are each a different
+type, so any single answer would be wrong more often than the empty string is; it stays untyped
+until the bestiary can express per-ray data. A test asserts that Eye Rays is the *only* permitted
+exception, so a newly added monster with an untyped attack fails the build.
+
+Also noted: `Morningstar` is absent from the `WEAPONS` catalog entirely, so it needed a table
+entry despite being a manufactured weapon. Worth adding to `WEAPONS` properly at some point.
+
 ## Spell damage types the prose never stated + targeting actually wired (v120.238)
 
 **`SPELL_DTYPE`.** `parseSpellMechanics` reads a damage type from a `"<dice> <type>"` phrase, so a

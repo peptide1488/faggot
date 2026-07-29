@@ -3553,6 +3553,50 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- Monster attack damage types (v120.239) ----
+   Only 11 of 56 parsed monster attacks (20%) carried a damage type: the bestiary writes
+   "Scimitar +4 (1d6+2)" and never says "slashing". An untyped hit can't match ANY resistance,
+   vulnerability or immunity, so a Mage's Fireball didn't count as fire and a Goblin's scimitar
+   didn't count as slashing. parseMonsterAttacks now falls back to the attack NAME — WEAPONS
+   first (single source for manufactured weapons), then MONSTER_ATK_DTYPE for natural weapons. */
+{
+  const typeOf=(raw,idx)=>parseMonsterAttacks(raw)[idx||0].dtype;
+  T('monster attack: a scimitar is slashing, from the WEAPONS catalog (prose never says so)',
+    typeOf('Scimitar +4 (1d6+2)')==='slashing');
+  T('monster attack: a greataxe is slashing', typeOf('Greataxe +5 (1d12+3)')==='slashing');
+  T('monster attack: a bite is piercing, from the natural-weapon table',
+    typeOf('Bite +4 (1d6+2)')==='piercing');
+  T('monster attack: a slam is bludgeoning', typeOf('Slam +5 (2d6+3)')==='bludgeoning');
+  T("monster attack: a Ghost's Withering Touch is necrotic", typeOf('Withering Touch +5 (4d6+3)')==='necrotic');
+  T("monster attack: a Mage's Fireball is fire (it was untyped, so fire resistance did nothing)",
+    typeOf('Fireball (8d6)')==='fire');
+  T('monster attack: Magic Missile is force', typeOf('Magic Missile (3d4+3)')==='force');
+  // Prose that DOES state a type must still win over the name-based fallback.
+  T('monster attack: an explicit type in the prose beats the name lookup',
+    typeOf('Bite +5 (1d8+3 fire)')==='fire');
+  // Beholder eye rays differ per ray, so they are deliberately left untyped.
+  T('monster attack: Eye Rays stay untyped on purpose (each ray is a different type)',
+    typeOf('Eye Rays +5 (1d6)')==='');
+
+  // The payoff, end to end: a skeleton is bludgeoning-vulnerable, so a club must now double.
+  const skel={base:'Skeleton', name:'Skeleton'};
+  T('a Skeleton now takes DOUBLE damage from a bludgeoning monster attack (was x1, untyped)',
+    monsterDmgMult(skel, typeOf('Greatclub +4 (2d8+2)'))===2);
+  T('...and still normal damage from a slashing one', monsterDmgMult(skel, typeOf('Scimitar +4 (1d6+2)'))===1);
+
+  // Coverage guard: keep the bestiary honest as monsters are added.
+  {
+    let dmgAttacks=0, typed=0; const untyped=[];
+    for(const mo of MONSTERS_5E) for(const a of parseMonsterAttacks(mo.atk||'')){
+      if(!a.dmg) continue; dmgAttacks++;
+      if(a.dtype) typed++; else untyped.push((mo.n||mo.name)+'::'+a.name);
+    }
+    const allowed=untyped.every(x=>/Eye Rays/.test(x));
+    T(`monster damage-type coverage is ${typed}/${dmgAttacks}, and every exception is a documented Eye Rays entry`
+      +(allowed?'':' — unexpected: '+untyped.join(', ')), allowed);
+  }
+}
+
 /* ---- Spell damage types the prose never stated (v120.238) ----
    parseSpellMechanics reads the damage type from a "<dice> <type>" phrase, so a spell that names
    its type anywhere else — or not at all — silently ended up with dtype:''. An empty type means

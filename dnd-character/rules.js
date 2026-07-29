@@ -3218,7 +3218,16 @@ function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim())
   else if(/blinded/i.test(part)) cond='Blinded';
   else if(/charm/i.test(part)) cond='Charmed';
   else if(/poisoned/i.test(part)) cond='Poisoned';
-  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, dtype:dt?dt[1].toLowerCase():'', tiles, cond, raw:part}; }); }
+  // Fall back to the attack's NAME when the prose didn't state a type (v120.239). Most bestiary
+  // entries read "Scimitar +4 (1d6+2)" and never say "slashing", which left 80% of monster attacks
+  // untyped and therefore immune to every resistance/vulnerability rule. The WEAPONS catalog is
+  // consulted first so manufactured weapons stay single-sourced there rather than duplicated.
+  let dtype = dt ? dt[1].toLowerCase() : '';
+  if(!dtype && name){
+    const w=WEAPONS.find(x=>x.n.toLowerCase()===name.toLowerCase());
+    dtype = (w && w.dt) || MONSTER_ATK_DTYPE[name] || '';
+  }
+  return {name:name||'Attack', hit:hit?Number(hit[1]):null, dc:dc?{n:Number(dc[1]),ab:dc[2]}:null, dmg:dmg?dmg[1].replace(/\s+/g,''):null, dtype, tiles, cond, raw:part}; }); }
 
 function spellCondOf(name){ const sc=SPELL_COND[name]; return sc?{c:sc.c, rounds:sc.r}:null; }
 
