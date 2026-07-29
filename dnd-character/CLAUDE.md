@@ -126,7 +126,13 @@ usage burns tokens fast. Follow this order:
    handler calling a function that doesn't exist passes the entire suite and then throws the
    instant a user presses the button (this happened on 2026-07-29: a `dmLog()` that was never
    defined). Playwright is the check that works — `dmHost()`, `render()`, click the selector,
-   then `browser_console_messages` at level `error`.
+   then `browser_console_messages` at level `error`. **`tools/smoke.js` automates exactly that**:
+   in the page run `fetch('tools/smoke.js').then(r=>r.text()).then(eval)` then `grimoireSmoke()`.
+   It renders every tab, clicks the roster/battle controls inside a synthetic DM session, and
+   returns `{ok, clicked, threw, consoleErrors, notCovered}`. It refuses to click anything
+   destructive, so it cannot delete a character or reset the app. Mutation-tested against the
+   real `dmLog` bug shape — and note failures land in `consoleErrors` via window.onerror, not in
+   `threw`, because a handler exception never propagates to the `.click()` caller.
    A static "is every called identifier defined?" guard was attempted and abandoned: stripping
    comments/strings/template literals with regex mangles the source and reported 195 false
    positives (`flashBanner`, `render`, `esc` …). That's the same known-hard problem the

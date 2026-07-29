@@ -19,6 +19,14 @@
  *      touch DB, localStorage, or the character sheet.
  * Anything outside that is reported as "not covered" rather than silently skipped, so the report
  * never overstates what was actually verified.
+ *
+ * HOW FAILURES ACTUALLY SURFACE — do not "simplify" this away: an exception thrown inside a click
+ * handler does NOT propagate back to the `el.click()` caller, so it will not appear in `threw`.
+ * It reaches the window 'error' event instead. That is why this captures window.onerror as well
+ * as console.error, and why `ok` requires BOTH to be empty. Verified 2026-07-29 by pointing
+ * `hideMonster` at an undefined function: the run flipped to ok:false with
+ * "Uncaught ReferenceError: … is not defined" in consoleErrors, and recovered when restored.
+ * A guard that has never been seen to fail is not a guard.
  */
 (function () {
   const DESTRUCTIVE = /reset|delete|del\b|mdel|remove|wipe|clear|leave|exit|import/i;
