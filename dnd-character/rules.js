@@ -2658,7 +2658,11 @@ function canSeeCell(s, viewer, x, y, maxTiles){
   if(!s||!s.map||!viewer||viewer.x==null) return false;
   const cap=maxTiles==null?24:maxTiles;
   if(gridDist(viewer.x,viewer.y,x,y)>cap) return false;
-  const c=viewer.c||null;
+  // `viewer.c` is the real character when we have it (the player's own device). The DM never holds
+  // a connected player's sheet, so for a "view as this player" preview it passes the synced
+  // `darkvision` flag from the hello payload instead — hasDarkvision() simply isn't computable
+  // there. A tiny stand-in object is enough: visionLevel only asks about darkvision. (v120.244)
+  const c=viewer.c || (viewer.darkvision ? {race:'', effects:[{name:'Darkvision'}]} : null);
   if(visionLevel(c, s, x, y, viewer.x, viewer.y)<=0) return false;
   return losClear(s, viewer.x, viewer.y, x, y, {ignoreCreatures:true});
 }

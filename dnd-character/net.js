@@ -136,7 +136,11 @@ function scheduleReconnect(){ if(!net||net.role!=='player') return; clearTimeout
 
 function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   const sanc=(c.effects||[]).find(e=>e.name==='Sanctuary'), holy=(c.effects||[]).find(e=>e.name==='Holy Aura');
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.wildShape?c.wildShape.hpCur:c.hp.cur,hpMax:c.wildShape?c.wildShape.hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed,wildShapeName:c.wildShape?c.wildShape.name:null,healerFeatSpent:!!c.healerFeatSpent,shieldReady:shieldEligible(c),absorbReady:reactionSpellReady(c,'Absorb Elements'),rebukeReady:reactionSpellReady(c,'Hellish Rebuke')}}); }catch(e){} }
+  // Darkvision rides along so the DM can preview what this player can actually see (v120.244).
+  // The DM never holds the real sheet, so hasDarkvision() is not computable DM-side -- same
+  // reason sanctuaryDC/holyAuraDC are synced here rather than derived.
+  const dark=hasDarkvision(c);
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.wildShape?c.wildShape.hpCur:c.hp.cur,hpMax:c.wildShape?c.wildShape.hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),darkvision:!!dark,sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed,wildShapeName:c.wildShape?c.wildShape.name:null,healerFeatSpent:!!c.healerFeatSpent,shieldReady:shieldEligible(c),absorbReady:reactionSpellReady(c,'Absorb Elements'),rebukeReady:reactionSpellReady(c,'Hellish Rebuke')}}); }catch(e){} }
 
 function battleSession(){ return (typeof QB!=='undefined'&&QB&&QB.active)?QB:(net&&net.session)||null; }
 

@@ -3362,7 +3362,7 @@ function dmOnData(conn,d){ if(!net||net.role!=='dm'||!d) return;
     let p = cid ? net.session.players.find(x=>x.cid===cid) : net.session.players.find(x=>x.id===conn.peer);
     if(!p){ const idx=net.session.players.length, cols=net.session.map.cols||10; p={cid, id:conn.peer, x:idx%cols, y:Math.max(0,(net.session.map.rows||8)-1)}; net.session.players.push(p); }
     p.id=conn.peer; p.online=true;   // re-bind routing to the current connection (handles reconnects)
-    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent,shieldReady:!!d.char.shieldReady,absorbReady:!!d.char.absorbReady,rebukeReady:!!d.char.rebukeReady});
+    Object.assign(p,{cid:cid||p.cid, name:d.char.name,cls:d.char.cls,level:d.char.level,hpCur:d.char.hpCur,hpMax:d.char.hpMax,ac:d.char.ac,init:d.char.init||0,conds:d.char.conds||[],darkvision:!!d.char.darkvision,sanctuaryDC:d.char.sanctuaryDC||null,holyAuraDC:d.char.holyAuraDC||null,stable:!!d.char.stable,deathFail:d.char.deathFail||0,hiddenDC:d.char.hiddenDC||null,shadowMartyrArmed:!!d.char.shadowMartyrArmed,cuttingWordsArmed:!!d.char.cuttingWordsArmed,wildShapeName:d.char.wildShapeName||null,healerFeatSpent:!!d.char.healerFeatSpent,shieldReady:!!d.char.shieldReady,absorbReady:!!d.char.absorbReady,rebukeReady:!!d.char.rebukeReady});
     dmBroadcast(); render();
   } else if(d.t==='attack'){ const mo=net.session.monsters.find(m=>m.id===d.mon); let dmg=d.dmg||0, mult=1; if(mo && d.dmg){ mult=monsterDmgMult(mo,d.dtype); dmg=Math.max(0,Math.round(d.dmg*mult)); mo.hp=Math.max(0,mo.hp-dmg); } const rv=mult===0?' (immune!)':mult===0.5?' (resisted)':mult===2?' (vulnerable!)':''; net.lastHit={who:d.who,mon:mo?mo.name:'?',dmg,hit:d.hit}; checkMountDeaths(net.session, ()=>{}); dmBroadcast(); render(); flashBanner((d.who||'A player')+(d.hit===false?' missed':' hit '+(mo?mo.name:'a monster')+' for '+dmg+rv)); }
   else if(d.t==='paintHazard'){ (SPELL_NOCAST_ZONE[d.name]?paintNoCastZone(net.session, d.ctr, d.aoeR, d.name):paintHazardTerrain(net.session, d.ctr, d.aoeR, d.name, d.dc)); dmBroadcast(); render(); }
@@ -4911,7 +4911,18 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Map <span class="muted" style="text-transform:none;font-size:11px">— ${s.map.cols}×${s.map.rows}</span><button class="btn ghost sm" id="dmRotBtn" style="float:right">🔄 Rotate</button></h2>
-    ${mapGridHTML(s,true, (s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0, dashMax=(mo.moveLeft||0)+(dashAvail?(mo.speed||30):0); return buildMoveRangeOpts(s,mo,mo.moveLeft||0,dashAvail,mo.speed||30,monsterFlies(mo)); })():{})}
+    ${(()=>{
+      // "View as" (v120.244): render the DM's own map through one player's eyes, so the DM can see
+      // what that character can actually see before describing the room. mapGridHTML only applies
+      // fog when isDM is false, so this deliberately renders as a player view for the preview.
+      const asId=net.viewAs, asP=asId&&(s.players||[]).find(p=>p.id===asId||p.cid===asId);
+      const base=(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0; return buildMoveRangeOpts(s,mo,mo.moveLeft||0,dashAvail,mo.speed||30,monsterFlies(mo)); })():{};
+      if(asP && asP.x!=null)
+        return mapGridHTML(s,false, Object.assign({}, base,
+          {fog:{viewer:{x:asP.x,y:asP.y,darkvision:!!asP.darkvision}, viewerId:'dmview:'+(asP.id||asP.cid)}}));
+      return mapGridHTML(s,true, base);
+    })()}
+    ${(s.players||[]).length?`<div class="chips" style="margin:6px 0"><span class="muted" style="font-size:11px;align-self:center">👁 View as:</span><button class="chip ${!net.viewAs?'on':''}" data-viewas="">DM (all)</button>${(s.players||[]).map(p=>`<button class="chip ${net.viewAs===(p.id||p.cid)?'on':''}" data-viewas="${esc(p.id||p.cid)}">${esc(p.name||'Player')}</button>`).join('')}</div>`:''}
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
@@ -4990,6 +5001,7 @@ function renderDM(){
   });
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
+  app.querySelectorAll('[data-viewas]').forEach(el=>el.onclick=()=>{ net.viewAs=el.dataset.viewas||null; render(); });
   app.querySelectorAll('[data-lightmode]').forEach(el=>el.onclick=()=>{ if(!s.map.light) s.map.light={}; s.map.light.mode=el.dataset.lightmode; dmBroadcast(); render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2);

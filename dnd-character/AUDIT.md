@@ -359,6 +359,24 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## DM "view as player" — per-player vision (v120.244)
+
+The DM map can now be rendered through one player's eyes (👁 View as), so the DM can check what a
+character can actually see before describing a room. Completes the per-player-vision half of
+roadmap item 7 alongside fog of war.
+
+Two details that made this less trivial than it looks:
+
+- **The DM never holds a connected player's sheet**, so `hasDarkvision()` is not computable DM-side.
+  The flag is synced in the `hello` payload instead — the same reason `sanctuaryDC` / `holyAuraDC`
+  are synced rather than derived. `canSeeCell` accepts `viewer.darkvision` in place of a character.
+  It only affects light level: a test asserts darkvision still does not see through a wall.
+- **The preview keeps its own fog memory**, namespaced `dmview:<id>`, so previewing a player's view
+  never pollutes that player's own explored-squares set (which lives on their device anyway).
+
+`mapGridHTML` only applies fog when `isDM` is false, so the preview deliberately renders as a
+player view; the DM's normal map is untouched.
+
 ## Monster attacks are structured data too — and the Wyvern could sting you from 120 ft (v120.243)
 
 The bestiary's `atk` strings were the other load-bearing prose. `MONSTER_MECH` is now authoritative

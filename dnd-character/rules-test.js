@@ -3599,6 +3599,22 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   // Degrade safely rather than throw on the shapes that actually occur.
   T('fog: no map or no viewer position yields no visibility, and does not throw',
     canSeeCell(null, viewer(0,0), 1,1)===false && canSeeCell(lit(), {x:null,y:null}, 1,1)===false);
+
+  /* v120.244 — "view as player" on the DM side. The DM never holds a connected player's sheet, so
+     hasDarkvision() isn't computable there; the flag is synced in the hello payload instead (same
+     reason sanctuaryDC/holyAuraDC are). canSeeCell accepts it in place of a character. */
+  T('fog: a synced darkvision flag works in place of a character sheet (DM "view as" preview)',
+    canSeeCell(dark(), {x:0,y:0,darkvision:true}, 3,0)===true);
+  T('fog: ...and without the flag the same viewer sees nothing in the dark',
+    canSeeCell(dark(), {x:0,y:0,darkvision:false}, 3,0)===false);
+  T('fog: the darkvision flag does not bypass walls — it is light, not x-ray',
+    canSeeCell(dark({'2,0':'wall'}), {x:0,y:0,darkvision:true}, 4,0)===false);
+  // The DM preview must not pollute the real player's fog memory: different viewerId namespace.
+  { resetFog('dmview:p1'); resetFog('p1');
+    const s=lit(); rememberSeen(s,'dmview:p1', visibleCells(s,{x:0,y:0,darkvision:true}));
+    T('fog: the DM preview keeps its own memory, separate from the player\'s own',
+      exploredCells(s,'dmview:p1').size>0 && exploredCells(s,'p1').size===0);
+    resetFog('dmview:p1'); }
 }
 
 /* ---- The 'me' unit carries its position (v120.240) ----
