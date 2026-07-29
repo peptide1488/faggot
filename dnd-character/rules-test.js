@@ -3553,6 +3553,75 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- Monster hiding (v120.237) ----
+   Stealth was one-directional: a PC could hide (maneuverHide) and a monster could Search for
+   them, but nothing could ever set a monster's hiddenDC — so the Search action added in v120.232
+   had nothing to find. This closes the loop with ONE shared rule per behaviour rather than a
+   parallel monster copy: hideEligibility, revealUnit and unitHiddenFrom are used by both sides. */
+{
+  const dark={ map:{cols:8,rows:8,tiles:{}, light:{mode:'night'}}, monsters:[], players:[] };
+  const lit ={ map:{cols:8,rows:8,tiles:{}, light:{mode:'day'}},   monsters:[], players:[] };
+  const mkMo=()=>({id:'m1', side:'mon', base:'Goblin', name:'Goblin', x:5,y:0, hp:7, max:7, ac:15, conds:[]});
+  const adFor=s=>({ map:()=>s.map, name:u=>u.name, allMonsters:()=>s.monsters });
+
+  // Eligibility uses the same rule as the PC path: darkness, or full cover from the watcher.
+  { const s=JSON.parse(JSON.stringify(lit)); const mo=mkMo(); s.monsters=[mo];
+    const watcher={x:0,y:0};
+    T('monster hiding: refused in the open, in bright light (same rule the PC path uses)',
+      hideMonster(adFor(s), mo, [watcher], null).success===false);
+    s.map.tiles={'2,0':'wall'};                       // full cover on the line to the watcher
+    const r=hideMonster(adFor(s), mo, [watcher], null);
+    T('monster hiding: succeeds behind full cover, and sets a real Stealth DC',
+      r.success===true && Number.isFinite(mo.hiddenDC) && mo.hiddenDC>0);
+    T('monster hiding: also marks the Hidden condition on the unit', (mo.conds||[]).some(x=>x.name==='Hidden'));
+  }
+  { const s=JSON.parse(JSON.stringify(dark)); const mo=mkMo(); s.monsters=[mo];
+    T('monster hiding: darkness alone is enough (no cover needed)',
+      hideMonster(adFor(s), mo, [{x:0,y:0}], null).success===true); }
+
+  // Hidden grants advantage on the attack — the same attackAdvantage path PCs use.
+  { const mo=mkMo(); mo.conds=[{name:'Hidden',rounds:100}];
+    T('monster hiding: a hidden attacker gets advantage, like a hidden PC does',
+      attackAdvantage(unitConds(mo), new Set(), true, {}).adv>0); }
+
+  // Attacking reveals — revealUnit must handle BOTH unit shapes.
+  { const mo=mkMo(); mo.hiddenDC=17; mo.conds=[{name:'Hidden',rounds:100}];
+    T('revealUnit: clears a hidden MONSTER (conds + hiddenDC)',
+      revealUnit(mo)===true && mo.hiddenDC===null && !(mo.conds||[]).some(x=>x.name==='Hidden'));
+    const pc=newCharacter('Sneaky'); pc.conditions={Hidden:true}; pc.hiddenDC=19;
+    T('revealUnit: clears a hidden PC through the same helper',
+      revealUnit({c:pc})===true && !pc.conditions.Hidden && pc.hiddenDC===null);
+    T('revealUnit: reports false when the unit was not hidden at all', revealUnit(mkMo())===false); }
+
+  // Noticing: passive Perception >= Stealth spots it automatically.
+  { const mo=mkMo(); mo.hiddenDC=14;
+    T('unitHiddenFrom: a keen observer (passive 15) notices a Stealth-14 monster', unitHiddenFrom(15,mo)===false);
+    T('unitHiddenFrom: a dull observer (passive 10) does not', unitHiddenFrom(10,mo)===true);
+    T('unitHiddenFrom: passive exactly equal to the DC still notices it (5e ties go to the observer)',
+      unitHiddenFrom(14,mo)===false);
+    T('unitHiddenFrom: a monster that is not hiding is never hidden', unitHiddenFrom(1,mkMo())===false); }
+
+  // The safe default matters: an unknown observer must filter NOTHING, or targets vanish.
+  T('observerPassivePerception: unknown observer yields Infinity so nothing is filtered out',
+    observerPassivePerception(null)===Infinity);
+  T('observerPassivePerception: reads a real character\'s passive Perception',
+    Number.isFinite(observerPassivePerception(newCharacter('Watcher'))));
+
+  // And the payoff: the Search action can now actually find something.
+  { const seeker=newCharacter('Finder'); seeker.abilities={str:10,dex:10,con:10,int:10,wis:18,cha:10};
+    seeker.battle={action:false,bonus:false,reaction:false,actionsMax:1,actionsUsed:0,attacksLeft:1,move:30,moveUsed:0};
+    setQB({active:true, over:null, paused:false, log:[], map:{cols:8,rows:8,tiles:{},light:{mode:'day'}},
+      order:[{k:'p',id:'pc'}], turn:0, battle:{active:true,round:1},
+      monsters:[Object.assign(mkMo(),{hiddenDC:6, conds:[{name:'Hidden',rounds:100}]})],
+      players:[{id:'pc',side:'pc',name:seeker.name,c:seeker,x:0,y:0,hpCur:seeker.hp.cur,hpMax:seeker.hp.max}] });
+    const o=Math.random; Math.random=()=>0.99;
+    const res=maneuverSearch(qbAdapter, getQB().players[0], 'perception', qbLog);
+    Math.random=o;
+    T('monster hiding closes the loop: the Search action now finds a hidden MONSTER (it never could before)',
+      res.found===1 && getQB().monsters[0].hiddenDC===null);
+    setQB(null); }
+}
+
 /* ---- MODE-PARITY HARNESS (VISION roadmap #3) ----
    The user's stated #1 friction is "systems applied to quick battle but not DM battle/hosted".
    Every parity pass so far (v120.208, v120.209) was manual archaeology that goes stale the

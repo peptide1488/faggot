@@ -4868,7 +4868,7 @@ function renderDM(){
   </div>
   <div class="card">
     <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button><button class="btn ghost sm" id="encBuilderBtn" style="float:right;margin-right:6px">🎯 Encounter</button><button class="btn ghost sm" id="npcBtn" style="float:right;margin-right:6px">🧑 New NPC</button></h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn ghost sm" data-msheet="${mo.id}" title="View full stat block">📋</button><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn ghost sm" data-mloot="${mo.id}" title="Inventory / loot">🎒${(mo.items&&mo.items.length)?' '+mo.items.length:''}</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn ghost sm" data-msheet="${mo.id}" title="View full stat block">📋</button><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn ghost sm" data-mhide="${mo.id}" title="Take the Hide action (needs darkness or full cover)">🫥</button><button class="btn ghost sm" data-mloot="${mo.id}" title="Inventory / loot">🎒${(mo.items&&mo.items.length)?' '+mo.items.length:''}</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -4936,6 +4936,20 @@ function renderDM(){
   app.querySelectorAll('[data-msheet]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.msheet); if(mo) openMonsterSheet(mo); });
   app.querySelectorAll('[data-mloot]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mloot); if(mo) openMonsterLoot(mo); });
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
+  // Hide (v120.237): the watchers are the connected players, since they're who the monster is
+  // hiding FROM. Same hideEligibility rule the PC path uses, so a DM can't hide a goblin standing
+  // in an open field in daylight.
+  app.querySelectorAll('[data-mhide]').forEach(el=>el.onclick=()=>{
+    const mo=s.monsters.find(m=>m.id===el.dataset.mhide); if(!mo) return;
+    const ad={ map:()=>s.map, name:u=>u.name, allMonsters:()=>s.monsters };
+    // qbLog takes the session explicitly, so it's the shared logger for QB and DM-hosted alike
+    // (there is no separate dmLog — writing one would have been the parallel-copy mistake again).
+    const r=hideMonster(ad, mo, (s.players||[]).filter(p=>p.x!=null), m=>qbLog(m, s));
+    if(!r.ok) return;
+    flashBanner(r.success ? '🫥 '+mo.name+' hides (Stealth '+r.total+')'
+      : 'Nowhere to hide — needs darkness or full cover from the party');
+    dmBroadcast(); render();
+  });
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-lightmode]').forEach(el=>el.onclick=()=>{ if(!s.map.light) s.map.light={}; s.map.light.mode=el.dataset.lightmode; dmBroadcast(); render(); });
@@ -5869,10 +5883,13 @@ function qbResolveAttack(att, tgt, atk, done){
     if(hasNotActedYet(QB, tgt.id)){ cx.adv=1; cx.why=(cx.why||[]).concat('Assassinate — hasn\'t acted yet'); }
     if(tgt.surprised) cx.autoCrit=true;
   }
-  // Attacking reveals a hidden PC (PHB) — cx above already captured the advantage this
+  // Attacking reveals a hidden attacker (PHB) — cx above already captured the advantage this
   // grants for THIS attack, so clearing here doesn't affect it. Simplification: unlike
   // Skulker's real text, a missed ranged attack still reveals you in this pass.
-  if(isPc && att.c && att.c.conditions && att.c.conditions.Hidden){ delete att.c.conditions.Hidden; att.c.hiddenDC=null; }
+  // v120.237: was `isPc &&` — monsters can hide now (hideMonster), so the reveal has to apply to
+  // whoever is attacking, not just the PC, or a hidden monster would keep advantage forever.
+  // revealUnit handles both unit shapes (PC's c.conditions vs a monster's own conds[]).
+  revealUnit(att);
   let useAdv=pre.adv, useWhy=(pre.advWhy||[]).slice();
   if(cx.adv&&!pre.adv){ useAdv=cx.adv; useWhy=cx.why; }
   else if(cx.adv&&pre.adv){ useWhy=useWhy.concat(cx.why||[]); }

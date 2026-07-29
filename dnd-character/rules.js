@@ -2353,7 +2353,12 @@ function buildTargetingOpts(s, from, tiles, opts){
   // Explicit target list (e.g. locked Fire Bolt pick), or auto: living monsters on valid LoS tiles
   if(opts.targets&&opts.targets.length) out.targets=opts.targets;
   else if(s.monsters&&rangeTiles){
-    out.targets=s.monsters.filter(m=>m.hp>0&&m.x!=null&&rangeTiles.has(m.x+','+m.y)).map(m=>m.id);
+    // v120.237: you can't target a creature you haven't noticed. `observer` is the looking
+    // character; when a caller doesn't supply one we pass Infinity, which filters nothing — so
+    // every existing call site behaves exactly as before until it opts in.
+    const passive=observerPassivePerception(opts.observer);
+    out.targets=s.monsters.filter(m=>m.hp>0&&m.x!=null&&rangeTiles.has(m.x+','+m.y)
+      && !unitHiddenFrom(passive, m)).map(m=>m.id);
   }
   // Iso3D pre-roll badges: cover / ADV / DIS / sneak-ready on each living foe in range
   out.targetInfo=buildAttackPreviewTags(s, from, rangeTiles, { meleeBudget:tiles });
@@ -3679,19 +3684,88 @@ function maneuverEscape(ad, unit, isPc, log){
   return Object.assign({ok:true, success}, rollInfo);
 }
 
+/**
+ * Can this unit hide from where it stands? Darkness, full cover from the nearest thing that
+ * would see it, or (Skulker) dim light. Extracted from maneuverHide in v120.237 so the monster
+ * side uses the SAME rule rather than a parallel copy — the mode-parity sin this codebase keeps
+ * paying for. `watchers` is whoever would notice: hostiles from that unit's point of view.
+ */
+function hideEligibility(ad, unit, watchers, skulker){
+  const mapS={map:ad.map()};
+  const lvl=tileLightLevel(mapS, unit.x, unit.y);
+  const closest=(watchers||[]).slice()
+    .sort((a,b)=>gridDist(unit.x,unit.y,a.x,a.y)-gridDist(unit.x,unit.y,b.x,b.y))[0];
+  const fullCover=!!(closest && coverBetween(mapS, unit.x,unit.y, closest.x, closest.y)>=5);
+  return { ok: lvl===0 || (lvl===1 && skulker) || fullCover, light:lvl, fullCover };
+}
+
+/**
+ * A monster takes the Hide action. Mirror of maneuverHide, and deliberately the same shape as
+ * monsterSearchRoll: a monster's Stealth is its CR-derived DEX check, since the bestiary carries
+ * no per-skill data. Until v120.237 nothing could ever set a monster's hiddenDC, which meant the
+ * Search action (v120.232) had nothing to find and stealth only worked in one direction.
+ */
+function monsterHideRoll(mo){ return rnd(20)+mod(abil(deriveMonsterAbilities(mo),'dex')); }
+
+function hideMonster(ad, mo, watchers, log){
+  if(!(mo&&mo.hp>0)) return {ok:false};
+  const el=hideEligibility(ad, mo, watchers, false);
+  if(!el.ok) return {ok:true, success:false, why:'no darkness or full cover'};
+  const total=monsterHideRoll(mo);
+  mo.hiddenDC=total;
+  mo.conds=(mo.conds||[]).filter(x=>x.name!=='Hidden').concat([{name:'Hidden', rounds:100}]);
+  if(log) log('🫥 '+((mo.name||'The monster'))+' hides (Stealth '+total+')');
+  return {ok:true, success:true, total};
+}
+
+/**
+ * Attacking, or taking a loud action, ends hiding. One helper for BOTH unit shapes so the two
+ * sides can't drift: a PC carries the flag on its character (`c.conditions.Hidden` + `c.hiddenDC`),
+ * a monster on the unit itself (`conds[]` + `hiddenDC`).
+ */
+function revealUnit(u){
+  if(!u) return false;
+  let was=false;
+  const c=u.c||(u.conditions?u:null);
+  if(c && c.conditions && c.conditions.Hidden){ delete c.conditions.Hidden; c.hiddenDC=null; was=true; }
+  if(u.hiddenDC!=null){ u.hiddenDC=null; was=true; }
+  if(u.conds && u.conds.some(x=>x.name==='Hidden')){ u.conds=u.conds.filter(x=>x.name!=='Hidden'); was=true; }
+  return was;
+}
+
+/**
+ * Is `target` hidden from an observer with this passive Perception? 5e: you notice a hidden
+ * creature automatically when your passive Perception meets or beats its Stealth total. Mirrors
+ * the monster-AI filter that already existed for hidden PCs, so both directions use one rule.
+ */
+/**
+ * Passive Perception of whoever is looking. Returns Infinity when the observer is unknown, so
+ * callers that don't track one filter nothing — "can't see it" must never be the accidental
+ * default, or targets would silently vanish from menus.
+ */
+function observerPassivePerception(observer){
+  if(!observer) return Infinity;
+  const c=observer.c||observer;
+  if(c && c.abilities) return passiveScore(c,'perception','wis');
+  if(observer.hp!=null) return monsterPassivePerception(observer);
+  return Infinity;
+}
+
+function unitHiddenFrom(observerPassive, target){
+  const dc = target ? (target.hiddenDC!=null ? target.hiddenDC
+    : ((target.c&&target.c.conditions&&target.c.conditions.Hidden) ? (target.c.hiddenDC||0) : null)) : null;
+  return dc!=null && observerPassive < dc;
+}
+
 function maneuverHide(ad, pcUnit, log){
   const c=ad.checkSubject(pcUnit);
   // Cunning Action (Rogue 2nd): Hide as a bonus action when it's still free, same preference
   // order Dash's own Cunning Action branch uses.
   const cunning=c.cls==='Rogue' && (Number(c.level)||1)>=2 && !(c.battle&&c.battle.bonus);
   if(!cunning && !hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
-  const mapS={map:ad.map()};
-  const lvl=tileLightLevel(mapS, pcUnit.x, pcUnit.y);
   const foes=ad.allMonsters().filter(mo=>mo.hp>0&&isHostile(mo));
-  const closest=foes.slice().sort((a,b)=>gridDist(pcUnit.x,pcUnit.y,a.x,a.y)-gridDist(pcUnit.x,pcUnit.y,b.x,b.y))[0];
-  const fullCover=!!(closest && coverBetween(mapS, pcUnit.x,pcUnit.y, closest.x, closest.y)>=5);
-  const eligible = lvl===0 || (lvl===1 && hasFeat(c,'Skulker')) || fullCover;
-  if(!eligible){ flashBanner('Nothing to hide behind — need darkness, full cover, or (Skulker) dim light'); return {ok:true, success:false}; }
+  const el=hideEligibility(ad, pcUnit, foes, hasFeat(c,'Skulker'));
+  if(!el.ok){ flashBanner('Nothing to hide behind — need darkness, full cover, or (Skulker) dim light'); return {ok:true, success:false}; }
   if(cunning){ if(c.battle) c.battle.bonus=true; } else spendAction(c);
   const adv=skillCheckAdvantage(c,'stealth','dex');
   const r=rollSkillCheck(c,'stealth','dex',{adv:adv.adv, flatBonus:skillCheckBonus(c,'stealth')});

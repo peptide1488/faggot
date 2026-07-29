@@ -359,6 +359,31 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Monster hiding — stealth becomes two-way (v120.237)
+
+Stealth ran in one direction only: a PC could Hide (`maneuverHide`) and a monster could Search for
+them, but **nothing in the app could ever set a monster's `hiddenDC`**. That's why the Search
+action added in v120.232 usually found nothing — there was never anything to find.
+
+Closed with one shared rule per behaviour, not a parallel monster copy:
+- `hideEligibility(ad, unit, watchers, skulker)` — extracted from `maneuverHide`, now used by both
+  sides: darkness, full cover from the nearest watcher, or dim light with Skulker.
+- `hideMonster(ad, mo, watchers, log)` — the monster's Hide action. Its Stealth is the CR-derived
+  DEX check (`monsterHideRoll`), same shape as `monsterSearchRoll`, because the bestiary carries no
+  per-skill data. Sets `hiddenDC` + the Hidden condition. DM triggers it with 🫥 on the roster.
+- `revealUnit(u)` — attacking ends hiding, for **either** unit shape (a PC's `c.conditions` or a
+  monster's own `conds[]`). The reveal site in `attackFlow` was `isPc &&`-gated; a hidden monster
+  would otherwise have kept advantage forever.
+- `unitHiddenFrom(observerPassive, target)` — 5e's "passive Perception meets or beats the Stealth
+  total and you notice it automatically", mirroring the monster-AI filter that already existed for
+  hidden PCs. Ties go to the observer.
+- `buildTargetingOpts` filters out monsters the looker hasn't noticed. **`observerPassivePerception`
+  returns `Infinity` for an unknown observer, so any caller that doesn't supply one filters nothing**
+  — "can't see it" must never be the accidental default, or targets would silently vanish.
+
+Known scope limits: monster hiding is DM-triggered, not something the tactical AI decides to do on
+its own; and monsters get no Skulker equivalent.
+
 ## Search (v120.232)
 
 The Search action was **half-built, not missing**: `monsterSearchRoll` let a DM's monster hunt
