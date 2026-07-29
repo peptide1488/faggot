@@ -532,6 +532,20 @@ const SPELL_RANGE={
   'Dominate Monster':60,'Feeblemind':150,'Power Word Stun':60,'Sunburst':60,
   'Meteor Swarm':500
 };
+
+// Damage type for spells whose SPELL_DESC prose doesn't state it in a form parseSpellMechanics
+// can pick up. Same escape hatch as SPELL_RANGE above, and for the same reason: the parser reads
+// the type from a "<dice> <type>" phrase, so a spell that mentions its type anywhere else (or
+// not at all) silently ends up with dtype:'' — and an empty type means monsterDmgMult() can
+// never apply resistance, vulnerability or immunity to it. Found 2026-07-29 by parsing all 257
+// spells and flagging any with damage but no type. Sacred Flame says "Radiant flame" up front,
+// never "1d8 radiant"; the other two never name their type at all.
+// NOT listed here, deliberately: Absorb Elements, whose rider type mirrors whatever triggered it.
+const SPELL_DTYPE={
+  'Sacred Flame':'radiant',        // PHB: radiant, Dex save, ignores cover
+  'Spike Growth':'piercing',       // PHB: 2d4 piercing per 5 ft moved
+  'Spiritual Weapon':'force'       // PHB: force — notably bypasses physical-resistant incorporeals
+};
 // Condition a spell imposes on its target(s) {c:label, r:rounds}.
 
 const SPELL_COND={'Hold Person':{c:'Paralyzed',r:10},'Hold Monster':{c:'Paralyzed',r:10},'Hex':{c:'Hexed',r:600},"Hunter's Mark":{c:'Marked',r:600},'Faerie Fire':{c:'Faerie Fire',r:10},'Bane':{c:'Baned',r:10},'Slow':{c:'Slowed',r:10},'Sleep':{c:'Asleep',r:10},"Tasha's Hideous Laughter":{c:'Incapacitated (prone, laughing)',r:10},'Hypnotic Pattern':{c:'Charmed',r:10},'Banishment':{c:'Banished',r:10},'Stinking Cloud':{c:'Retching',r:10},'Web':{c:'Restrained',r:10},'Entangle':{c:'Restrained',r:10},'Command':{c:'Commanded',r:1},'Blindness/Deafness':{c:'Blinded',r:10},'Ray of Enfeeblement':{c:'Enfeebled',r:10},'Bestow Curse':{c:'Cursed',r:10},'Crown of Madness':{c:'Charmed',r:10},'Dominate Beast':{c:'Dominated',r:10},'Dominate Person':{c:'Dominated',r:10},'Dominate Monster':{c:'Dominated',r:10},'Fear':{c:'Frightened',r:10},'Confusion':{c:'Confused',r:10},'Color Spray':{c:'Blinded',r:1},'Ray of Sickness':{c:'Poisoned',r:1},'Contagion':{c:'Poisoned',r:70},'Heat Metal':{c:'(drop or take dmg)',r:10},'Grease':{c:'Prone',r:1},'Charm Person':{c:'Charmed',r:600},'Animal Friendship':{c:'Charmed',r:14400},'Fear':{c:'Frightened',r:10},'Sleet Storm':{c:'Prone',r:1},'Sunbeam':{c:'Blinded',r:10},'Shocking Grasp':{c:'No Reactions',r:1},'Chill Touch':{c:"Can't Heal",r:1},'Guiding Bolt':{c:'Guided',r:1},'Power Word Stun':{c:'Stunned',r:10},'Forcecage':{c:'Restrained',r:6000},

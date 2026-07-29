@@ -359,6 +359,31 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Spell damage types the prose never stated + targeting actually wired (v120.238)
+
+**`SPELL_DTYPE`.** `parseSpellMechanics` reads a damage type from a `"<dice> <type>"` phrase, so a
+spell that names its type anywhere else — or never — silently ended up with `dtype:''`, and an
+empty type means `monsterDmgMult()` can never apply resistance/vulnerability/immunity to it. Found
+by parsing all **257** spells and flagging any with damage but no type. Three were real:
+`Sacred Flame` → radiant (its prose opens "Radiant flame", never "1d8 radiant"), `Spike Growth` →
+piercing, `Spiritual Weapon` → force (notable: force bypasses incorporeal physical resistance).
+Same override-table escape hatch as `SPELL_RANGE`. `Absorb Elements` is deliberately excluded —
+its rider type mirrors whatever triggered it. The other flagged spells (Guidance, Resistance,
+Shillelagh) are false positives: their d4/d8 is a bonus die or a weapon die, not spell damage.
+
+**Hidden-monster targeting is now actually wired.** v120.237 added the filter to
+`buildTargetingOpts`, but no caller passed an `observer`, so it never ran and hidden monsters
+stayed targetable. `openSpellTarget`, `qbOpenAttack` and `qbSpellTarget` now pass the acting
+character, and `monstersInRange` defaults to this device's own character. The `Infinity` default
+for an unknown observer is retained, so anything not yet wired still filters nothing.
+
+**A self-inflicted bug worth recording**, because it's the failure mode the modularization note
+warns about. The `SPELL_DTYPE` override was first inserted between `if(groups.length){…}` and the
+`else if` flat-heal branch below it — which re-parented that `else` onto the new statement. Effect:
+`Regenerate` ("Restore 4d8+15 HP") had its correct `4d8+15` heal overwritten by the flat `15`.
+Caught by the *existing* Regenerate test. When adding a statement in `parseSpellMechanics`, check
+whether the next block starts with `else`.
+
 ## Monster hiding — stealth becomes two-way (v120.237)
 
 Stealth ran in one direction only: a PC could Hide (`maneuverHide`) and a monster could Search for

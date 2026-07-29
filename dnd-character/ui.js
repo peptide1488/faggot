@@ -608,7 +608,10 @@ function openSpellTarget(c, name, level){
     } else {
       body+=`<p class="muted" style="font-size:11.5px;margin:0 0 8px">${aoeR?'Slate = blocked · Gold = clear shot · Orange = blast. Tap gold to aim, then Cast. Drag to pan.':'Slate = blocked · Gold = clear shot. Tap a gold enemy to aim, then Cast. Drag map to pan.'}</p>`;
     }
-    liveOpts=buildTargetingOpts(s, me, tilesR, { needLos:!seek&&tilesR>1, seek:!!seek, reach:reach, center:center, aoeR:aoeR, targets:picked?[picked.id]:null });
+    // observer:c — the caster is who's looking, so a monster hiding well enough to beat their
+    // passive Perception drops out of the target list (v120.238; the filter existed in
+    // buildTargetingOpts from v120.237 but nothing passed an observer, so it never actually ran).
+    liveOpts=buildTargetingOpts(s, me, tilesR, { needLos:!seek&&tilesR>1, seek:!!seek, reach:reach, center:center, aoeR:aoeR, targets:picked?[picked.id]:null, observer:c });
     const opts=liveOpts;
     body+=mapGridHTML(s,false,opts);
     body+=`<button class="btn ghost block" id="stClose" style="margin-top:10px">Cancel</button>`;
@@ -6204,7 +6207,7 @@ function qbOpenAttack(c){ const s=QB, pc=s.players[0]; const foes=s.monsters.fil
     const rangeTiles=buildRangeTileSet(s, pc.x, pc.y, tiles, needLos, false);
     const tIds=foes.filter(mo=>rangeTiles.has(mo.x+','+mo.y)).map(mo=>mo.id);
     const objHere=listHazardObjectsInRange(s, pc, tiles, needLos).filter(h=>rangeTiles.has(h.x+','+h.y));
-    const opts=buildTargetingOpts(s, pc, tiles, { needLos, targets:tIds });
+    const opts=buildTargetingOpts(s, pc, tiles, { needLos, targets:tIds, observer:c });
     body+='<p class="muted" style="font-size:12px;margin:0 0 8px"><b>'+esc(pick.name)+'</b> — range '+(tiles*5)+' ft'+(needLos?' · line of sight':' · adjacent')+'. Tap a gold enemy'+(objHere.length?' or a listed barrel':'')+'. Drag to pan.</p>';
     if(objHere.length){
       body+=objHere.map((h,i)=>`<div class="spell"><div class="nm"><b>🛢️ ${esc(h.def.name)}</b><small>(${h.x},${h.y})</small></div><button class="btn sm" data-qao2="${i}">Smash</button></div>`).join('');
@@ -6438,7 +6441,10 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
       body+=`<p class="muted" style="font-size:11.5px;margin:0 0 6px">🛢️ Objects in range:</p>`;
       body+=hazIn.map((h,i)=>`<div class="spell"><div class="nm"><b>${esc(h.def.name)}</b><small>(${h.x},${h.y})</small></div><button class="btn sm" data-qstobj="${i}">Aim</button></div>`).join('');
     }
-    liveOpts=buildTargetingOpts(s, me, tilesR, { needLos:!seek&&tilesR>1, seek:!!seek, reach:reach, center:center, aoeR:aoeR, targets:picked?[picked.id]:null });
+    // observer:c — the caster is who's looking, so a monster hiding well enough to beat their
+    // passive Perception drops out of the target list (v120.238; the filter existed in
+    // buildTargetingOpts from v120.237 but nothing passed an observer, so it never actually ran).
+    liveOpts=buildTargetingOpts(s, me, tilesR, { needLos:!seek&&tilesR>1, seek:!!seek, reach:reach, center:center, aoeR:aoeR, targets:picked?[picked.id]:null, observer:c });
     const opts=liveOpts;
     body+=mapGridHTML(s,false,opts);
     body+=`<button class="btn ghost block" id="qstClose" style="margin-top:10px">Cancel</button>`;

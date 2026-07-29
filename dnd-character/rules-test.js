@@ -34,7 +34,7 @@ eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_DESC=SPELL_DESC;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
@@ -3553,6 +3553,32 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- Spell damage types the prose never stated (v120.238) ----
+   parseSpellMechanics reads the damage type from a "<dice> <type>" phrase, so a spell that names
+   its type anywhere else — or not at all — silently ended up with dtype:''. An empty type means
+   monsterDmgMult() can never apply resistance/vulnerability/immunity to that spell. Found by
+   parsing all 257 spells and flagging any with damage but no type. */
+{
+  T('Sacred Flame is radiant (prose says "Radiant flame", never "1d8 radiant")',
+    parseSpellMechanics('Sacred Flame').dtype==='radiant');
+  T('Spike Growth is piercing (prose never names a type at all)',
+    parseSpellMechanics('Spike Growth').dtype==='piercing');
+  T('Spiritual Weapon is force (matters: force bypasses incorporeal physical resistance)',
+    parseSpellMechanics('Spiritual Weapon').dtype==='force');
+  // The override must not invent damage where there is none, nor override a correctly-parsed type.
+  T('the dtype override never fires for a spell with no damage', !SPELL_DTYPE['Bless']);
+  T('a spell that DOES state its type inline still parses it from the prose (no regression)',
+    parseSpellMechanics('Fire Bolt').dtype==='fire');
+  // The payoff: a fire-immune monster must not shrug off radiant damage, and vice versa.
+  { const dragon={base:'Red Dragon', name:'Red Dragon'};
+    const sf=parseSpellMechanics('Sacred Flame');
+    T('a fire-immune monster takes FULL damage from Sacred Flame now that it is typed radiant',
+      monsterDmgMult(dragon, sf.dtype)===1); }
+  // Every spell in the override table must actually deal damage, or the entry is dead weight.
+  T('every SPELL_DTYPE entry belongs to a spell that really deals damage',
+    Object.keys(SPELL_DTYPE).every(n=>!!parseSpellMechanics(n).dmg));
+}
+
 /* ---- Monster hiding (v120.237) ----
    Stealth was one-directional: a PC could hide (maneuverHide) and a monster could Search for
    them, but nothing could ever set a monster's hiddenDC — so the Search action added in v120.232
@@ -3606,6 +3632,30 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     observerPassivePerception(null)===Infinity);
   T('observerPassivePerception: reads a real character\'s passive Perception',
     Number.isFinite(observerPassivePerception(newCharacter('Watcher'))));
+
+  /* v120.238: the filter existed from v120.237 but NOTHING passed an observer, so it never ran
+     and hidden monsters stayed targetable. Assert the real targeting builder drops them. */
+  {
+    const dull=newCharacter('Dull');   dull.abilities={str:10,dex:10,con:10,int:10,wis:6,cha:10};
+    const keen=newCharacter('Keen');   keen.abilities={str:10,dex:10,con:10,int:10,wis:20,cha:10};
+    keen.skillProf.perception=true;
+    // One monster only. An earlier draft of this test put a second monster in the line and it
+    // vanished from the target list for an unrelated (and correct) reason — a creature standing
+    // between you and the target blocks it — which nearly got misread as a filter bug.
+    const mk=hidden=>({ map:{cols:10,rows:5,tiles:{},light:{mode:'day'}},
+      monsters:[{id:'lurker', name:'Goblin', base:'Goblin', hp:7,max:7,ac:15,x:3,y:2,
+                 conds:hidden?[{name:'Hidden',rounds:100}]:[], hiddenDC:hidden?14:null}],
+      players:[] });
+    const from={x:0,y:0};
+    const ids=(hidden,o)=>(buildTargetingOpts(mk(hidden), from, 8, o||{}).targets||[]);
+    T('targeting: an unhidden monster is targetable (control)', ids(false).includes('lurker'));
+    T('targeting: with NO observer nothing is filtered (the safe default is preserved)',
+      ids(true).includes('lurker'));
+    T('targeting: a dull-eyed PC (passive 8) cannot target a monster hiding at Stealth 14',
+      !ids(true,{observer:dull}).includes('lurker'));
+    T('targeting: a keen-eyed PC (passive 17) CAN target that same hidden monster',
+      ids(true,{observer:keen}).includes('lurker'));
+  }
 
   // And the payoff: the Search action can now actually find something.
   { const seeker=newCharacter('Finder'); seeker.abilities={str:10,dex:10,con:10,int:10,wis:18,cha:10};

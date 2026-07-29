@@ -121,7 +121,17 @@ usage burns tokens fast. Follow this order:
    resolve a real attack must pre-roll the d20 (`{face:20}`, or stub `Math.random`) — `toHit:99`
    is NOT a guaranteed hit, because a natural 1 always misses, and one test flaked ~5% of runs
    on exactly that (fixed 2026-07-28).
-7. **Deploying takes TWO pushes.** Work happens on `iso3d-engine`; GitHub Pages serves
+7. **`rules-test.js` does NOT cover UI wiring — click new handlers in a real browser.** The suite
+   evals the app against a stub DOM and exercises *rules*; a click handler is never executed. A
+   handler calling a function that doesn't exist passes the entire suite and then throws the
+   instant a user presses the button (this happened on 2026-07-29: a `dmLog()` that was never
+   defined). Playwright is the check that works — `dmHost()`, `render()`, click the selector,
+   then `browser_console_messages` at level `error`.
+   A static "is every called identifier defined?" guard was attempted and abandoned: stripping
+   comments/strings/template literals with regex mangles the source and reported 195 false
+   positives (`flashBanner`, `render`, `esc` …). That's the same known-hard problem the
+   modularization note above warns about — don't retry it without a real parser.
+8. **Deploying takes TWO pushes.** Work happens on `iso3d-engine`; GitHub Pages serves
    `claude/elegant-bohr-zx67jk` (verified via the Pages API — `build_type: legacy`, path `/`).
    A push to `iso3d-engine` alone changes nothing the user can see:
    `git push origin iso3d-engine && git push origin iso3d-engine:claude/elegant-bohr-zx67jk`

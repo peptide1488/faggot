@@ -142,7 +142,12 @@ function battleSession(){ return (typeof QB!=='undefined'&&QB&&QB.active)?QB:(ne
 
 function myMapPos(){ if(!net||!net.session) return {x:0,y:0}; return net.session.players.find(p=>p.id===net.peer.id)||{x:0,y:0}; }
 
-function monstersInRange(fromPos, tiles){ if(!net||!net.session) return []; return net.session.monsters.filter(m=>m.hp>0 && inBlast(fromPos.x,fromPos.y,m.x,m.y,tiles) && losClear(net.session,fromPos.x,fromPos.y,m.x,m.y)); }
+// A hidden monster the local character hasn't noticed isn't a legal target (v120.238). The
+// observer defaults to this device's own character, since that's always who is looking here —
+// unlike buildTargetingOpts, which serves several modes and so has to be told.
+function monstersInRange(fromPos, tiles, observer){ if(!net||!net.session) return [];
+  const passive=observerPassivePerception(observer!==undefined?observer:playerChar());
+  return net.session.monsters.filter(m=>m.hp>0 && inBlast(fromPos.x,fromPos.y,m.x,m.y,tiles) && losClear(net.session,fromPos.x,fromPos.y,m.x,m.y) && !unitHiddenFrom(passive,m)); }
 
 function deleteCampaign(name){ const all=campaigns(); delete all[name];
   try{ localStorage.setItem('grimoire.campaigns',JSON.stringify(all)); }catch(e){}

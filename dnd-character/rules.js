@@ -1123,6 +1123,14 @@ function parseSpellMechanics(name){
     if(flat) out.heal=flat[1];
   }
   if(!out.save && !out.heal && /\b(ranged|melee|spell attack|attack roll|beam|ray|rays|bolt)\b/i.test(d)) out.attack=true;
+  // Explicit damage-type override, for spells whose prose never puts the type next to the dice —
+  // an empty dtype silently disables resist/vuln/immunity for that spell (see SPELL_DTYPE).
+  // NOTE: this MUST stay below the if/else-if chain above. Putting it between `if(groups.length)`
+  // and the `else if` flat-heal branch re-parented that `else` onto this statement, so Regenerate
+  // ("Restore 4d8+15 HP") had its correct 4d8+15 heal overwritten by the flat 15. Caught by the
+  // existing Regenerate test — the exact "statement swept into the wrong block" failure the
+  // modularization note in CLAUDE.md warns about.
+  if(out.dmg && SPELL_DTYPE[name]) out.dtype=SPELL_DTYPE[name];
   return out;
 }
 
