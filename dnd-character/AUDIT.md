@@ -359,6 +359,30 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## The 'me' unit had no position, and Engine crashed on unresolvable ids (v120.240)
+
+Two fixes to the shared resolver, both found while probing the blind spot recorded in v120.234.
+
+**1. `playerNetAdapter.unit('me')` carried no x/y.** Every distance check involving the local
+player therefore saw `null` and fell back to the weapon's range (`!(atk.tiles>1)`). Measured live:
+firing a **bow at an ADJACENT PRONE target**, the DM's screen showed **advantage (+1)** — correct
+RAW, since prone grants advantage within 5 ft — while the player's showed **disadvantage (−1)**,
+because a 24-tile weapon was assumed to be a ranged attack. A two-step swing on the same shot,
+with the player's screen wrong. `unit('me')` now reads x/y off this device's own mirror in the DM
+broadcast, the same `players.find(p => p.id === net.peer.id)` lookup `ac` and `cover` already use.
+
+**2. `Engine.hitResult` threw a `TypeError` on any unresolvable unit id.** `ad.unit(id)` returns
+null for an id it can't resolve — a monster deleted mid-turn, a player who dropped, a stale id in
+a queued action, or `'me'` before a character is bound — and all three `ad.checkSubject(...)` call
+sites dereferenced it. That took the whole attack down rather than degrading. Guarded; everything
+downstream already tolerated a null subject.
+
+*Method note:* three successive attempts to measure #1 were wrecked by my own scenario errors —
+a hand-built player mirror with `conds:[]` while the real sheet carried `Prone`, and a Level 20
+Wizard whose armor non-proficiency added a disadvantage the DM side can't compute. The bug only
+became visible after controlling for both. A disagreement between two modes is not automatically
+the bug you're hunting.
+
 ## Monster attacks were 80% untyped (fixed v120.239)
 
 The bestiary writes `"Scimitar +4 (1d6+2)"` and never says "slashing", and `parseMonsterAttacks`

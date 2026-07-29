@@ -3553,6 +3553,46 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- The 'me' unit carries its position (v120.240) ----
+   playerNetAdapter.unit('me') returned {me,c,id} with NO x/y, so every distance check involving
+   the local player saw null and fell back to the weapon's range. Measured on the live site:
+   firing a BOW at an ADJACENT PRONE target, the DM's screen showed advantage (+1) — correct RAW,
+   since prone grants advantage within 5 ft — while the player's showed disadvantage (-1), because
+   a 24-tile weapon was assumed to be a ranged attack. A two-step swing on the same shot. */
+{
+  const savedNet=getNet();
+  const sess={ map:{cols:8,rows:1,tiles:{}},
+    monsters:[{id:'m1',name:'Orc',base:'Orc',hp:20,max:20,ac:13,x:1,y:0,conds:[]}],
+    players:[{id:'p1',cid:'p1',name:'Hero',ac:15,hpCur:30,hpMax:30,x:4,y:0,conds:[]}] };
+  setNet({role:'player', session:sess, peer:{id:'p1'}, charId:null});
+  // playerChar() is null in this harness, so unit('me') must still return null, not throw.
+  T("unit('me') stays null (not a crash) when no character is bound", playerNetAdapter.unit('me')===null);
+  setNet(savedNet);
+}
+
+/* ---- Engine must not crash on an unresolvable unit (v120.240) ----
+   ad.unit(id) returns null for any id it can't resolve — a monster deleted mid-turn, a player
+   who dropped, a stale id in a queued action, or 'me' before a character is bound. Every
+   adapter's checkSubject dereferences the unit, so hitResult/castApply threw a TypeError and
+   took the whole attack down. Found while probing the melee blind spot: the crash was the thing
+   standing in the way of measuring it. */
+{
+  setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},
+    players:[], monsters:[{id:'m1',side:'mon',name:'Orc',base:'Orc',hp:20,max:20,ac:13,x:0,y:0,conds:[]}]});
+  const atk={name:'Club', toHit:5, dmg:'1d6', tiles:1};
+  const safe=fn=>{ try{ return fn(); }catch(e){ return 'THREW: '+e.message; } };
+  T('hitResult survives an unknown ATTACKER id instead of throwing',
+    typeof safe(()=>Engine.hitResult(qbAdapter,'nobody','m1',atk,10))==='object');
+  T('hitResult survives an unknown TARGET id instead of throwing',
+    typeof safe(()=>Engine.hitResult(qbAdapter,'m1','nobody',atk,10))==='object');
+  T('hitResult survives BOTH ids being unresolvable',
+    typeof safe(()=>Engine.hitResult(qbAdapter,'nobody','nothing',atk,10))==='object');
+  // A real attack must still resolve exactly as before — the guards are additive, not a behaviour change.
+  const ok=Engine.hitResult(qbAdapter,'m1','m1',atk,10);
+  T('a resolvable attack is unaffected by the null guards', typeof ok==='object' && ok.ac!=null);
+  setQB(null);
+}
+
 /* ---- Monster attack damage types (v120.239) ----
    Only 11 of 56 parsed monster attacks (20%) carried a damage type: the bestiary writes
    "Scimitar +4 (1d6+2)" and never says "slashing". An untyped hit can't match ANY resistance,

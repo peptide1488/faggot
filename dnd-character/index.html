@@ -1800,7 +1800,12 @@ const Engine = {
     // Armor non-proficiency (PHB): disadvantage on Str/Dex attack rolls. Only computable when
     // the actor's real character is reachable (checkSubject returns null for a monster or a
     // DM-hosted mirror of a connected player — same known limitation as Evasion above).
-    const armorSubj=ad.checkSubject&&ad.checkSubject(a);
+    // `a`/`t` are null whenever the id can't be resolved — a monster deleted mid-turn, a player
+    // who dropped, a stale id in a queued action, or 'me' before a character is bound. Every
+    // adapter's checkSubject dereferences the unit, so an unguarded call threw a TypeError and
+    // took the whole attack down instead of degrading (v120.240). Everything below already
+    // tolerates a null subject.
+    const armorSubj=(a&&ad.checkSubject)?ad.checkSubject(a):null;
     const armorDis=!!(armorSubj && armorSubj.armor && armorSubj.armor!=='none' && !armorProficient(armorSubj, armorSubj.armor));
     // Grappler feat: advantage on attacks vs a creature YOU'VE grappled (PHB) — grappledBy
     // stores the grappler's own display name (see maneuverGrapple's own comment on why a
@@ -1817,7 +1822,7 @@ const Engine = {
     // size qualifier is dropped — a documented simplification, not silently narrower than it
     // looks. "Unmounted" only ever matters for a real character target riding their OWN mount
     // (a monster can never be mounted in this engine, so this is always true against them).
-    const targetSubj=ad.checkSubject&&ad.checkSubject(t);
+    const targetSubj=(t&&ad.checkSubject)?ad.checkSubject(t):null;
     const mountedAdv=!!(armorSubj && armorSubj.mountedOn && hasFeat(armorSubj,'Mounted Combatant') && melee && !(targetSubj && targetSubj.mountedOn));
     // Altitude vs. reach (PHB): a melee attack needs the target within your weapon's reach
     // (5 ft, 10 ft for a reach weapon) counting the VERTICAL gap too — a ground-bound 5-ft-
@@ -1910,7 +1915,7 @@ const Engine = {
       // DM-hosted mirror of a connected player (the DM can't see that player's real feats) —
       // hasEvasion(null) is a safe false, so this only ever fires where the real character is
       // actually known locally (QB's own PC, or a player's own device).
-      const evasion = sp.save==='dex' && ad.checkSubject && hasEvasion(ad.checkSubject(t));
+      const evasion = sp.save==='dex' && t && ad.checkSubject && hasEvasion(ad.checkSubject(t));
       dmg = saved ? (evasion?0:Math.floor(sp.dmgTotal/2)) : (evasion?Math.floor(sp.dmgTotal/2):sp.dmgTotal);
       mult=ad.damageMult?ad.damageMult(t, sp.dtype):1; dmg=Math.max(0,Math.round(dmg*mult)); if(dmg) ad.hurt(t,dmg,sp.dtype);
     }
@@ -1986,7 +1991,14 @@ const sessionAdapter = {
 // attacks), so damageMult here stays 1. targetId 'me' = the local character.
 const playerNetAdapter = {
   unit:id=>{ const s=net&&net.session; if(!s) return null;
-    if(id==='me'){ const c=playerChar(); return c?{me:true, c, id:'me'}:null; }
+    // x/y come off this device's own mirror in the DM broadcast (v120.240). Without them every
+    // distance check involving 'me' saw null and fell back to the weapon's range, so a bow fired
+    // at an ADJACENT prone target was treated as a ranged attack: the DM's screen showed
+    // advantage (+1) and the player's showed disadvantage (-1) for the same shot. Same
+    // players.find(p=>p.id===net.peer.id) lookup `ac` and `cover` already use.
+    if(id==='me'){ const c=playerChar(); if(!c) return null;
+      const mine=(s.players&&net.peer&&s.players.find(p=>p.id===net.peer.id))||null;
+      return {me:true, c, id:'me', x:mine?mine.x:undefined, y:mine?mine.y:undefined}; }
     return s.monsters.find(m=>m.id===id)||s.players.find(p=>p.id===id); },
   session:()=>net&&net.session,
   ac:u=>{ if(!u.me) return u.ac||10; const s=net&&net.session; const me=s&&s.players&&net.peer&&s.players.find(p=>p.id===net.peer.id); return computeAC(u.c,{ignoreEffects:!!(me&&s&&inAntimagicField(s,me.x,me.y))}); },
@@ -2363,7 +2375,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.239';
+const APP_VERSION='v120.240';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
