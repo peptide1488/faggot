@@ -121,11 +121,19 @@ regressing quietly.
 - **Real sessions:** script the two-tab DM+player test (host in one tab, `playerJoin` in another
   over real PeerJS). It found the worst bug of the session. Nothing else exercises the netplay path.
 
-### Pillar 3 — Pay the 1.0 tax while it is still cheap
+### Pillar 3 — The 1.0 / licensing tax — **DO THIS LAST** (user's call, 2026-07-29)
 
-SRD content tagging is the only item here with a real deadline. It is already flagged below as the
-#1 App Store risk. Tagging entries as they're touched costs almost nothing; retrofitting 257 spells
-and 35 monsters the week before submission is miserable.
+SRD content tagging is flagged below as the #1 App Store risk, and tagging entries as they're
+touched is cheaper than retrofitting 257 spells and 35 monsters before submission. **But the user
+has explicitly put it last in the order — do not pick it up off a "keep going".** Licensing,
+publishing and other business decisions get an explicit go-ahead, never an assumption.
+
+A `NON_SRD` risk register was built and then **reverted at the user's request** (v120.246 → 247) —
+it was picked up off a "keep going" rather than being asked for. Nothing licensing-related is in
+the codebase now. If it's ever wanted, the findings from that pass were: **Beholder** and **Gazer**
+are the clear Product-Identity exposure; **Echo Knight**, **Circle of the Moon** and **Assassin**
+are non-SRD subclasses; and exactly one spell of 257 flagged — **Tasha's Hideous Laughter**, which
+SRD 5.1 carries as plain "Hideous Laughter", making it a rename rather than a removal.
 
 ### Pillar 4 — Depth where Grimoire is differentiated
 
