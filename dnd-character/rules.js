@@ -2627,6 +2627,68 @@ function visionLevel(c,s,x,y, fromX, fromY){
 
 function lightLabel(n){ return n>=2?'bright':n===1?'dim':'dark'; }
 
+/* ---- Fog of war (v120.241) ------------------------------------------------------------------
+   "Can this creature see that square right now?" — the shared predicate every fog feature needs.
+   Deliberately built on the three primitives that already exist rather than a parallel model:
+     * losClear   — walls and solid terrain block sight (and it samples a continuous ray, so it is
+                    symmetric; the Bresenham drift bug fixed in v120.235 never applied to it)
+     * visionLevel — light level AT the target square as seen FROM the viewer, already folding in
+                    darkvision (12 tiles / 60 ft) and magical darkness
+     * gridDist   — Chebyshev, 1 tile = 5 ft, same as everything else
+   Darkness is the hard cut: light level 0 from the viewer's position means not visible at all.
+   Dim (1) counts as seen — 5e treats dim as lightly obscured (disadvantage on Perception), not
+   blindness, which lightSkillMode already models elsewhere.
+
+   `maxTiles` exists purely as a perf bound on huge maps; 24 tiles = 120 ft, well past the point
+   where a battle map matters. Callers that need everything can pass Infinity. */
+function canSeeCell(s, viewer, x, y, maxTiles){
+  if(!s||!s.map||!viewer||viewer.x==null) return false;
+  const cap=maxTiles==null?24:maxTiles;
+  if(gridDist(viewer.x,viewer.y,x,y)>cap) return false;
+  const c=viewer.c||null;
+  if(visionLevel(c, s, x, y, viewer.x, viewer.y)<=0) return false;
+  return losClear(s, viewer.x, viewer.y, x, y, {ignoreCreatures:true});
+}
+
+/** Every cell this viewer can currently see, as a Set of "x,y" keys. */
+function visibleCells(s, viewer, maxTiles){
+  const out=new Set();
+  if(!s||!s.map||!viewer||viewer.x==null) return out;
+  const cols=s.map.cols|0, rows=s.map.rows|0;
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++)
+    if(canSeeCell(s, viewer, x, y, maxTiles)) out.add(x+','+y);
+  return out;
+}
+
+/**
+ * Fog memory: squares this viewer has ever seen. Classic three-state fog needs "never seen"
+ * (black), "seen before, not now" (remembered terrain, no creatures) and "visible now".
+ *
+ * Kept CLIENT-SIDE on purpose — fog is a presentation concern, and computing it locally means no
+ * protocol change, no extra broadcast payload, and no way for a player device to learn about
+ * squares it shouldn't. Keyed by viewer id + map size so a new map starts unexplored.
+ */
+const _fogMemory=new Map();
+function fogKey(s, viewerId){ return (viewerId||'me')+'@'+((s&&s.map)?(s.map.cols+'x'+s.map.rows):'0'); }
+function rememberSeen(s, viewerId, seen){
+  const k=fogKey(s,viewerId);
+  let set=_fogMemory.get(k); if(!set){ set=new Set(); _fogMemory.set(k,set); }
+  seen.forEach(v=>set.add(v));
+  return set;
+}
+function exploredCells(s, viewerId){ return _fogMemory.get(fogKey(s,viewerId))||new Set(); }
+function resetFog(viewerId){
+  if(viewerId==null){ _fogMemory.clear(); return; }
+  [..._fogMemory.keys()].forEach(k=>{ if(k.indexOf(viewerId+'@')===0) _fogMemory.delete(k); });
+}
+
+/** Fog state for one square: 'visible' | 'remembered' | 'unseen'. */
+function fogStateAt(s, viewer, viewerId, x, y, seenSet){
+  const seen=seenSet||visibleCells(s, viewer);
+  if(seen.has(x+','+y)) return 'visible';
+  return exploredCells(s, viewerId).has(x+','+y) ? 'remembered' : 'unseen';
+}
+
 function lightSkillMode(c, skillKey){
   const s=battleSession(); if(!s) return 'normal';
   const me=s.players&&s.players.find(p=>p.c===c||p.id==='pc'||(c&&p.cid===c.id));

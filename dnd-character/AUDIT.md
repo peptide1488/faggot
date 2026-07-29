@@ -359,6 +359,35 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Fog of war (v120.241)
+
+The player's own battle map now shows only what their character can see. Three states:
+**visible** (in sight now), **remembered** (explored earlier — terrain is drawn dim, creatures are
+NOT, since they may have moved) and **unseen** (blacked out).
+
+Built on the primitives that already existed rather than a second visibility model:
+- `losClear` for line of sight — note it samples a continuous ray through cell centres, so it is
+  symmetric and never had the Bresenham drift bug fixed in v120.235;
+- `visionLevel` for the light level at the target square *as seen from the viewer*, which already
+  folds in darkvision (12 tiles / 60 ft) and magical darkness. **Darkness is the hard cut**: level
+  0 means not visible. Dim counts as seen, because 5e treats dim as lightly obscured
+  (disadvantage on Perception), not blind — `lightSkillMode` already models that.
+
+`canSeeCell` / `visibleCells` are the shared predicates. Fog *memory* (`rememberSeen`,
+`exploredCells`, `fogStateAt`) is deliberately **client-side**: it's a presentation concern, so
+computing it locally means no protocol change, no extra broadcast payload, and no way for a player
+device to learn about squares it shouldn't. Keyed by viewer id + map size, so a new map starts
+unexplored.
+
+**Fog does not remove anything from target lists, by design.** 5e lets you attack a square you
+can't see — at disadvantage, which `hitResult` already applies via `seeTarget`. Gating target
+menus would be both wrong RAW and a repeat of the "targets silently vanish" hazard. Fog is
+strictly what you *see*, never what you may *do*.
+
+Opt-in per call site (`opts.fog`), so the DM map and every other caller are untouched, plus a
+🌫 toggle on the player's Battlefield card, persisted in `localStorage` so it survives the `net`
+object being rebuilt on rejoin.
+
 ## The 'me' unit had no position, and Engine crashed on unresolvable ids (v120.240)
 
 Two fixes to the shared resolver, both found while probing the blind spot recorded in v120.234.

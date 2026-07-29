@@ -3520,7 +3520,10 @@ function playerConnect(){ if(!net||net.role!=='player'||!net.peer) return;
 function playerJoin(code, charId){
   loadPeer(()=>{
     let peer; try{ peer=new Peer('grimoire-pl-'+Math.random().toString(36).slice(2,8),{debug:1}); }catch(e){ flashBanner('Could not join'); return; }
-    net={role:'player', code, peer, conn:null, session:null, charId, targetMon:null, connected:false};
+    net={role:'player', code, peer, conn:null, session:null, charId, targetMon:null, connected:false,
+      // Fog-of-war preference survives rejoining (v120.241) — net is rebuilt on every join, so
+      // without this the toggle would silently reset each session.
+      fogOff:(()=>{ try{ return localStorage.getItem('grimoire.fogOff')==='1'; }catch(e){ return false; } })()};
     peer.on('open',()=>{ playerConnect(); flashBanner('Joining game '+code+'…'); });
     peer.on('disconnected',()=>{ try{ if(!peer.destroyed) peer.reconnect(); }catch(e){} });
     peer.on('error',e=>{ const t=e&&e.type; if(t==='peer-unavailable'){ flashBanner('DM not found — check the code'); } else { net&&(net.connected=false); scheduleReconnect(); } render&&render(); });
@@ -3755,8 +3758,14 @@ function renderPlayerBattle(c){
     ${hasActionSurge(c)?`<button class="btn ghost sm block" data-pbt="surge" style="margin-top:8px${c.actionSurgeUsed?';opacity:.5':''}" ${c.actionSurgeUsed?'disabled':''}>⚡ ${c.actionSurgeUsed?'Action Surge spent (rest to recharge)':'Action Surge (+1 action)'}</button>`:''}
   </div>
   <div class="card">
-    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button><button class="btn ghost sm" id="pbRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button></h2>
-    ${mapGridHTML(s,false, net.moveMode?buildMoveRangeOpts(s,me,b.move||0,hasAction(c),effSpeed(c),isFlying(c)):{})}
+    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button><button class="btn ghost sm" id="pbRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button><button class="btn ghost sm" id="pbFogBtn" style="float:right;margin-right:6px" title="Show only what your character can see">${net.fogOff?'🌐 Fog off':'🌫 Fog on'}</button></h2>
+    ${mapGridHTML(s,false, Object.assign(
+        net.moveMode?buildMoveRangeOpts(s,me,b.move||0,hasAction(c),effSpeed(c),isFlying(c)):{},
+        // Fog of war (v120.241): the player's own map shows only what their character can see,
+        // with previously-explored squares dimmed. `me` carries x/y from the DM broadcast, and
+        // `c` supplies darkvision. Opt-in per call site, so the DM view is unaffected.
+        net.fogOff ? {} : {fog:{viewer:{x:me&&me.x, y:me&&me.y, c}, viewerId:(net.peer&&net.peer.id)||'me'}}
+      ))}
     <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?('Green: <='+(b.move||0)+' ft left (still act) · sheet speed '+effSpeed(c)+' ft'+(hasAction(c)?' · Red: Dash (Action) adds '+effSpeed(c)+' ft':' · no Action left for Dash')+' · Jump/climb marked on path') :'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
   </div>
   <div class="card">
@@ -3815,6 +3824,11 @@ function renderPlayerBattle(c){
     save(); render(); });
   { const mv=$('#pbMoveBtn'); if(mv) mv.onclick=()=>{ net.moveMode=!net.moveMode; render(); }; }
   { const rv=$('#pbRotBtn'); if(rv) rv.onclick=rotateMap; }
+  // Fog toggle — some tables prefer the whole map visible, and it's also the escape hatch if fog
+  // ever hides something it shouldn't. Persisted so it survives re-renders and reconnects.
+  { const fg=$('#pbFogBtn'); if(fg) fg.onclick=()=>{ net.fogOff=!net.fogOff;
+      try{ localStorage.setItem('grimoire.fogOff', net.fogOff?'1':''); }catch(e){}
+      render(); }; }
   if(isoView&&iso3dView&&net&&net.session) syncIso3DHost(net.session);
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
@@ -4717,6 +4731,13 @@ function loadCampaign(name){ if(!net||net.role!=='dm') return; const cp=campaign
   dmBroadcast(); render(); flashBanner('📜 Campaign loaded: '+name); }
 
 function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; const tiles=s.map.tiles||{}; let cells='';
+  // Fog is computed here, once per render, rather than per cell — visibleCells walks the grid and
+  // doing that inside the cell loop would be O(n^2) on every frame. Null unless a caller opts in.
+  let fogSeen=null, fogKnown=null;
+  if(opts.fog && opts.fog.viewer && opts.fog.viewer.x!=null && !isDM){
+    fogSeen=visibleCells(s, opts.fog.viewer);
+    fogKnown=rememberSeen(s, opts.fog.viewerId, fogSeen);   // accumulates, then returns the memory
+  }
   const at=(x,y)=>tiles[x+','+y];
   const iso=isoView, rot=mapRotation;
   const stageW=iso?Math.ceil(IsoRenderer.stageSize(cols,rows,rot).w):0, stageH=iso?Math.ceil(IsoRenderer.stageSize(cols,rows,rot).h):0;
@@ -4792,7 +4813,19 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       style+=`left:${cx-20}px;top:${cy-20}px;z-index:${(rx+ry)*100+hgt};`;
     }
     const decorKey=decorAt(s,x,y), decorHTML=(iso&&decorKey)?decorTokenHTML(decorKey):'';
-    const inner=iso?`<div class="isoContent">${decorHTML}${tok}${elevBadge}</div>`:`${tok}${elevBadge}`;
+    // Fog of war (v120.241): only when a caller opts in with opts.fog — the DM map and every
+    // existing call site are untouched. Three states: seen now, seen before (terrain remembered,
+    // creatures NOT — they may have moved), never seen (nothing at all).
+    // Note this hides tokens visually; it deliberately does NOT remove targets, because 5e lets
+    // you attack a square you can't see at disadvantage, which hitResult already applies.
+    let fogTok=tok;
+    if(fogSeen){
+      const key=x+','+y;
+      if(fogSeen.has(key)) extra+=' fogSeen';
+      else if(fogKnown && fogKnown.has(key)){ extra+=' fogRemembered'; fogTok=elevBadge?'':''; }
+      else { extra+=' fogUnseen'; fogTok=''; }
+    }
+    const inner=iso?`<div class="isoContent">${decorHTML}${fogTok}${elevBadge}</div>`:`${fogTok}${elevBadge}`;
     cells+=`<div class="mcell${iso?' iso':''}${td?' ter-'+ter:''}${extra} ${canTarget?'tgt':''}" data-cell="${x},${y}" style="${style}" ${canTarget?`data-target="${mo.id}"`:''}>${inner}</div>`;
   }
   if(iso){

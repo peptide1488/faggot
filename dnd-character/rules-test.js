@@ -3553,6 +3553,54 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   setQB(null);
 }
 
+/* ---- Fog of war (v120.241) ----
+   Built on losClear + visionLevel + gridDist rather than a parallel visibility model. */
+{
+  const lit = (tiles)=>({ map:{cols:8,rows:3,tiles:tiles||{}, light:{mode:'day'}}, monsters:[], players:[], lights:[] });
+  const dark= (tiles)=>({ map:{cols:8,rows:3,tiles:tiles||{}, light:{mode:'night'}}, monsters:[], players:[], lights:[] });
+  const viewer=(x,y,c)=>({x,y,c:c||null});
+
+  T('fog: an open square in daylight is visible', canSeeCell(lit(), viewer(0,0), 3,0)===true);
+  T('fog: a wall blocks sight of the square behind it',
+    canSeeCell(lit({'2,0':'wall'}), viewer(0,0), 4,0)===false);
+  T('fog: the wall square itself is still visible (you see the wall)',
+    canSeeCell(lit({'2,0':'wall'}), viewer(0,0), 2,0)===true);
+  T('fog: darkness hides a square from a creature with no darkvision',
+    canSeeCell(dark(), viewer(0,0), 3,0)===false);
+  { const c=newCharacter('Elf'); c.race='Elf';                       // Elves have Darkvision
+    T('fog: darkvision sees into the dark (and the race trait is what enables it)',
+      hasDarkvision(c)===true && canSeeCell(dark(), viewer(0,0,c), 3,0)===true); }
+  T('fog: the perf cap excludes squares beyond maxTiles', canSeeCell(lit(), viewer(0,0), 7,0, 3)===false);
+
+  // visibleCells is just canSeeCell over the grid; a wall must shrink the set.
+  { const open=visibleCells(lit(), viewer(0,0));
+    const walled=visibleCells(lit({'2,0':'wall','2,1':'wall','2,2':'wall'}), viewer(0,0));
+    T('fog: a wall across the map reduces the visible set', walled.size < open.size);
+    T('fog: the viewer always sees its own square', open.has('0,0')); }
+
+  // Three-state memory: unseen -> visible -> remembered.
+  {
+    resetFog('tester');
+    const s=lit({'2,0':'wall','2,1':'wall','2,2':'wall'});
+    T('fog: a square never seen is "unseen"', fogStateAt(s, viewer(0,0), 'tester', 6,0)==='unseen');
+    const seen=visibleCells(s, viewer(0,0));
+    rememberSeen(s, 'tester', seen);
+    T('fog: a square in view right now is "visible"', fogStateAt(s, viewer(0,0), 'tester', 1,0)==='visible');
+    // Walk the viewer somewhere that can no longer see square 1,0 (behind the wall from 6,0).
+    const seen2=visibleCells(s, viewer(6,0));
+    rememberSeen(s, 'tester', seen2);
+    T('fog: a square seen earlier but not now is "remembered", not "unseen"',
+      fogStateAt(s, viewer(6,0), 'tester', 1,0, seen2)==='remembered');
+    T('fog: memory is per-viewer — a different id has explored nothing',
+      fogStateAt(s, viewer(6,0), 'someone-else', 1,0, seen2)==='unseen');
+    resetFog('tester');
+    T('fog: resetFog clears that viewer\'s memory', exploredCells(s,'tester').size===0);
+  }
+  // Degrade safely rather than throw on the shapes that actually occur.
+  T('fog: no map or no viewer position yields no visibility, and does not throw',
+    canSeeCell(null, viewer(0,0), 1,1)===false && canSeeCell(lit(), {x:null,y:null}, 1,1)===false);
+}
+
 /* ---- The 'me' unit carries its position (v120.240) ----
    playerNetAdapter.unit('me') returned {me,c,id} with NO x/y, so every distance check involving
    the local player saw null and fell back to the weapon's range. Measured on the live site:
