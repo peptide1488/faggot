@@ -34,7 +34,7 @@ eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
@@ -3692,6 +3692,36 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     T(`SPELL_MECH ratchet: ${proseOnly} spells still derive mechanics from prose (must not increase; was 0 at migration)`,
       proseOnly<=0);
   }
+}
+
+/* ---- Structured monster attacks (v120.243, Pillar 1 continued) ----
+   Keyed by the exact `atk` string, so built-in bestiary entries use structured data while
+   user-typed homebrew/NPC strings keep falling through to the prose parser — which for them is
+   the intended feature, not a liability. */
+{
+  const wyvern=MONSTERS_5E.find(m=>m.n==='Wyvern');
+  const sting=parseMonsterAttacks(wyvern.atk).find(a=>/Stinger/i.test(a.name));
+  T('MONSTER_MECH: the Wyvern\'s Stinger is a 10 ft reach MELEE attack, not a 120 ft ranged one',
+    sting.tiles===2);
+  // The heuristic itself was fixed, so a homebrew "Stinger" is no longer ranged either.
+  T('the range heuristic no longer treats "stinger"/"spike" as ranged (helps homebrew too)',
+    parseMonsterAttacks('Stinger +5 (1d6)')[0].tiles<12);
+
+  // Homebrew must NOT be captured by the table — it has to keep using the prose parser.
+  { const hb=parseMonsterAttacks('Custom Blade +6 (2d8+3 slashing) · Zap +4 (1d8 lightning)');
+    T('MONSTER_MECH: a user-typed homebrew string still parses from prose (2 attacks, typed)',
+      hb.length===2 && hb[0].hit===6 && hb[0].dtype==='slashing' && hb[1].dtype==='lightning'); }
+
+  // The table must not hand out shared objects that a caller could mutate.
+  { const a1=parseMonsterAttacks(wyvern.atk)[0]; a1.dmg='999d999';
+    const a2=parseMonsterAttacks(wyvern.atk)[0];
+    T('MONSTER_MECH returns copies — mutating one parse cannot corrupt the shared table',
+      a2.dmg!=='999d999'); }
+
+  // Ratchet: every built-in bestiary entry must be covered, or it silently reverts to prose.
+  { const missing=MONSTERS_5E.filter(m=>(m.atk||'').trim() && !MONSTER_MECH[m.atk]).map(m=>m.n);
+    T(`MONSTER_MECH ratchet: every bestiary monster has a structured entry${missing.length?' — MISSING: '+missing.join(', '):''}`,
+      missing.length===0); }
 }
 
 /* ---- Monster attack damage types (v120.239) ----

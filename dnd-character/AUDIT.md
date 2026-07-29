@@ -359,6 +359,30 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Monster attacks are structured data too — and the Wyvern could sting you from 120 ft (v120.243)
+
+The bestiary's `atk` strings were the other load-bearing prose. `MONSTER_MECH` is now authoritative
+for built-in monsters, completing Pillar 1 alongside `SPELL_MECH`.
+
+**One deliberate difference from the spell migration: the prose parser is NOT retired.** Homebrew
+monsters and NPCs let the user type an `atk` string by hand (`#hbAtk` / `#npcAtk`), and parsing
+English is the intended feature there. So the table is keyed by the **exact `atk` string**: a
+built-in entry matches and uses structured data, while any user-typed string simply doesn't match
+and falls through to the parser. No signature change, no call-site churn, homebrew safe by
+construction. If a bestiary string is ever edited its key stops matching and that monster reverts
+to prose parsing — the same behaviour as before the table existed, so the failure mode is safe, and
+a ratchet test asserts every entry is still covered.
+
+**The bug it exposed:** the range heuristic marked an attack ranged (24 tiles / 120 ft) if its text
+contained `bow|crossbow|sling|javelin|dart|spit|ray|bolt|hurl|thrown|web|net|stinger|spike`. Two of
+those are melee terms, so the **Wyvern's Stinger was a 120 ft ranged attack**. Nothing in the
+bestiary uses "spike" and the Wyvern is the only "stinger", so both words were removed from the
+heuristic — which fixes homebrew as well — and the table states the RAW value (10 ft reach,
+`tiles:2`).
+
+`parseMonsterAttacks` returns **copies** of table rows, so a caller stamping a rolled value onto an
+attack can't corrupt the shared data. There's a test for that specifically.
+
 ## Spell mechanics are structured data now, not prose (v120.242 — strategy Pillar 1)
 
 `SPELL_DESC` was **load-bearing English**: `parseSpellMechanics` regex-mined player-facing

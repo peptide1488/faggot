@@ -3271,7 +3271,13 @@ function castDetectThoughts(c, mo, log){
   return flavor;
 }
 
-function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
+function parseMonsterAttacks(str){
+  // Built-in bestiary entries are structured data (v120.243); only user-typed homebrew/NPC strings
+  // reach the prose parser below, which for them is the intended behaviour. Returns copies so a
+  // caller mutating an attack (e.g. stamping a rolled value on it) can't corrupt the shared table.
+  const mech=MONSTER_MECH[str];
+  if(mech) return mech.map(a=>Object.assign({}, a, {raw:str}));
+  return (str||'').split('·').map(s=>s.trim()).filter(Boolean).map(part=>{
   const hit=part.match(/\+(\d+)\s*\(/)||part.match(/\+(\d+)/); const dc=part.match(/DC\s*(\d+)\s*(Str|Dex|Con|Int|Wis|Cha)/i);
   const dmg=part.match(/(\d+d\d+(?:\s*\+\s*\d+)?)/); const name=part.split(/\s*\(|\s*\+/)[0].trim();
   // Damage type (e.g. "2d8+4 bludgeoning", "4d6 fire") — previously unparsed, so monster hits
@@ -3280,7 +3286,11 @@ function parseMonsterAttacks(str){ return (str||'').split('·').map(s=>s.trim())
   const dt=part.match(/\b(acid|cold|fire|lightning|thunder|poison|necrotic|radiant|psychic|force|bludgeoning|piercing|slashing)\b/i);
   let tiles=/reach/i.test(part)?2:1;
   if(/breath|cone|line/i.test(part)) tiles=6;
-  else if(/bow|crossbow|sling|javelin|dart|spit|ray|bolt|hurl|thrown|web|net|stinger|spike/i.test(part)) tiles=24;
+  // `stinger` and `spike` were in this ranged list and are melee terms — a Wyvern's Stinger came
+  // out as a 120 ft ranged attack (v120.243). Nothing in the bestiary uses "spike" at all, and the
+  // Wyvern is the only "stinger", so removing both is safe and also fixes homebrew monsters whose
+  // attacks are still parsed from prose by design.
+  else if(/bow|crossbow|sling|javelin|dart|spit|ray|bolt|hurl|thrown|web|net/i.test(part)) tiles=24;
   // a condition this attack inflicts on a hit (parity with spells imposing conditions on monsters)
   let cond=null;
   if(/prone/i.test(part)) cond='Prone';

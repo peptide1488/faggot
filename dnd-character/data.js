@@ -541,6 +541,62 @@ const SPELL_RANGE={
 // spells and flagging any with damage but no type. Sacred Flame says "Radiant flame" up front,
 // never "1d8 radiant"; the other two never name their type at all.
 // NOT listed here, deliberately: Absorb Elements, whose rider type mirrors whatever triggered it.
+
+// Structured monster attacks — authoritative for the BUILT-IN bestiary (v120.243).
+//
+// Same Pillar-1 move as SPELL_MECH, with one deliberate difference: the prose parser is NOT being
+// retired here, because homebrew monsters and NPCs let the user type an `atk` string by hand
+// (#hbAtk / #npcAtk). For those, parsing English is the intended feature. So this table is keyed
+// by the exact `atk` STRING: a built-in bestiary entry matches and uses structured data, while any
+// user-typed string simply doesn't match and falls through to the parser. No signature change, no
+// call-site churn, and homebrew keeps working by construction.
+//
+// Generated from the parser's own output so behaviour was identical on introduction, except one
+// correction: the Wyvern's Stinger was coming out as a 120 ft RANGED attack because the range
+// heuristic matched the word "stinger". RAW it is a 10 ft reach melee attack (tiles:2). The
+// heuristic itself was fixed too, so homebrew benefits.
+//
+// If a bestiary `atk` string is ever edited, its key stops matching and that monster silently
+// falls back to prose parsing — same behaviour as before this table existed, so the failure mode
+// is safe. A ratchet test asserts every MONSTERS_5E entry still has a matching key.
+const MONSTER_MECH={
+  'Scimitar +4 (1d6+2) · Shortbow +4 (1d6+2)':[{name:'Scimitar',hit:4,dmg:'1d6+2',dtype:'slashing',tiles:1},{name:'Shortbow',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:24}],
+  'Longsword +3 (1d8+1)':[{name:'Longsword',hit:3,dmg:'1d8+1',dtype:'slashing',tiles:1}],
+  'Morningstar +4 (2d8+2)':[{name:'Morningstar',hit:4,dmg:'2d8+2',dtype:'piercing',tiles:1}],
+  'Dagger +4 (1d4+2)':[{name:'Dagger',hit:4,dmg:'1d4+2',dtype:'piercing',tiles:1}],
+  'Greataxe +5 (1d12+3)':[{name:'Greataxe',hit:5,dmg:'1d12+3',dtype:'slashing',tiles:1}],
+  'Scimitar +3 (1d6+1) · Crossbow +3 (1d8+1)':[{name:'Scimitar',hit:3,dmg:'1d6+1',dtype:'slashing',tiles:1},{name:'Crossbow',hit:3,dmg:'1d8+1',dtype:'piercing',tiles:24}],
+  'Spear +3 (1d6+1)':[{name:'Spear',hit:3,dmg:'1d6+1',dtype:'piercing',tiles:1}],
+  'Scimitar +3 (1d6+1)':[{name:'Scimitar',hit:3,dmg:'1d6+1',dtype:'slashing',tiles:1}],
+  'Fireball (DC 14 Dex, 8d6) · Magic Missile (3d4+3, auto-hit) · Dagger +5 (1d4+2)':[{name:'Fireball',dc:{n:14,ab:'Dex'},dmg:'8d6',dtype:'fire',tiles:1},{name:'Magic Missile',hit:3,dmg:'3d4+3',dtype:'force',tiles:1},{name:'Dagger',hit:5,dmg:'1d4+2',dtype:'piercing',tiles:1}],
+  'Shortsword +4 (1d6+2) · Shortbow +4 (1d6+2)':[{name:'Shortsword',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:1},{name:'Shortbow',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:24}],
+  'Slam +3 (1d6+1)':[{name:'Slam',hit:3,dmg:'1d6+1',dtype:'bludgeoning',tiles:1}],
+  'Claws +4 (2d4+2, DC 10 Con or paralyzed) · Bite +2 (2d6+2)':[{name:'Claws',hit:4,dc:{n:10,ab:'Con'},dmg:'2d4+2',dtype:'slashing',tiles:1,cond:'Paralyzed'},{name:'Bite',hit:2,dmg:'2d6+2',dtype:'piercing',tiles:1}],
+  'Life Drain +4 (3d6, lowers max HP)':[{name:'Life Drain',hit:4,dmg:'3d6',dtype:'necrotic',tiles:1}],
+  'Withering Touch +5 (4d6+3) · Horrifying Visage (DC 13 Wis, frightened)':[{name:'Withering Touch',hit:5,dmg:'4d6+3',dtype:'necrotic',tiles:1},{name:'Horrifying Visage',dc:{n:13,ab:'Wis'},tiles:1,cond:'Frightened'}],
+  'Life Drain +6 (4d8+3)':[{name:'Life Drain',hit:6,dmg:'4d8+3',dtype:'necrotic',tiles:1}],
+  'Bite +4 (2d4+2, knock prone)':[{name:'Bite',hit:4,dmg:'2d4+2',dtype:'piercing',tiles:1,cond:'Prone'}],
+  'Bite +5 (2d6+3, knock prone)':[{name:'Bite',hit:5,dmg:'2d6+3',dtype:'piercing',tiles:1,cond:'Prone'}],
+  'Bite +6 (1d8+4) · Claws +6 (2d6+4)':[{name:'Bite',hit:6,dmg:'1d8+4',dtype:'piercing',tiles:1},{name:'Claws',hit:6,dmg:'2d6+4',dtype:'slashing',tiles:1}],
+  'Bite +5 (1d8+3 + DC11 Con 2d8 poison) · Web (DC 11 Str, restrained)':[{name:'Bite',hit:5,dc:{n:11,ab:'Con'},dmg:'1d8+3',dtype:'poison',tiles:1},{name:'Web',dc:{n:11,ab:'Str'},tiles:24,cond:'Restrained'}],
+  'Bite +4 (1d6+2) · Constrict +4 (1d8+2, grappled)':[{name:'Bite',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:1},{name:'Constrict',hit:4,dmg:'1d8+2',dtype:'bludgeoning',tiles:1,cond:'Grappled'}],
+  'Bite +5 (1 + DC10 Con 2d4 poison)':[{name:'Bite',hit:5,dc:{n:10,ab:'Con'},dmg:'2d4',dtype:'poison',tiles:1}],
+  'Greatclub +6 (2d8+4)':[{name:'Greatclub',hit:6,dmg:'2d8+4',dtype:'bludgeoning',tiles:1}],
+  'Claw +7 (2d6+4) · Bite +7 (1d6+4)':[{name:'Claw',hit:7,dmg:'2d6+4',dtype:'slashing',tiles:1},{name:'Bite',hit:7,dmg:'1d6+4',dtype:'piercing',tiles:1}],
+  'Greatclub +8 (3d8+5) · Rock +8 (3d10+5)':[{name:'Greatclub',hit:8,dmg:'3d8+5',dtype:'bludgeoning',tiles:1},{name:'Rock',hit:8,dmg:'3d10+5',dtype:'bludgeoning',tiles:1}],
+  'Pseudopod +3 (2d6+1 acid, corrodes metal)':[{name:'Pseudopod',hit:3,dmg:'2d6+1',dtype:'acid',tiles:1}],
+  'Pseudopod +4 (3d6 acid) · Engulf (DC 12 Dex)':[{name:'Pseudopod',hit:4,dmg:'3d6',dtype:'acid',tiles:1},{name:'Engulf',dc:{n:12,ab:'Dex'},tiles:1}],
+  'Sting +5 (1d4+3 + DC11 Con 3d6 poison)':[{name:'Sting',hit:5,dc:{n:11,ab:'Con'},dmg:'1d4+3',dtype:'poison',tiles:1}],
+  'Claws +4 (1d4+2 + DC10 Con poison)':[{name:'Claws',hit:4,dc:{n:10,ab:'Con'},dmg:'1d4+2',dtype:'poison',tiles:1}],
+  'Bite +2 (1d6) · Claws +2 (2d4)':[{name:'Bite',hit:2,dmg:'1d6',dtype:'piercing',tiles:1},{name:'Claws',hit:2,dmg:'2d4',dtype:'slashing',tiles:1}],
+  'Spear +4 (1d6+2) · Bite +4 (1d6+2)':[{name:'Spear',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:1},{name:'Bite',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:1}],
+  'Bite +7 (2d6+4) · Stinger +7 (2d6+4 + DC15 Con 7d6 poison)':[{name:'Bite',hit:7,dmg:'2d6+4',dtype:'piercing',tiles:1},{name:'Stinger',hit:7,dc:{n:15,ab:'Con'},dmg:'2d6+4',dtype:'poison',tiles:2}],
+  'Bite +6 (1d10+4 + 1d6 fire) · Fire Breath (DC13 Dex, 7d6)':[{name:'Bite',hit:6,dmg:'1d10+4',dtype:'fire',tiles:1},{name:'Fire Breath',dc:{n:13,ab:'Dex'},dmg:'7d6',dtype:'fire',tiles:6}],
+  'Bite +10 (2d10+6 + 1d6 fire) · Claw +10 (2d6+6) · Fire Breath (DC17 Dex, 16d6)':[{name:'Bite',hit:10,dmg:'2d10+6',dtype:'fire',tiles:1},{name:'Claw',hit:10,dmg:'2d6+6',dtype:'slashing',tiles:1},{name:'Fire Breath',dc:{n:17,ab:'Dex'},dmg:'16d6',dtype:'fire',tiles:6}],
+  'Eye Rays +5 (1d6) · Bite +1 (1)':[{name:'Eye Rays',hit:5,dmg:'1d6',tiles:24},{name:'Bite',hit:1,dtype:'piercing',tiles:1}],
+  'Eye Rays +9 (3 of 10, ~4d8 each) · Bite +5 (4d6)':[{name:'Eye Rays',hit:9,dmg:'4d8',tiles:24},{name:'Bite',hit:5,dmg:'4d6',dtype:'piercing',tiles:1}]
+};
+
 // Damage types for monster attacks whose bestiary `atk` prose never states one. Only 11 of 56
 // parsed attacks carried a type before v120.239 (20%): a Goblin's scimitar wasn't slashing, an
 // Orc's greataxe wasn't slashing, and a Mage's Fireball wasn't fire — so a target's resistance,
