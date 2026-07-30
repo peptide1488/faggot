@@ -1971,7 +1971,8 @@ function renderSheet(c){
   <div class="card">
     <h2>Identity</h2>
     <div class="row" style="gap:14px;align-items:center;margin-bottom:14px">
-      <div class="pfp" id="pfp" style="${c.portrait?`background-image:url('${c.portrait}')`:''}">${c.portrait?'':'🧙'}</div>
+      <div class="pfp${unitIsInvisible({c})?' invisTok':''}" id="pfp" title="${unitIsInvisible({c})?'Invisible':''}" style="${c.portrait?`background-image:url('${c.portrait}')`:''}">${c.portrait?'':'🧙'}</div>
+      ${unitIsInvisible({c})?`<span class="pill" style="align-self:center;background:#2b3a55;border-color:#4a6a9a">👻 Invisible</span>`:''}
       <div>
         <button class="btn ghost sm" id="pfpBtn">${c.portrait?'Change photo':'＋ Upload photo'}</button>
         ${c.portrait?'<button class="btn ghost sm" id="pfpDel" style="margin-top:6px;color:var(--bad)">Remove</button>':''}
