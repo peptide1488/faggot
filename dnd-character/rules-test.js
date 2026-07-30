@@ -4185,6 +4185,17 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('sw.js ASSETS covers every local <script src> in index.html (offline-cache drift guard)'
     +(unlisted.length?' — MISSING: '+unlisted.join(', '):''), unlisted.length===0);
 
+  /* v120.256: the build stamps must stay in lockstep with APP_VERSION, or the stale-code detector
+     itself becomes the false alarm — bumping the version and forgetting a stamp would warn users
+     about a problem that doesn't exist, which is worse than no detector at all. */
+  {
+    const appV=(html.match(/const APP_VERSION='([^']+)'/)||[])[1];
+    const uiV=(fs.readFileSync(path.join(__dirname,'ui.js'),'utf8').match(/const UI_BUILD='([^']+)'/)||[])[1];
+    const ruV=(fs.readFileSync(path.join(__dirname,'rules.js'),'utf8').match(/const RULES_BUILD='([^']+)'/)||[])[1];
+    T('build stamps: ui.js matches APP_VERSION'+(uiV===appV?'':` — ${uiV} vs ${appV}`), uiV===appV);
+    T('build stamps: rules.js matches APP_VERSION'+(ruV===appV?'':` — ${ruV} vs ${appV}`), ruV===appV);
+  }
+
   /* v120.255: the app's own JS must be network-first, or a reload pairs the newest index.html
      (which carries APP_VERSION) with stale JavaScript — the header shows a new version while the
      behaviour is several versions old. That exact failure wasted debugging time twice, so it gets

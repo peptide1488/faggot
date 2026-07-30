@@ -2389,8 +2389,25 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.255';
+const APP_VERSION='v120.256';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
+// Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
+// cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That
+// exact mismatch cost real debugging time twice on 2026-07-30 before it was understood. The
+// service-worker fix in v120.255 should prevent it; this makes it impossible to hide if it ever
+// happens again (a third-party cache, a proxy, a half-updated install).
+{
+  const stamps={ 'ui.js':(typeof UI_BUILD!=='undefined')?UI_BUILD:null,
+                 'rules.js':(typeof RULES_BUILD!=='undefined')?RULES_BUILD:null };
+  const stale=Object.keys(stamps).filter(k=>stamps[k] && stamps[k]!==APP_VERSION);
+  if(stale.length){
+    const msg='Stale code: index.html is '+APP_VERSION+' but '+stale.map(k=>k+' is '+stamps[k]).join(', ')
+      +'. Reload once more, or clear site data.';
+    console.warn('[Grimoire] '+msg);
+    const vb=document.getElementById('verBadge');
+    if(vb){ vb.textContent=APP_VERSION+' ⚠ stale'; vb.title=msg; vb.style.color='#c0392b'; }
+  }
+}
 if('serviceWorker' in navigator){
   let _reloaded=false;
   // NEVER hard-reload during Quick Battle — QB lives only in memory, and skipWaiting+claim

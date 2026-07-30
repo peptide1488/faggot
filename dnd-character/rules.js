@@ -1,3 +1,9 @@
+// Build stamp (v120.256). Lets the app DETECT the failure that wasted time on 2026-07-30: a
+// service worker serving stale JS alongside fresh index.html, so the header showed a new
+// APP_VERSION while the behaviour was several versions old. index.html compares these and
+// warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
+// three in lockstep so bumping one and forgetting the others can't itself become the bug.
+const RULES_BUILD='v120.256';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
