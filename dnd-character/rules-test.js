@@ -4217,6 +4217,11 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     }
     T('sw.js: the network-first branch has a timeout fallback (bad wifi must not hang startup)',
       /NET_TIMEOUT/.test(swSrc) && /setTimeout\(fallback/.test(swSrc));
+    // Without this the whole network-first branch is decorative: GitHub Pages sends
+    // Cache-Control: max-age=600, so a plain fetch() is answered by the browser's HTTP cache and
+    // never reaches the network. v120.256 shipped stale ui.js after a reload for exactly this.
+    T('sw.js: app-code fetches bypass the HTTP cache, or "network-first" is a lie',
+      /fetch\(req,\s*\{\s*cache:\s*'no-cache'\s*\}\)/.test(swSrc));
   }
 
   // Walk iso3d's import graph exactly as the browser would, preserving each request's query.

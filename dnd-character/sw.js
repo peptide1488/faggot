@@ -1,5 +1,5 @@
 // Grimoire — D&D 5e Character Keeper — offline app-shell service worker
-const CACHE = 'grimoire-v120.256';
+const CACHE = 'grimoire-v120.257';
 const ASSETS = [
   './',
   './index.html',
@@ -80,7 +80,13 @@ self.addEventListener('fetch', (e) => {
     // hasn't answered in time, serve the cached copy and let the fetch keep running to refresh
     // the cache for next load. A genuine offline error falls back the same way.
     const NET_TIMEOUT = 2500;
-    const fromNet = fetch(req).then((res) => {
+    // {cache:'no-cache'} is load-bearing, not belt-and-braces (v120.257). GitHub Pages serves
+    // these with `Cache-Control: max-age=600`, so a plain fetch() inside the worker is answered by
+    // the BROWSER's HTTP cache for ten minutes and never reaches the network — "network-first" was
+    // really "http-cache-first", and v120.256 still shipped stale ui.js after a reload because of
+    // it. A reloaded document revalidates automatically; its sub-resources do not.
+    // 'no-cache' means revalidate, not re-download: the ETag makes it a 304 when nothing changed.
+    const fromNet = fetch(req, { cache: 'no-cache' }).then((res) => {
       if (res && res.status === 200 && res.type === 'basic') {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy));
