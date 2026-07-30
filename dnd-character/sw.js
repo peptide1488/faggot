@@ -1,5 +1,5 @@
 // Grimoire — D&D 5e Character Keeper — offline app-shell service worker
-const CACHE = 'grimoire-v120.254';
+const CACHE = 'grimoire-v120.255';
 const ASSETS = [
   './',
   './index.html',
@@ -60,15 +60,47 @@ self.addEventListener('fetch', (e) => {
   // user had to reload twice to ever see new code. Navigations + index.html always
   // try the network first now and only fall back to cache when offline.
   const isShell = req.mode === 'navigate' || req.url.endsWith('/') || req.url.endsWith('index.html');
-  if (isShell) {
+  // The app's own JS modules must be network-first for the SAME reason as the shell, and this was
+  // the more damaging half of the bug (fixed v120.255). index.html was already network-first while
+  // data/rules/net/ui/iso-renderer.js stayed cache-first, so a reload reliably paired the NEWEST
+  // html with STALE JavaScript. That is the worst possible combination: APP_VERSION lives in
+  // index.html, so the header showed the new version number while the behaviour was several
+  // versions old, which makes "did my change deploy?" unanswerable. It cost real debugging time
+  // twice on 2026-07-30 — a reported "zero effect" turned out to be a browser pinned to
+  // grimoire-v120.251 while the site served v120.254.
+  //
+  // These are unversioned URLs, so only freshness-checking can update them. iso3d/ is deliberately
+  // NOT included: those imports carry an explicit ?v= cache-buster, so a new build requests new
+  // URLs and cache-first is both correct and cheaper for them.
+  const isAppCode = /\/(data|rules|net|ui|iso-renderer)\.js(\?|$)/.test(req.url);
+  if (isShell || isAppCode) {
+    // Network-first, but never hang on it. This app gets used at a table on bad wifi, where a
+    // stalled (not failed) request would otherwise block startup indefinitely — worse than the
+    // staleness this is fixing. So: race the network against a short timer, and if the network
+    // hasn't answered in time, serve the cached copy and let the fetch keep running to refresh
+    // the cache for next load. A genuine offline error falls back the same way.
+    const NET_TIMEOUT = 2500;
+    const fromNet = fetch(req).then((res) => {
+      if (res && res.status === 200 && res.type === 'basic') {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy));
+      }
+      return res;
+    });
     e.respondWith(
-      fetch(req).then((res) => {
-        if (res && res.status === 200 && res.type === 'basic') {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      }).catch(() => caches.match(req))
+      new Promise((resolve) => {
+        let settled = false;
+        const done = (r) => { if (!settled && r) { settled = true; resolve(r); } };
+        fromNet.then(done).catch(() => { /* handled by the fallback below */ });
+        const fallback = () => caches.match(req).then((cached) => {
+          if (cached) done(cached);
+          // No cached copy: the network is the only option, so wait for it however long it takes,
+          // and surface its error rather than resolving with undefined.
+          else fromNet.then(done).catch(() => done(Response.error()));
+        });
+        setTimeout(fallback, NET_TIMEOUT);
+        fromNet.catch(fallback);
+      })
     );
     return;
   }

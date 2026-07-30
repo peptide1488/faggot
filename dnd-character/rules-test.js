@@ -4185,6 +4185,29 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('sw.js ASSETS covers every local <script src> in index.html (offline-cache drift guard)'
     +(unlisted.length?' — MISSING: '+unlisted.join(', '):''), unlisted.length===0);
 
+  /* v120.255: the app's own JS must be network-first, or a reload pairs the newest index.html
+     (which carries APP_VERSION) with stale JavaScript — the header shows a new version while the
+     behaviour is several versions old. That exact failure wasted debugging time twice, so it gets
+     a guard rather than a comment. */
+  {
+    const appCodeRe=/const isAppCode\s*=\s*(\/.*?\/)\.test\(req\.url\)/.exec(swSrc);
+    T('sw.js still classifies the app modules as network-first (isAppCode exists)', !!appCodeRe);
+    if(appCodeRe){
+      let re=null; try{ re=eval(appCodeRe[1]); }catch(e){}
+      const base='https://x/dnd-character/';
+      const mustBeFresh=['data.js','rules.js','net.js','ui.js','iso-renderer.js'];
+      const missed=mustBeFresh.filter(f=>!(re&&re.test(base+f)));
+      T('sw.js: every app module is network-first'+(missed.length?' — still cache-first: '+missed.join(', '):''),
+        missed.length===0);
+      // iso3d is versioned by ?v=, so it SHOULD stay cache-first — freshness is already guaranteed
+      // by the URL changing, and re-fetching 12 modules every load would be pure waste.
+      T('sw.js: versioned iso3d modules stay cache-first (their ?v= already busts them)',
+        !(re&&re.test(base+'iso3d/src/host.js?v=0.6.16')));
+    }
+    T('sw.js: the network-first branch has a timeout fallback (bad wifi must not hang startup)',
+      /NET_TIMEOUT/.test(swSrc) && /setTimeout\(fallback/.test(swSrc));
+  }
+
   // Walk iso3d's import graph exactly as the browser would, preserving each request's query.
   const seen=new Set(), want=new Set();
   const bootSpec=(html.match(/src="(iso3d\/boot\.js[^"]*)"/)||[])[1];
