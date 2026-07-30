@@ -359,6 +359,45 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Stress test: 100 monsters, 600 tiles (v120.249)
+
+First real performance measurement of the app. Driven in a live browser: a DM session with **100
+monsters + 6 players** on a **30×20 (600-tile)** map with scattered terrain.
+
+**The rules engine is not the problem.** Everything gameplay-related is sub-3ms at that size:
+
+| | 100 units, 600 tiles |
+|---|---|
+| `Engine.hitResult` ×100 | 1.4 ms |
+| `visibleCells` (whole 600-tile map) | 0.8 ms |
+| `coverBetween` ×100 | 0.7 ms |
+| `parseMonsterAttacks` ×100 | ~0 ms |
+| `mapGridHTML` with fog | 2.7 ms |
+| **`render()` (full screen)** | **50 ms** |
+
+**The bottleneck is the full-screen `innerHTML` re-render**, which MASTER_PLAN had already flagged
+as debt before it was retired. Breakdown: `innerHTML` *parsing* is ~18 ms, while layout adds only
+~1.6 ms — so it's HTML construction, not CSS. `app.className='fade'; void app.offsetWidth` looks
+like a forced synchronous reflow but measures 0 ms; it is not the problem.
+
+Scaling (desktop; ×4 is a fair mid-range-phone multiplier):
+
+| Map | 5 mon | 20 mon | 50 mon | 100 mon |
+|---|---|---|---|---|
+| 12×10 | 12.5 ms | 16 ms | 27 ms | 46 ms |
+| 20×15 | 19.5 ms | 18 ms | 26 ms | 43 ms |
+| 30×20 | 25 ms | 22 ms | 34 ms | **50 ms (~200 ms on a phone)** |
+
+**Read:** a normal encounter (≤20 monsters, ≤300 tiles) re-renders in under 20 ms — fine, and fine
+on a phone. Cost climbs with monster count more than map size. 100 monsters is where a phone would
+feel it, at roughly 200 ms per action. Since `render()` runs on *every* action, that is the wall to
+watch; the fix, if it's ever needed, is targeted re-render rather than an `innerHTML` wipe.
+
+Also fixed here: the initiative editor emitted `value="${o.roll}"` with `o.roll` undefined whenever
+turn order existed without rolled initiative — ~100 console warnings *per render* at this size.
+Cosmetic on its own, but `tools/smoke.js` treats console cleanliness as its pass signal, so noise
+that dense actively degrades the test that catches UI bugs.
+
 ## Legendary & lair actions (v120.248) — the last real combat gap
 
 Boss monsters had **no mechanical support at all**; the only trace in the entire app was a prose
