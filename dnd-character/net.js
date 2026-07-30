@@ -121,7 +121,8 @@ function dmBroadcast(){ if(!net||net.role!=='dm') return;
 
 function dmAutoPlace(){ const s=net.session; s.players.forEach((p,i)=>{ if(p.placed) return; p.x=Math.min(s.map.cols-1,i); p.y=s.map.rows-1; }); s.monsters.forEach((m,i)=>{ if(m.placed) return; m.x=Math.min(s.map.cols-1,i); m.y=0; }); }
 
-function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo){ mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; } } }
+function dmRefreshActor(){ const s=net.session, cur=s.order&&s.order[s.turn]; if(cur&&cur.k==='m'){ const mo=s.monsters.find(m=>m.id===cur.id); if(mo){ resetLegendary(mo);   /* PHB: the legendary pool refreshes at the START of its turn (v120.247) */
+    mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; } } }
 
 function orderDead(o){ if(o.k!=='m') return false; const mo=net.session.monsters.find(m=>m.id===o.id); return mo&&mo.hp<=0; }
 

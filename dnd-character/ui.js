@@ -4923,6 +4923,25 @@ function renderDM(){
       return mapGridHTML(s,true, base);
     })()}
     ${(s.players||[]).length?`<div class="chips" style="margin:6px 0"><span class="muted" style="font-size:11px;align-self:center">👁 View as:</span><button class="chip ${!net.viewAs?'on':''}" data-viewas="">DM (all)</button>${(s.players||[]).map(p=>`<button class="chip ${net.viewAs===(p.id||p.cid)?'on':''}" data-viewas="${esc(p.id||p.cid)}">${esc(p.name||'Player')}</button>`).join('')}</div>`:''}
+    ${(()=>{
+      // Legendary & lair (v120.247). Legendary actions are offered ONLY when it is not the boss's
+      // own turn, which is the RAW rule people most often play wrong; the pool refreshes in
+      // dmRefreshActor. Lair actions are a round-level prompt on initiative 20.
+      if(!s.battle||!s.battle.active) return '';
+      const cur=s.order&&s.order[s.turn];
+      let html='';
+      (s.monsters||[]).filter(mo=>mo.hp>0 && legendaryOf(mo)).forEach(mo=>{
+        const own=!!(cur&&cur.k==='m'&&cur.id===mo.id), L=legendaryOf(mo);
+        const left=mo.legLeft==null?L.perRound:mo.legLeft;
+        html+=`<div class="card" style="margin-top:8px;padding:8px"><b style="font-size:12.5px">👑 ${esc(mo.name)} — legendary actions ${left}/${L.perRound}</b>`
+          +(own?`<p class="muted" style="font-size:11.5px;margin:4px 0 0">It's this creature's own turn — legendary actions can't be used now (PHB).</p>`
+                :`<div class="chips" style="margin-top:6px">${L.actions.map(a=>`<button class="chip" data-leg="${esc(mo.id)}|${esc(a.name)}" ${left<(a.cost||1)?'disabled style="opacity:.4"':''}>${esc(a.name)}${(a.cost||1)>1?` (${a.cost})`:''}</button>`).join('')}</div>`)
+          +`</div>`;
+        if(lairPending(s,mo))
+          html+=`<div class="card" style="margin-top:6px;padding:8px;border-color:var(--accent)"><b style="font-size:12.5px">🏰 Lair action available (initiative 20)</b><div class="chips" style="margin-top:6px">${(lairOf(mo)||[]).map(a=>`<button class="chip" data-lair="${esc(a.name)}">${esc(a.name)}</button>`).join('')}<button class="chip" data-lair="">Skip this round</button></div></div>`;
+      });
+      return html;
+    })()}
     ${(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); return mo?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">Moving <b>${esc(mo.name)}</b> — ${mo.moveLeft||0} ft left. Tap a glowing tile.</p>`:''; })():''}
     <p class="muted" style="font-size:11.5px;margin:8px 0 4px">Pick a brush or token below, then tap cells. (Paint terrain, or place a monster/player.)</p>
     <div class="chips" style="margin-bottom:6px">${Object.keys(TERRAIN).map(k=>`<button class="chip ${net.sel==='t:'+k?'on':''}" data-place="t:${k}" style="${TERRAIN[k].c?'border-color:'+TERRAIN[k].c:''}">${TERRAIN[k].e||''} ${TERRAIN[k].name}</button>`).join('')}</div>
@@ -5002,6 +5021,40 @@ function renderDM(){
   app.querySelectorAll('[data-mmove]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mmove); if(mo){ net.sel='m'+mo.id; render(); flashBanner('Tap a map cell to move '+mo.name); } });
   app.querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{ net.sel=(net.sel===el.dataset.place)?null:el.dataset.place; render(); });
   app.querySelectorAll('[data-viewas]').forEach(el=>el.onclick=()=>{ net.viewAs=el.dataset.viewas||null; render(); });
+  app.querySelectorAll('[data-leg]').forEach(el=>el.onclick=()=>{
+    const [moId,actName]=el.dataset.leg.split('|');
+    const mo=s.monsters.find(m=>m.id===moId); if(!mo) return;
+    const cur=s.order&&s.order[s.turn], own=!!(cur&&cur.k==='m'&&cur.id===mo.id);
+    const act=spendLegendary(mo, actName, own);
+    if(!act){ flashBanner('Not available right now'); return; }
+    // An attack-shaped action goes through the Engine like any other, so cover/conditions/RVI all
+    // apply; a save- or narrative-shaped one is logged for the DM to adjudicate and roll.
+    if(act.atk){
+      // Same Engine.applyAction path dmOpportunityAttack uses, so cover, conditions, resistances
+      // and the event stream all apply exactly as they do for a normal monster attack.
+      const tgt=(s.players||[]).filter(p=>(p.hpCur||0)>0)
+        .sort((a,b)=>gridDist(mo.x,mo.y,a.x,a.y)-gridDist(mo.x,mo.y,b.x,b.y))[0];
+      if(!tgt){ flashBanner('No living target'); return; }
+      const A=act.atk;
+      const ev=Engine.applyAction(sessionAdapter, {type:'attack', actorId:mo.id, targetId:tgt.id,
+        atk:{name:A.name, toHit:A.hit||0, dmg:A.dmg||'1d6', dtype:A.dtype||'', tiles:A.tiles||1}});
+      sfx(ev.crit?'crit':ev.hit?'hit':'miss');
+      qbLog('👑 '+mo.name+' — '+act.name+' vs '+tgt.name+': '+(ev.hit?(ev.dmg+' dmg'):'miss'), s);
+      flashBanner('👑 '+act.name+' — '+(ev.hit?ev.dmg+' damage to '+tgt.name:'missed '+tgt.name));
+    } else {
+      qbLog('👑 '+mo.name+' uses '+act.name+(act.desc?' — '+act.desc:''), s);
+      flashBanner('👑 '+act.name+(act.desc?' — '+act.desc:''));
+    }
+    dmBroadcast(); render();
+  });
+  app.querySelectorAll('[data-lair]').forEach(el=>el.onclick=()=>{
+    const name=el.dataset.lair;
+    if(name){ const boss=(s.monsters||[]).find(m=>m.hp>0&&lairOf(m));
+      const act=(lairOf(boss)||[]).find(a=>a.name===name);
+      qbLog('🏰 Lair action — '+name+(act&&act.desc?': '+act.desc:''), s);
+      flashBanner('🏰 '+name+(act&&act.desc?' — '+act.desc:'')); }
+    markLairUsed(s); dmBroadcast(); render();
+  });
   app.querySelectorAll('[data-lightmode]').forEach(el=>el.onclick=()=>{ if(!s.map.light) s.map.light={}; s.map.light.mode=el.dataset.lightmode; dmBroadcast(); render(); });
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{ if(!net.sel) return; const [x,y]=el.dataset.cell.split(',').map(Number);
     if(net.sel.slice(0,2)==='t:'){ const key=net.sel.slice(2);

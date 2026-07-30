@@ -34,7 +34,7 @@ eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
   'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
@@ -3708,6 +3708,54 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     T(`SPELL_MECH ratchet: ${proseOnly} spells still derive mechanics from prose (must not increase; was 0 at migration)`,
       proseOnly<=0);
   }
+}
+
+/* ---- Legendary & lair actions (v120.247) ----
+   The last real combat gap: boss monsters had no mechanics, only a prose note telling the DM to
+   adjudicate. Two RAW rules are easy to get wrong and are pinned here — a legendary creature may
+   not act on its OWN turn, and lair actions fire once per ROUND on initiative 20, not on a turn. */
+{
+  const drake=()=>({id:'d1', name:'Young Red Dragon', base:'Young Red Dragon', hp:178, max:178, ac:18, x:0,y:0, conds:[]});
+
+  T('legendary: a boss has a profile, an ordinary monster does not',
+    !!legendaryOf(drake()) && !legendaryOf({name:'Goblin', base:'Goblin'}));
+
+  { const d=drake(); resetLegendary(d);
+    T('legendary: the pool refreshes to perRound at the start of its turn', d.legLeft===3);
+    T('legendary: it may NOT act on its own turn (RAW)', canSpendLegendary(d,1,true)===false);
+    T('legendary: it may act at the end of someone else\'s turn', canSpendLegendary(d,1,false)===true);
+
+    const a=spendLegendary(d,'Tail Attack',false);
+    T('legendary: spending a 1-cost action leaves 2', !!a && d.legLeft===2);
+    const w=spendLegendary(d,'Wing Attack',false);
+    T('legendary: Wing Attack costs 2, emptying the pool', !!w && w.cost===2 && d.legLeft===0);
+    T('legendary: an empty pool refuses the next action', spendLegendary(d,'Detect',false)===null);
+    resetLegendary(d);
+    T('legendary: the next turn start refills it', d.legLeft===3); }
+
+  { const d=drake(); resetLegendary(d); d.hp=0;
+    T('legendary: a dead boss spends nothing', canSpendLegendary(d,1,false)===false); }
+  { const d=drake(); resetLegendary(d); d.conds=[{name:'Paralyzed',rounds:3}];
+    T('legendary: an incapacitated boss spends nothing', canSpendLegendary(d,1,false)===false); }
+  { const d=drake(); resetLegendary(d);
+    T('legendary: an unknown action name is refused, not silently free',
+      spendLegendary(d,'Nonexistent Action',false)===null && d.legLeft===3); }
+
+  // Lair actions: once per round, and re-rendering must not fire them twice.
+  { const s={battle:{active:true, round:1}}; const d=drake();
+    T('lair: pending on a fresh round', lairPending(s,d)===true);
+    markLairUsed(s);
+    T('lair: not pending again in the SAME round (re-render / undo safe)', lairPending(s,d)===false);
+    s.battle.round=2;
+    T('lair: pending again next round', lairPending(s,d)===true);
+    T('lair: a monster with no lair never pends', lairPending(s,{name:'Goblin',base:'Goblin',hp:7})===false);
+    s.battle.active=false;
+    T('lair: nothing pends outside an active battle', lairPending(s,d)===false); }
+
+  // Every legendary/lair action must reference a monster that actually exists.
+  { const missing=Object.keys(LEGENDARY).concat(Object.keys(LAIR)).filter(n=>!MONSTERS_5E.some(m=>m.n===n));
+    T('legendary/lair tables reference real bestiary monsters'+(missing.length?' — missing: '+missing.join(', '):''),
+      missing.length===0); }
 }
 
 /* ---- Structured monster attacks (v120.243, Pillar 1 continued) ----

@@ -3950,6 +3950,57 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
   return {ok:true, success:found.length>0, total:r.total, found:found.length, skill:key};
 }
 
+/* ---- Legendary & lair actions (v120.247) ----------------------------------------------------
+   Boss monsters had no mechanical support at all — the only trace was a prose note on the
+   Beholder telling the DM to adjudicate by hand. These are the shared rules; the DM UI drives
+   them, and they're written adapter-free so Quick Battle can use them unchanged later. */
+
+/** The legendary profile for a monster, or null. Uses `base` so numbered copies (Orc 2) work. */
+function legendaryOf(mo){ return (mo && LEGENDARY[mo.base||mo.name]) || null; }
+function lairOf(mo){ return (mo && LAIR[mo.base||mo.name]) || null; }
+
+/** Refresh the pool at the START of the legendary creature's turn (PHB). */
+function resetLegendary(mo){
+  const L=legendaryOf(mo); if(!L) return;
+  mo.legLeft=L.perRound;
+}
+
+/**
+ * Can this monster spend `cost` legendary actions right now? Two RAW gates that are easy to get
+ * wrong and are therefore explicit here: a legendary creature may NOT act on its own turn, and it
+ * cannot act at all while incapacitated.
+ */
+function canSpendLegendary(mo, cost, isOwnTurn){
+  const L=legendaryOf(mo); if(!L) return false;
+  if(isOwnTurn) return false;
+  if(!(mo.hp>0)) return false;
+  if(typeof isIncapacitated==='function' && isIncapacitated(mo)) return false;
+  const left=mo.legLeft==null?L.perRound:mo.legLeft;
+  return left>=(cost||1);
+}
+
+/** Spend it. Returns the action, or null when it wasn't allowed. */
+function spendLegendary(mo, actionName, isOwnTurn){
+  const L=legendaryOf(mo); if(!L) return null;
+  const act=L.actions.find(a=>a.name===actionName); if(!act) return null;
+  const cost=act.cost||1;
+  if(!canSpendLegendary(mo, cost, isOwnTurn)) return null;
+  mo.legLeft=(mo.legLeft==null?L.perRound:mo.legLeft)-cost;
+  return act;
+}
+
+/**
+ * Lair actions fire on initiative count 20, losing ties — i.e. once per ROUND, not on anyone's
+ * turn. `s.lairDoneRound` records the round already resolved so a re-render or an undo can't fire
+ * it twice, which is the obvious bug in any "once per round" mechanic.
+ */
+function lairPending(s, mo){
+  if(!s||!s.battle||!s.battle.active) return false;
+  if(!lairOf(mo) || !(mo.hp>0)) return false;
+  return (s.lairDoneRound||0) < (s.battle.round||1);
+}
+function markLairUsed(s){ if(s&&s.battle) s.lairDoneRound=s.battle.round||1; }
+
 function needsStabilizing(p){ return (p.hpCur||0)<=0 && !p.stable && (p.deathFail||0)<3; }
 
 function maneuverStabilize(ad, pcUnit, targetName, log, opts){

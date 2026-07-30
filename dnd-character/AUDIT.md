@@ -359,6 +359,34 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Legendary & lair actions (v120.248) — the last real combat gap
+
+Boss monsters had **no mechanical support at all**; the only trace in the entire app was a prose
+note on the Beholder telling the DM to adjudicate by hand.
+
+Two RAW rules are the ones tables usually get wrong, so both are enforced rather than trusted:
+- **A legendary creature may not use legendary actions on its own turn.** The DM panel hides the
+  buttons and says why; `canSpendLegendary` refuses regardless of the UI. The pool refreshes at the
+  **start** of its turn (hooked into `dmRefreshActor`), not at the end of the round.
+- **Lair actions fire on initiative count 20, once per round** — a round-level event, not attached
+  to anyone's turn. `s.lairDoneRound` records the round already resolved, so a re-render or a
+  combat undo can't fire it twice, which is the obvious bug in any "once per round" mechanic.
+
+Also refused: spending while dead or incapacitated, spending more than the pool holds, and an
+unknown action name (which must not be silently free). 17 tests.
+
+Attack-shaped legendary actions resolve through `Engine.applyAction` on the same path
+`dmOpportunityAttack` uses, so cover, conditions, resistances and the event stream all apply
+normally — no second combat path. Save- and narrative-shaped ones log for the DM to adjudicate.
+
+`LEGENDARY` / `LAIR` are keyed by monster name and cover Young Red Dragon, Beholder and Wraith; a
+test asserts every key names a real bestiary monster.
+
+*Process note:* the first draft of the UI handler called a `dmMonsterAttackWith()` that does not
+exist — the identical shape to the `dmLog` bug from v120.237. Caught before shipping by checking
+every referenced function with `tools/whereis.js`, which is now the cheap habit that replaces
+finding out when a user presses the button.
+
 ## Mode-parity scenario matrix (v120.245 — strategy Pillar 2)
 
 The parity harness compared adapter **interfaces**, which catches a *missing* method. It could not

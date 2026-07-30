@@ -542,6 +542,43 @@ const SPELL_RANGE={
 // never "1d8 radiant"; the other two never name their type at all.
 // NOT listed here, deliberately: Absorb Elements, whose rider type mirrors whatever triggered it.
 
+
+// Legendary & lair actions (v120.247). Boss monsters were the last real combat gap: the only
+// trace in the app was a prose note on the Beholder telling the DM to adjudicate it by hand.
+//
+// PHB/MM model, kept faithful where it matters:
+//   * Legendary actions are spent at the END of another creature's turn, never on the boss's own
+//     turn, and the pool refreshes at the START of the boss's turn. `perRound` is the budget;
+//     each action has a `cost` (usually 1, sometimes 2).
+//   * Lair actions happen on initiative count 20, losing initiative ties, once per round -- so
+//     they are a ROUND-level event, not tied to any creature's turn.
+// Keyed by monster name, like MONSTER_MECH is keyed by attack string; homebrew simply has none.
+const LEGENDARY={
+  'Young Red Dragon':{perRound:3, actions:[
+    {name:'Detect', cost:1, desc:'Wisdom (Perception) check.'},
+    {name:'Tail Attack', cost:1, atk:{name:'Tail', hit:10, dmg:'2d8+6', dtype:'bludgeoning', tiles:3}},
+    {name:'Wing Attack', cost:2, dc:{n:19,ab:'Dex'}, dmg:'2d6+6', dtype:'bludgeoning',
+     desc:'Each creature within 10 ft: DC 19 Dex save or take damage and be knocked prone.', cond:'Prone'}
+  ]},
+  'Beholder':{perRound:3, actions:[
+    {name:'Eye Ray', cost:1, desc:'Use one random eye ray at a creature it can see.'}
+  ]},
+  'Wraith':{perRound:1, actions:[
+    {name:'Life Drain', cost:1, atk:{name:'Life Drain', hit:6, dmg:'4d8+3', dtype:'necrotic', tiles:1}}
+  ]}
+};
+// Lair actions fire on initiative 20 each round while the boss is in its lair.
+const LAIR={
+  'Young Red Dragon':[
+    {name:'Magma Erupts', desc:'Magma erupts from a point on the ground within 120 ft: DC 15 Dex save or 6d6 fire.', dc:{n:15,ab:'Dex'}, dmg:'6d6', dtype:'fire'},
+    {name:'Tremor', desc:'A tremor shakes the lair: DC 15 Dex save or fall prone.', dc:{n:15,ab:'Dex'}, cond:'Prone'}
+  ],
+  'Beholder':[
+    {name:'Slippery Walls', desc:'Walls become slick; climbing them requires a DC 15 Athletics check.'},
+    {name:'Blinding Eye', desc:'An eye opens in a wall: one creature must make a DC 15 Con save or be blinded until initiative 20 next round.', dc:{n:15,ab:'Con'}, cond:'Blinded'}
+  ]
+};
+
 // Structured monster attacks — authoritative for the BUILT-IN bestiary (v120.243).
 //
 // Same Pillar-1 move as SPELL_MECH, with one deliberate difference: the prose parser is NOT being
