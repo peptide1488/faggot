@@ -4766,10 +4766,18 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
       const tstyle=mo.sprite?(allyMark?'background:none;box-shadow:0 0 0 2px rgba(80,160,255,.85);':'background:none;box-shadow:none;'):'';
       const condMark=(mo.conds&&mo.conds.length)?`<span class="condmark" title="${esc(mo.conds.map(x=>x.name).join(', '))}">🌀</span>`:'';
       const allyBadge=allyMark?`<span class="mnum" style="background:#2a6ab0" title="Ally">✦</span>`:'';
-      tok=(sheet?`<span style="${allyMark?'filter:drop-shadow(0 0 3px #4af)':''}">${sheet}</span>`:`<span class="${tcls}" style="${tstyle}">${inner}</span>`)+(mo.num?`<span class="mnum">${mo.num}</span>`:'')+allyBadge+condMark+hpbar(mo.hp,mo.max); }
+      tok=(sheet?`<span style="${allyMark?'filter:drop-shadow(0 0 3px #4af)':''}">${sheet}</span>`:`<span class="${tcls}" style="${tstyle}">${inner}</span>`)+(mo.num?`<span class="mnum">${mo.num}</span>`:'')+allyBadge+condMark+hpbar(mo.hp,mo.max);
+      // Invisible reads as ghosted rather than absent (v120.250). The condition already drives
+      // advantage/disadvantage through attackAdvantage; until now nothing on the board showed it,
+      // so a table could easily forget it was running. Wrapping rather than restyling the token
+      // keeps sprites, HP bar, number badge and condition mark all faded together.
+      if(unitIsInvisible(mo)) tok=`<span class="invisTok" title="Invisible">${tok}</span>`; }
     else if(pl){ const meTok=(net&&net.role==='player'&&net.peer&&pl.id===net.peer.id);
       const plCls=pl.cls||(pl.c&&pl.c.cls); const sheet=iso&&plCls?spriteTokenHTML(plCls.toLowerCase(),pl.facing):null;
       tok=(sheet?`<span>${sheet}</span>`:`<span class="tok pl ${(net&&net.sel==='p'+pl.id)||meTok?'sel':''}">${esc((pl.name[0]||'P').toUpperCase())}</span>`)+hpbar(pl.hpCur,pl.hpMax);
+      // Players go ghosted too — invisibility is symmetric, and a PC under Greater Invisibility
+      // should look it on the DM's board.
+      if(unitIsInvisible(pl)) tok=`<span class="invisTok" title="Invisible">${tok}</span>`;
       // matching prone corpse under feet when sharing the tile (no skull badge)
       if(moDead){ const sheetC=iso&&moDead.sprite?spriteTokenHTML(moDead.sprite,moDead.facing):null;
         tok+=sheetC?`<span class="deadtok corpse-under" title="${esc(moDead.name||'Corpse')} — walkable" style="position:absolute;left:2px;bottom:0;transform:rotate(90deg) scale(.55);filter:brightness(.82) saturate(.75);pointer-events:none">${sheetC}</span>`

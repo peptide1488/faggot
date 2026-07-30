@@ -3955,6 +3955,18 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
    Beholder telling the DM to adjudicate by hand. These are the shared rules; the DM UI drives
    them, and they're written adapter-free so Quick Battle can use them unchanged later. */
 
+/**
+ * Is this unit invisible? (v120.250) One predicate for every unit shape, because that is where
+ * this kind of check reliably drifts: a monster keeps conditions in `conds[]` as objects, a QB
+ * player carries them on `c.conditions` as an object map, and a DM-side player mirror gets a flat
+ * array of strings from the hello payload. `unitConds` already normalises all three, so this just
+ * asks it — no fourth interpretation of "has a condition".
+ */
+function unitIsInvisible(u){
+  if(!u) return false;
+  try{ return unitConds(u).has('Invisible'); }catch(e){ return false; }
+}
+
 /** The legendary profile for a monster, or null. Uses `base` so numbered copies (Orc 2) work. */
 function legendaryOf(mo){ return (mo && LEGENDARY[mo.base||mo.name]) || null; }
 function lairOf(mo){ return (mo && LAIR[mo.base||mo.name]) || null; }

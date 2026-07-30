@@ -367,6 +367,12 @@
      Remembered = you know the terrain but not what's standing on it now; unseen = nothing.
      Kept as brightness/opacity rather than an overlay element so it works identically in the
      flat grid and the iso view, which position .mcell very differently. */
+  /* Invisible (v120.250): ghosted, not gone. 25% opacity plus a faint shimmer so it reads as a
+     deliberate state rather than a rendering glitch. A dashed outline would fight the existing
+     selection ring, so the cue is opacity + hue, which no other token state uses. */
+  .invisTok{opacity:.25;filter:saturate(.35) hue-rotate(180deg);animation:invisShimmer 2.4s ease-in-out infinite}
+  @keyframes invisShimmer{0%,100%{opacity:.22}50%{opacity:.34}}
+  @media (prefers-reduced-motion:reduce){ .invisTok{animation:none} }
   .mcell.fogRemembered{filter:brightness(.42) saturate(.35);opacity:.8}
   .mcell.fogUnseen{filter:brightness(.09) saturate(0);opacity:.55}
   .mcell.fogUnseen::after{content:"";position:absolute;inset:0;background:rgba(4,6,12,.72);pointer-events:none}
@@ -2384,7 +2390,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.249';
+const APP_VERSION='v120.250';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;

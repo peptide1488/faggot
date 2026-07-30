@@ -3710,6 +3710,27 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   }
 }
 
+/* ---- Invisible is visible on the board (v120.250) ----
+   The condition already drove advantage/disadvantage; nothing showed it, so a table could forget
+   it was running. One predicate across all three unit shapes, since that's where such checks drift. */
+{
+  T('unitIsInvisible: a monster with the condition in conds[]',
+    unitIsInvisible({name:'Imp', conds:[{name:'Invisible',rounds:10}]})===true);
+  { const c=newCharacter('Sneak'); c.conditions={Invisible:true};
+    T('unitIsInvisible: a Quick Battle PC carrying it on the character', unitIsInvisible({side:'pc', c})===true); }
+  T('unitIsInvisible: a DM-side player mirror with a flat string array',
+    unitIsInvisible({name:'Hero', hpCur:10, conds:['Invisible']})===true);
+  T('unitIsInvisible: a plain unit is not invisible', unitIsInvisible({name:'Orc', conds:[]})===false);
+  T('unitIsInvisible: null/undefined degrade to false rather than throwing',
+    unitIsInvisible(null)===false && unitIsInvisible(undefined)===false);
+  // It must not be confused with the OTHER concealment state — they stack differently in play.
+  T('unitIsInvisible: Hidden is not Invisible (separate states)',
+    unitIsInvisible({name:'Goblin', conds:[{name:'Hidden',rounds:10}]})===false);
+  // And the mechanical half must still work, so the visual is a cue rather than the whole feature.
+  T('Invisible still grants the attacker advantage (mechanics unchanged by the visual)',
+    attackAdvantage(new Set(['Invisible']), new Set(), true, {}).adv>0);
+}
+
 /* ---- Legendary & lair actions (v120.247) ----
    The last real combat gap: boss monsters had no mechanics, only a prose note telling the DM to
    adjudicate. Two RAW rules are easy to get wrong and are pinned here — a legendary creature may
