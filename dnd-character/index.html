@@ -367,11 +367,11 @@
      Remembered = you know the terrain but not what's standing on it now; unseen = nothing.
      Kept as brightness/opacity rather than an overlay element so it works identically in the
      flat grid and the iso view, which position .mcell very differently. */
-  /* Invisible (v120.253): just transparent. Nothing else.
-     v120.250 shipped opacity .22 plus a hue-rotate and a shimmer animation — that washed the
-     colour out and drew the eye, which is the opposite of "faded". Slightly see-through reads as
-     invisible on its own; the token still needs to be recognisable at a glance. */
-  .invisTok{opacity:.55}
+  /* Invisible (v120.254): opacity 0.25, and nothing else.
+     v120.250 had the right opacity but bolted on a hue-rotate and a shimmer animation, which
+     desaturated the token and drew the eye — the opposite of fading it. Transparency alone is
+     the whole effect. */
+  .invisTok{opacity:.25}
   .mcell.fogRemembered{filter:brightness(.42) saturate(.35);opacity:.8}
   .mcell.fogUnseen{filter:brightness(.09) saturate(0);opacity:.55}
   .mcell.fogUnseen::after{content:"";position:absolute;inset:0;background:rgba(4,6,12,.72);pointer-events:none}
@@ -2389,7 +2389,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.253';
+const APP_VERSION='v120.254';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 if('serviceWorker' in navigator){
   let _reloaded=false;
