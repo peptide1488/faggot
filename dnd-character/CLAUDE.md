@@ -228,6 +228,19 @@ Combat / grid / multiplayer — **file attribution corrected 2026-07-28**: grid 
 - `parseMonsterAttacks` — parses bestiary `atk` strings (also load-bearing prose:
   `+N (dice)`, `DC N Abl`, reach/range/condition keywords)
 
+**The battle screen is ONE screen (v120.278).** `renderQuickBattle` and `renderPlayerBattle` are
+thin: both build a `battleCtx(mode)` and compose five shared builders (`battleHeaderHTML`,
+`battleStatTilesHTML`, `battleMapHTML`, `battleActionsHTML`, `battleLogHTML`) plus one shared
+binder, `bindBattleCommon`, which is the single place the move range reaches BOTH `mapGridHTML`
+and `syncIso3DHost`. Per-mode differences (verbs, gating, log shape, fog) are FIELDS on the
+context - if you find yourself adding a `mode==='qb'` check that isn't about markup, it belongs
+in `battleCtx` instead. `renderDM` is deliberately separate: it's a DM console (roster, bestiary,
+map editor), not this screen, and it shares the panels that matter rather than the layout.
+Shared panels pick their adapter with `battleAdapter(s)` - never hardcode `qbAdapter` in code a
+second mode can reach, which is exactly how `openStatusPanel` came to read Quick Battle state
+during DM fights. `clearBattleState(c)` is the single list of state that must not survive a
+fight (altitude, conditions, mount, wild shape, ...); all three cleanup paths call it.
+
 UI (lives in `ui.js` now, rarely rules-relevant): `render()` dispatcher, `renderSheet`,
 `renderCombat`, `renderSpells`, `renderItems`, `battleCard`, `castModal`, `mapGridHTML`.
 
