@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.280';
+const RULES_BUILD='v120.281';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -2871,7 +2871,7 @@ function syncInteractDecor(s){
 }
 
 /**
- * Keep a cell's LIGHT in step with the decor sitting on it (v120.280).
+ * Keep a cell's LIGHT in step with the decor sitting on it (v120.281).
  *
  * Reported: "in the map editor i added torch to wall but it didnt add light." The editor wrote
  * s.map.decor[key] and stopped there, but light does not come from decor at all - it comes from
@@ -2887,14 +2887,14 @@ const DECOR_LIGHT={
   campfire:{radius:4.5, color:[1.0,0.50,0.18], intensity:1.40, kind:'campfire'},
 };
 /**
- * Which Engine adapter drives THIS session (v120.280)?
+ * Which Engine adapter drives THIS session (v120.281)?
  *
  * Shared UI kept hardcoding `qbAdapter`, which silently produced Quick-Battle answers inside a
  * DM-hosted fight (openStatusPanel's advantage probe did exactly that). One picker so a shared
  * panel behaves the same in all three modes instead of quietly reading the wrong session.
  */
 /**
- * A monster's turn starts clean (v120.280).
+ * A monster's turn starts clean (v120.281).
  *
  * The character side has had freshTurnState since forever; monsters had their per-turn fields
  * re-set inline at two call sites instead, which is the same shape as the battle-state leak that
@@ -2906,7 +2906,7 @@ function freshMonsterTurn(m){
   m.attacksLeft=m.attacks||1;
   m.moveLeft=speedBlocked(m)?0:(m.speed||30);
   m.reactionUsed=false;
-  m.disengaged=false;   // general actions, v120.280
+  m.disengaged=false;   // general actions, v120.281
   m.readied=false;
   return m;
 }
@@ -3509,7 +3509,7 @@ function qbCheckEnd(){ if(!QB) return;
   // instead means the sheet is correct the moment the fight ends, not retroactively.
   if(!wasOver && QB.over){
     const pc=QB.players[0].c;
-    clearBattleState(pc);   // one list, three call sites (v120.280)
+    clearBattleState(pc);   // one list, three call sites (v120.281)
     if(typeof longRest==='function') longRest(pc);   // full recovery between sandbox fights
     if(typeof save==='function') save();
     qbLog('🛌 Long rest — HP, slots and abilities restored, all effects cleared');
@@ -4054,7 +4054,7 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
    them, and they're written adapter-free so Quick Battle can use them unchanged later. */
 
 /**
- * Everything that belongs to ONE fight and must not survive it (v120.280).
+ * Everything that belongs to ONE fight and must not survive it (v120.281).
  *
  * This exists because the list kept being forgotten a field at a time. First conditions carried
  * between Quick Battles ("in every map i am restrained"), then Invisible did, and then altitude —
@@ -4070,7 +4070,7 @@ function clearBattleState(c){
   if(!c) return;
   c.conditions={};
   c.hiddenDC=null;
-  c.altitude=0;              // flight — the v120.280 report
+  c.altitude=0;              // flight — the v120.281 report
   c.effects=[];
   c.concentration={active:false, spell:''};
   c.mountedOn=null;          // dismount; a steed doesn't follow you out of the arena

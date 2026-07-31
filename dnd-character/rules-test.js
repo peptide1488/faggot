@@ -30,7 +30,7 @@ global.Image=class{ constructor(){ this.complete=false; this.naturalWidth=0; } s
 require('./iso-renderer.js');   // mapGridHTML calls IsoRenderer.stageSize/tileScreenPos — see iso-renderer-test.js for the renderer's own tests
 
 // consts inside eval stay block-scoped — re-export the data tables the tests assert on
-eval(src.replace('"use strict";','')+
+eval(fs.readFileSync(path.join(__dirname,'fx.js'),'utf8')+';'+src.replace('"use strict";','')+';globalThis.FX=FX;globalThis.FX_BUILD=FX_BUILD;'+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
   'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;'+
   'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
@@ -4563,7 +4563,7 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     // Every module that sw.js serves network-first needs a stamp, or the detector has a hole and
     // reads as an all-clear while that file is stale (v120.256 stamped only 2 of the 5).
     const MODULES=[['ui.js','UI_BUILD'],['rules.js','RULES_BUILD'],['data.js','DATA_BUILD'],
-                   ['net.js','NET_BUILD'],['iso-renderer.js','ISOR_BUILD']];
+                   ['net.js','NET_BUILD'],['iso-renderer.js','ISOR_BUILD'],['fx.js','FX_BUILD']];
     const bad=[];
     for(const [file,konst] of MODULES){
       const v=(fs.readFileSync(path.join(__dirname,file),'utf8').match(new RegExp('const '+konst+"='([^']+)'"))||[])[1];
@@ -4836,6 +4836,79 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('afterManeuver broadcasts in DM mode', /if\(mode==='dm'\) dmBroadcast\(\)/.test(useBody));
 }
 
+
+
+/* ---- Combat FX (v120.281) ----
+   Impact frames, hitstop, screen shake and floating numbers, driven by ONE subscriber on the
+   shared Events bus so all three modes get them without per-mode wiring.
+
+   The bar here is "can never break a fight": FX runs on every attack in every mode, so a throw
+   inside it would take the battle down with it. These tests are mostly about that promise, plus
+   the wiring that makes a new module actually ship (script tag, offline cache, network-first,
+   build stamp - each of which has bitten this project before). ---- */
+{
+  T('FX module loaded with a build stamp', typeof FX==='object' && typeof FX_BUILD==='string');
+
+  // 1. It must survive anything the bus throws at it. A malformed event must not reach the fight.
+  const junk=[null, undefined, {}, {type:'attack'}, {type:'attack', to:null},
+              {type:'attack', to:{x:1,y:1}, hit:true, dmg:NaN},
+              {type:'death'}, {type:'death', at:{x:0,y:0}}, {type:'hazard'},
+              {type:'nonsense', to:{x:'a',y:'b'}}];
+  let threw=null;
+  junk.forEach(ev=>{ try{ FX.onEvent(ev); }catch(e){ threw=threw||(JSON.stringify(ev)+' -> '+e.message); } });
+  T('FX.onEvent never throws, whatever the event looks like'+(threw?' - THREW on '+threw:''), !threw);
+
+  // 2. Damage-type colours: known types are distinct, unknown falls back rather than undefined.
+  T('FX.colorFor maps known damage types', FX.colorFor('fire')!==FX.colorFor('cold'));
+  T('FX.colorFor is case-insensitive', FX.colorFor('Fire')===FX.colorFor('fire'));
+  T('FX.colorFor falls back for unknown/missing types',
+    /^#/.test(FX.colorFor('bludgeoning')) && /^#/.test(FX.colorFor()) && /^#/.test(FX.colorFor(null)));
+
+  // 3. Shake is clamped at both ends - a 200-damage crit must not throw the map off screen.
+  T('shake config is sane and bounded', FX.cfg.shakeBase>0 && FX.cfg.shakeMax>FX.cfg.shakeBase && FX.cfg.shakeMax<=24);
+  T('crits hold a longer beat than normal hits', FX.cfg.hitstopCritMs>FX.cfg.hitstopMs);
+
+  // 4. The node cap is what keeps a 100-monster round from spawning hundreds of divs.
+  T('a live-node cap exists', FX.cfg.maxLiveNodes>0 && FX.cfg.maxLiveNodes<=64);
+
+  // 5. Hitstop must delay VISUALS ONLY. If it ever delayed state, a dropped timer would desync a
+  //    fight - so the callback is optional and the call returns immediately.
+  let ran=false;
+  FX.hitstop(0, ()=>{ ran=true; });
+  T('FX.hitstop accepts a callback and returns immediately', ran===false);
+  T('FX.hitstop tolerates no callback', (()=>{ try{ FX.hitstop(5); return true; }catch(e){ return false; } })());
+
+  // 6. Wiring: a new module only ships if all four of these are done. Each has broken before.
+  const html=fs.readFileSync(path.join(__dirname,'index.html'),'utf8');
+  const swSrc=fs.readFileSync(path.join(__dirname,'sw.js'),'utf8');
+  T('index.html loads fx.js', /<script src="\.\/fx\.js"><\/script>/.test(html));
+  T('fx.js is subscribed to the shared Events bus (one subscriber, all three modes)',
+    /Events\.on\(ev=>FX\.onEvent\(ev\)\)/.test(html));
+  T('sw.js caches fx.js for offline', /'\.\/fx\.js'/.test(swSrc));
+  T('sw.js serves fx.js network-first (or an FX update serves stale)',
+    /\(data\|rules\|net\|ui\|fx\|iso-renderer\)/.test(swSrc));
+
+  // 7. It must be switch-off-able, and must respect the OS reduced-motion setting.
+  const fxSrc=fs.readFileSync(path.join(__dirname,'fx.js'),'utf8');
+  T('FX can be disabled by the user', /grimoire\.fxOff/.test(fxSrc));
+  T('FX respects prefers-reduced-motion', /prefers-reduced-motion/.test(fxSrc));
+  T('the FX overlay never eats clicks', /pointer-events:none/.test(fxSrc));
+
+  // 8. Scope. iso3d/src/fx.js ALREADY draws impacts, floaters, projectiles and dtype colours with
+  //    the real camera projection. This layer must not paint a second set over the top - measured
+  //    in a browser: DOM cell boxes follow the 2D projection, so in iso3d they land in the wrong
+  //    place. So: impacts/numbers only when the 3D host is NOT the active renderer.
+  T('FX knows whether the 3D host is drawing', typeof FX.host3dActive==='function');
+  T('impacts are suppressed when the 3D host owns them',
+    /const own=!this\.host3dActive\(\)/.test(fxSrc) && /if\(own\) this\.burst\(/.test(fxSrc));
+  T('floating numbers are suppressed when the 3D host owns them', /if\(own\) this\.number\(/.test(fxSrc));
+  T('cellRect is documented as 2D-only (it does not follow the 3D camera)',
+    /VALID IN THE 2D VIEW ONLY/.test(fxSrc));
+  // The 3D view is two stacked canvases; shaking one and not the other visibly tears them apart.
+  T('shake moves BOTH iso3d canvases together',
+    /canvas\.iso3d-gl, canvas\.iso3d-overlay/.test(fxSrc));
+  T('shake never targets the whole page', !/document\.body\.classList\.add\('fxShaking'\)/.test(fxSrc));
+}
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);

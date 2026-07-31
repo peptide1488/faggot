@@ -1,5 +1,5 @@
 // Grimoire — D&D 5e Character Keeper — offline app-shell service worker
-const CACHE = 'grimoire-v120.280';
+const CACHE = 'grimoire-v120.281';
 const ASSETS = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const ASSETS = [
   './rules.js',
   './net.js',
   './ui.js',
+  './fx.js',
   './iso-renderer.js',
   './manifest.webmanifest',
   './icon.svg',
@@ -72,7 +73,7 @@ self.addEventListener('fetch', (e) => {
   // These are unversioned URLs, so only freshness-checking can update them. iso3d/ is deliberately
   // NOT included: those imports carry an explicit ?v= cache-buster, so a new build requests new
   // URLs and cache-first is both correct and cheaper for them.
-  const isAppCode = /\/(data|rules|net|ui|iso-renderer)\.js(\?|$)/.test(req.url);
+  const isAppCode = /\/(data|rules|net|ui|fx|iso-renderer)\.js(\?|$)/.test(req.url);
   if (isShell || isAppCode) {
     // Network-first, but never hang on it. This app gets used at a table on bad wifi, where a
     // stalled (not failed) request would otherwise block startup indefinitely — worse than the

@@ -493,6 +493,7 @@
 <script src="./rules.js"></script>
 <script src="./net.js"></script>
 <script src="./ui.js"></script>
+<script src="./fx.js"></script>
 <script>
 "use strict";
 /* ----------------------------------------------------------------------------
@@ -1796,6 +1797,12 @@ try{ if(typeof window!=='undefined') window.GrimoireEvents=Events; }catch(e){}
 // actorId, so the immediately-preceding attack event is used to recover who did it. This is
 // the one central choke point every attack in every mode (QB, player-net) already funnels
 // through, so no per-mode wiring is needed.
+// Combat juice (v120.281). One subscriber, so Quick Battle, DM-hosted and player-net all get
+// impact frames/hitstop/shake without any per-mode wiring - the same reason Dark One's Blessing
+// below is a subscriber rather than three hooks. FX is defensive internally and never delays
+// game state, only visuals.
+try{ if(typeof FX!=='undefined') Events.on(ev=>FX.onEvent(ev)); }catch(e){}
+
 let _lastAttackEv=null;
 Events.on(ev=>{
   if(ev.type==='attack') _lastAttackEv=ev;
@@ -2442,7 +2449,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.280';
+const APP_VERSION='v120.281';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That
@@ -2454,7 +2461,8 @@ const APP_VERSION='v120.280';
                  'rules.js':(typeof RULES_BUILD!=='undefined')?RULES_BUILD:null,
                  'data.js':(typeof DATA_BUILD!=='undefined')?DATA_BUILD:null,
                  'net.js':(typeof NET_BUILD!=='undefined')?NET_BUILD:null,
-                 'iso-renderer.js':(typeof ISOR_BUILD!=='undefined')?ISOR_BUILD:null };
+                 'iso-renderer.js':(typeof ISOR_BUILD!=='undefined')?ISOR_BUILD:null,
+                 'fx.js':(typeof FX_BUILD!=='undefined')?FX_BUILD:null };
   const stale=Object.keys(stamps).filter(k=>stamps[k] && stamps[k]!==APP_VERSION);
   if(stale.length){
     const msg='Stale code: index.html is '+APP_VERSION+' but '+stale.map(k=>k+' is '+stamps[k]).join(', ')
