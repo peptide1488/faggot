@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.277';
+const UI_BUILD='v120.278';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -2052,14 +2052,14 @@ function openStatusPanel(c, s, unit){
   let advLine='No foe in sight to measure against.';
   try{
     // Measure against the OPPOSING side. A monster's advantage is judged against the party,
-    // not against the monster standing next to it (v120.277, now that the DM can open this
+    // not against the monster standing next to it (v120.278, now that the DM can open this
     // panel on its own monsters).
     const isMon=((s&&s.monsters)||[]).some(m=>m.id===(unit&&unit.id));
     const foes=isMon ? ((s&&s.players)||[]).filter(p=>(p.hpCur||0)>0 && p.x!=null)
                      : ((s&&s.monsters)||[]).filter(m=>m.hp>0);
     const near=foes.slice().sort((a,b)=>gridDist(unit.x,unit.y,a.x,a.y)-gridDist(unit.x,unit.y,b.x,b.y))[0];
     if(near){
-      // Adapter must follow the session, not assume Quick Battle (v120.277) - this panel is
+      // Adapter must follow the session, not assume Quick Battle (v120.278) - this panel is
       // shared with DM-hosted and player-net battles, where qbAdapter reads the wrong state.
       const pv=Engine.hitResult(battleAdapter(s), unit.id, near.id, {name:'probe', toHit:0, dmg:'1d4', tiles:1}, 10);
       const lbl=advLabel(pv.adv, pv.advWhy, {bare:true});
@@ -3056,7 +3056,7 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
-    // Destructive controls bind with onclick, NOT addEventListener (v120.277). onclick is
+    // Destructive controls bind with onclick, NOT addEventListener (v120.278). onclick is
   // idempotent -- rebinding replaces -- whereas addEventListener STACKS, so an element bound
   // twice fires its handler twice and queues two confirm() dialogs. Reset dialogs were seen
   // stacking during testing, including a second 'delete this character' prompt. For anything
@@ -3868,68 +3868,219 @@ function playerAttackMenu(c){
   draw();
 }
 
-function renderPlayerBattle(c){
-  const s=net.session, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0};
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   ONE battle screen (v120.278)
+
+   Quick Battle and the player-net battle were two hand-written screens with the same anatomy -
+   header, stats, battlefield, actions, log - and every divergence between them shipped as a bug:
+   the move grid reached the 3D renderer in one mode and not the other, Status existed in one and
+   not the other, and openStatusPanel read Quick Battle state during DM fights. Rather than keep
+   diffing two files by eye, the anatomy is now five shared builders plus one context object that
+   says what THIS mode calls things.
+
+   renderDM is deliberately NOT folded in. It is not this screen - it is a DM console (roster,
+   bestiary, map editor, campaign controls) that happens to contain a map. It already shares the
+   pieces that matter (mapGridHTML, buildMoveRangeOpts, openAdjacentUseUI, openStatusPanel,
+   syncIso3DHost), and pretending its 288 lines are the same screen would be a worse lie than the
+   duplication it replaced.
+
+   DOM ids are unchanged on purpose (qbMove, pbMoveBtn, qbUse, pbStatus, ...). Existing handlers,
+   tools/smoke.js and the parity guards in rules-test.js all key off them.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Everything the shared builders need, expressed once per mode. This is the ONLY place the two
+ * modes are allowed to differ: if a panel below needs a `mode==='qb'` check that isn't about
+ * markup, the difference belongs here as a field instead.
+ */
+function battleCtx(mode, cIn){
+  if(mode==='qb'){
+    const s=QB, unit=s.players[0], c=unit.c;
+    unit.hpCur=c.hp.cur; unit.hpMax=c.hp.max; unit.ac=computeAC(c);
+    const o=qbCurrent(), myTurn=!!(o && o.k==='p' && !s.over);
+    return {
+      mode, s, c, unit, b:c.battle, myTurn, over:s.over, current:o,
+      idp:'qb',                                  // id prefix, so markup ids stay mode-native
+      moveMode:!!s.moveMode,
+      setMoveMode:v=>{ s.moveMode=v; },
+      gate:myTurn,                               // QB disables its controls off-turn
+      log:(s.log||[]), logLimit:0, logTime:false,
+      fogOpts:null, showFogBtn:false, showUndo:true, showSheet:true, showSurge:false,
+      showHpBtns:false, showDeath:false, showRage:false, showChipToggle:false,
+      onAttack:()=>qbOpenAttack(c), onSpells:()=>qbOpenSpells(c),
+      onUse:()=>openAdjacentUseUI(c,s,unit), onStatus:()=>openStatusPanel(c,s,unit),
+      onEnd:()=>qbEndPcTurn(),
+      useUnit:unit,
+    };
+  }
+  // player-net: the DM owns the clock, so controls stay live and "my turn" is advisory.
+  const s=net.session, c=cIn, me=s.players.find(p=>p.id===net.peer.id)||{x:0,y:0};
   const spdOpts={ignoreEffects:inAntimagicField(s,me.x,me.y)};
-  if(!c.battle) c.battle={round:s.battle.round||1, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c,spdOpts), moveUsed:0};
+  if(!c.battle) c.battle={round:s.battle.round||1, action:false, bonus:false, reaction:false,
+    actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, attacksLeft:extraAttacks(c)+1,
+    move:effSpeed(c,spdOpts), moveUsed:0};
   if(c.battle.move==null) c.battle.move=effSpeed(c,spdOpts);
-  const b=c.battle;
-  // Built once and shared by BOTH renderers below. Previously the DOM grid got the move range
-  // and syncIso3DHost got nothing, so in iso3d - the view people actually play in - the player's
-  // move grid simply never appeared (v120.277).
-  const pbMoveOpts = net.moveMode ? buildMoveRangeOpts(s,me,b.move||0,hasAction(c),effSpeed(c),isFlying(c)) : {};
-  $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
-  app.className='fade'; void app.offsetWidth;
-  const myTurn = s.order&&s.order.length&&s.order[s.turn]&&s.order[s.turn].id===net.peer.id;
-  app.innerHTML=`
-  <div class="card" style="border:2px solid var(--accent)">
+  const myTurn=!!(s.order && s.order.length && s.order[s.turn] && s.order[s.turn].id===net.peer.id);
+  const useUnit=Object.assign({}, me, {me:true, c, id:'me'});
+  return {
+    mode, s, c, unit:me, b:c.battle, myTurn, over:null, current:(s.order||[])[s.turn],
+    idp:'pb',
+    moveMode:!!net.moveMode,
+    setMoveMode:v=>{ net.moveMode=v; },
+    gate:true,
+    log:(c.log||[]), logLimit:30, logTime:true,
+    fogOpts: net.fogOff ? {} : {fog:{viewer:{x:me&&me.x, y:me&&me.y, c}, viewerId:(net.peer&&net.peer.id)||'me'}},
+    showFogBtn:true, showUndo:false, showSheet:false, showSurge:true,
+    showHpBtns:true, showDeath:true, showRage:true, showChipToggle:true,
+    onAttack:()=>playerAttackMenu(c), onSpells:()=>openQuickSpells(c),
+    onUse:()=>openAdjacentUseUI(c, s, useUnit), onStatus:()=>openStatusPanel(c, s, useUnit),
+    onEnd:()=>{ if(timeStopExtraTurn(c)) return;
+      if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} }
+      net.moveMode=false; flashBanner('Turn ended'); },
+    useUnit,
+  };
+}
+
+/** Move range, built ONCE per render and handed to both the DOM grid and the 3D host. */
+function battleMoveOpts(x){
+  return x.moveMode && (x.mode!=='qb' || x.myTurn)
+    ? buildMoveRangeOpts(x.s, x.unit, x.b.move||0, hasAction(x.c), effSpeed(x.c), isFlying(x.c))
+    : {};
+}
+
+function battleHeaderHTML(x){
+  const s=x.s;
+  if(x.mode==='qb'){
+    const o=x.current;
+    return `<div class="card" style="border:2px solid var(--accent2)">
+    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Quick Battle</h2><div class="addrow" style="gap:6px"><button class="btn ghost sm" id="qbSheet">📜 Sheet</button><button class="btn ghost sm" id="qbExit" style="color:var(--bad)">Exit</button></div></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Round ${s.battle.round} · ${x.over?(x.over==='win'?'🏆 Victory!':'💀 Defeated'):(x.myTurn?'Your turn':'⏳ '+esc(o?o.name:'…')+'…')}</div>
+    <div class="addrow" style="gap:5px;flex-wrap:wrap;margin-top:8px">${(s.order||[]).map((it,i)=>{ const u=qbUnitById(it.id); const dead=u&&!qbAlive(u); const icon=it.k==='p'?'🟩':(u&&isPartyAlly(u)||it.ally)?'🟦':'🟥'; return `<span class="pill" style="${i===s.turn?'background:var(--accent2);color:#fff;':''}${dead?'opacity:.4;text-decoration:line-through':''}">${icon} ${esc(it.name)} <b>${it.roll}</b></span>`; }).join('')}</div>
+  </div>`;
+  }
+  return `<div class="card" style="border:2px solid var(--accent)">
     <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Battle · Round ${s.battle.round}</h2><span class="muted" style="font-size:11px">DM controls turns</span></div>
-    ${(s.order&&s.order.length)?`<div style="text-align:center;margin:8px 0;font-weight:700;color:${myTurn?'var(--accent)':'var(--mut)'}">${myTurn?'★ YOUR TURN ★':'Now: '+esc((s.order[s.turn]||{}).name||'—')}</div>
+    ${(s.order&&s.order.length)?`<div style="text-align:center;margin:8px 0;font-weight:700;color:${x.myTurn?'var(--accent)':'var(--mut)'}">${x.myTurn?'★ YOUR TURN ★':'Now: '+esc((s.order[s.turn]||{}).name||'—')}</div>
       <div class="chips" style="justify-content:center">${s.order.map((o,i)=>`<span class="chip ${i===s.turn?'on':''}" style="${i===s.turn?'':'opacity:.6'}">${o.k==='m'?'🟥':'🟩'} ${esc(o.name)} (${o.roll})</span>`).join('')}</div>`:''}
-    <div class="tiles" style="margin-top:8px">
+    ${battleStatTilesHTML(x)}
+  </div>`;
+}
+
+/** HP/AC/Move tiles + the action-economy chips. Shape differs per mode; the data does not. */
+function battleStatTilesHTML(x){
+  const c=x.c, b=x.b;
+  const chip=(on,label,key)=>`<button class="chip ${on?'on':''}"${x.showChipToggle&&key?` data-pbt="${key}"`:''}>${on?'✓ ':''}${label}</button>`;
+  const econ=`<div class="chips" style="margin-top:10px">
+      ${chip(!hasAction(c),'Action'+((b.actionsMax||1)>1?' '+actionsLeft(c)+'/'+(b.actionsMax||1):''),'action')}
+      ${chip(!!b.bonus,'Bonus','bonus')}
+      ${chip(!!b.reaction,'Reaction','reaction')}
+    </div>`;
+  const alt=c.altitude>0?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">🕊️ Airborne at ${c.altitude} ft</p>`:'';
+  if(x.mode==='qb'){
+    return `<div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+      <div class="tile"><div class="lab">HP</div><div class="big" style="color:${c.hp.cur<=c.hp.max*0.3?'var(--bad)':'inherit'}">${c.hp.cur}/${c.hp.max}</div></div>
+      <div class="tile"><div class="lab">AC ${bd('ac')}</div><div class="big">${computeAC(c)}</div></div>
+      <div class="tile"><div class="lab">Move</div><div class="big">${b.move||0}<span style="font-size:11px">ft</span></div></div>
+      <div class="tile"><div class="lab">Attacks</div><div class="big">${b.attacksLeft||0}</div></div>
+    </div>
+    ${alt}
+    ${econ}`;
+  }
+  return `<div class="tiles" style="margin-top:8px">
       <div class="tile" style="${c.hp.cur<=0?'box-shadow:inset 0 0 0 1px var(--bad)':''}"><div class="lab">HP${c.hp.cur<=0?' · DOWN':''}</div><div class="big" style="color:${c.hp.cur<=0?'var(--bad)':'var(--good)'}">${c.hp.cur}/${c.hp.max}</div></div>
       <div class="tile"><div class="lab">Move left${b.moveUsed?' · used '+b.moveUsed:''}</div><div class="big">${b.move||0}</div></div>
       <div class="tile"><div class="lab">AC</div><div class="big">${computeAC(c)}</div></div>
     </div>
-    ${c.altitude>0?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">🕊️ Airborne at ${c.altitude} ft</p>`:''}
-    <div class="chips" style="margin-top:10px">
-      <button class="chip ${!hasAction(c)?'on':''}" data-pbt="action">${!hasAction(c)?'✓ ':''}Action${(b.actionsMax||1)>1?' '+actionsLeft(c)+'/'+(b.actionsMax||1):''}</button>
-      <button class="chip ${b.bonus?'on':''}" data-pbt="bonus">${b.bonus?'✓ ':''}Bonus</button>
-      <button class="chip ${b.reaction?'on':''}" data-pbt="reaction">${b.reaction?'✓ ':''}Reaction</button>
+    ${alt}
+    ${econ}
+    ${(x.showSurge&&hasActionSurge(c))?`<button class="btn ghost sm block" data-pbt="surge" style="margin-top:8px${c.actionSurgeUsed?';opacity:.5':''}" ${c.actionSurgeUsed?'disabled':''}>⚡ ${c.actionSurgeUsed?'Action Surge spent (rest to recharge)':'Action Surge (+1 action)'}</button>`:''}`;
+}
+
+/** The battlefield card: map controls, the grid itself, and the movement hint. */
+function battleMapHTML(x, moveOpts){
+  const c=x.c, b=x.b, dis=x.gate?'':'disabled style="opacity:.5"';
+  const rot=`<button class="btn ghost sm" id="${x.idp}RotBtn" style="float:right${x.mode==='qb'?'':';margin-right:6px'}">🔄 Rotate</button>`;
+  const fog=x.showFogBtn?`<button class="btn ghost sm" id="pbFogBtn" style="float:right;margin-right:6px" title="Show only what your character can see">${net.fogOff?'🌐 Fog off':'🌫 Fog on'}</button>`:'';
+  const moveBtn=x.mode==='qb'
+    ? ''   // Quick Battle keeps Move in its action row, next to Attack
+    : `<button class="btn sm" id="pbMoveBtn" style="float:right;${x.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${x.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button>`;
+  const hint=x.mode==='qb'
+    ? `<p class="muted" style="font-size:11.5px;margin:8px 0 0">${x.myTurn?(x.moveMode?'Green: remaining speed (can still Attack). Red: Dash uses your Action. Jump/climb marked on path. Tap a tile.':'⚔ Attack a monster in range, ✨ cast a spell, or 🥾 Move. You can also tap a 🟥 monster directly.'):'⏳ Waiting for '+esc(x.current?x.current.name:'…')+'…'}</p>`
+    : `<p class="muted" style="font-size:11.5px;margin:8px 0 0">${x.moveMode?('Green: <='+(b.move||0)+' ft left (still act) · sheet speed '+effSpeed(c)+' ft'+(hasAction(c)?' · Red: Dash (Action) adds '+effSpeed(c)+' ft':' · no Action left for Dash')+' · Jump/climb marked on path'):'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>`;
+  return `<div class="card">
+    <h2>Battlefield ${moveBtn}${rot}${fog}</h2>
+    ${mapGridHTML(x.s, false, Object.assign({}, moveOpts, x.fogOpts||{}))}
+    ${hint}
+  </div>`;
+}
+
+/** Attack / Spells / Use / Status / End turn, plus the per-mode extras. */
+function battleActionsHTML(x){
+  const c=x.c, dis=x.gate?'':'disabled style="opacity:.5"';
+  const casts=(isCaster(c)||c.spells.length);
+  if(x.mode==='qb'){
+    return `<div class="card">
+    ${battleStatTilesHTML(x)}
+    <div class="addrow" style="gap:6px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn ${x.moveMode?'':'ghost'}" id="qbMove" style="flex:1" ${dis}>🥾 ${x.moveMode?'Moving '+(x.b.move||0)+'/'+effSpeed(c)+' ft':'Move'}</button>
+      <button class="btn" id="qbAttack" style="flex:1" ${dis}>⚔ Attack</button>
+      ${casts?`<button class="btn" id="qbCast" style="flex:1" ${dis}>✨ Spells</button>`:''}
+      <button class="btn ghost" id="qbUse" style="flex:1" ${dis} title="Interact with adjacent objects, or Shove/Grapple an adjacent foe">🖐 Use</button>
+      <button class="btn ghost" id="qbStatus" style="flex:1" title="Everything currently affecting you — conditions, spell effects, concentration, and your current advantage state">🩺 Status</button>
     </div>
-    ${hasActionSurge(c)?`<button class="btn ghost sm block" data-pbt="surge" style="margin-top:8px${c.actionSurgeUsed?';opacity:.5':''}" ${c.actionSurgeUsed?'disabled':''}>⚡ ${c.actionSurgeUsed?'Action Surge spent (rest to recharge)':'Action Surge (+1 action)'}</button>`:''}
-  </div>
-  <div class="card">
-    <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button><button class="btn ghost sm" id="pbRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button><button class="btn ghost sm" id="pbFogBtn" style="float:right;margin-right:6px" title="Show only what your character can see">${net.fogOff?'🌐 Fog off':'🌫 Fog on'}</button></h2>
-    ${mapGridHTML(s,false, Object.assign({}, pbMoveOpts,
-        // Fog of war (v120.241): the player's own map shows only what their character can see,
-        // with previously-explored squares dimmed. `me` carries x/y from the DM broadcast, and
-        // `c` supplies darkvision. Opt-in per call site, so the DM view is unaffected.
-        net.fogOff ? {} : {fog:{viewer:{x:me&&me.x, y:me&&me.y, c}, viewerId:(net.peer&&net.peer.id)||'me'}}
-      ))}
-    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${net.moveMode?('Green: <='+(b.move||0)+' ft left (still act) · sheet speed '+effSpeed(c)+' ft'+(hasAction(c)?' · Red: Dash (Action) adds '+effSpeed(c)+' ft':' · no Action left for Dash')+' · Jump/climb marked on path') :'Tap 🥾 Move to see where you can go. Tap a monster 🟥 to attack it.'}</p>
-  </div>
-  <div class="card">
+    <div class="row2" style="margin-top:8px">
+      <button class="btn ghost" id="qbEnd" ${dis}>End turn ▶</button>
+      ${x.showUndo?`<button class="btn ghost" id="qbUndo" title="Restart this turn from how it began — undoes everything since your turn started" ${(x.myTurn&&qbUndoAvailable())?'':'disabled style="opacity:.5"'}>↩ Undo turn</button>`:''}
+    </div>
+  </div>`;
+  }
+  return `<div class="card">
     <h2>Your turn</h2>
     ${(c.effects&&c.effects.length)?`<div class="addrow" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">${c.effects.map(e=>`<span class="pill" style="${e.name==='Rage'?'background:var(--bad);color:#fff;border-color:var(--bad)':''}">${spellIcon(e.name)} ${esc(e.name)}${e.mods&&modSummary(e.mods)?' · '+modSummary(e.mods):''}</span>`).join('')}</div>`:''}
     <div class="row2">
       <button class="btn" id="pbAttack">⚔ Attack</button>
-      ${(isCaster(c)||c.spells.length)?`<button class="btn" id="pbSpells">✨ Spells</button>`:''}
+      ${casts?`<button class="btn" id="pbSpells">✨ Spells</button>`:''}
     </div>
     <button class="btn ghost block" id="pbUse" style="margin-top:8px">🖐 Use<small style="display:block;opacity:.75">Objects, Shove/Grapple/Hide/Recall Knowledge, Stabilize a downed ally</small></button>
     <button class="btn ghost block" id="pbStatus" style="margin-top:8px">🩺 Status<small style="display:block;opacity:.75">Conditions, spell effects, concentration and your current advantage state</small></button>
-    ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging — tap to stop':'Enter Rage'}</button>`:''}
-    <div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>
-    ${c.hp.cur<=0&&!c.stable?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
-    ${c.hp.cur<=0&&c.stable?`<p class="muted" style="font-size:12px;margin:8px 0 0">🩹 Stabilized — unconscious but not dying.</p>`:''}
-    <button class="btn block" id="pbEndTurn" style="margin-top:10px;${myTurn?'':'opacity:.5'}">⏭ End my turn</button>
-  </div>
-  <div class="card">
+    ${(x.showRage&&c.cls==='Barbarian')?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging — tap to stop':'Enter Rage'}</button>`:''}
+    ${x.showHpBtns?`<div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>`:''}
+    ${(x.showDeath&&c.hp.cur<=0&&!c.stable)?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
+    ${(x.showDeath&&c.hp.cur<=0&&c.stable)?`<p class="muted" style="font-size:12px;margin:8px 0 0">🩹 Stabilized — unconscious but not dying.</p>`:''}
+    <button class="btn block" id="pbEndTurn" style="margin-top:10px;${x.myTurn?'':'opacity:.5'}">⏭ End my turn</button>
+  </div>`;
+}
+
+function battleLogHTML(x){
+  const rows=x.logLimit?x.log.slice(0,x.logLimit):x.log;
+  const empty=x.mode==='qb'?'…':'Your rolls, damage, casts and moves show here.';
+  return `<div class="card">
     <h2>Battle Log</h2>
-    <div style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px">
-      ${(c.log&&c.log.length)? c.log.slice(0,30).map(e=>`<div class="listrow" style="padding:4px 0"><div class="nm" style="font-size:12px">${esc(e.m)}</div><div class="sub" style="white-space:nowrap;font-size:11px">${fmtLogTime(e.t)}</div></div>`).join('') : '<div class="empty" style="padding:8px 0">Your rolls, damage, casts and moves show here.</div>'}
+    <div style="max-height:${x.mode==='qb'?170:200}px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px">
+      ${rows.length? rows.map(e=>`<div class="listrow" style="padding:4px 0"><div class="nm" style="font-size:12px">${esc(e.m)}</div>${x.logTime?`<div class="sub" style="white-space:nowrap;font-size:11px">${fmtLogTime(e.t)}</div>`:''}</div>`).join('') : `<div class="empty" style="padding:8px 0">${empty}</div>`}
     </div>
   </div>`;
+}
+
+/** Bindings every battle screen shares. Mode-specific ones are bound by the caller. */
+function bindBattleCommon(x, moveOpts){
+  { const mv=$('#'+x.idp+'MoveBtn')||$('#'+x.idp+'Move');
+    if(mv && x.gate) mv.onclick=()=>{ x.setMoveMode(!x.moveMode); render(); }; }
+  { const rv=$('#'+x.idp+'RotBtn'); if(rv) rv.onclick=rotateMap; }
+  { const us=$('#'+x.idp+'Use'); if(us && x.gate) us.onclick=x.onUse; }
+  { const st=$('#'+x.idp+'Status'); if(st) st.onclick=x.onStatus; }
+  // The 3D host gets the SAME move opts the DOM grid got - the v120.278 bug was these two
+  // disagreeing, so they are deliberately passed from one variable.
+  if(isoView&&iso3dView) try{ syncIso3DHost(x.s, moveOpts); }catch(e){}
+}
+
+function renderPlayerBattle(c){
+  const x=battleCtx('player', c), s=x.s, me=x.unit, b=x.b, myTurn=x.myTurn;
+  $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
+  app.className='fade'; void app.offsetWidth;
+  const moveOpts=battleMoveOpts(x);
+  app.innerHTML = battleHeaderHTML(x) + battleMapHTML(x, moveOpts)
+                + battleActionsHTML(x) + battleLogHTML(x);
   app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{
     const t=el.getAttribute('data-target'); if(t){ playerAttackMenu(c); return; }
     const [x,y]=el.dataset.cell.split(',').map(Number);
@@ -3963,26 +4114,22 @@ function renderPlayerBattle(c){
   });
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ const k=el.dataset.pbt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }
-    else if(k==='surge'){ if(c.actionSurgeUsed){ flashBanner('Action Surge spent — rest to recharge'); return; } b.actionsMax=(b.actionsMax!=null?b.actionsMax:actionsPerTurn(c))+1; c.actionSurgeUsed=true; b.action=!hasAction(c); logChange(c,'⚡ Action Surge — extra action'); flashBanner('⚡ Action Surge — +1 action'); }
+    else if(k==='surge'){ if(c.actionSurgeUsed){ flashBanner('Action Surge spent - rest to recharge'); return; } b.actionsMax=(b.actionsMax!=null?b.actionsMax:actionsPerTurn(c))+1; c.actionSurgeUsed=true; b.action=!hasAction(c); logChange(c,'\u26A1 Action Surge - extra action'); flashBanner('\u26A1 Action Surge - +1 action'); }
     else b[k]=!b[k];
     save(); render(); });
-  { const mv=$('#pbMoveBtn'); if(mv) mv.onclick=()=>{ net.moveMode=!net.moveMode; render(); }; }
-  { const rv=$('#pbRotBtn'); if(rv) rv.onclick=rotateMap; }
-  // Fog toggle — some tables prefer the whole map visible, and it's also the escape hatch if fog
+  // Fog toggle - some tables prefer the whole map visible, and it's also the escape hatch if fog
   // ever hides something it shouldn't. Persisted so it survives re-renders and reconnects.
   { const fg=$('#pbFogBtn'); if(fg) fg.onclick=()=>{ net.fogOff=!net.fogOff;
       try{ localStorage.setItem('grimoire.fogOff', net.fogOff?'1':''); }catch(e){}
       render(); }; }
-  if(isoView&&iso3dView&&net&&net.session) syncIso3DHost(net.session, pbMoveOpts);
-  { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
-  { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
-  { const us=$('#pbUse'); if(us) us.onclick=()=>openAdjacentUseUI(c, net.session, Object.assign({}, me, {me:true, c, id:'me'})); }
-  { const st=$('#pbStatus'); if(st) st.onclick=()=>openStatusPanel(c, net.session, Object.assign({}, me, {me:true, c, id:'me'})); }
+  { const a=$('#pbAttack'); if(a) a.onclick=x.onAttack; }
+  { const sp=$('#pbSpells'); if(sp) sp.onclick=x.onSpells; }
   { const rg=$('#pbRage'); if(rg) rg.onclick=()=>rageButtonClick(c); }
-  { const et=$('#pbEndTurn'); if(et) et.onclick=()=>{ if(timeStopExtraTurn(c)) return; if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} } net.moveMode=false; flashBanner('Turn ended'); }; }
+  { const et=$('#pbEndTurn'); if(et) et.onclick=x.onEnd; }
   { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
   { const hh=$('#pbHeal'); if(hh) hh.onclick=()=>applyHp(c,Math.abs(Number($('#pbAmt').value)||0)); }
   { const ds=$('#pbDeath'); if(ds) ds.onclick=()=>rollDeathSave(c); }
+  bindBattleCommon(x, moveOpts);
 }
 
 function playerLeave(){ try{ net.peer.destroy(); }catch(e){} net=null; render(); }
@@ -4005,7 +4152,7 @@ function openAdjacentUseUI(c, s, me){
   // Hide/Study/Stabilize) — same functions in Quick Battle and player-net, just a different
   // adapter/log. DM-hosted has no PC of its own to "Use" with (see dmMonsterAttack instead,
   // where the DM's monsters get their own Shove/Grapple options).
-  // DM-hosted joined this in v120.277 ("in the dm mode need to be able to have the use and
+  // DM-hosted joined this in v120.278 ("in the dm mode need to be able to have the use and
   // status button for each one"). Every maneuver below is already adapter-driven, so the DM
   // needs a mode + adapter, not a parallel copy of this menu.
   const mode = (typeof QB!=='undefined' && s===QB) ? 'qb'
@@ -5040,7 +5187,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
 
 function renderDM(){
   const s=net.session; app.className='fade'; void app.offsetWidth;
-  // Move grid for whatever token the DM has selected - monster OR player (v120.277).
+  // Move grid for whatever token the DM has selected - monster OR player (v120.278).
   // Was built inline inside the map template and only for monsters, so the DM got no reach
   // preview when moving a character, and syncIso3DHost never received it at all, which meant
   // the grid was invisible in iso3d for both the DM and the players.
@@ -5100,7 +5247,7 @@ function renderDM(){
       // what that character can actually see before describing the room. mapGridHTML only applies
       // fog when isDM is false, so this deliberately renders as a player view for the preview.
       const asId=net.viewAs, asP=asId&&(s.players||[]).find(p=>p.id===asId||p.cid===asId);
-      const base=dmMoveOpts;   // hoisted above so the 3D host gets the same grid (v120.277)
+      const base=dmMoveOpts;   // hoisted above so the 3D host gets the same grid (v120.278)
       if(asP && asP.x!=null)
         return mapGridHTML(s,false, Object.assign({}, base,
           {fog:{viewer:{x:asP.x,y:asP.y,darkvision:!!asP.darkvision}, viewerId:'dmview:'+(asP.id||asP.cid)}}));
@@ -5186,7 +5333,7 @@ function renderDM(){
   { const eb=$('#encBuilderBtn'); if(eb) eb.onclick=openEncounterBuilder; }
   { const nb=$('#npcBtn'); if(nb) nb.onclick=openNpcBuilder; }
   app.querySelectorAll('[data-msheet]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.msheet); if(mo) openMonsterSheet(mo); });
-  // Use + Status per unit (v120.277) - the SAME shared panels Quick Battle uses, bound to the
+  // Use + Status per unit (v120.278) - the SAME shared panels Quick Battle uses, bound to the
   // DM's session rather than a second DM-only implementation.
   app.querySelectorAll('[data-muse]').forEach(el=>el.onclick=()=>{
     const mo=s.monsters.find(m=>m.id===el.dataset.muse); if(!mo) return;
@@ -5262,7 +5409,7 @@ function renderDM(){
       const dk=x+','+y;
       // Decor alone is scenery. Light lives in map.light.points and interactability in
       // map.interact, so painting a torch has to write all three or it just sits there dark
-      // and unusable (v120.277 — "i added torch to wall but it didnt add light").
+      // and unusable (v120.278 — "i added torch to wall but it didnt add light").
       if(key==='erase'){ delete s.map.decor[dk]; if(s.map.interact) delete s.map.interact[dk]; }
       else { if((key==='torch'||key==='torch_unlit') && !nextToWall(s,x,y)){ flashBanner('🔥 Torches mount on a wall — pick a tile next to one'); return; }
         s.map.decor[dk]=key;
@@ -5823,7 +5970,7 @@ function startQuickBattle(c, crMax, count, mapKey){
   // Same leak applied to c.effects (Haste/Rage/Sanctuary/etc.) and concentration — only
   // conditions were being cleared, so a buff from the previous fight (or an active
   // concentration lock) silently carried over too.
-  clearBattleState(c);   // one list, three call sites (v120.277)
+  clearBattleState(c);   // one list, three call sites (v120.278)
   // Don't open a fight already dead — 0 HP left over from the last battle made the UI look
   // like the encounter "instantly ended" (lose screen) the moment anything checked end state.
   if(!c.hp) c.hp={max:8,cur:8,temp:0};
@@ -6259,75 +6406,31 @@ function qbRunBrain(u){ if(!QB||QB.over){ return; }
 }
 
 function renderQuickBattle(){
-  const s=QB, pc=s.players[0], c=pc.c, b=c.battle; pc.hpCur=c.hp.cur; pc.hpMax=c.hp.max; pc.ac=computeAC(c);
-  const o=qbCurrent(), myTurn=o&&o.k==='p'&&!s.over;
+  const x=battleCtx('qb'), s=x.s, c=x.c, myTurn=x.myTurn;
   app.className='fade'; void app.offsetWidth;
-  const dashAvail=hasAction(c), dashMax=(b.move||0)+(dashAvail?effSpeed(c):0);
-  const moveOpts = (myTurn&&s.moveMode)?buildMoveRangeOpts(s,pc,b.move||0,hasAction(c),effSpeed(c),isFlying(c)):{};
-  app.innerHTML=`
-  <div class="card" style="border:2px solid var(--accent2)">
-    <div class="row between"><h2 style="margin:0;color:var(--accent2)">⚔ Quick Battle</h2><div class="addrow" style="gap:6px"><button class="btn ghost sm" id="qbSheet">📜 Sheet</button><button class="btn ghost sm" id="qbExit" style="color:var(--bad)">Exit</button></div></div>
-    <div class="muted" style="font-size:12px;margin-top:6px">Round ${s.battle.round} · ${s.over?(s.over==='win'?'🏆 Victory!':'💀 Defeated'):(myTurn?'Your turn':'⏳ '+esc(o?o.name:'…')+'…')}</div>
-    <div class="addrow" style="gap:5px;flex-wrap:wrap;margin-top:8px">${s.order.map((it,i)=>{ const u=qbUnitById(it.id); const dead=u&&!qbAlive(u); const icon=it.k==='p'?'🟩':(u&&isPartyAlly(u)||it.ally)?'🟦':'🟥'; return `<span class="pill" style="${i===s.turn?'background:var(--accent2);color:#fff;':''}${dead?'opacity:.4;text-decoration:line-through':''}">${icon} ${esc(it.name)} <b>${it.roll}</b></span>`; }).join('')}</div>
-  </div>
-  ${s.over?`<div class="card" style="text-align:center"><div style="font-size:40px">${s.over==='win'?'🏆':'💀'}</div><h2 style="margin:6px 0">${s.over==='win'?'Victory!':'You were defeated'}</h2>
-    <button class="btn block" id="qbAgain" style="margin-top:8px">⚔ New Quick Battle</button>
-    <button class="btn ghost block" id="qbDone" style="margin-top:8px">Back to character</button></div>`:`
-  <div class="card">
-    <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
-      <div class="tile"><div class="lab">HP</div><div class="big" style="color:${c.hp.cur<=c.hp.max*0.3?'var(--bad)':'inherit'}">${c.hp.cur}/${c.hp.max}</div></div>
-      <div class="tile"><div class="lab">AC ${bd('ac')}</div><div class="big">${computeAC(c)}</div></div>
-      <div class="tile"><div class="lab">Move</div><div class="big">${b.move||0}<span style="font-size:11px">ft</span></div></div>
-      <div class="tile"><div class="lab">Attacks</div><div class="big">${b.attacksLeft||0}</div></div>
-    </div>
-    ${c.altitude>0?`<p class="muted" style="font-size:11.5px;margin:6px 0 0">🕊️ Airborne at ${c.altitude} ft</p>`:''}
-    <div class="chips" style="margin-top:10px">
-      <button class="chip ${!hasAction(c)?'on':''}">${!hasAction(c)?'✓ ':''}Action${(b.actionsMax||1)>1?' '+actionsLeft(c)+'/'+(b.actionsMax||1):''}</button>
-      <button class="chip ${b.bonus?'on':''}">Bonus</button>
-      <button class="chip ${b.reaction?'on':''}">Reaction</button>
-    </div>
-    <div class="addrow" style="gap:6px;flex-wrap:wrap;margin-top:10px">
-      <button class="btn ${s.moveMode?'':'ghost'}" id="qbMove" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>🥾 ${s.moveMode?'Moving '+ (b.move||0) +'/'+effSpeed(c)+' ft':'Move'}</button>
-      <button class="btn" id="qbAttack" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>⚔ Attack</button>
-      ${(isCaster(c)||c.spells.length)?`<button class="btn" id="qbCast" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>✨ Spells</button>`:''}
-      <button class="btn ghost" id="qbUse" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'} title="Interact with adjacent objects, or Shove/Grapple an adjacent foe">🖐 Use</button>
-      <button class="btn ghost" id="qbStatus" style="flex:1" title="Everything currently affecting you — conditions, spell effects, concentration, and your current advantage state">🩺 Status</button>
-    </div>
-    <div class="row2" style="margin-top:8px">
-      <button class="btn ghost" id="qbEnd" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
-      <button class="btn ghost" id="qbUndo" title="Restart this turn from how it began — undoes everything since your turn started" ${(myTurn&&qbUndoAvailable())?'':'disabled style="opacity:.5"'}>↩ Undo turn</button>
-    </div>
-    <p class="muted" style="font-size:11.5px;margin:8px 0 0">${myTurn?(s.moveMode?'Green: remaining speed (can still Attack). Red: Dash uses your Action. Jump/climb marked on path. Tap a tile.':'⚔ Attack a monster in range, ✨ cast a spell, or 🥾 Move. You can also tap a 🟥 monster directly.'):'⏳ Waiting for '+esc(o?o.name:'…')+'…'}</p>
-  </div>
-  <div class="card">
-    <h2>Battlefield <button class="btn ghost sm" id="qbRotBtn" style="float:right">🔄 Rotate</button></h2>
-    ${mapGridHTML(s,false,moveOpts)}
-  </div>`}
-  <div class="card">
-    <h2>Battle Log</h2>
-    <div style="max-height:170px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px">
-      ${s.log.length? s.log.map(e=>`<div class="listrow" style="padding:4px 0"><div class="nm" style="font-size:12px">${esc(e.m)}</div></div>`).join(''):'<div class="empty" style="padding:8px 0">…</div>'}
-    </div>
-  </div>`;
+  const moveOpts=battleMoveOpts(x);
+  app.innerHTML = battleHeaderHTML(x)
+    + (x.over
+        ? `<div class="card" style="text-align:center"><div style="font-size:40px">${x.over==='win'?'\u{1F3C6}':'\u{1F480}'}</div><h2 style="margin:6px 0">${x.over==='win'?'Victory!':'You were defeated'}</h2>
+    <button class="btn block" id="qbAgain" style="margin-top:8px">\u2694 New Quick Battle</button>
+    <button class="btn ghost block" id="qbDone" style="margin-top:8px">Back to character</button></div>`
+        : battleActionsHTML(x) + battleMapHTML(x, moveOpts))
+    + battleLogHTML(x);
   $('#qbExit').onclick=qbExit;
   $('#qbSheet').onclick=()=>openQbSheet(c);
   // "Fight again" also leaves the battle, so it must go through qbExit rather than nulling QB
-  // itself — otherwise it skips the rest/cleanup exactly like the old exit path did (v120.265).
+  // itself - otherwise it skips the rest/cleanup exactly like the old exit path did (v120.265).
   { const a=$('#qbAgain'); if(a) a.onclick=()=>{ qbExit(); openQuickBattle(); }; }
   { const d=$('#qbDone'); if(d) d.onclick=qbExit; }
-  { const mv=$('#qbMove'); if(mv&&myTurn) mv.onclick=()=>{ s.moveMode=!s.moveMode; render(); }; }
-  { const rv=$('#qbRotBtn'); if(rv) rv.onclick=rotateMap; }
-  { const at=$('#qbAttack'); if(at&&myTurn) at.onclick=()=>qbOpenAttack(c); }
-  { const ca=$('#qbCast'); if(ca&&myTurn) ca.onclick=()=>qbOpenSpells(c); }
-  { const us=$('#qbUse'); if(us&&myTurn) us.onclick=()=>openAdjacentUseUI(c,s,pc); }
-  { const st=$('#qbStatus'); if(st) st.onclick=()=>openStatusPanel(c, s, pc); }
-  { const en=$('#qbEnd'); if(en&&myTurn) en.onclick=qbEndPcTurn; }
+  { const at=$('#qbAttack'); if(at&&myTurn) at.onclick=x.onAttack; }
+  { const ca=$('#qbCast'); if(ca&&myTurn) ca.onclick=x.onSpells; }
+  { const en=$('#qbEnd'); if(en&&myTurn) en.onclick=x.onEnd; }
   { const un=$('#qbUndo'); if(un&&myTurn&&qbUndoAvailable()) un.onclick=qbUndoTurn; }
   if(myTurn) app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{
     const t=el.getAttribute('data-target'); if(t){ const mo=s.monsters.find(m=>m.id===t); if(mo&&mo.hp>0) qbPcAttack(mo); return; }
-    const [x,y]=el.dataset.cell.split(',').map(Number); if(!s.moveMode){ flashBanner('Tap 🥾 Move first'); return; } qbMovePc(x,y);
+    const [px,py]=el.dataset.cell.split(',').map(Number); if(!x.moveMode){ flashBanner('Tap \u{1F97E} Move first'); return; } qbMovePc(px,py);
   });
-  if(isoView&&iso3dView) syncIso3DHost(s, moveOpts);
+  bindBattleCommon(x, moveOpts);
 }
 
 function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isFlying(c);
@@ -6818,7 +6921,7 @@ function qbExit(){
   // fight resolves, rather than only once the player closes the screen.
   const pc=(QB && QB.players && QB.players[0]) ? QB.players[0].c : null;
   if(pc){
-    clearBattleState(pc);   // one list, three call sites (v120.277)
+    clearBattleState(pc);   // one list, three call sites (v120.278)
     if(typeof longRest==='function') longRest(pc);
     if(typeof save==='function') save();
   }

@@ -4712,21 +4712,30 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('syncIso3DHost is called in more than one mode (sanity: the survey below means something)',
     syncCalls.length>=3);
 
+  // v120.278: QB and player-net now share ONE screen, so the wiring is asserted once on the
+  // shared binder plus once on the DM console, which stays a separate screen.
+  const bindFn=uiSrc.slice(uiSrc.indexOf('function bindBattleCommon'));
+  const bindBody=bindFn.slice(0, bindFn.indexOf(String.fromCharCode(10)+'}'));
   const modeSync=[
-    ['Quick Battle', /syncIso3DHost\(s, *moveOpts\)/],
-    ['DM-hosted',    /syncIso3DHost\(s, *dmMoveOpts\)/],
-    ['player-net',   /syncIso3DHost\(net\.session, *pbMoveOpts\)/],
+    ['shared battle screen', /syncIso3DHost\(x\.s, *moveOpts\)/.test(bindBody)],
+    ['DM-hosted',            /syncIso3DHost\(s, *dmMoveOpts\)/.test(uiSrc)],
   ];
-  const noGrid=modeSync.filter(p=>!p[1].test(uiSrc)).map(p=>p[0]);
+  const noGrid=modeSync.filter(p=>!p[1]).map(p=>p[0]);
   T('every mode hands its move grid to the 3D renderer, not just to the DOM grid'
     +(noGrid.length?' - NOT WIRED: '+noGrid.join(', '):''), noGrid.length===0);
+  const viaShared=['renderQuickBattle','renderPlayerBattle'].filter(fn=>{
+    const f=uiSrc.slice(uiSrc.indexOf('function '+fn));
+    return !/bindBattleCommon\(x, *moveOpts\)/.test(f.slice(0, f.indexOf(String.fromCharCode(10)+'}')));
+  });
+  T('both PC battle screens bind through bindBattleCommon (no per-mode copy)'
+    +(viaShared.length?' - NOT SHARED: '+viaShared.join(', '):''), viaShared.length===0);
 
   // 2. The move opts must be built ONCE per render and shared, so the DOM grid and the 3D view
   //    can never show different reachable squares.
-  const shared=[['Quick Battle','moveOpts'],['DM-hosted','dmMoveOpts'],['player-net','pbMoveOpts']];
+  const shared=[['shared battle screen','moveOpts'],['DM-hosted','dmMoveOpts']];
   const notShared=shared.filter(p=>{
     const uses=(uiSrc.match(new RegExp('\\b'+p[1]+'\\b','g'))||[]).length;
-    return uses<3;   // declaration + mapGridHTML + syncIso3DHost
+    return uses<3;   // built once, then handed to the DOM grid AND the 3D host
   }).map(p=>p[0]);
   T('each mode builds its move grid once and shares it with both renderers'
     +(notShared.length?' - NOT SHARED: '+notShared.join(', '):''), notShared.length===0);
