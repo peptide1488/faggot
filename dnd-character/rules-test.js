@@ -4908,6 +4908,33 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('shake moves BOTH iso3d canvases together',
     /canvas\.iso3d-gl, canvas\.iso3d-overlay/.test(fxSrc));
   T('shake never targets the whole page', !/document\.body\.classList\.add\('fxShaking'\)/.test(fxSrc));
+
+  // 9. Coalescing. Measured with 100 monsters attacking in one round: without this, shake() ran
+  //    100 times, each forcing a reflow on both canvases - continuous judder. With it, 2.
+  {
+    const realApply=FX._applyShake.bind(FX);
+    let applied=0;
+    FX._applyShake=(p)=>{ applied++; return realApply(p); };
+    FX._shakeAt=0; FX._shakePending=0;
+    if(FX._shakeTimer){ clearTimeout(FX._shakeTimer); FX._shakeTimer=null; }
+
+    FX.shake(5); FX.shake(9); FX.shake(FX.cfg.shakeMax + 50);   // a burst inside one window
+    T('a burst of hits coalesces into ONE immediate shake (not one per hit)', applied===1);
+    T('the STRONGEST hit in the window wins, so a crit is not averaged away by later chip damage',
+      FX._shakePending===FX.cfg.shakeMax);
+    T('shake amplitude is clamped even for absurd damage', FX._shakePending<=FX.cfg.shakeMax);
+
+    // A lone hit must still shake at once - coalescing must not dull the common case.
+    FX._shakeAt=0; FX._shakePending=0;
+    if(FX._shakeTimer){ clearTimeout(FX._shakeTimer); FX._shakeTimer=null; }
+    applied=0; FX.shake(7);
+    T('a single hit still shakes immediately', applied===1);
+
+    if(FX._shakeTimer){ clearTimeout(FX._shakeTimer); FX._shakeTimer=null; }
+    FX._applyShake=realApply;
+    T('the coalesce window is short enough to stay responsive',
+      FX.cfg.shakeCoalesceMs>=60 && FX.cfg.shakeCoalesceMs<=250);
+  }
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

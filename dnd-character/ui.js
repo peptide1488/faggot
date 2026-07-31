@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.281';
+const UI_BUILD='v120.282';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -2052,14 +2052,14 @@ function openStatusPanel(c, s, unit){
   let advLine='No foe in sight to measure against.';
   try{
     // Measure against the OPPOSING side. A monster's advantage is judged against the party,
-    // not against the monster standing next to it (v120.281, now that the DM can open this
+    // not against the monster standing next to it (v120.282, now that the DM can open this
     // panel on its own monsters).
     const isMon=((s&&s.monsters)||[]).some(m=>m.id===(unit&&unit.id));
     const foes=isMon ? ((s&&s.players)||[]).filter(p=>(p.hpCur||0)>0 && p.x!=null)
                      : ((s&&s.monsters)||[]).filter(m=>m.hp>0);
     const near=foes.slice().sort((a,b)=>gridDist(unit.x,unit.y,a.x,a.y)-gridDist(unit.x,unit.y,b.x,b.y))[0];
     if(near){
-      // Adapter must follow the session, not assume Quick Battle (v120.281) - this panel is
+      // Adapter must follow the session, not assume Quick Battle (v120.282) - this panel is
       // shared with DM-hosted and player-net battles, where qbAdapter reads the wrong state.
       const pv=Engine.hitResult(battleAdapter(s), unit.id, near.id, {name:'probe', toHit:0, dmg:'1d4', tiles:1}, 10);
       const lbl=advLabel(pv.adv, pv.advWhy, {bare:true});
@@ -3056,7 +3056,7 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
-    // Destructive controls bind with onclick, NOT addEventListener (v120.281). onclick is
+    // Destructive controls bind with onclick, NOT addEventListener (v120.282). onclick is
   // idempotent -- rebinding replaces -- whereas addEventListener STACKS, so an element bound
   // twice fires its handler twice and queues two confirm() dialogs. Reset dialogs were seen
   // stacking during testing, including a second 'delete this character' prompt. For anything
@@ -3869,7 +3869,7 @@ function playerAttackMenu(c){
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════
-   ONE battle screen (v120.281)
+   ONE battle screen (v120.282)
 
    Quick Battle and the player-net battle were two hand-written screens with the same anatomy -
    header, stats, battlefield, actions, log - and every divergence between them shipped as a bug:
@@ -4069,7 +4069,7 @@ function bindBattleCommon(x, moveOpts){
   { const rv=$('#'+x.idp+'RotBtn'); if(rv) rv.onclick=rotateMap; }
   { const us=$('#'+x.idp+'Use'); if(us && x.gate) us.onclick=x.onUse; }
   { const st=$('#'+x.idp+'Status'); if(st) st.onclick=x.onStatus; }
-  // The 3D host gets the SAME move opts the DOM grid got - the v120.281 bug was these two
+  // The 3D host gets the SAME move opts the DOM grid got - the v120.282 bug was these two
   // disagreeing, so they are deliberately passed from one variable.
   if(isoView&&iso3dView) try{ syncIso3DHost(x.s, moveOpts); }catch(e){}
 }
@@ -4152,7 +4152,7 @@ function openAdjacentUseUI(c, s, me){
   // Hide/Study/Stabilize) — same functions in Quick Battle and player-net, just a different
   // adapter/log. DM-hosted has no PC of its own to "Use" with (see dmMonsterAttack instead,
   // where the DM's monsters get their own Shove/Grapple options).
-  // DM-hosted joined this in v120.281 ("in the dm mode need to be able to have the use and
+  // DM-hosted joined this in v120.282 ("in the dm mode need to be able to have the use and
   // status button for each one"). Every maneuver below is already adapter-driven, so the DM
   // needs a mode + adapter, not a parallel copy of this menu.
   const mode = (typeof QB!=='undefined' && s===QB) ? 'qb'
@@ -4183,7 +4183,7 @@ function openAdjacentUseUI(c, s, me){
   const actorConds=(typeof unitConds==='function') ? unitConds(me||{c}) : new Set(Object.keys((c&&c.conditions)||{}));
   // Dodge/Disengage/Ready are general actions available to ANY creature, so they cannot key off
   // c.battle - a DM-driven monster has no such object. These four resolve the actor's action
-  // budget and per-turn flags for whichever kind of unit is acting (v120.281).
+  // budget and per-turn flags for whichever kind of unit is acting (v120.282).
   const actorHasAction = ()=> (mode==='dm' && actorIsMonster) ? (me.attacksLeft||0)>0 : hasAction(c);
   const actorSpendAction = ()=>{ if(mode==='dm' && actorIsMonster) me.attacksLeft=0; else spendAction(c); };
   const actorFlag = k => (mode==='dm' && actorIsMonster) ? !!me[k] : !!(c.battle && c.battle[k]);
@@ -5196,7 +5196,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
 
 function renderDM(){
   const s=net.session; app.className='fade'; void app.offsetWidth;
-  // Move grid for whatever token the DM has selected - monster OR player (v120.281).
+  // Move grid for whatever token the DM has selected - monster OR player (v120.282).
   // Was built inline inside the map template and only for monsters, so the DM got no reach
   // preview when moving a character, and syncIso3DHost never received it at all, which meant
   // the grid was invisible in iso3d for both the DM and the players.
@@ -5256,7 +5256,7 @@ function renderDM(){
       // what that character can actually see before describing the room. mapGridHTML only applies
       // fog when isDM is false, so this deliberately renders as a player view for the preview.
       const asId=net.viewAs, asP=asId&&(s.players||[]).find(p=>p.id===asId||p.cid===asId);
-      const base=dmMoveOpts;   // hoisted above so the 3D host gets the same grid (v120.281)
+      const base=dmMoveOpts;   // hoisted above so the 3D host gets the same grid (v120.282)
       if(asP && asP.x!=null)
         return mapGridHTML(s,false, Object.assign({}, base,
           {fog:{viewer:{x:asP.x,y:asP.y,darkvision:!!asP.darkvision}, viewerId:'dmview:'+(asP.id||asP.cid)}}));
@@ -5342,7 +5342,7 @@ function renderDM(){
   { const eb=$('#encBuilderBtn'); if(eb) eb.onclick=openEncounterBuilder; }
   { const nb=$('#npcBtn'); if(nb) nb.onclick=openNpcBuilder; }
   app.querySelectorAll('[data-msheet]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.msheet); if(mo) openMonsterSheet(mo); });
-  // Use + Status per unit (v120.281) - the SAME shared panels Quick Battle uses, bound to the
+  // Use + Status per unit (v120.282) - the SAME shared panels Quick Battle uses, bound to the
   // DM's session rather than a second DM-only implementation.
   app.querySelectorAll('[data-muse]').forEach(el=>el.onclick=()=>{
     const mo=s.monsters.find(m=>m.id===el.dataset.muse); if(!mo) return;
@@ -5418,7 +5418,7 @@ function renderDM(){
       const dk=x+','+y;
       // Decor alone is scenery. Light lives in map.light.points and interactability in
       // map.interact, so painting a torch has to write all three or it just sits there dark
-      // and unusable (v120.281 — "i added torch to wall but it didnt add light").
+      // and unusable (v120.282 — "i added torch to wall but it didnt add light").
       if(key==='erase'){ delete s.map.decor[dk]; if(s.map.interact) delete s.map.interact[dk]; }
       else { if((key==='torch'||key==='torch_unlit') && !nextToWall(s,x,y)){ flashBanner('🔥 Torches mount on a wall — pick a tile next to one'); return; }
         s.map.decor[dk]=key;
@@ -5979,7 +5979,7 @@ function startQuickBattle(c, crMax, count, mapKey){
   // Same leak applied to c.effects (Haste/Rage/Sanctuary/etc.) and concentration — only
   // conditions were being cleared, so a buff from the previous fight (or an active
   // concentration lock) silently carried over too.
-  clearBattleState(c);   // one list, three call sites (v120.281)
+  clearBattleState(c);   // one list, three call sites (v120.282)
   // Don't open a fight already dead — 0 HP left over from the last battle made the UI look
   // like the encounter "instantly ended" (lose screen) the moment anything checked end state.
   if(!c.hp) c.hp={max:8,cur:8,temp:0};
@@ -6930,7 +6930,7 @@ function qbExit(){
   // fight resolves, rather than only once the player closes the screen.
   const pc=(QB && QB.players && QB.players[0]) ? QB.players[0].c : null;
   if(pc){
-    clearBattleState(pc);   // one list, three call sites (v120.281)
+    clearBattleState(pc);   // one list, three call sites (v120.282)
     if(typeof longRest==='function') longRest(pc);
     if(typeof save==='function') save();
   }

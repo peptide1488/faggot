@@ -1797,7 +1797,7 @@ try{ if(typeof window!=='undefined') window.GrimoireEvents=Events; }catch(e){}
 // actorId, so the immediately-preceding attack event is used to recover who did it. This is
 // the one central choke point every attack in every mode (QB, player-net) already funnels
 // through, so no per-mode wiring is needed.
-// Combat juice (v120.281). One subscriber, so Quick Battle, DM-hosted and player-net all get
+// Combat juice (v120.282). One subscriber, so Quick Battle, DM-hosted and player-net all get
 // impact frames/hitstop/shake without any per-mode wiring - the same reason Dark One's Blessing
 // below is a subscriber rather than three hooks. FX is defensive internally and never delays
 // game state, only visuals.
@@ -2449,7 +2449,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.281';
+const APP_VERSION='v120.282';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That

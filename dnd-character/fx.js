@@ -1,7 +1,7 @@
 // Grimoire combat FX — screen shake, hitstop, and (2D view only) impact frames and numbers.
 // Loaded via <script src> like data/rules/net/ui, so everything here is a plain global.
 //
-// SCOPE, and why it is narrower than it first looks (v120.281):
+// SCOPE, and why it is narrower than it first looks (v120.282):
 // The iso3d WebGL renderer ALREADY has a full effects system of its own — iso3d/src/fx.js draws
 // projectiles by weapon kind, impacts, explosions, damage floaters and damage-type colours, fed
 // by fxFromGameEvent() on the very same 'attack' events. It draws them with the real camera
@@ -21,7 +21,7 @@
 // number, shake that scales with the size of the hit. Nothing here blocks input or delays game
 // state, every node self-removes, and the whole layer is skipped under prefers-reduced-motion or
 // when switched off.
-const FX_BUILD='v120.281';
+const FX_BUILD='v120.282';
 
 const FX = {
   // ---- tunables (a "feel" table, deliberately in one place) ----
@@ -33,9 +33,11 @@ const FX = {
     numberRiseMs:   900,
     burstMs:        260,
     maxLiveNodes:   28,    // hard cap: a 100-monster round must not spawn 300 divs
+    shakeCoalesceMs:130,   // one shake per window, however many hits land inside it
   },
 
   _layer:null, _live:0, _stopUntil:0,
+  _shakeAt:0, _shakePending:0, _shakeTimer:null,
 
   /**
    * Is the WebGL renderer the thing actually on screen? If so it draws its own impacts and
@@ -131,8 +133,34 @@ const FX = {
     this._spawn(n, this.cfg.numberRiseMs);
   },
 
-  /** Shake the battlefield, not the whole page — the log and buttons must stay readable. */
+  /**
+   * Shake the battlefield, not the whole page — the log and buttons must stay readable.
+   *
+   * COALESCED, because a big round is a burst not a drip: measured with 100 monsters attacking in
+   * one round, the uncoalesced version fired 100 shakes, each doing a class swap plus a forced
+   * reflow on BOTH canvases — 200 layout flushes and a map that judders without pause. Within a
+   * window the STRONGEST pending hit wins (not the last one), so a crit inside a flurry still
+   * reads as a crit instead of being averaged away by whatever landed after it.
+   */
   shake(power){
+    const p=Math.max(this.cfg.shakeBase, Math.min(this.cfg.shakeMax, power||this.cfg.shakeBase));
+    const now=Date.now(), since=now-this._shakeAt, win=this.cfg.shakeCoalesceMs;
+    if(since < win){
+      this._shakePending=Math.max(this._shakePending, p);
+      if(!this._shakeTimer){
+        this._shakeTimer=setTimeout(()=>{
+          this._shakeTimer=null;
+          const q=this._shakePending; this._shakePending=0;
+          if(q) this._applyShake(q);
+        }, win-since);
+      }
+      return;
+    }
+    this._applyShake(p);
+  },
+
+  _applyShake(power){
+    this._shakeAt=Date.now();
     // Shake whatever is actually drawing the battle, never the whole page - the log and buttons
     // have to stay readable. iso3d draws as TWO stacked canvases (.iso3d-gl for the scene and
     // .iso3d-overlay for its own effects/UI); they must shake together or they visibly desync.
@@ -140,7 +168,7 @@ const FX = {
       ? Array.from(document.querySelectorAll('canvas.iso3d-gl, canvas.iso3d-overlay'))
       : [document.querySelector('.mapgrid') || document.querySelector('.isocanvas')].filter(Boolean);
     if(!hosts.length) return;
-    const px=Math.max(this.cfg.shakeBase, Math.min(this.cfg.shakeMax, power||this.cfg.shakeBase));
+    const px=power;
     hosts.forEach(host=>{
       host.style.setProperty('--fxShake', px+'px');
       host.classList.remove('fxShaking'); void host.offsetWidth;   // restart the animation
