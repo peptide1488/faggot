@@ -3,9 +3,9 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.6.18';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.18';
-import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.18';
+import { TERRAIN, createMap } from './map.js?v=0.6.19';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.19';
+import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.19';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {
@@ -321,6 +321,20 @@ export function normalizeFacing(f) {
  * mirror gets a flat array of strings. Kept here rather than in host.js so both unit paths share
  * one answer. (Iso3D 0.6.17)
  */
+
+/**
+ * Flight altitude in FEET for a Grimoire unit (Iso3D 0.6.19). Grimoire tracks c.altitude on the
+ * character (Fly / Ascend), and the engine had no concept of it at all — so a flying PC was gated
+ * correctly by the rules (melee reach, fall damage) while its sprite stayed glued to the ground.
+ * Monsters use a plain `altitude` on the unit; a PC keeps it on the character sheet.
+ */
+function unitAltitudeFt(raw) {
+  if (!raw) return 0;
+  const a = raw.altitude != null ? raw.altitude : (raw.c && raw.c.altitude);
+  const n = Number(a);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function isUnitInvisible(raw) {
   if (!raw) return false;
   const list = raw.conds || [];
@@ -380,6 +394,7 @@ export function grimoireSessionToView(session, opts = {}) {
       source: 'player',
       raw: pl,
       invisible: isUnitInvisible(pl),
+      altitudeFt: unitAltitudeFt(pl),
       col: pl.x | 0,
       row: pl.y | 0,
       team: 'player',
@@ -413,6 +428,7 @@ export function grimoireSessionToView(session, opts = {}) {
       source: 'monster',
       raw: mo,
       invisible: isUnitInvisible(mo),
+      altitudeFt: unitAltitudeFt(mo),
       col: mo.x | 0,
       row: mo.y | 0,
       team: 'enemy',

@@ -1,5 +1,5 @@
 // Grimoire — D&D 5e Character Keeper — offline app-shell service worker
-const CACHE = 'grimoire-v120.271';
+const CACHE = 'grimoire-v120.272';
 const ASSETS = [
   './',
   './index.html',
@@ -23,18 +23,18 @@ const ASSETS = [
   //
   // If the iso3d ?v= is ever bumped, these must be updated in lockstep. rules-test.js derives
   // the list from the real import graph and fails on drift, so this cannot rot silently.
-  './iso3d/boot.js?v=0.6.18&t=115',
-  './iso3d/src/adapter.js?v=0.6.18',
-  './iso3d/src/fx.js?v=0.6.18',
-  './iso3d/src/host.js?v=0.6.18',
-  './iso3d/src/lighting.js?v=0.6.18',
-  './iso3d/src/map.js?v=0.6.18',
-  './iso3d/src/math.js?v=0.6.18',
-  './iso3d/src/pathfinding.js?v=0.6.18',
-  './iso3d/src/renderer.js?v=0.6.18',
-  './iso3d/src/sprites.js?v=0.6.18',
-  './iso3d/src/terrainTextures.js?v=0.6.18',
-  './iso3d/src/version.js?v=0.6.18'
+  './iso3d/boot.js?v=0.6.19&t=115',
+  './iso3d/src/adapter.js?v=0.6.19',
+  './iso3d/src/fx.js?v=0.6.19',
+  './iso3d/src/host.js?v=0.6.19',
+  './iso3d/src/lighting.js?v=0.6.19',
+  './iso3d/src/map.js?v=0.6.19',
+  './iso3d/src/math.js?v=0.6.19',
+  './iso3d/src/pathfinding.js?v=0.6.19',
+  './iso3d/src/renderer.js?v=0.6.19',
+  './iso3d/src/sprites.js?v=0.6.19',
+  './iso3d/src/terrainTextures.js?v=0.6.19',
+  './iso3d/src/version.js?v=0.6.19'
 ];
 
 self.addEventListener('install', (e) => {

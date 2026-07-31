@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.18';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.18';
+import { Renderer } from './renderer.js?v=0.6.19';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.19';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.18';
+} from './adapter.js?v=0.6.19';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.18';
+} from './sprites.js?v=0.6.19';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.18';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.18';
-import { APP_VERSION } from './version.js?v=0.6.18';
-import { resolveLighting } from './lighting.js?v=0.6.18';
+} from './fx.js?v=0.6.19';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.19';
+import { APP_VERSION } from './version.js?v=0.6.19';
+import { resolveLighting } from './lighting.js?v=0.6.19';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -1124,7 +1124,12 @@ export class Iso3DHost {
         ];
       const elev = cell?.h ?? 0;
       // Corpses hug the floor; living feet clear the tile top
-      const y = elev * STEP + (dead ? 0.04 : 0.03);
+      // Flight altitude lifts the sprite off the ground (0.6.19). Grimoire tracks c.altitude in
+      // FEET and the engine had no concept of it, so Fly/Ascend changed the rules (melee reach
+      // gating, fall damage) while the sprite stayed on the floor and nothing looked airborne.
+      // 5 ft = one grid/height step, the same scale the rest of the map uses. Corpses never fly.
+      const altStep = dead ? 0 : (Number(u.altitudeFt) || 0) / 5;
+      const y = (elev + altStep) * STEP + (dead ? 0.04 : 0.03);
       const { x, z } = gridToWorld(
         pose.col,
         pose.row,
@@ -1737,4 +1742,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.18';
+export { Renderer } from './renderer.js?v=0.6.19';
