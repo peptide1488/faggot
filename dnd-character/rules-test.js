@@ -3731,6 +3731,29 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     attackAdvantage(new Set(['Invisible']), new Set(), true, {}).adv>0);
 }
 
+/* ---- No opportunity attacks against a creature you can't see (v120.263) ----
+   Reported from play: successfully Hidden, walked past an enemy, still ate an OA. RAW you can't
+   make an opportunity attack against a creature you can't see. */
+{
+  const orc={id:'m1',name:'Orc',base:'Orc',hp:15,max:15,x:0,y:0,conds:[]};
+  const invisPc={c:(()=>{ const c=newCharacter('Ghost'); c.conditions={Invisible:true}; return c; })()};
+  const hiddenPc={c:(()=>{ const c=newCharacter('Sneak'); c.conditions={Hidden:true}; c.hiddenDC=25; return c; })()};
+  const plainPc={c:newCharacter('Solid')};
+
+  T('OA: an INVISIBLE mover is unseen, so provokes nothing', unseenBy(orc, invisPc)===true);
+  T('OA: a HIDDEN mover whose Stealth beats passive Perception provokes nothing',
+    unseenBy(orc, hiddenPc)===true);
+  T('OA: an ordinary mover still provokes', unseenBy(orc, plainPc)===false);
+  // A weak Stealth roll must NOT hide you from an attentive monster.
+  { const sloppy={c:(()=>{ const c=newCharacter('Loud'); c.conditions={Hidden:true}; c.hiddenDC=1; return c; })()};
+    T('OA: a poor Stealth total does not beat passive Perception, so it still provokes',
+      unseenBy(orc, sloppy)===false); }
+  // Safe default: an unrecognised watcher must be treated as SEEING, or every OA silently vanishes.
+  T('OA: an unknown watcher defaults to seeing (a missed OA beats cancelling them all)',
+    unseenBy(null, plainPc)===false);
+  T('OA: a null mover never suppresses anything', unseenBy(orc, null)===false);
+}
+
 /* ---- Invisible creatures can Hide in the open (v120.262) ----
    Reported from play: standing invisible in a daylit field, Hide was refused with "need darkness,
    full cover, or (Skulker) dim light" — the one situation where hiding should be EASIEST. PHB: you

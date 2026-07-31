@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.262';
+const RULES_BUILD='v120.263';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -3983,6 +3983,23 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
 function unitIsInvisible(u){
   if(!u) return false;
   try{ return unitConds(u).has('Invisible'); }catch(e){ return false; }
+}
+
+/**
+ * Can `watcher` NOT see `mover`? (v120.263) Used to suppress opportunity attacks: RAW you can't
+ * make one against a creature you can't see. Reported from play — successfully Hidden, walked past
+ * an enemy, and still ate an OA.
+ *
+ * Two ways to be unseen, and they are different states that stack: Invisible (unless the watcher
+ * has See Invisibility) and Hidden (unless the watcher's passive Perception beats the Stealth
+ * total). observerPassivePerception returns Infinity for an unknown watcher, so an unrecognised
+ * shape defaults to "can see" — a false negative here means a missed OA, which is far better than
+ * silently cancelling every OA in the game.
+ */
+function unseenBy(watcher, mover){
+  if(!mover) return false;
+  if(unitIsInvisible(mover) && !(typeof hasSeesInvisible==='function' && hasSeesInvisible(watcher))) return true;
+  return unitHiddenFrom(observerPassivePerception(watcher), mover);
 }
 
 /** The legendary profile for a monster, or null. Uses `base` so numbered copies (Orc 2) work. */

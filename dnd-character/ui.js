@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.262';
+const UI_BUILD='v120.263';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -2493,22 +2493,62 @@ function concentrationCheck(c, dmg){
     } else {
       body+=`<div class="card" style="text-align:center;margin:0 0 10px;background:${st.ok?'rgba(63,125,54,.14)':'rgba(160,40,40,.14)'}">
         <div style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:${st.ok?'var(--good)':'var(--bad)'}">${st.total}</div>
-        <div class="muted">d20 (${st.d20}) ${sgn(conBonus)} vs DC ${dc} — ${st.ok?'✓ HELD':'✗ LOST'}</div></div>`;
+        <div class="muted">d20 (${st.d20}) ${sgn(conBonus)} vs DC ${dc} — ${st.ok?'✓ HELD':(st.settled?'✗ LOST':'✗ failed — re-roll available')}</div></div>`;
+      // Re-roll offered here rather than on the floating roll banner, because the banner can only
+      // change the number shown — it has no way to re-evaluate the save or restore concentration.
+      if(!st.ok && !st.settled){
+        if(hasFeat(c,'Lucky') && luckPointsLeft(c)>0)
+          body+=`<button class="btn block" id="ccLucky" style="margin-bottom:6px">🍀 Lucky — re-roll (${luckPointsLeft(c)} left)</button>`;
+        if(st.d20===1 && hasRacialTrait(c,'Lucky'))
+          body+=`<button class="btn block" id="ccHalfling" style="margin-bottom:6px">↻ Halfling Lucky — re-roll the 1</button>`;
+        body+=`<button class="btn ghost block" id="ccAccept" style="margin-bottom:6px">Accept the failure</button>`;
+      }
     }
     body+=`<button class="btn ghost block" id="ccClose" style="margin-top:8px">Close</button>`;
     $('#modalRoot').innerHTML=`<div class="modal" id="ccModal"><div class="sheet"><div class="grip"></div>${body}</div></div>`;
-    const close=()=>{ $('#modalRoot').innerHTML=''; concActive=false;
+    const close=()=>{
+      // Closing with an unresolved failure must still apply it — otherwise dismissing the modal
+      // would silently KEEP concentration after a failed save, which is worse than the bug fixed.
+      if(st.rolled && !st.settled) settle();
+      $('#modalRoot').innerHTML=''; concActive=false;
       if(concQueue.length){ const nx=concQueue.shift(); concentrationCheck(nx.c, nx.dmg); }
       else if(QB&&QB.active) QB.paused=false; };
     $('#ccClose').onclick=close; $('#ccModal').onclick=e=>{ if(e.target.id==='ccModal') close(); };
+    // A failed save must NOT drop concentration immediately (v120.263). Reported from play: the
+    // save failed, the player spent a Lucky point, the re-roll SUCCEEDED — and concentration was
+    // already gone, because drop() ran the instant st.ok was false. The re-roll banner only
+    // updates the displayed roll; nothing re-evaluated the save. So the decision is now deferred
+    // while a re-roll is still available, and the modal owns the re-roll rather than the banner.
+    const rerollAvailable=()=>!st.rerolled && !st.ok &&
+      ((hasFeat(c,'Lucky') && luckPointsLeft(c)>0) || (st.d20===1 && hasRacialTrait(c,'Lucky')));
+    const settle=()=>{   // apply the final outcome exactly once
+      if(st.settled) return; st.settled=true;
+      if(!st.ok) drop();
+      else { logChange(c,'Held concentration on '+spell+' ('+st.total+' vs '+dc+')'); save(); }
+    };
     const resolve=(face)=>{ const r1=face!=null?face:rnd(20), r2=rnd(20); const d20=(adv&&face==null)?Math.max(r1,r2):r1;
       st.d20=d20; st.total=d20+conBonus; st.ok=st.total>=dc; st.rolled=true;
       pushRoll({label:'Concentration (CON)', total:st.total, detail:'d20 ('+d20+') '+sgn(conBonus)+' vs DC '+dc, kind:'save'});
-      sfx(st.ok?'success':'error'); if(!st.ok) drop(); else { logChange(c,'Held concentration on '+spell+' ('+st.total+' vs '+dc+')'); save(); }
+      sfx(st.ok?'success':'error');
+      // Hold the failure open only while a re-roll could still change it.
+      if(st.ok || !rerollAvailable()) settle();
       draw(); };
+    st.reroll=(kind)=>{
+      if(kind==='lucky' && !spendLuckPoint(c)) return;
+      st.rerolled=true;                       // one re-roll per save, either source
+      const d20=rnd(20);
+      st.d20=d20; st.total=d20+conBonus; st.ok=st.total>=dc;
+      pushRoll({label:'Concentration (CON) — re-roll', total:st.total, detail:'d20 ('+d20+') '+sgn(conBonus)+' vs DC '+dc, kind:'save'});
+      logChange(c, (kind==='lucky'?'🍀 Lucky':'↻ Halfling Lucky')+' re-roll on concentration: '+st.total+' vs DC '+dc+' — '+(st.ok?'HELD':'lost'));
+      sfx(st.ok?'success':'error');
+      settle(); draw();
+    };
     { const r=$('#ccRoll'); if(r) r.onclick=()=>resolve(null); }
     { const u=$('#ccUse'); if(u) u.onclick=()=>{ const v=Number($('#ccMan').value); if(v>=1&&v<=20) resolve(v); else flashBanner('Enter 1–20'); }; }
-    { const dp=$('#ccDrop'); if(dp) dp.onclick=()=>{ drop(); close(); }; }
+    { const dp=$('#ccDrop'); if(dp) dp.onclick=()=>{ st.settled=true; drop(); close(); }; }
+    { const lk=$('#ccLucky');    if(lk) lk.onclick=()=>st.reroll('lucky'); }
+    { const hl=$('#ccHalfling'); if(hl) hl.onclick=()=>st.reroll('halfling'); }
+    { const ac=$('#ccAccept');   if(ac) ac.onclick=()=>{ settle(); draw(); }; }
   }
   draw();
 }
@@ -3811,7 +3851,9 @@ function renderPlayerBattle(c){
       if(!dashAvail){ flashBanner('Too far — Dash needs your action (already used)'); return; }
       b.move=(b.move||0)+effSpeed(c); spendAction(c); b.dashed=true; logChange(c,'🏃 Dash (action) — extra movement'); }
     b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; net.moveMode=false;
-    const provokers=(s.battle&&s.battle.active&&!(c.battle&&c.battle.disengaged))?s.monsters.filter(mo=>mo.hp>0 && leavesReach(me.x,me.y,x,y,mo.x,mo.y,1)):[];   // Disengage: no opportunity attacks this turn
+    // unseenBy: RAW you can't make an opportunity attack against a creature you can't see, so a
+    // Hidden or Invisible mover slips past (v120.263). Same rule as Disengage, different reason.
+    const provokers=(s.battle&&s.battle.active&&!(c.battle&&c.battle.disengaged))?s.monsters.filter(mo=>mo.hp>0 && leavesReach(me.x,me.y,x,y,mo.x,mo.y,1) && !unseenBy(mo,{c})):[];   // Disengage: no opportunity attacks this turn
     animateToken(null,(nx,ny)=>{ const mm=net.session.players.find(p=>p.id===net.peer.id); if(mm){ mm.x=nx; mm.y=ny; } }, path, 200, ()=>{ save();
       if(net.conn){ try{ net.conn.send({t:'move',x,y}); }catch(e){} }
       if(provokers.length && net.conn){ try{ net.conn.send({t:'provoke', cid:clientId(), who:c.name, mons:provokers.map(m=>m.id)}); }catch(e){} logChange(c,'⚔ Provoked opportunity attack'+(provokers.length>1?'s':'')+' from '+provokers.map(m=>m.name).join(', ')); }
@@ -6144,7 +6186,8 @@ function qbMovePc(x,y){ const s=QB, pc=s.players[0], c=pc.c, b=c.battle, fly=isF
     opts=opts||{};
     if(cost>(b.move||0)){ if(!dashAvail){ flashBanner('Too far — Dash needs your action'); return; } b.move=(b.move||0)+effSpeed(c); spendAction(c); b.dashed=true; qbLog('🏃 '+c.name+' dashes'); }
     const fromX=pc.x, fromY=pc.y; b.move=(b.move||0)-cost; b.moveUsed=(b.moveUsed||0)+cost; s.moveMode=false;
-    const provokers=(b.disengaged)?[]:s.monsters.filter(m=>m.hp>0 && !m.reactionUsed && leavesReach(fromX,fromY,x,y,m.x,m.y,1));   // Disengage: movement provokes no opportunity attacks this turn
+    // Hidden/Invisible movers provoke nothing — see unseenBy (v120.263).
+    const provokers=(b.disengaged)?[]:s.monsters.filter(m=>m.hp>0 && !m.reactionUsed && leavesReach(fromX,fromY,x,y,m.x,m.y,1) && !unseenBy(m,QB.players[0]));   // Disengage: movement provokes no opportunity attacks this turn
     const riseFt=Math.max(0,(heightAt(s,x,y)-heightAt(s,fromX,fromY))*5);
     const dropFt=Math.max(0,(heightAt(s,fromX,fromY)-heightAt(s,x,y))*5);
     const jumpMax=runningHighJumpFt(pc);
