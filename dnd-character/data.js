@@ -2,7 +2,7 @@
 // flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
 // stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
 // with holes in it is worse than none, because it reads as an all-clear.
-const DATA_BUILD='v120.273';
+const DATA_BUILD='v120.274';
 // Grimoire — extracted data tables (Stage 1 of index.html modularization).
 // Pure content: spells, monsters, classes, items, maps, terrain. No app logic here —
 // see AUDIT.md for the modularization writeup. Loaded via <script src> before the main
@@ -1640,6 +1640,115 @@ const MAP_PRESETS=(()=>{ const P={};
       light:{mode:'dungeon',points:pts},
       blurb:'Tavern · tables · kitchen · fireplace · cellar'};
   })();
+
+
+  // ═══════════════════════════════════════════════════
+  // SKYBRIDGE — verticality showcase (v120.274)
+  // Built for the things altitude finally makes testable now that flying renders (v120.272):
+  // fly ACROSS a chasm, shove someone INTO one, and reach islands that have no ground route.
+  // isPitTerrain gates pits to flyers only, so an isolated platform is genuinely flight-only.
+  // ═══════════════════════════════════════════════════
+  (function skybridge(){
+    const w=26,h=18,t={},ht={},dc={},ix={};
+    fill(t,w,h,'stone');
+    box(t,w,h,'wall');
+    // A wide chasm splitting the map north/south — the main "fly or find the bridge" decision.
+    for(let x=1;x<w-1;x++){ t[x+',8']='pit'; t[x+',9']='pit'; t[x+',10']='pit'; }
+    // Two crossings, deliberately narrow: one plank walk, one stone span. Narrow means a Shove
+    // near the edge is a real threat rather than a curiosity.
+    [7,8].forEach(x=>{ t[x+',8']='wood'; t[x+',9']='wood'; t[x+',10']='wood'; });
+    [18].forEach(x=>{ t[x+',8']='stone'; t[x+',9']='stone'; t[x+',10']='stone'; });
+    // Raised approaches so the bridges are also a HEIGHT change, not just a gap.
+    hrect(ht,5,5,10,7,1); rect(t,5,5,10,7,'stone');
+    hrect(ht,16,11,21,14,1); rect(t,16,11,21,14,'stone');
+    // A tall spire on the north side — climbable via stepped ledges (1→2→3).
+    hrect(ht,2,2,5,4,1); hrect(ht,3,2,5,3,2); hrect(ht,4,2,5,2,3);
+    rect(t,2,2,5,4,'stone');
+    // FLIGHT-ONLY ISLAND: ringed by pit on every side, no ground route at all.
+    for(let x=11;x<=15;x++) for(let y=2;y<=5;y++) t[x+','+y]='pit';
+    rect(t,12,3,14,4,'stone'); hrect(ht,12,3,14,4,2);
+    put(dc,[[13,3]],'crate'); put(dc,[[14,4]],'barrel');
+    // Low walls along the bridge mouths: cover, and something to be shoved over.
+    put(t,[[6,7],[9,7],[17,11],[19,11]],'low_wall');
+    put(dc,[[3,15],[22,3],[23,15],[9,15]],'tree');
+    put(dc,[[6,13],[20,6],[11,14]],'bush');
+    put(dc,[[8,13]],'campfire');
+    const torches=[[7,7],[18,7],[7,11],[18,11]];
+    put(dc,torches,'torch');
+    torches.forEach(([c,r])=>{ ix[c+','+r]={type:'torch',state:'lit'}; });
+    ix['8,13']={type:'torch',state:'lit'};
+    ix['19,13']={type:'trap',state:'armed'};
+    syncIx(ix,dc);
+    P['Skybridge']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:torches.map(([c,r])=>torchPt(c,r)).concat([campPt(8,13)])},
+      blurb:'Chasm split · 2 narrow spans · stepped spire · FLIGHT-ONLY island · shove risk'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // QUARRY STEPS — climbing showcase (v120.274)
+  // Four stacked terraces (0→3) so climb cost, high ground and falling all come into play in one
+  // fight, with a flooded pit at the bottom to be shoved into.
+  // ═══════════════════════════════════════════════════
+  (function quarry(){
+    const w=24,h=18,t={},ht={},dc={},ix={};
+    fill(t,w,h,'dirt');
+    box(t,w,h,'wall');
+    // Terraces stepping up west→east: each is a climb, and each looks down on the last.
+    hrect(ht,1,1,6,16,0);
+    hrect(ht,7,1,12,16,1);  rect(t,7,1,12,16,'stone');
+    hrect(ht,13,1,18,16,2); rect(t,13,1,18,16,'stone');
+    hrect(ht,19,1,22,16,3); rect(t,19,1,22,16,'stone');
+    // Ramps: low_wall is climbable, so these are the "cheap" routes between terraces.
+    put(t,[[6,4],[6,5],[12,9],[12,10],[18,13],[18,14]],'low_wall');
+    // Flooded quarry floor — the shove target.
+    for(let y=6;y<=11;y++) for(let x=2;x<=5;x++) t[x+','+y]='water';
+    put(t,[[3,8],[4,9]],'pit');   // sinkholes in the flooded floor
+    // Working equipment for cover.
+    put(dc,[[9,4],[10,4]],'crate'); put(dc,[[15,7]],'barrel'); put(dc,[[20,10]],'crate');
+    put(dc,[[8,14],[16,3],[21,15]],'bush');
+    put(dc,[[2,15],[22,2]],'tree');
+    put(dc,[[10,12]],'campfire');
+    ix['10,12']={type:'torch',state:'lit'};
+    ix['14,10']={type:'trap',state:'armed'};
+    ix['16,12']={type:'oil_barrel',state:'intact'};
+    syncIx(ix,dc);
+    P['Quarry Steps']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'day',points:[campPt(10,12)]},
+      blurb:'Four terraces 0→3 · climbable ramps · flooded floor · sinkholes · high ground'};
+  })();
+
+  // ═══════════════════════════════════════════════════
+  // COLLAPSED VAULT — holes & ledges (v120.274)
+  // Indoor counterpart: a dark vault whose floor has given way, leaving ledges and holes. Torchlit
+  // so darkvision, Darkness and Fog Cloud all matter alongside the verticality.
+  // ═══════════════════════════════════════════════════
+  (function vault(){
+    const w=22,h=16,t={},ht={},dc={},ix={};
+    fill(t,w,h,'stone');
+    box(t,w,h,'cave_wall');
+    // Collapsed centre — a ragged hole rather than a neat rectangle.
+    const hole=[[8,6],[9,6],[10,6],[11,6],[7,7],[8,7],[9,7],[10,7],[11,7],[12,7],
+                [7,8],[8,8],[9,8],[10,8],[11,8],[12,8],[8,9],[9,9],[10,9],[11,9]];
+    put(t,hole,'pit');
+    // A single plank across it — the only ground route, and easy to be pushed off.
+    put(t,[[9,7],[9,8]],'wood');
+    // Ledges around the rim at different heights, so fights happen above the hole.
+    hrect(ht,2,2,6,5,1);  rect(t,2,2,6,5,'stone');
+    hrect(ht,15,2,19,6,2); rect(t,15,2,19,6,'stone');
+    hrect(ht,14,10,19,13,1); rect(t,14,10,19,13,'stone');
+    put(t,[[6,3],[6,4],[14,4],[14,5],[13,11],[13,12]],'low_wall');   // climbable edges
+    put(dc,[[3,3]],'crate'); put(dc,[[17,4]],'barrel'); put(dc,[[16,12]],'crate');
+    const torches=[[4,8],[17,8],[10,2],[10,13]];
+    put(dc,torches,'torch');
+    torches.forEach(([c,r])=>{ ix[c+','+r]={type:'torch',state:'lit'}; });
+    ix['12,12']={type:'trap',state:'armed'};
+    ix['5,11']={type:'oil_barrel',state:'intact'};
+    syncIx(ix,dc);
+    P['Collapsed Vault']={cols:w,rows:h,tiles:t,height:ht,decor:dc,interact:ix,
+      light:{mode:'dungeon',points:torches.map(([c,r])=>torchPt(c,r))},
+      blurb:'Dark vault · collapsed floor · single plank · rim ledges 1–2 · torchlit'};
+  })();
+
 
 return P; })();
 

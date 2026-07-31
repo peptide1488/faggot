@@ -32,10 +32,10 @@ require('./iso-renderer.js');   // mapGridHTML calls IsoRenderer.stageSize/tileS
 // consts inside eval stay block-scoped — re-export the data tables the tests assert on
 eval(src.replace('"use strict";','')+
   ';globalThis.SPELL_AOE=SPELL_AOE;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.MONSTERS_5E=MONSTERS_5E;'+
-  'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;'+
+  'globalThis.mod=mod;globalThis.sgn=sgn;globalThis.ARMOR=ARMOR;globalThis.ARMOR_PROF=ARMOR_PROF;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;'+
   'globalThis.RITUAL_SPELLS=RITUAL_SPELLS;globalThis.RITUAL_CASTERS=RITUAL_CASTERS;'+
-  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
-  'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
+  'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
+  'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
   'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
@@ -3807,6 +3807,47 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     qbCheckEnd(); qbCheckEnd();
     T('QB end: the rest happens once, not on every end-check', getQB().log.length===logsAfterFirst);
     setQB(null); }
+}
+
+/* ---- Vertical maps (v120.274) ----
+   Requested: more height, cliffs, chasms, bridges and holes, to test flying across gaps, shoving
+   people into them, and climbing. These assert the maps actually contain those features rather
+   than merely being named after them — a "Skybridge" with no pit would look fine and test nothing. */
+{
+  const NEW=['Skybridge','Quarry Steps','Collapsed Vault'];
+  for(const n of NEW) T(`map "${n}" exists`, !!MAP_PRESETS[n]);
+
+  const count=(m,pred)=>Object.values(m.tiles||{}).filter(pred).length;
+  const sky=MAP_PRESETS['Skybridge'];
+  if(sky){
+    T('Skybridge: has a real chasm', count(sky,v=>v==='pit')>30);
+    T('Skybridge: has bridge tiles across it', count(sky,v=>v==='wood')>0);
+    T('Skybridge: has multiple elevations', new Set(Object.values(sky.height||{})).size>=2);
+    // The flight-only island is the point of the map: stone ringed entirely by pit.
+    { const H=sky.height||{}, tl=sky.tiles||{};
+      const island=['12,3','13,3','14,3','12,4','13,4','14,4'];
+      const allStone=island.every(k=>tl[k]==='stone');
+      const ringed=['11,3','15,3','11,4','15,4','12,2','13,2','14,2','12,5','13,5','14,5'].every(k=>tl[k]==='pit');
+      T('Skybridge: the flight-only island is stone fully ringed by pit (no ground route)',
+        allStone && ringed);
+      T('Skybridge: that island is raised, so altitude shows against it', H['13,3']>0); }
+  }
+  const q=MAP_PRESETS['Quarry Steps'];
+  if(q){
+    const levels=new Set(Object.values(q.height||{}));
+    T('Quarry Steps: has four distinct terrace levels', levels.size>=4);
+    T('Quarry Steps: has climbable ramps between them',
+      count(q,v=>v==='low_wall')>=4 && TERRAIN.low_wall.climbable===true);
+    T('Quarry Steps: has sinkholes to be shoved into', count(q,v=>v==='pit')>0);
+  }
+  const v=MAP_PRESETS['Collapsed Vault'];
+  if(v){
+    T('Collapsed Vault: floor has actually collapsed', count(v,v2=>v2==='pit')>10);
+    T('Collapsed Vault: a plank crosses the hole', count(v,v2=>v2==='wood')>0);
+    T('Collapsed Vault: is dark, so vision/Darkness matter there', (v.light||{}).mode==='dungeon');
+  }
+  // Pits must remain flight-only, or none of these maps mean anything.
+  T('pit terrain is still crossable only by flying', isPitTerrain('pit')===true);
 }
 
 /* ---- Spells that declared an effect nothing implemented (v120.270) ----
