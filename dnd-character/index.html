@@ -478,7 +478,7 @@
 <div id="modalRoot"></div>
 
 <script src="iso-renderer.js"></script>
-<script type="module" src="iso3d/boot.js?v=0.6.17&t=115"></script>
+<script type="module" src="iso3d/boot.js?v=0.6.18&t=115"></script>
 <script src="./data.js"></script>
 <script src="./rules.js"></script>
 <script src="./net.js"></script>
@@ -2423,7 +2423,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.268';
+const APP_VERSION='v120.269';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That

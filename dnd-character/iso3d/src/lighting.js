@@ -83,7 +83,7 @@ export const MAX_GPU_LIGHTS = 32;
  * @param {object|null|undefined} mapLight
  * @param {PointLight[]} [extraPoints]
  */
-export function resolveLighting(mapLight, extraPoints = []) {
+export function resolveLighting(mapLight, extraPoints = [], darkZones = []) {
   const mode = (mapLight && mapLight.mode) || 'day';
   const base = { ...(LIGHT_PRESETS[mode] || LIGHT_PRESETS.day) };
   if (mapLight) {
@@ -118,6 +118,9 @@ export function resolveLighting(mapLight, extraPoints = []) {
     for (const p of mapLight.points) push(p);
   }
   base.points = points;
+  // darkZones ride along on the profile so tileIllumination01 can enforce them (0.6.18).
+  // darkZones ride along on the resolved profile so tileIllumination01 can enforce them (0.6.18).
+  base.darkZones = (darkZones || []).filter(z => z && z.col != null && z.row != null);
   return base;
 }
 
@@ -176,6 +179,18 @@ export function tileIllumination01(profile, col, row) {
     if (d > r) continue;
     const t = 1 - d / r;
     v += (p.intensity || 1) * t * t * 0.85;
+  }
+  // Magical darkness (Iso3D 0.6.18). Applied AFTER the point lights and as a hard floor rather
+  // than a subtraction, because that is what the spell does: Darkness doesn't dim a torch, it
+  // beats it — a light source inside the sphere illuminates nothing. Subtracting would let a
+  // bright enough torch "win", which is exactly the wrong ruling.
+  //
+  // Previously host.js dropped these entries with "magical darkness is rules-only; skip as a
+  // point light", so Grimoire's rules went dark while the map stayed lit and casting Darkness
+  // looked like it had done nothing at all.
+  for (const z of profile.darkZones || []) {
+    const d = Math.max(Math.abs(col - z.col), Math.abs(row - z.row));
+    if (d <= Math.max(0, z.radius)) return 0.04;   // below the 0.28 dim threshold => level 0
   }
   return Math.max(0, Math.min(1.15, v));
 }

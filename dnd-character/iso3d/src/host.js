@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.17';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.17';
+import { Renderer } from './renderer.js?v=0.6.18';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.18';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.17';
+} from './adapter.js?v=0.6.18';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.17';
+} from './sprites.js?v=0.6.18';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.17';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.17';
-import { APP_VERSION } from './version.js?v=0.6.17';
-import { resolveLighting } from './lighting.js?v=0.6.17';
+} from './fx.js?v=0.6.18';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.18';
+import { APP_VERSION } from './version.js?v=0.6.18';
+import { resolveLighting } from './lighting.js?v=0.6.18';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -637,6 +637,7 @@ export class Iso3DHost {
       (this._view.map && this._view.map.light) ||
       null;
     const extra = [];
+    const darkZones = [];   // magical darkness spheres (Darkness, Hunger of Hadar)
     // Dynamic lights (spell Light / Daylight / etc.) — update follow-casters to live positions
     const dyn =
       (this._session && this._session.lights) ||
@@ -665,8 +666,10 @@ export class Iso3DHost {
         }
       }
       if (col == null || row == null) continue;
-      // Magical darkness is rules-only; skip as a point light
-      if (L.dark) continue;
+      // Magical darkness is not a point light, but it IS a light-level change — collect it as a
+      // zone instead of dropping it (0.6.18). Skipping entirely is why casting Darkness changed
+      // Grimoire's rules while the map stayed fully lit, so the spell looked like it did nothing.
+      if (L.dark) { darkZones.push({ col: col | 0, row: row | 0, radius: L.dark | 0 }); continue; }
       extra.push({
         col: col | 0,
         row: row | 0,
@@ -699,7 +702,7 @@ export class Iso3DHost {
         }
       }
     }
-    const profile = resolveLighting(mapLight, extra);
+    const profile = resolveLighting(mapLight, extra, darkZones);
     this._lightProfile = profile;
     this.renderer.setLighting(profile, {
       cols: this._view.map.cols,
@@ -1734,4 +1737,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.17';
+export { Renderer } from './renderer.js?v=0.6.18';
