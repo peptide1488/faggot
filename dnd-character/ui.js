@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.274';
+const UI_BUILD='v120.275';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -1807,11 +1807,11 @@ function renderWizard(c){
   }
   $('#wzBack').addEventListener('click',()=>{ if(wiz.step>0){ wiz.step--; render(); } });
   $('#wzNext').addEventListener('click',wizNext);
-  $('#wzCancel').addEventListener('click',()=>{
+  $('#wzCancel').onclick=()=>{
     if(!confirm('Cancel and delete this character?')) return;
     const id=c.id; wiz=null; DB=DB.filter(x=>x.id!==id);
     curId=DB[0]?DB[0].id:null; localStorage.setItem(LS_CUR,curId||''); save(); render();
-  });
+  };
 }
 
 function wizNext(){
@@ -2238,11 +2238,11 @@ function renderSheet(c){
   $('#levelUpBtn').addEventListener('click',levelUp);
   $('#pfpBtn').addEventListener('click',()=>$('#pfpFile').click());
   $('#pfpFile').addEventListener('change',e=>{ if(e.target.files[0]) setPortrait(e.target.files[0]); });
-  { const d=$('#pfpDel'); if(d) d.addEventListener('click',()=>{ c.portrait=''; save(); render(); }); }
+  { const d=$('#pfpDel'); if(d) d.onclick=()=>{ c.portrait=''; save(); render(); }; }
   $('#feat_pick').addEventListener('change',e=>{ $('#featPickDesc').textContent=FEAT_DESC[e.target.value]||''; });
   $('#addFeat').addEventListener('click',()=>{ const v=$('#feat_pick').value; if(!v) return; applyFeat(c, v); });
-  app.querySelectorAll('[data-delfeat]').forEach(el=>el.addEventListener('click',()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); }));
-  $('#deleteChar').addEventListener('click',()=>deleteCharacter(c));
+  app.querySelectorAll('[data-delfeat]').forEach(el=>el.onclick=()=>{ c.feats.splice(Number(el.dataset.delfeat),1); save(); render(); });
+  $('#deleteChar').onclick=()=>deleteCharacter(c);
   { const r=$('#resolveChoices'); if(r) r.addEventListener('click',()=>resolveChoices(c)); }
   $('#abilEditBtn').addEventListener('click',()=>{ abilEdit=!abilEdit; render(); });
   $('#skillEditBtn').addEventListener('click',()=>{ skillEdit=!skillEdit; render(); });
@@ -2256,19 +2256,19 @@ function bindAbilHandlers(c){
     const inp=$('#ab_'+k);   // only present in Manual mode
     if(inp) inp.addEventListener('change',e=>{ c.abilities[k]=Math.max(1,Math.min(30,Number(e.target.value)||10)); save(); render(); });
   });
-  app.querySelectorAll('[data-abmethod]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-abmethod]').forEach(el=>el.onclick=()=>{
     const m=el.dataset.abmethod; if(m===(c.abilMethod||'manual')) return;
     if(m==='pointbuy'){ ABILITIES.forEach(([k])=>{ c.abilities[k]=Math.max(8,Math.min(15,Number(c.abilities[k])||8)); }); }
     else if(m==='array'){ ABILITIES.forEach(([k])=>c.abilities[k]=null); }
     else { ABILITIES.forEach(([k])=>{ if(c.abilities[k]==null) c.abilities[k]=10; }); }
     c.abilMethod=m; save(); render();
-  }));
-  app.querySelectorAll('[data-pb]').forEach(el=>el.addEventListener('click',()=>{
+  });
+  app.querySelectorAll('[data-pb]').forEach(el=>el.onclick=()=>{
     const k=el.dataset.pb, d=Number(el.dataset.d), v=Number(c.abilities[k])||8, nv=v+d;
     if(nv<8||nv>15) return;
     if(d>0 && (pbUsed(c)-pbCost(v)+pbCost(nv))>27) return;
     c.abilities[k]=nv; save(); render();
-  }));
+  });
   app.querySelectorAll('[data-arr]').forEach(el=>el.addEventListener('change',e=>{
     c.abilities[el.dataset.arr] = e.target.value==='—' ? null : Number(e.target.value);
     save(); render();
@@ -2425,21 +2425,21 @@ function renderCombat(c){
   });
   { const sc=$('#cb_spdcust'); if(sc) sc.addEventListener('change',e=>{ c.speed=Number(e.target.value)||30; save(); render(); }); }
   $('#cb_init').addEventListener('change',e=>{ c.initMisc=Number(e.target.value)||0; save(); render(); });
-  app.querySelectorAll('[data-hdpip]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-hdpip]').forEach(el=>el.onclick=()=>{
     const n=Number(el.dataset.hdpip), total=hd?hd.count:0, avail=total-(c.hitDice.used||0);
     if(n<=avail) c.hitDice.used=Math.min(total,(c.hitDice.used||0)+1);
     else c.hitDice.used=Math.max(0,(c.hitDice.used||0)-1);
     save(); render();
-  }));
+  });
 
   $('#dmgBtn').addEventListener('click',()=>applyHp(c,-Math.abs(Number($('#hpamt').value)||0)));
   $('#healBtn').addEventListener('click',()=>applyHp(c,Math.abs(Number($('#hpamt').value)||0)));
 
-  app.querySelectorAll('[data-pip]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-pip]').forEach(el=>el.onclick=()=>{
     const kind=el.dataset.kind, n=Number(el.dataset.pip);
     const field=kind==='succ'?'succ':'fail';
     c.death[field] = (c.death[field]===n)?n-1:n; save(); render();
-  }));
+  });
 
   { const ab=$('#attackBtn'); if(ab) ab.addEventListener('click',()=>openAttack(c)); }
   { const sb=$('#startBattle'); if(sb) sb.addEventListener('click',()=>startBattle(c)); }
@@ -2458,7 +2458,7 @@ function renderCombat(c){
   { const pab=$('#palBtn'); if(pab) pab.addEventListener('click',()=>openPaladinUI(c)); }
   { const sob=$('#sorcBtn'); if(sob) sob.addEventListener('click',()=>openSorcererUI(c)); }
   { const wlb=$('#wlBtn'); if(wlb) wlb.addEventListener('click',()=>openWarlockUI(c)); }
-  app.querySelectorAll('[data-bt]').forEach(el=>el.addEventListener('click',()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
+  app.querySelectorAll('[data-bt]').forEach(el=>el.onclick=()=>{ const b=c.battle; if(!b) return; const k=el.dataset.bt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }   // tap to spend/reset (cycles for multi-action)
     else if(k==='bonus'||k==='reaction') b[k]=!b[k];
     else if(k==='atkminus') b.attacksLeft=Math.max(0,b.attacksLeft-1);
@@ -2475,23 +2475,23 @@ function renderCombat(c){
       if(cunning){ b.bonus=true; b.move+=effSpeed(c); b.dashed=true; logChange(c,'🏃 Dash (Cunning Action, bonus action) — +'+effSpeed(c)+' ft movement'); }
       else { if(!hasAction(c)){ flashBanner('No action left to Dash this turn'); return; } spendAction(c); b.move+=effSpeed(c); b.dashed=true; logChange(c,'🏃 Dash — +'+effSpeed(c)+' ft movement'); }
     }
-    save(); render(); }));
+    save(); render(); });
   $('#addAtk').addEventListener('click',()=>{
     const name=$('#atk_name').value.trim(); if(!name) return;
     c.attacks.push({name, bonus:$('#atk_bonus').value.trim(), damage:$('#atk_dmg').value.trim()});
     save(); render();
   });
-  app.querySelectorAll('[data-delatk]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-delatk]').forEach(el=>el.onclick=()=>{
     c.attacks.splice(Number(el.dataset.delatk),1); save(); render();
-  }));
+  });
 
   $('#spendHd').addEventListener('click',()=>spendHitDie(c));
   { const dr=$('#deathRoll'); if(dr) dr.addEventListener('click',()=>rollDeathSave(c)); }
-  app.querySelectorAll('[data-cond]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-cond]').forEach(el=>el.onclick=()=>{
     const k=el.dataset.cond;
     if(c.conditions[k]){ delete c.conditions[k]; logChange(c,'Cleared condition: '+k); } else { c.conditions[k]=true; logChange(c,'Gained condition: '+k); }
     save(); render(); if(net&&net.role==='player') playerHello();   // conditions drive advantage — keep the DM's mirror current
-  }));
+  });
   $('#exhUp').addEventListener('click',()=>{ c.exhaustion=Math.min(6,(c.exhaustion||0)+1); save(); render(); });
   $('#exhDown').addEventListener('click',()=>{ c.exhaustion=Math.max(0,(c.exhaustion||0)-1); save(); render(); });
   $('#concOn').addEventListener('change',e=>{ c.concentration.active=e.target.checked; if(!e.target.checked){ c.concentration.spell=''; c.effects=(c.effects||[]).filter(x=>!x.conc); } save(); render(); });
@@ -2802,7 +2802,7 @@ function renderSpells(c){
     if(sorcCur(c)<cost){ flashBanner('Need '+cost+' sorcery points'); return; }
     if(u<=0){ flashBanner('No spent level '+l+' slot to recover'); return; }
     c.slots[l].used=u-1; c.sorcPts=sorcCur(c)-cost; logChange(c,'Font of Magic: '+cost+' points → L'+l+' slot'); save(); render(); }; }
-  app.querySelectorAll('[data-slotpip]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-slotpip]').forEach(el=>el.onclick=()=>{
     const l=el.dataset.slotpip, n=Number(el.dataset.n);
     const total=spellSlots(c)[l]||0;
     if(!c.slots[l]) c.slots[l]={total:0,used:0};
@@ -2810,7 +2810,7 @@ function renderSpells(c){
     if(n<=available) c.slots[l].used = Math.min(total, used+1);   // spend
     else c.slots[l].used = Math.max(0, used-1);                    // recover
     save(); render();
-  }));
+  });
   $('#sp_pick').addEventListener('change',e=>{
     $('#customSpellRow').style.display = e.target.value==='__custom__' ? 'flex' : 'none';
     const n=(e.target.value||'').split('|')[0]; const d=$('#spPickDesc');
@@ -2831,12 +2831,12 @@ function renderSpells(c){
     if(e.target.checked && isPrepCaster(c) && (c.spells[idx].level||0)>0 && preparedCount(c)>=preparedMax(c)){ e.target.checked=false; flashBanner('At your prepared limit ('+preparedMax(c)+') — unprepare one first'); return; }
     c.spells[idx].prepared=e.target.checked; save(); render();
   }));
-  app.querySelectorAll('[data-delspell]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-delspell]').forEach(el=>el.onclick=()=>{
     c.spells.splice(Number(el.dataset.delspell),1); save(); render();
-  }));
-  app.querySelectorAll('[data-cast]').forEach(el=>el.addEventListener('click',()=>{
+  });
+  app.querySelectorAll('[data-cast]').forEach(el=>el.onclick=()=>{
     const [n,l]=el.dataset.cast.split('|'); castModal(c, n, Number(l));
-  }));
+  });
   bindEffectsCard(c);
 }
 
@@ -2964,13 +2964,13 @@ function renderItems(c){
     c.items.push({name, kind:'wondrous', qty:1, equipped:false, mods: ac?{ac}:{}});
     save(); render();
   });
-  app.querySelectorAll('[data-ownmount]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-ownmount]').forEach(el=>el.onclick=()=>{
     const id=el.dataset.ownmount; c.ownedMounts=c.ownedMounts||[];
     const i=c.ownedMounts.indexOf(id);
     if(i>=0) c.ownedMounts.splice(i,1); else c.ownedMounts.push(id);
     logChange(c, (i>=0?'No longer owns a ':'Now owns a ')+(MOUNT_CATALOG.find(m=>m.id===id)||{}).name);
     save(); render();
-  }));
+  });
   { const mp=$('#mi_pick'), tRow=$('#mi_targetRow'), tSel=$('#mi_target'), desc=$('#mi_desc'), addBtn=$('#miAdd');
     function refresh(){
       const idx=mp.value; const m=idx!==''?MAGIC_ITEMS[Number(idx)]:null;
@@ -2998,20 +2998,20 @@ function renderItems(c){
       if(tk) flashBanner(targetName+' is now a '+m.name);
     });
   }
-  app.querySelectorAll('[data-equip]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-equip]').forEach(el=>el.onclick=()=>{
     const i=Number(el.dataset.equip); setEquipped(c, i, !c.items[i].equipped);
-  }));
-  app.querySelectorAll('[data-attune]').forEach(el=>el.addEventListener('click',()=>{
+  });
+  app.querySelectorAll('[data-attune]').forEach(el=>el.onclick=()=>{
     const i=Number(el.dataset.attune); if(toggleAttune(c,i)) render();
-  }));
-  app.querySelectorAll('[data-delitem]').forEach(el=>el.addEventListener('click',()=>{
+  });
+  app.querySelectorAll('[data-delitem]').forEach(el=>el.onclick=()=>{
     const i=Number(el.dataset.delitem); const it=c.items[i];
     if(it && it.equipped){ setEquipped(c, i, false); }
     c.items.splice(i,1); save(); render();
-  }));
-  app.querySelectorAll('[data-drinkpotion]').forEach(el=>el.addEventListener('click',()=>{
+  });
+  app.querySelectorAll('[data-drinkpotion]').forEach(el=>el.onclick=()=>{
     if(drinkPotion(c, Number(el.dataset.drinkpotion))){ render(); if(net&&net.role==='player') playerHello(); }
-  }));
+  });
 }
 
 function renderNotes(c){
@@ -3049,7 +3049,12 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
-  $('#resetAllBtn').addEventListener('click',resetAllData);
+    // Destructive controls bind with onclick, NOT addEventListener (v120.275). onclick is
+  // idempotent -- rebinding replaces -- whereas addEventListener STACKS, so an element bound
+  // twice fires its handler twice and queues two confirm() dialogs. Reset dialogs were seen
+  // stacking during testing, including a second 'delete this character' prompt. For anything
+  // that destroys data, double-firing must be impossible by construction, not by luck.
+  $('#resetAllBtn').onclick=resetAllData;
   $('#importFile').addEventListener('change',importData);
 }
 
@@ -3914,7 +3919,7 @@ function renderPlayerBattle(c){
       ${(c.log&&c.log.length)? c.log.slice(0,30).map(e=>`<div class="listrow" style="padding:4px 0"><div class="nm" style="font-size:12px">${esc(e.m)}</div><div class="sub" style="white-space:nowrap;font-size:11px">${fmtLogTime(e.t)}</div></div>`).join('') : '<div class="empty" style="padding:8px 0">Your rolls, damage, casts and moves show here.</div>'}
     </div>
   </div>`;
-  app.querySelectorAll('[data-cell]').forEach(el=>el.addEventListener('click',()=>{
+  app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{
     const t=el.getAttribute('data-target'); if(t){ playerAttackMenu(c); return; }
     const [x,y]=el.dataset.cell.split(',').map(Number);
     if(s.monsters.some(m=>m.hp>0&&m.x===x&&m.y===y)||s.players.some(p=>p.x===x&&p.y===y)) return;   // dead bodies don't block
@@ -3944,7 +3949,7 @@ function renderPlayerBattle(c){
       else if(tdef&&tdef.deadly){ applyHp(c,-c.hp.cur); flashBanner('💀 Fell into the pit!'); }
       else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; applyHp(c,-d); flashBanner((tdef.e||'🔥')+' '+tdef.name+'! '+d+' damage'); }
       else if(tdef&&tdef.diff) flashBanner(tdef.name+' — difficult terrain'); Events.emit({type:'move', by:c.name, to:{x,y}, fly}); render(); }, me);
-  }));
+  });
   app.querySelectorAll('[data-pbt]').forEach(el=>el.onclick=()=>{ const k=el.dataset.pbt;
     if(k==='action'){ if(hasAction(c)) spendAction(c); else { b.actionsUsed=0; b.action=false; } }
     else if(k==='surge'){ if(c.actionSurgeUsed){ flashBanner('Action Surge spent — rest to recharge'); return; } b.actionsMax=(b.actionsMax!=null?b.actionsMax:actionsPerTurn(c))+1; c.actionSurgeUsed=true; b.action=!hasAction(c); logChange(c,'⚡ Action Surge — extra action'); flashBanner('⚡ Action Surge — +1 action'); }

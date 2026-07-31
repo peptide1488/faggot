@@ -4508,6 +4508,53 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     }
   }
 
+  /* ---- Destructive controls must bind idempotently (v120.275) ----
+     onclick replaces on rebind; addEventListener STACKS, so an element bound twice fires twice and
+     queues two confirm() dialogs. Reset prompts were observed stacking during testing, including a
+     second "delete this character". For anything that destroys data, double-firing has to be
+     impossible by construction. */
+  {
+    const uiSrc=fs.readFileSync(path.join(__dirname,'ui.js'),'utf8');
+    const bad=uiSrc.split('\n')
+      .map((l,i)=>({l, n:i+1}))
+      .filter(x=>/addEventListener\('click'/.test(x.l) && /reset|delete|deleteChar|wzCancel|delfeat|delatk|delspell|delitem|pfpDel/i.test(x.l));
+    T('destructive controls bind with onclick, never addEventListener (stacking = double confirm)'
+      +(bad.length?' — '+bad.map(b=>'ui.js:'+b.n).join(', '):''), bad.length===0);
+    // The reset itself must still be double-confirmed; making binding idempotent must not have
+    // weakened the prompt.
+    T('resetAllData still asks twice before wiping everything',
+      (uiSrc.match(/function resetAllData\(\)\{[\s\S]{0,400}/)||[''])[0].split('confirm(').length-1 >= 2);
+  }
+
+  /* ---- Renderer-consumption guard (v120.275) ----
+     Three bugs in two days shared one shape: the rules gated on a unit property and the RENDERER
+     was never told, so the mechanic worked invisibly — invisibility (v120.260), flight altitude
+     (v120.272), and every condition badge (v120.273). Each arrived as a separate bug report. This
+     is the class check that would have caught all three at once: every unit state the rules act on
+     must be exposed by the adapter AND consumed by the host. Adding a new one without a visual now
+     fails here instead of in play. */
+  {
+    const isoDir=path.join(__dirname,'iso3d','src');
+    if(fs.existsSync(isoDir)){
+      const adapter=fs.readFileSync(path.join(isoDir,'adapter.js'),'utf8');
+      const host=fs.readFileSync(path.join(isoDir,'host.js'),'utf8');
+      // state -> the adapter field that carries it to the engine.
+      const VISUAL_STATE=[
+        ['invisibility', 'invisible'],
+        ['flight altitude', 'altitudeFt'],
+        ['conditions', 'conditionNames'],
+        ['alive/dead', 'alive'],
+        ['facing', 'facing'],
+      ];
+      const notExposed=VISUAL_STATE.filter(([,f])=>!new RegExp('\\b'+f+'\\s*:').test(adapter)).map(([s])=>s);
+      const notConsumed=VISUAL_STATE.filter(([,f])=>!new RegExp('\\.'+f+'\\b').test(host)).map(([s])=>s);
+      T('renderer guard: every rules-gated unit state is exposed by the adapter'
+        +(notExposed.length?' — missing: '+notExposed.join(', '):''), notExposed.length===0);
+      T('renderer guard: ...and actually consumed by the host (mechanic without a visual = invisible bug)'
+        +(notConsumed.length?' — ignored by renderer: '+notConsumed.join(', '):''), notConsumed.length===0);
+    }
+  }
+
   /* v120.256: the build stamps must stay in lockstep with APP_VERSION, or the stale-code detector
      itself becomes the false alarm — bumping the version and forgetting a stamp would warn users
      about a problem that doesn't exist, which is worse than no detector at all. */
