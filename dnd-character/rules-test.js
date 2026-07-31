@@ -37,7 +37,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
@@ -920,8 +920,8 @@ T('sw.js cache version matches APP_VERSION ('+appVer+')', appVer && appVer===swV
 /* ---- map elevation (isometric renderer content) ---- */
 T('preset maps include elevation data', Object.values(MAP_PRESETS).some(m=>m.height&&Object.keys(m.height).length>0));
 T('startQuickBattle copies preset height into QB.map (was silently dropped)', /map:\{cols:map\.cols, rows:map\.rows, tiles:Object\.assign\(\{\},map\.tiles\), height:Object\.assign\(\{\},map\.height/.test(src));
-T('startQuickBattle clears effects and concentration, not just conditions (buffs/conc were leaking into the next fight)',
-  /c\.conditions=\{\};\s*\n\s*c\.effects=\[\];\s*\n\s*c\.concentration=\{active:false,spell:''\};/.test(src));
+T('startQuickBattle delegates its reset to clearBattleState (was an inline list that kept missing fields)',
+  /clearBattleState\(c\)/.test(src));
 
 /* ---- sprite-sheet loader (opt-in; no-op with an empty manifest) ---- */
 T('dirFromDelta picks screen-dominant axis (iso projection: (dx,dy) both same-sign renders as pure vertical, opposite-sign as pure horizontal)', dirFromDelta(1,1,true)==='down' && dirFromDelta(-1,-1,true)==='up' && dirFromDelta(1,-1,true)==='right' && dirFromDelta(-1,1,true)==='left');
@@ -4631,6 +4631,62 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const ghosts=rawListed.filter(a=>a!=='./' && !fs.existsSync(path.join(__dirname, a.replace(/^\.\//,'').replace(/\?.*$/,''))));
   T('every file listed in sw.js ASSETS exists (a missing one makes cache.addAll reject and kills offline entirely)'
     +(ghosts.length?' — NOT FOUND: '+ghosts.join(', '):''), ghosts.length===0);
+}
+
+
+/* ---- Battle-scoped state must not survive the battle (v120.276) ----
+   Reported three times, one field at a time: conditions carried between Quick Battles, then
+   Invisible did, then "i exited quick battle, reloaded the tab, and i am still flying". Each
+   fix appended ONE field to THREE hand-maintained lists, which is precisely how the next field
+   gets missed. clearBattleState is now the single list; these fail if a call site grows its own
+   copy again, or if a known battle field stops being cleared. ---- */
+{
+  const FIELDS=['conditions','hiddenDC','altitude','effects','concentration',
+                'mountedOn','wildShape','surprised','grappledBy','goadedBy'];
+  const c={ conditions:{Invisible:1,Prone:1}, hiddenDC:17, altitude:30,
+            effects:[{name:'Fly',rounds:10}], concentration:{active:true,spell:'Fly'},
+            mountedOn:'steed-1', wildShape:{form:'Bear'}, surprised:true,
+            grappledBy:'ogre-2', goadedBy:'orc-3' };
+  clearBattleState(c);
+  const left=FIELDS.filter(f=>{
+    const v=c[f];
+    if(f==='conditions')    return Object.keys(v||{}).length>0;
+    if(f==='effects')       return (v||[]).length>0;
+    if(f==='concentration') return !!(v&&v.active);
+    return !!v;                      // altitude 0, hiddenDC null, flags false/null
+  });
+  T('clearBattleState clears every battle-scoped field'
+    +(left.length?' - STILL SET: '+left.join(', '):''), left.length===0);
+  T('clearBattleState zeroes altitude (the "i exited, reloaded, and i am still flying" report)',
+    c.altitude===0);
+  T('clearBattleState tolerates a missing character instead of throwing',
+    (()=>{ try{ clearBattleState(null); clearBattleState(undefined); return true; }catch(e){ return false; } })());
+
+  // Every cleanup path must DELEGATE - an inline reset outside the helper is a second list.
+  const rulesSrc=fs.readFileSync(path.join(__dirname,'rules.js'),'utf8');
+  const uiSrc=fs.readFileSync(path.join(__dirname,'ui.js'),'utf8');
+  const hStart=rulesSrc.indexOf('function clearBattleState');
+  T('clearBattleState is declared in rules.js', hStart>=0);
+  const helper=hStart<0?' ':rulesSrc.slice(hStart, rulesSrc.indexOf('\n}', hStart)+2);
+  // A SINGLE reset is normal gameplay (dismounting, reverting Wild Shape when the beast form
+  // drops to 0). The thing we are banning is a CLUSTER: three-plus battle fields wiped together
+  // in one spot, which is a second copy of the list drifting out of sync with this one.
+  const RESET=/^\s*(pc|c)\.(conditions|hiddenDC|altitude|effects|concentration|mountedOn|wildShape|surprised|grappledBy|goadedBy)\s*=/;
+  const inline=[];
+  for(const pair of [['rules.js',rulesSrc.replace(helper,'')],['ui.js',uiSrc]]){
+    const lines=pair[1].split('\n');
+    lines.forEach((ln,i)=>{
+      if(!RESET.test(ln)) return;
+      const near=lines.slice(i,i+6).filter(l=>RESET.test(l)).length;
+      if(near>=3) inline.push(pair[0]+':'+(i+1)+' -> '+near+' battle fields reset together');
+    });
+  }
+  T('no cleanup path keeps its own hand-maintained battle-field list (call clearBattleState)'
+    +(inline.length?' - INLINE: '+inline.join(' | '):''), inline.length===0);
+
+  const callers=((uiSrc+rulesSrc).match(/clearBattleState\(/g)||[]).length;
+  T('all three cleanup paths (qbExit, qbCheckEnd, startQuickBattle) call clearBattleState'
+    +' - found '+callers+' references', callers>=4);   // 3 call sites + the declaration
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

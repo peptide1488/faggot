@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.275';
+const UI_BUILD='v120.276';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -3049,7 +3049,7 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
-    // Destructive controls bind with onclick, NOT addEventListener (v120.275). onclick is
+    // Destructive controls bind with onclick, NOT addEventListener (v120.276). onclick is
   // idempotent -- rebinding replaces -- whereas addEventListener STACKS, so an element bound
   // twice fires its handler twice and queues two confirm() dialogs. Reset dialogs were seen
   // stacking during testing, including a second 'delete this character' prompt. For anything
@@ -5758,9 +5758,7 @@ function startQuickBattle(c, crMax, count, mapKey){
   // Same leak applied to c.effects (Haste/Rage/Sanctuary/etc.) and concentration — only
   // conditions were being cleared, so a buff from the previous fight (or an active
   // concentration lock) silently carried over too.
-  c.conditions={};
-  c.effects=[];
-  c.concentration={active:false,spell:''};
+  clearBattleState(c);   // one list, three call sites (v120.276)
   // Don't open a fight already dead — 0 HP left over from the last battle made the UI look
   // like the encounter "instantly ended" (lose screen) the moment anything checked end state.
   if(!c.hp) c.hp={max:8,cur:8,temp:0};
@@ -5772,7 +5770,6 @@ function startQuickBattle(c, crMax, count, mapKey){
   // slots and class resources carried into the next fight. Quick Battle is a sandbox; every fight
   // starts fresh regardless of how you got here. Cheap and idempotent, so doing it at both ends is
   // fine — and resting here means the fix works even from a stale entry point I haven't found.
-  c.hiddenDC=null;
   if(typeof longRest==='function') longRest(c);
   const presetKeys=Object.keys(MAP_PRESETS);
   const key=mapKey&&MAP_PRESETS[mapKey]?mapKey:(MAP_PRESETS['Mechanics Lab']?'Mechanics Lab':rndPick(presetKeys));
@@ -6756,8 +6753,7 @@ function qbExit(){
   // fight resolves, rather than only once the player closes the screen.
   const pc=(QB && QB.players && QB.players[0]) ? QB.players[0].c : null;
   if(pc){
-    pc.conditions={}; pc.hiddenDC=null;
-    pc.effects=[]; pc.concentration={active:false, spell:''};
+    clearBattleState(pc);   // one list, three call sites (v120.276)
     if(typeof longRest==='function') longRest(pc);
     if(typeof save==='function') save();
   }

@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.275';
+const RULES_BUILD='v120.276';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -3442,8 +3442,7 @@ function qbCheckEnd(){ if(!QB) return;
   // instead means the sheet is correct the moment the fight ends, not retroactively.
   if(!wasOver && QB.over){
     const pc=QB.players[0].c;
-    pc.conditions={}; pc.hiddenDC=null;
-    pc.effects=[]; pc.concentration={active:false, spell:''};
+    clearBattleState(pc);   // one list, three call sites (v120.276)
     if(typeof longRest==='function') longRest(pc);   // full recovery between sandbox fights
     if(typeof save==='function') save();
     qbLog('🛌 Long rest — HP, slots and abilities restored, all effects cleared');
@@ -3986,6 +3985,33 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
    Boss monsters had no mechanical support at all — the only trace was a prose note on the
    Beholder telling the DM to adjudicate by hand. These are the shared rules; the DM UI drives
    them, and they're written adapter-free so Quick Battle can use them unchanged later. */
+
+/**
+ * Everything that belongs to ONE fight and must not survive it (v120.276).
+ *
+ * This exists because the list kept being forgotten a field at a time. First conditions carried
+ * between Quick Battles ("in every map i am restrained"), then Invisible did, and then altitude —
+ * reported as "I exited, reloaded, and I'm still flying", because the three cleanup sites cleared
+ * conditions/effects/concentration/hiddenDC and nothing else. Three call sites each maintaining
+ * their own list is how a field gets missed; now they all call this, and rules-test enumerates it
+ * so a newly-added battle field fails the suite instead of leaking into the next fight.
+ *
+ * Deliberately NOT here: hp, spell slots and class resources. Those are a long rest's job
+ * (longRest), which the Quick Battle paths call alongside this.
+ */
+function clearBattleState(c){
+  if(!c) return;
+  c.conditions={};
+  c.hiddenDC=null;
+  c.altitude=0;              // flight — the v120.276 report
+  c.effects=[];
+  c.concentration={active:false, spell:''};
+  c.mountedOn=null;          // dismount; a steed doesn't follow you out of the arena
+  c.wildShape=null;          // revert to your own form
+  c.surprised=false;
+  c.grappledBy=null;
+  c.goadedBy=null;
+}
 
 /**
  * Is this unit invisible? (v120.250) One predicate for every unit shape, because that is where

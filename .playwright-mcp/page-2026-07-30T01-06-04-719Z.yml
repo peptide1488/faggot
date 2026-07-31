@@ -1,0 +1,455 @@
+- generic [active] [ref=f11e1]:
+  - banner [ref=f11e2]:
+    - generic [ref=f11e3]:
+      - generic [ref=f11e5]:
+        - generic [ref=f11e6]: Grimoire v120.248
+        - generic [ref=f11e7]: Aasimar Wizard · v120.248
+      - generic [ref=f11e8]:
+        - combobox "Switch character" [ref=f11e9]:
+          - option "Soraeen" [selected]
+        - button "🔍" [ref=f11e10] [cursor=pointer]
+        - button "＋" [ref=f11e11] [cursor=pointer]
+        - button "⚙" [ref=f11e12] [cursor=pointer]
+  - main [ref=f11e13]:
+    - generic [ref=f11e14]:
+      - heading "Identity" [level=2] [ref=f11e15]
+      - generic [ref=f11e18]:
+        - button "Change photo" [ref=f11e19] [cursor=pointer]
+        - button "Remove" [ref=f11e20] [cursor=pointer]
+      - generic [ref=f11e21]:
+        - generic [ref=f11e22]:
+          - generic [ref=f11e23]: Character name
+          - textbox [ref=f11e24]: Soraeen
+        - generic [ref=f11e25]:
+          - generic [ref=f11e26]:
+            - generic [ref=f11e27]: Race / Species
+            - combobox [ref=f11e28]:
+              - option "—"
+              - option "Aarakocra"
+              - option "Aasimar" [selected]
+              - option "Bugbear"
+              - option "Centaur"
+              - option "Changeling"
+              - option "Dragonborn"
+              - option "Dwarf"
+              - option "Elf"
+              - option "Fairy"
+              - option "Firbolg"
+              - option "Genasi"
+              - option "Githyanki"
+              - option "Githzerai"
+              - option "Gnome"
+              - option "Goblin"
+              - option "Goliath"
+              - option "Half-Elf"
+              - option "Half-Orc"
+              - option "Halfling"
+              - option "Harengon"
+              - option "Hobgoblin"
+              - option "Human"
+              - option "Human (Variant)"
+              - option "Kalashtar"
+              - option "Kenku"
+              - option "Kobold"
+              - option "Leonin"
+              - option "Lizardfolk"
+              - option "Loxodon"
+              - option "Minotaur"
+              - option "Orc"
+              - option "Owlin"
+              - option "Satyr"
+              - option "Shifter"
+              - option "Simic Hybrid"
+              - option "Tabaxi"
+              - option "Tiefling"
+              - option "Tortle"
+              - option "Triton"
+              - option "Vedalken"
+              - option "Warforged"
+              - option "Yuan-Ti"
+              - option "Custom…"
+          - generic [ref=f11e29]:
+            - generic [ref=f11e30]:
+              - text: Background
+              - button "Background" [ref=f11e31] [cursor=pointer]: ⓘ
+            - combobox [ref=f11e32]:
+              - option "—"
+              - option "Acolyte"
+              - option "Anthropologist"
+              - option "Archaeologist"
+              - option "Charlatan"
+              - option "City Watch"
+              - option "Clan Crafter"
+              - option "Cloistered Scholar"
+              - option "Courtier"
+              - option "Criminal"
+              - option "Entertainer"
+              - option "Faction Agent"
+              - option "Far Traveler"
+              - option "Folk Hero"
+              - option "Gladiator"
+              - option "Guild Artisan"
+              - option "Haunted One"
+              - option "Hermit"
+              - option "Knight"
+              - option "Mercenary Veteran"
+              - option "Noble"
+              - option "Outlander"
+              - option "Pirate"
+              - option "Sage" [selected]
+              - option "Sailor"
+              - option "Soldier"
+              - option "Spy"
+              - option "Urchin"
+              - option "Custom…"
+        - generic [ref=f11e33]:
+          - generic [ref=f11e34]:
+            - generic [ref=f11e35]: Class
+            - combobox [ref=f11e36]:
+              - option "Artificer"
+              - option "Barbarian"
+              - option "Bard"
+              - option "Cleric"
+              - option "Druid"
+              - option "Fighter"
+              - option "Monk"
+              - option "Paladin"
+              - option "Ranger"
+              - option "Rogue"
+              - option "Sorcerer"
+              - option "Warlock"
+              - option "Wizard" [selected]
+              - option "Other"
+          - generic [ref=f11e37]:
+            - generic [ref=f11e38]: Subclass
+            - combobox [ref=f11e39]:
+              - option "—"
+              - option "Abjuration"
+              - option "Conjuration"
+              - option "Divination"
+              - option "Enchantment"
+              - option "Evocation"
+              - option "Illusion"
+              - option "Necromancy"
+              - option "Transmutation"
+              - option "Bladesinging"
+              - option "War Magic"
+              - option "Chronurgy"
+              - option "Graviturgy" [selected]
+              - option "Order of Scribes"
+              - option "Custom…"
+        - generic [ref=f11e40]:
+          - generic [ref=f11e41]:
+            - generic [ref=f11e42]: XP
+            - spinbutton [ref=f11e43]: "0"
+          - generic [ref=f11e44]:
+            - generic [ref=f11e45]: Prof. bonus (auto)
+            - spinbutton "6" [ref=f11e46]
+    - generic [ref=f11e47]:
+      - generic [ref=f11e48]:
+        - heading "Level 20 Wizard · Graviturgy" [level=2] [ref=f11e49]
+        - button "⬆ Level Up" [disabled] [ref=f11e50] [cursor=pointer]
+      - generic [ref=f11e51]:
+        - generic [ref=f11e52]:
+          - generic [ref=f11e53]:
+            - text: Proficiency
+            - button "ⓘ" [ref=f11e54] [cursor=pointer]
+          - generic [ref=f11e55]: "+6"
+        - generic [ref=f11e56]:
+          - generic [ref=f11e57]:
+            - text: Initiative ▲
+            - button "ⓘ" [ref=f11e58] [cursor=pointer]
+          - generic [ref=f11e59]: "+6"
+        - generic [ref=f11e60]:
+          - generic [ref=f11e61]:
+            - text: Armor Class
+            - button "ⓘ" [ref=f11e62] [cursor=pointer]
+          - generic [ref=f11e63]: "11"
+        - generic [ref=f11e64]:
+          - generic [ref=f11e65]:
+            - text: Speed
+            - button "ⓘ" [ref=f11e66] [cursor=pointer]
+          - generic [ref=f11e67]: "30"
+      - generic [ref=f11e69] [cursor=pointer]:
+        - checkbox "Inspiration" [ref=f11e70]
+        - text: Inspiration
+    - generic [ref=f11e71]:
+      - generic [ref=f11e72]:
+        - heading "Ability Scores" [level=2] [ref=f11e73]
+        - button "✎ Edit" [ref=f11e74] [cursor=pointer]
+      - generic [ref=f11e75]:
+        - generic [ref=f11e76]: str
+        - generic [ref=f11e77]: 8 base
+        - button "ⓘ" [ref=f11e78] [cursor=pointer]
+        - button "8 -1" [ref=f11e79] [cursor=pointer]
+      - generic [ref=f11e80]:
+        - generic [ref=f11e81]: dex
+        - generic [ref=f11e82]: 13 base
+        - button "ⓘ" [ref=f11e83] [cursor=pointer]
+        - button "13 +1" [ref=f11e84] [cursor=pointer]
+      - generic [ref=f11e85]:
+        - generic [ref=f11e86]: con
+        - generic [ref=f11e87]: 14 base +5 ASI
+        - button "ⓘ" [ref=f11e88] [cursor=pointer]
+        - button "19 +4" [ref=f11e89] [cursor=pointer]
+      - generic [ref=f11e90]:
+        - generic [ref=f11e91]: int
+        - generic [ref=f11e92]: 15 base +5 ASI
+        - button "ⓘ" [ref=f11e93] [cursor=pointer]
+        - button "20 +5" [ref=f11e94] [cursor=pointer]
+      - generic [ref=f11e95]:
+        - generic [ref=f11e96]: wis
+        - generic [ref=f11e97]: 12 base
+        - button "ⓘ" [ref=f11e98] [cursor=pointer]
+        - button "12 +1" [ref=f11e99] [cursor=pointer]
+      - generic [ref=f11e100]:
+        - generic [ref=f11e101]: cha
+        - generic [ref=f11e102]: 10 base +2 race
+        - button "ⓘ" [ref=f11e103] [cursor=pointer]
+        - button "12 +1" [ref=f11e104] [cursor=pointer]
+    - generic [ref=f11e105]:
+      - heading [level=2] [ref=f11e106]:
+        - button "▾" [ref=f11e107] [cursor=pointer]
+        - text: Saving Throws — ● = proficient (from Wizard)
+      - generic [ref=f11e108]:
+        - generic [ref=f11e110]: Strength
+        - button "ⓘ" [ref=f11e111] [cursor=pointer]
+        - button "-1" [ref=f11e112] [cursor=pointer]
+      - generic [ref=f11e113]:
+        - generic [ref=f11e115]: Dexterity
+        - button "ⓘ" [ref=f11e116] [cursor=pointer]
+        - button "+1" [ref=f11e117] [cursor=pointer]
+      - generic [ref=f11e118]:
+        - generic [ref=f11e120]: Constitution
+        - button "ⓘ" [ref=f11e121] [cursor=pointer]
+        - button "+4" [ref=f11e122] [cursor=pointer]
+      - generic [ref=f11e123]:
+        - generic [ref=f11e125]: Intelligence
+        - button "ⓘ" [ref=f11e126] [cursor=pointer]
+        - button "+11" [ref=f11e127] [cursor=pointer]
+      - generic [ref=f11e128]:
+        - generic [ref=f11e130]: Wisdom
+        - button "ⓘ" [ref=f11e131] [cursor=pointer]
+        - button "+7" [ref=f11e132] [cursor=pointer]
+      - generic [ref=f11e133]:
+        - generic [ref=f11e135]: Charisma
+        - button "ⓘ" [ref=f11e136] [cursor=pointer]
+        - button "+1" [ref=f11e137] [cursor=pointer]
+    - generic [ref=f11e138]:
+      - generic [ref=f11e139]:
+        - heading [level=2] [ref=f11e140]:
+          - button "▾" [ref=f11e141] [cursor=pointer]
+          - text: Skills — 4/4
+        - button "✎ Edit" [ref=f11e142] [cursor=pointer]
+      - generic [ref=f11e143]:
+        - generic [ref=f11e145]: Acrobatics (dex)
+        - button "ⓘ" [ref=f11e146] [cursor=pointer]
+        - button "+7" [ref=f11e147] [cursor=pointer]
+      - generic [ref=f11e148]:
+        - generic [ref=f11e150]: Animal Handling (wis)
+        - button "ⓘ" [ref=f11e151] [cursor=pointer]
+        - button "+1" [ref=f11e152] [cursor=pointer]
+      - generic [ref=f11e153]:
+        - generic [ref=f11e155]: Arcana (int)
+        - button "ⓘ" [ref=f11e156] [cursor=pointer]
+        - button "+11" [ref=f11e157] [cursor=pointer]
+      - generic [ref=f11e158]:
+        - generic [ref=f11e160]: Athletics (str)
+        - button "ⓘ" [ref=f11e161] [cursor=pointer]
+        - button "-1" [ref=f11e162] [cursor=pointer]
+      - generic [ref=f11e163]:
+        - generic [ref=f11e165]: Deception (cha)
+        - button "ⓘ" [ref=f11e166] [cursor=pointer]
+        - button "+1" [ref=f11e167] [cursor=pointer]
+      - generic [ref=f11e168]:
+        - generic [ref=f11e170]: History (int)
+        - button "ⓘ" [ref=f11e171] [cursor=pointer]
+        - button "+11" [ref=f11e172] [cursor=pointer]
+      - generic [ref=f11e173]:
+        - generic [ref=f11e175]: Insight (wis)
+        - button "ⓘ" [ref=f11e176] [cursor=pointer]
+        - button "+1" [ref=f11e177] [cursor=pointer]
+      - generic [ref=f11e178]:
+        - generic [ref=f11e180]: Intimidation (cha)
+        - button "ⓘ" [ref=f11e181] [cursor=pointer]
+        - button "+1" [ref=f11e182] [cursor=pointer]
+      - generic [ref=f11e183]:
+        - generic [ref=f11e185]: Investigation (int)
+        - button "ⓘ" [ref=f11e186] [cursor=pointer]
+        - button "+5" [ref=f11e187] [cursor=pointer]
+      - generic [ref=f11e188]:
+        - generic [ref=f11e190]: Medicine (wis)
+        - button "ⓘ" [ref=f11e191] [cursor=pointer]
+        - button "+1" [ref=f11e192] [cursor=pointer]
+      - generic [ref=f11e193]:
+        - generic [ref=f11e195]: Nature (int)
+        - button "ⓘ" [ref=f11e196] [cursor=pointer]
+        - button "+5" [ref=f11e197] [cursor=pointer]
+      - generic [ref=f11e198]:
+        - generic [ref=f11e200]: Perception (wis)
+        - button "ⓘ" [ref=f11e201] [cursor=pointer]
+        - button "+1" [ref=f11e202] [cursor=pointer]
+      - generic [ref=f11e203]:
+        - generic [ref=f11e205]: Performance (cha)
+        - button "ⓘ" [ref=f11e206] [cursor=pointer]
+        - button "+1" [ref=f11e207] [cursor=pointer]
+      - generic [ref=f11e208]:
+        - generic [ref=f11e210]: Persuasion (cha)
+        - button "ⓘ" [ref=f11e211] [cursor=pointer]
+        - button "+1" [ref=f11e212] [cursor=pointer]
+      - generic [ref=f11e213]:
+        - generic [ref=f11e215]: Religion (int)
+        - button "ⓘ" [ref=f11e216] [cursor=pointer]
+        - button "+11" [ref=f11e217] [cursor=pointer]
+      - generic [ref=f11e218]:
+        - generic [ref=f11e220]: Sleight of Hand (dex)
+        - button "ⓘ" [ref=f11e221] [cursor=pointer]
+        - button "+1" [ref=f11e222] [cursor=pointer]
+      - generic [ref=f11e223]:
+        - generic [ref=f11e225]: Stealth (dex)
+        - button "ⓘ" [ref=f11e226] [cursor=pointer]
+        - button "+1" [ref=f11e227] [cursor=pointer]
+      - generic [ref=f11e228]:
+        - generic [ref=f11e230]: Survival (wis)
+        - button "ⓘ" [ref=f11e231] [cursor=pointer]
+        - button "+1" [ref=f11e232] [cursor=pointer]
+    - generic [ref=f11e233]:
+      - heading "Passive Senses" [level=2] [ref=f11e234]
+      - generic [ref=f11e235]:
+        - generic [ref=f11e236]:
+          - generic [ref=f11e237]:
+            - text: Passive Perception
+            - button "ⓘ" [ref=f11e238] [cursor=pointer]
+          - generic [ref=f11e239]: "11"
+        - generic [ref=f11e240]:
+          - generic [ref=f11e241]:
+            - text: Passive Investigation
+            - button "ⓘ" [ref=f11e242] [cursor=pointer]
+          - generic [ref=f11e243]: "15"
+      - paragraph [ref=f11e244]: "Not a skill — it's your Perception/Investigation used without rolling. 5e uses a fixed 10 in place of the d20, then adds your skill bonus. The DM compares it to a hidden creature's Stealth: ≤ your passive = you notice it automatically."
+    - generic [ref=f11e245]:
+      - heading "Class & Race" [level=2] [ref=f11e246]
+      - generic [ref=f11e247]:
+        - generic [ref=f11e248]: Wizard
+        - generic [ref=f11e318]: Aasimar
+      - generic [ref=f11e382]:
+        - generic [ref=f11e383]: Race
+        - generic [ref=f11e384]: Aasimar · CHA+2
+      - generic [ref=f11e385]:
+        - generic [ref=f11e386]: Class
+        - generic [ref=f11e387]: Wizard · Graviturgy
+      - generic [ref=f11e388]:
+        - generic [ref=f11e389]: Hit die
+        - generic [ref=f11e390]: d6
+      - generic [ref=f11e391]:
+        - generic [ref=f11e392]: Saving throws
+        - generic [ref=f11e393]: INT, WIS
+      - generic [ref=f11e394]:
+        - generic [ref=f11e395]: Spellcasting
+        - generic [ref=f11e396]: Intelligence
+      - generic [ref=f11e397]:
+        - generic [ref=f11e398]: Feats
+        - generic [ref=f11e399]: Alert
+    - generic [ref=f11e400]:
+      - heading "Features & Traits" [level=2] [ref=f11e401]
+      - generic [ref=f11e402]: Aasimar traits
+      - generic [ref=f11e404]:
+        - generic [ref=f11e405]: Darkvision
+        - text: See 60 ft in dim light.
+      - generic [ref=f11e407]:
+        - generic [ref=f11e408]: Celestial Resistance
+        - text: Resist necrotic and radiant.
+      - generic [ref=f11e410]:
+        - generic [ref=f11e411]: Healing Hands
+        - text: Touch heal once per long rest.
+      - generic [ref=f11e413]:
+        - generic [ref=f11e414]: Light Bearer
+        - text: Know the Light cantrip.
+      - generic [ref=f11e415]: Wizard features · Graviturgy
+      - generic [ref=f11e417]:
+        - generic [ref=f11e418]: Spellcasting Lv 1
+        - text: Cast from your spellbook (Intelligence).
+      - generic [ref=f11e420]:
+        - generic [ref=f11e421]: Arcane Recovery Lv 1
+        - text: Recover some slots on a short rest.
+      - generic [ref=f11e423]:
+        - generic [ref=f11e424]: Arcane Tradition Lv 2
+        - text: Your wizard school subclass.
+      - paragraph [ref=f11e425]: Auto-generated summaries through level 20. Subclass features with real mechanics behind them (Echo Knight so far) are usable from the Use menu in battle.
+    - generic [ref=f11e426]:
+      - heading "Feats — 1" [level=2] [ref=f11e427]
+      - generic [ref=f11e429]:
+        - generic [ref=f11e430]:
+          - generic [ref=f11e431]: Alert
+          - text: +5 initiative; you can't be surprised while conscious; attackers don't gain advantage from being unseen.
+        - button "ⓘ" [ref=f11e432] [cursor=pointer]
+        - button "✕" [ref=f11e433] [cursor=pointer]
+      - generic [ref=f11e434]:
+        - combobox [ref=f11e435]:
+          - option "— choose a feat to add —" [selected]
+          - option "Alert"
+          - option "Athlete"
+          - option "Actor"
+          - option "Charger"
+          - option "Crossbow Expert"
+          - option "Defensive Duelist"
+          - option "Dual Wielder"
+          - option "Dungeon Delver"
+          - option "Durable"
+          - option "Elemental Adept"
+          - option "Fey Touched"
+          - option "Grappler"
+          - option "Great Weapon Master"
+          - option "Gunner"
+          - option "Healer"
+          - option "Heavily Armored"
+          - option "Heavy Armor Master"
+          - option "Inspiring Leader"
+          - option "Keen Mind"
+          - option "Lightly Armored"
+          - option "Lucky"
+          - option "Mage Slayer"
+          - option "Magic Initiate"
+          - option "Martial Adept"
+          - option "Medium Armor Master"
+          - option "Mobile"
+          - option "Moderately Armored"
+          - option "Mounted Combatant"
+          - option "Observant"
+          - option "Polearm Master"
+          - option "Resilient"
+          - option "Ritual Caster"
+          - option "Savage Attacker"
+          - option "Sentinel"
+          - option "Shadow Touched"
+          - option "Sharpshooter"
+          - option "Shield Master"
+          - option "Skill Expert"
+          - option "Skilled"
+          - option "Skulker"
+          - option "Spell Sniper"
+          - option "Tavern Brawler"
+          - option "Telekinetic"
+          - option "Telepathic"
+          - option "Tough"
+          - option "War Caster"
+          - option "Weapon Master"
+        - button "Add" [ref=f11e436] [cursor=pointer]
+    - button "Delete this character" [ref=f11e438] [cursor=pointer]
+  - navigation [ref=f11e439]:
+    - button "🪪 Sheet" [ref=f11e440] [cursor=pointer]:
+      - generic [ref=f11e441]: 🪪
+      - text: Sheet
+    - button "⚔️ Combat" [ref=f11e442] [cursor=pointer]:
+      - generic [ref=f11e443]: ⚔️
+      - text: Combat
+    - button "✨ Spells" [ref=f11e444] [cursor=pointer]:
+      - generic [ref=f11e445]: ✨
+      - text: Spells
+    - button "🎒 Items" [ref=f11e446] [cursor=pointer]:
+      - generic [ref=f11e447]: 🎒
+      - text: Items
+    - button "📜 Notes" [ref=f11e448] [cursor=pointer]:
+      - generic [ref=f11e449]: 📜
+      - text: Notes
+  - button "🎲" [ref=f11e450] [cursor=pointer]
