@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.263';
+const UI_BUILD='v120.264';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -1965,6 +1965,57 @@ function levelUp(){
   renderModal();
 }
 
+/**
+ * A full long rest, as data only (v120.264). This was ~40 lines inline in the #restBtn click
+ * handler, so nothing else could reuse it — which is why Quick Battle couldn't offer a rest
+ * between fights without duplicating every class-resource line and drifting from this one.
+ * Caller decides save()/render()/banners.
+ */
+function longRest(c){
+    // Tolerate a sparse character. Inline in the sheet's click handler this always got a full
+    // ensureFields()'d character; reachable from qbCheckEnd it can get whatever the caller holds,
+    // and a rest that throws would abort the end-of-battle cleanup half-done.
+    if(!c) return;
+    if(!c.slots) c.slots={};
+    if(!c.hp) c.hp={cur:0,max:0,temp:0};
+    if(!c.hitDice) c.hitDice={used:0};
+    for(let l=1;l<=9;l++) if(c.slots[l]) c.slots[l].used=0;
+    c.hp.cur=c.hp.max; c.hp.temp=0; c.death={succ:0,fail:0};   // temp HP ends when a long rest ends (PHB)
+    const hd=parseHitDice(c);                 // long rest: regain half your hit dice
+    if(hd) c.hitDice.used=Math.max(0,(c.hitDice.used||0)-Math.max(1,Math.floor(hd.count/2)));
+    c.exhaustion=Math.max(0,(c.exhaustion||0)-1);  // a long rest removes 1 exhaustion
+    c.actionSurgeUsed=false;   // Action Surge recharges on a long rest too
+    c.arcaneRecovered=false;   // Arcane Recovery is once per day
+    c.luckUsed=0;              // Lucky feat: 3 luck points refresh on a long rest
+    if(sorcMax(c)) c.sorcPts=sorcMax(c);   // sorcery points refresh
+    if(isEchoKnight(c,3)){ c.echoIncarnationLeft=echoResourceMax(c); }   // Unleash Incarnation: long rest only
+    if(isEchoKnight(c,7)) c.echoAvatarUsed=false;
+    if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;
+    c.healerFeatSpent=false;   // same target-side restriction as the short-rest reset above
+    if(hasFeat(c,'Inspiring Leader')) c.inspiringLeaderUsed=false;
+    if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
+    if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
+    if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
+    if(superiorityDiceMax(c)) c.superiorityDiceLeft=superiorityDiceMax(c);   // Battle Master/Martial Adept: long rest too
+    if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: long rest too
+    if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: long rest too
+    if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: long rest too
+    if(isFiendWarlock(c,14)) c.hurlThroughHellUsed=false;   // Hurl Through Hell: long rest only
+    if(isEvocationWizard(c,14)) c.overchannelUses=0;   // Overchannel: backlash counter resets on a long rest
+    c.featFreeCastUsed={};   // Fey Touched/Shadow Touched/Magic Initiate: once/day free casts, approximated as once/long rest
+    if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: long rest too
+    if(c.cls==='Paladin'){ c.divineSenseLeft=divineSenseMax(c); c.layOnHandsLeft=layOnHandsMax(c); }   // long rest only (PHB)
+    if(isDevotionPaladin(c,20)) c.holyNimbusUsed=false;   // once per long rest
+    if(c.cls==='Monk' && (Number(c.level)||1)>=6) c.wholenessUsed=false;   // Wholeness of Body: long rest only
+    // Tranquility (11th): grants the real Sanctuary EFFECT (same name, same dc field every
+    // existing Sanctuary check already reads — sanctuaryDC, dmOpportunityAttack's block, etc.
+    // all recognize it for free) rather than a parallel Tranquility-named effect. Like this
+    // app's own Sanctuary SPELL, it doesn't auto-end when you attack/cast (no such hook exists
+    // anywhere in this codebase yet) — a pre-existing simplification, not a new gap.
+    if(isOpenHandMonk(c,11)) addEffect(c,'Sanctuary',{rounds:null, dc:kiDC(c), note:'Tranquility — lasts until your next long rest.'});
+    logChange(c, 'Long rest — HP, slots & hit dice restored');
+}
+
 function renderSheet(c){
   const pend=pendingChoiceSpecs(c);
   app.innerHTML = `
@@ -2672,42 +2723,7 @@ function renderSpells(c){
   </div>`;
 
   $('#restBtn').addEventListener('click',()=>{
-    for(let l=1;l<=9;l++) if(c.slots[l]) c.slots[l].used=0;
-    c.hp.cur=c.hp.max; c.hp.temp=0; c.death={succ:0,fail:0};   // temp HP ends when a long rest ends (PHB)
-    const hd=parseHitDice(c);                 // long rest: regain half your hit dice
-    if(hd) c.hitDice.used=Math.max(0,(c.hitDice.used||0)-Math.max(1,Math.floor(hd.count/2)));
-    c.exhaustion=Math.max(0,(c.exhaustion||0)-1);  // a long rest removes 1 exhaustion
-    c.actionSurgeUsed=false;   // Action Surge recharges on a long rest too
-    c.arcaneRecovered=false;   // Arcane Recovery is once per day
-    c.luckUsed=0;              // Lucky feat: 3 luck points refresh on a long rest
-    if(sorcMax(c)) c.sorcPts=sorcMax(c);   // sorcery points refresh
-    if(isEchoKnight(c,3)){ c.echoIncarnationLeft=echoResourceMax(c); }   // Unleash Incarnation: long rest only
-    if(isEchoKnight(c,7)) c.echoAvatarUsed=false;
-    if(isEchoKnight(c,10)) c.shadowMartyrUsed=false;
-    c.healerFeatSpent=false;   // same target-side restriction as the short-rest reset above
-    if(hasFeat(c,'Inspiring Leader')) c.inspiringLeaderUsed=false;
-    if(isEchoKnight(c,15)) c.echoReclaimLeft=echoResourceMax(c);         // Reclaim Potential: long rest only
-    if(c.cls==='Bard') c.bardicInspLeft=bardicInspMax(c);   // Bardic Inspiration always refills on a long rest, Font of Inspiration just adds short rest too
-    if(c.cls==='Cleric' && (Number(c.level)||1)>=2) c.channelDivinityLeft=channelDivinityMax(c);   // Channel Divinity: long rest too
-    if(superiorityDiceMax(c)) c.superiorityDiceLeft=superiorityDiceMax(c);   // Battle Master/Martial Adept: long rest too
-    if(c.cls==='Druid' && (Number(c.level)||1)>=2) c.wildShapeLeft=wildShapeMax(c);   // Wild Shape: long rest too
-    if(c.cls==='Monk' && (Number(c.level)||1)>=2) c.kiLeft=kiMax(c);   // Ki: long rest too
-    if(isFiendWarlock(c,6)) c.darkOneLuckUsed=false;   // Dark One's Own Luck: long rest too
-    if(isFiendWarlock(c,14)) c.hurlThroughHellUsed=false;   // Hurl Through Hell: long rest only
-    if(isEvocationWizard(c,14)) c.overchannelUses=0;   // Overchannel: backlash counter resets on a long rest
-    c.featFreeCastUsed={};   // Fey Touched/Shadow Touched/Magic Initiate: once/day free casts, approximated as once/long rest
-    if(c.cls==='Paladin' && (Number(c.level)||1)>=3) c.paladinCDLeft=paladinCDMax(c);   // Paladin Channel Divinity: long rest too
-    if(c.cls==='Paladin'){ c.divineSenseLeft=divineSenseMax(c); c.layOnHandsLeft=layOnHandsMax(c); }   // long rest only (PHB)
-    if(isDevotionPaladin(c,20)) c.holyNimbusUsed=false;   // once per long rest
-    if(c.cls==='Monk' && (Number(c.level)||1)>=6) c.wholenessUsed=false;   // Wholeness of Body: long rest only
-    // Tranquility (11th): grants the real Sanctuary EFFECT (same name, same dc field every
-    // existing Sanctuary check already reads — sanctuaryDC, dmOpportunityAttack's block, etc.
-    // all recognize it for free) rather than a parallel Tranquility-named effect. Like this
-    // app's own Sanctuary SPELL, it doesn't auto-end when you attack/cast (no such hook exists
-    // anywhere in this codebase yet) — a pre-existing simplification, not a new gap.
-    if(isOpenHandMonk(c,11)) addEffect(c,'Sanctuary',{rounds:null, dc:kiDC(c), note:'Tranquility — lasts until your next long rest.'});
-    logChange(c, 'Long rest — HP, slots & hit dice restored');
-    save(); render();
+    longRest(c); save(); render();
     flashBanner('Long rest — HP, slots & hit dice restored');
   });
   { const ar=$('#arcRec'); if(ar) ar.onclick=()=>{ if(c.arcaneRecovered) return; let budget=Math.ceil((Number(c.level)||1)/2); const auto=spellSlots(c);

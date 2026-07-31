@@ -2,7 +2,7 @@
 // flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
 // stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
 // with holes in it is worse than none, because it reads as an all-clear.
-const DATA_BUILD='v120.263';
+const DATA_BUILD='v120.264';
 // Grimoire — extracted data tables (Stage 1 of index.html modularization).
 // Pure content: spells, monsters, classes, items, maps, terrain. No app logic here —
 // see AUDIT.md for the modularization writeup. Loaded via <script src> before the main

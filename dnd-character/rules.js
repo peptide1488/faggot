@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.263';
+const RULES_BUILD='v120.264';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -3433,7 +3433,21 @@ function qbCheckEnd(){ if(!QB) return;
   }
   pruneDeadSummons(QB);
   checkMountDeaths(QB, qbLog);
-  if(QB.players[0].c.hp.cur<=0){ QB.over='lose'; } else if(!qbEnemiesAlive()){ QB.over='win'; } }
+  const wasOver=QB.over;
+  if(QB.players[0].c.hp.cur<=0){ QB.over='lose'; } else if(!qbEnemiesAlive()){ QB.over='win'; }
+  // Quick Battle is a sandbox, not a campaign: each fight should start from a clean sheet
+  // (v120.264). startQuickBattle already wiped conditions/effects on the way IN, but nothing did
+  // so on the way OUT, which is why a spell like Invisibility appeared to persist "between" quick
+  // battles — the character genuinely was still invisible until the next fight began. Resting here
+  // instead means the sheet is correct the moment the fight ends, not retroactively.
+  if(!wasOver && QB.over){
+    const pc=QB.players[0].c;
+    pc.conditions={}; pc.hiddenDC=null;
+    pc.effects=[]; pc.concentration={active:false, spell:''};
+    if(typeof longRest==='function') longRest(pc);   // full recovery between sandbox fights
+    if(typeof save==='function') save();
+    qbLog('🛌 Long rest — HP, slots and abilities restored, all effects cleared');
+  } }
 
 function forgeRandomReturnQuiet(){
   const before=DB.length;

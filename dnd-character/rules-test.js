@@ -547,8 +547,13 @@ T('enemy monster fights back against the dominated one', domInts2.length>0 && do
 (function(){
   // sanity: a LIVING dominated monster must NOT have its concentration cleared
   const pc={hp:{cur:20,max:20}, concentration:{active:true, spell:'Dominate Monster'}, effects:[{name:'Dominate Monster', conc:true}], log:[]};
+  // A living HOSTILE is required here, or the fight is already won (the only monster being
+  // dominated means no enemies remain) and v120.264's end-of-battle long rest legitimately clears
+  // concentration — which would make this test pass or fail for a reason that has nothing to do
+  // with the Dominate cleanup it exists to check.
   setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},
-    monsters:[{id:'pet',side:'mon',hp:5,max:10,x:0,y:1,conds:[{name:'Dominated',rounds:10}]}],
+    monsters:[{id:'pet',side:'mon',hp:5,max:10,x:0,y:1,conds:[{name:'Dominated',rounds:10}]},
+              {id:'foe',side:'mon',hp:9,max:9,x:3,y:3,conds:[]}],
     players:[{id:'pc',side:'pc',name:'Hero',c:pc,x:0,y:0}]});
   qbCheckEnd();
   T('concentration stays active while the dominated monster is still alive', getQB().players[0].c.concentration.active===true);
@@ -3729,6 +3734,43 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   // And the mechanical half must still work, so the visual is a cue rather than the whole feature.
   T('Invisible still grants the attacker advantage (mechanics unchanged by the visual)',
     attackAdvantage(new Set(['Invisible']), new Set(), true, {}).adv>0);
+}
+
+/* ---- Quick Battle ends with a long rest (v120.264) ----
+   Reported from play: "between quick battles it still thinks I'm invisible". startQuickBattle
+   already wiped conditions/effects on the way IN, but nothing did on the way OUT — so the
+   character genuinely stayed invisible (and injured, and out of slots) until the next fight began.
+   QB is a sandbox, so the fight now ends with a full rest. */
+{
+  const c=newCharacter('Rester');
+  c.hp.cur=1; c.conditions={Invisible:true, Prone:true}; c.hiddenDC=17;
+  c.effects=[{name:'Invisibility', conc:true}];
+  c.concentration={active:true, spell:'Invisibility'};
+  c.luckUsed=3;
+  if(c.slots && c.slots[1]) c.slots[1].used=c.slots[1].used||0;
+  setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},
+    monsters:[{id:'m1',side:'mon',name:'Orc',base:'Orc',hp:0,max:10,x:2,y:2,conds:[]}],   // dead → win
+    players:[{id:'pc',side:'pc',name:c.name,c,x:0,y:0}]});
+  qbCheckEnd();
+  T('QB end: the battle registers as over', getQB().over==='win');
+  T('QB end: conditions are cleared (this is the reported "still invisible" bug)',
+    !c.conditions.Invisible && !c.conditions.Prone);
+  T('QB end: the Hidden stealth DC is cleared too', c.hiddenDC===null);
+  T('QB end: effects and concentration are dropped', c.effects.length===0 && c.concentration.active===false);
+  T('QB end: HP is restored by the long rest', c.hp.cur===c.hp.max);
+  T('QB end: long-rest resources come back (Lucky points)', (c.luckUsed||0)===0);
+  setQB(null);
+
+  // It must fire ONCE, not on every subsequent qbCheckEnd call while the result stands.
+  { const c2=newCharacter('Once'); c2.hp.cur=c2.hp.max;
+    setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},
+      monsters:[{id:'m1',side:'mon',name:'Orc',base:'Orc',hp:0,max:10,x:2,y:2,conds:[]}],
+      players:[{id:'pc',side:'pc',name:c2.name,c:c2,x:0,y:0}]});
+    qbCheckEnd();
+    const logsAfterFirst=getQB().log.length;
+    qbCheckEnd(); qbCheckEnd();
+    T('QB end: the rest happens once, not on every end-check', getQB().log.length===logsAfterFirst);
+    setQB(null); }
 }
 
 /* ---- No opportunity attacks against a creature you can't see (v120.263) ----
