@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.261';
+const RULES_BUILD='v120.262';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -3808,7 +3808,16 @@ function hideEligibility(ad, unit, watchers, skulker){
   const closest=(watchers||[]).slice()
     .sort((a,b)=>gridDist(unit.x,unit.y,a.x,a.y)-gridDist(unit.x,unit.y,b.x,b.y))[0];
   const fullCover=!!(closest && coverBetween(mapS, unit.x,unit.y, closest.x, closest.y)>=5);
-  return { ok: lvl===0 || (lvl===1 && skulker) || fullCover, light:lvl, fullCover };
+  // Invisible creatures can hide in the open (v120.262). PHB: you can't hide from something that
+  // can see you, and an invisible creature is HEAVILY OBSCURED to anything without See
+  // Invisibility — so being unseen is itself the qualifying condition, no cover or darkness
+  // required. Reported from play: standing invisible in a daylit field, Hide was refused with
+  // "need darkness, full cover, or (Skulker) dim light", which is the one situation where hiding
+  // should be easiest. Only matters while nothing watching can see invisible; a watcher that can
+  // negates it, exactly like cover being blown.
+  const invis=unitIsInvisible(unit) &&
+    !(watchers||[]).some(w=>typeof hasSeesInvisible==='function' && hasSeesInvisible(w));
+  return { ok: invis || lvl===0 || (lvl===1 && skulker) || fullCover, light:lvl, fullCover, invisible:invis };
 }
 
 /**
@@ -3877,7 +3886,10 @@ function maneuverHide(ad, pcUnit, log){
   if(!cunning && !hasAction(c)){ flashBanner('No action left'); return {ok:false}; }
   const foes=ad.allMonsters().filter(mo=>mo.hp>0&&isHostile(mo));
   const el=hideEligibility(ad, pcUnit, foes, hasFeat(c,'Skulker'));
-  if(!el.ok){ flashBanner('Nothing to hide behind — need darkness, full cover, or (Skulker) dim light'); return {ok:true, success:false}; }
+  // Name invisibility in the refusal too, so the message matches the rule that's actually applied
+  // (someone standing invisible in the open and told "need darkness" has no way to know it should
+  // have worked).
+  if(!el.ok){ flashBanner('Nothing to hide behind — need darkness, full cover, invisibility, or (Skulker) dim light'); return {ok:true, success:false}; }
   if(cunning){ if(c.battle) c.battle.bonus=true; } else spendAction(c);
   const adv=skillCheckAdvantage(c,'stealth','dex');
   const r=rollSkillCheck(c,'stealth','dex',{adv:adv.adv, flatBonus:skillCheckBonus(c,'stealth')});

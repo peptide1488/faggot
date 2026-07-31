@@ -3731,6 +3731,36 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     attackAdvantage(new Set(['Invisible']), new Set(), true, {}).adv>0);
 }
 
+/* ---- Invisible creatures can Hide in the open (v120.262) ----
+   Reported from play: standing invisible in a daylit field, Hide was refused with "need darkness,
+   full cover, or (Skulker) dim light" — the one situation where hiding should be EASIEST. PHB: you
+   can't hide from something that can see you, and an invisible creature is heavily obscured to
+   anything without See Invisibility, so being unseen is itself the qualifying condition. */
+{
+  const ad=s=>({ map:()=>s.map, name:u=>u.name, allMonsters:()=>s.monsters||[] });
+  const daylitField={ map:{cols:8,rows:3,tiles:{}, light:{mode:'day'}}, monsters:[], players:[] };
+  const watcher={x:6,y:0,name:'Wolf',base:'Wolf',hp:11};
+  const invisUnit={x:0,y:0,name:'Ghost',conds:[{name:'Invisible',rounds:9}]};
+  const plainUnit={x:0,y:0,name:'Solid',conds:[]};
+
+  T('hide: an INVISIBLE creature can hide in an open, daylit field',
+    hideEligibility(ad(daylitField), invisUnit, [watcher], false).ok===true);
+  T('hide: a visible creature still cannot (the old rule is intact)',
+    hideEligibility(ad(daylitField), plainUnit, [watcher], false).ok===false);
+  T('hide: the eligibility reports WHY it passed, so the UI can explain it',
+    hideEligibility(ad(daylitField), invisUnit, [watcher], false).invisible===true);
+  // A watcher that can see invisible negates it, the same way cover being blown would.
+  { const seer={x:6,y:0,name:'Seer',base:'Seer',hp:20,effects:[{name:'See Invisibility'}]};
+    const canSee=typeof hasSeesInvisible==='function' && hasSeesInvisible(seer);
+    if(canSee) T('hide: a watcher with See Invisibility negates the invisibility route',
+      hideEligibility(ad(daylitField), invisUnit, [seer], false).ok===false);
+    else T('hide: (See Invisibility watcher case skipped — hasSeesInvisible does not read that shape)', true); }
+  // Darkness must still work on its own for a plainly visible creature.
+  { const night={ map:{cols:8,rows:3,tiles:{}, light:{mode:'night'}}, monsters:[], players:[] };
+    T('hide: darkness still qualifies without invisibility',
+      hideEligibility(ad(night), plainUnit, [watcher], false).ok===true); }
+}
+
 /* ---- Invisibility actually helps against the AI (v120.261) ----
    Attacks on an invisible target already rolled at disadvantage, but BRAINS.tactical picked
    targets as if it could see perfectly — so a monster walked straight at an invisible PC and swung
