@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.278';
+const UI_BUILD='v120.279';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -2052,14 +2052,14 @@ function openStatusPanel(c, s, unit){
   let advLine='No foe in sight to measure against.';
   try{
     // Measure against the OPPOSING side. A monster's advantage is judged against the party,
-    // not against the monster standing next to it (v120.278, now that the DM can open this
+    // not against the monster standing next to it (v120.279, now that the DM can open this
     // panel on its own monsters).
     const isMon=((s&&s.monsters)||[]).some(m=>m.id===(unit&&unit.id));
     const foes=isMon ? ((s&&s.players)||[]).filter(p=>(p.hpCur||0)>0 && p.x!=null)
                      : ((s&&s.monsters)||[]).filter(m=>m.hp>0);
     const near=foes.slice().sort((a,b)=>gridDist(unit.x,unit.y,a.x,a.y)-gridDist(unit.x,unit.y,b.x,b.y))[0];
     if(near){
-      // Adapter must follow the session, not assume Quick Battle (v120.278) - this panel is
+      // Adapter must follow the session, not assume Quick Battle (v120.279) - this panel is
       // shared with DM-hosted and player-net battles, where qbAdapter reads the wrong state.
       const pv=Engine.hitResult(battleAdapter(s), unit.id, near.id, {name:'probe', toHit:0, dmg:'1d4', tiles:1}, 10);
       const lbl=advLabel(pv.adv, pv.advWhy, {bare:true});
@@ -3056,7 +3056,7 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
-    // Destructive controls bind with onclick, NOT addEventListener (v120.278). onclick is
+    // Destructive controls bind with onclick, NOT addEventListener (v120.279). onclick is
   // idempotent -- rebinding replaces -- whereas addEventListener STACKS, so an element bound
   // twice fires its handler twice and queues two confirm() dialogs. Reset dialogs were seen
   // stacking during testing, including a second 'delete this character' prompt. For anything
@@ -3595,7 +3595,7 @@ function dmOpportunityAttack(mo,p){
 function rollInitiative(){ const s=net.session; const o=[];
   s.players.forEach(p=>o.push({k:'p',id:p.id,name:p.name,roll:rnd(20)+(p.init||0)}));
   s.monsters.forEach(m=>o.push({k:'m',id:m.id,name:m.name,roll:rnd(20)+(m.init||0)}));
-  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>{ m.attacksLeft=m.attacks||1; m.moveLeft=speedBlocked(m)?0:(m.speed||30); m.reactionUsed=false; }); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
+  o.sort((a,b)=>b.roll-a.roll); s.order=o; s.turn=0; s.battle.round=1; s.monsters.forEach(m=>freshMonsterTurn(m)); dmBroadcast(); render(); flashBanner('Initiative rolled'); }
 
 function dmNextTurn(){ const s=net.session; if(!s.order||!s.order.length){ s.battle.round++; tickMonsterConds(); tickGasHazards(s); expireHazards(s); dmBroadcast(); render(); return; }
   const oldR=s.battle.round; let guard=0; do{ s.turn=((s.turn||0)+1)%s.order.length; if(s.turn===0) s.battle.round++; guard++; } while(guard<=s.order.length && orderDead(s.order[s.turn]));
@@ -3869,7 +3869,7 @@ function playerAttackMenu(c){
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════
-   ONE battle screen (v120.278)
+   ONE battle screen (v120.279)
 
    Quick Battle and the player-net battle were two hand-written screens with the same anatomy -
    header, stats, battlefield, actions, log - and every divergence between them shipped as a bug:
@@ -4069,7 +4069,7 @@ function bindBattleCommon(x, moveOpts){
   { const rv=$('#'+x.idp+'RotBtn'); if(rv) rv.onclick=rotateMap; }
   { const us=$('#'+x.idp+'Use'); if(us && x.gate) us.onclick=x.onUse; }
   { const st=$('#'+x.idp+'Status'); if(st) st.onclick=x.onStatus; }
-  // The 3D host gets the SAME move opts the DOM grid got - the v120.278 bug was these two
+  // The 3D host gets the SAME move opts the DOM grid got - the v120.279 bug was these two
   // disagreeing, so they are deliberately passed from one variable.
   if(isoView&&iso3dView) try{ syncIso3DHost(x.s, moveOpts); }catch(e){}
 }
@@ -4152,7 +4152,7 @@ function openAdjacentUseUI(c, s, me){
   // Hide/Study/Stabilize) — same functions in Quick Battle and player-net, just a different
   // adapter/log. DM-hosted has no PC of its own to "Use" with (see dmMonsterAttack instead,
   // where the DM's monsters get their own Shove/Grapple options).
-  // DM-hosted joined this in v120.278 ("in the dm mode need to be able to have the use and
+  // DM-hosted joined this in v120.279 ("in the dm mode need to be able to have the use and
   // status button for each one"). Every maneuver below is already adapter-driven, so the DM
   // needs a mode + adapter, not a parallel copy of this menu.
   const mode = (typeof QB!=='undefined' && s===QB) ? 'qb'
@@ -4181,6 +4181,13 @@ function openAdjacentUseUI(c, s, me){
   // unitConds reads BOTH shapes (character .conditions object, monster .conds array), which
   // matters now that the actor here can be a monster.
   const actorConds=(typeof unitConds==='function') ? unitConds(me||{c}) : new Set(Object.keys((c&&c.conditions)||{}));
+  // Dodge/Disengage/Ready are general actions available to ANY creature, so they cannot key off
+  // c.battle - a DM-driven monster has no such object. These four resolve the actor's action
+  // budget and per-turn flags for whichever kind of unit is acting (v120.279).
+  const actorHasAction = ()=> (mode==='dm' && actorIsMonster) ? (me.attacksLeft||0)>0 : hasAction(c);
+  const actorSpendAction = ()=>{ if(mode==='dm' && actorIsMonster) me.attacksLeft=0; else spendAction(c); };
+  const actorFlag = k => (mode==='dm' && actorIsMonster) ? !!me[k] : !!(c.battle && c.battle[k]);
+  const setActorFlag = (k,v)=>{ if(mode==='dm' && actorIsMonster) me[k]=v; else if(c.battle) c.battle[k]=v; };
   const grappled=!!mode && actorConds.has('Grappled');
   const canHide=!!mode && !actorConds.has('Hidden'); // maneuverHide itself checks cover/darkness and bails with a banner if ineligible
   // Stabilize only ever makes sense against ANOTHER party member at 0 HP — Quick Battle has
@@ -4242,12 +4249,12 @@ function openAdjacentUseUI(c, s, me){
       // Dodge & Disengage — core PHB actions any character can take (were previously reachable
       // only via a subclass shortcut: Monk's Patient Defense / Step of the Wind). Both cost the
       // Action here; the bonus-action versions still live on those subclass buttons.
-      if(mode && c.battle && hasAction(c) && !(c.conditions&&c.conditions.Dodge)) body+=`<button class="btn block" id="useDodge" style="margin-bottom:8px;text-align:left">🛡 Dodge<small style="display:block;opacity:.75">Action — attacks against you have disadvantage until the start of your next turn</small></button>`;
-      if(mode && c.battle && hasAction(c) && !c.battle.disengaged) body+=`<button class="btn block" id="useDisengage" style="margin-bottom:8px;text-align:left">🏃 Disengage<small style="display:block;opacity:.75">Action — your movement won't provoke opportunity attacks this turn</small></button>`;
+      if(mode && actorHasAction() && !actorConds.has('Dodge')) body+=`<button class="btn block" id="useDodge" style="margin-bottom:8px;text-align:left">🛡 Dodge<small style="display:block;opacity:.75">Action — attacks against you have disadvantage until the start of your next turn</small></button>`;
+      if(mode && actorHasAction() && !actorFlag('disengaged')) body+=`<button class="btn block" id="useDisengage" style="margin-bottom:8px;text-align:left">🏃 Disengage<small style="display:block;opacity:.75">Action — your movement won't provoke opportunity attacks this turn</small></button>`;
       // Ready action (PHB): spend your Action now to hold an attack; release it later as your
       // reaction (before your next turn) against any foe — the "trigger" is left to the player's
       // judgement, VTT-style, rather than auto-detected. Released via the ⚡ button on any foe.
-      if(mode && c.battle && hasAction(c) && !c.battle.readied) body+=`<button class="btn block" id="useReady" style="margin-bottom:8px;text-align:left">⚡ Ready an attack<small style="display:block;opacity:.75">Action — hold your attack, then release it as a reaction before your next turn</small></button>`;
+      if(mode && actorHasAction() && !actorFlag('readied')) body+=`<button class="btn block" id="useReady" style="margin-bottom:8px;text-align:left">⚡ Ready an attack<small style="display:block;opacity:.75">Action — hold your attack, then release it as a reaction before your next turn</small></button>`;
       if(mode && c.battle && c.battle.readied) body+=`<div class="card" style="margin:0 0 8px;padding:8px 10px"><div class="nm"><b>⚡ Attack readied</b><small style="display:block;opacity:.75">${c.battle.reaction?'Reaction already spent — the readied attack is lost':'Tap ⚡ Release on a foe below to strike'}</small></div></div>`;
       if(servant) body+=`<button class="btn block" data-use="servant" style="margin-bottom:8px;text-align:left">👻 Command Servant<small style="display:block;opacity:.75">Move it up to 15 ft / interact with an object — bonus action</small></button>`;
       if(canManifestEcho) body+=`<button class="btn block" id="useManifestEcho" style="margin-bottom:8px;text-align:left">👤 Manifest Echo<small style="display:block;opacity:.75">${echo?'Replaces your current echo — ':''}Bonus action, within 15 ft</small></button>`;
@@ -4477,7 +4484,7 @@ function openAdjacentUseUI(c, s, me){
     // Every maneuver mutates state via `ad`/`log` (network sends already happen inside
     // ad.addCond/ad.moveUnit for player-net) — this wrapper just does the UI-layer bookkeeping
     // every path needs (close modal, save, re-render, and mode-specific extras).
-    const afterManeuver=()=>{ $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello(); };
+    const afterManeuver=()=>{ $('#modalRoot').innerHTML=''; save(); render(); if(mode==='qb') qbCheckEnd(); if(mode==='player') playerHello(); if(mode==='dm') dmBroadcast(); };
     // The maneuverResult view has already mutated state (the roll+apply happened before this
     // card ever rendered) and only ever shows a "Continue" button, no #useClose — route the
     // generic close/backdrop-dismiss through afterManeuver there so a stray backdrop tap
@@ -4678,28 +4685,30 @@ function openAdjacentUseUI(c, s, me){
     { const se=$('#useSearch'); if(se) se.onclick=()=>{ draw({kind:'confirmRoll', desc:'Search for a hidden creature. Costs your action.', skillLabel:'Perception', backTo:null, run:()=>{ maneuverSearch(ad, me, 'perception', log); return null; }}); }; }
     { const si=$('#useSearchInv'); if(si) si.onclick=()=>{ draw({kind:'confirmRoll', desc:'Search, resolved with Intelligence (Investigation) instead of Perception — the DM decides which fits.', skillLabel:'Investigation', backTo:null, run:()=>{ maneuverSearch(ad, me, 'investigation', log); return null; }}); }; }
     { const dg=$('#useDodge'); if(dg) dg.onclick=()=>{
-      if(!hasAction(c)){ flashBanner('No action left'); return; }
-      spendAction(c);
-      // Same Dodge effect Monk's Patient Defense grants — attackAdvantage already reads the Dodge
-      // condition to give attackers disadvantage. rounds:1 = "until the start of your next turn".
-      addEffect(c,'Dodge',{rounds:1, cond:'Dodge', note:'Attack rolls against you have disadvantage.'});
-      log('🛡 '+c.name+' takes the Dodge action');
+      if(!actorHasAction()){ flashBanner('No action left'); return; }
+      actorSpendAction();
+      // Same Dodge effect Monk's Patient Defense grants — attackAdvantage (rules.js:30) reads the
+      // Dodge condition for ANY unit, so a monster gets it through the adapter instead of an
+      // effect list it doesn't have. rounds:1 = "until the start of your next turn".
+      if(mode==='dm' && actorIsMonster) ad.addCond(me,'Dodge');
+      else addEffect(c,'Dodge',{rounds:1, cond:'Dodge', note:'Attack rolls against you have disadvantage.'});
+      log('🛡 '+ad.name(me)+' takes the Dodge action');
       flashBanner('🛡 Dodging — attacks against you have disadvantage');
       afterManeuver();
     }; }
     { const di=$('#useDisengage'); if(di) di.onclick=()=>{
-      if(!hasAction(c)){ flashBanner('No action left'); return; }
-      spendAction(c);
-      c.battle.disengaged=true;   // checked at every PC-move opportunity-attack provocation point (QB + player-net)
-      log('🏃 '+c.name+' takes the Disengage action — no opportunity attacks this turn');
+      if(!actorHasAction()){ flashBanner('No action left'); return; }
+      actorSpendAction();
+      setActorFlag('disengaged',true);   // checked at every opportunity-attack provocation point (QB, player-net, DM)
+      log('🏃 '+ad.name(me)+' takes the Disengage action — no opportunity attacks this turn');
       flashBanner('🏃 Disengage — your movement won\'t provoke opportunity attacks');
       afterManeuver();
     }; }
     { const rd=$('#useReady'); if(rd) rd.onclick=()=>{
-      if(!hasAction(c)){ flashBanner('No action left'); return; }
-      spendAction(c);
-      c.battle.readied=true;   // cleared by freshTurnState at the start of your next turn if never released
-      log('⚡ '+c.name+' readies an attack — held until released as a reaction');
+      if(!actorHasAction()){ flashBanner('No action left'); return; }
+      actorSpendAction();
+      setActorFlag('readied',true);   // cleared at the start of the actor's next turn (freshTurnState / freshMonsterTurn)
+      log('⚡ '+ad.name(me)+' readies an attack — held until released as a reaction');
       flashBanner('⚡ Attack readied — release it on a foe as your reaction');
       afterManeuver();
     }; }
@@ -5187,7 +5196,7 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
 
 function renderDM(){
   const s=net.session; app.className='fade'; void app.offsetWidth;
-  // Move grid for whatever token the DM has selected - monster OR player (v120.278).
+  // Move grid for whatever token the DM has selected - monster OR player (v120.279).
   // Was built inline inside the map template and only for monsters, so the DM got no reach
   // preview when moving a character, and syncIso3DHost never received it at all, which meant
   // the grid was invisible in iso3d for both the DM and the players.
@@ -5247,7 +5256,7 @@ function renderDM(){
       // what that character can actually see before describing the room. mapGridHTML only applies
       // fog when isDM is false, so this deliberately renders as a player view for the preview.
       const asId=net.viewAs, asP=asId&&(s.players||[]).find(p=>p.id===asId||p.cid===asId);
-      const base=dmMoveOpts;   // hoisted above so the 3D host gets the same grid (v120.278)
+      const base=dmMoveOpts;   // hoisted above so the 3D host gets the same grid (v120.279)
       if(asP && asP.x!=null)
         return mapGridHTML(s,false, Object.assign({}, base,
           {fog:{viewer:{x:asP.x,y:asP.y,darkvision:!!asP.darkvision}, viewerId:'dmview:'+(asP.id||asP.cid)}}));
@@ -5333,7 +5342,7 @@ function renderDM(){
   { const eb=$('#encBuilderBtn'); if(eb) eb.onclick=openEncounterBuilder; }
   { const nb=$('#npcBtn'); if(nb) nb.onclick=openNpcBuilder; }
   app.querySelectorAll('[data-msheet]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.msheet); if(mo) openMonsterSheet(mo); });
-  // Use + Status per unit (v120.278) - the SAME shared panels Quick Battle uses, bound to the
+  // Use + Status per unit (v120.279) - the SAME shared panels Quick Battle uses, bound to the
   // DM's session rather than a second DM-only implementation.
   app.querySelectorAll('[data-muse]').forEach(el=>el.onclick=()=>{
     const mo=s.monsters.find(m=>m.id===el.dataset.muse); if(!mo) return;
@@ -5409,7 +5418,7 @@ function renderDM(){
       const dk=x+','+y;
       // Decor alone is scenery. Light lives in map.light.points and interactability in
       // map.interact, so painting a torch has to write all three or it just sits there dark
-      // and unusable (v120.278 — "i added torch to wall but it didnt add light").
+      // and unusable (v120.279 — "i added torch to wall but it didnt add light").
       if(key==='erase'){ delete s.map.decor[dk]; if(s.map.interact) delete s.map.interact[dk]; }
       else { if((key==='torch'||key==='torch_unlit') && !nextToWall(s,x,y)){ flashBanner('🔥 Torches mount on a wall — pick a tile next to one'); return; }
         s.map.decor[dk]=key;
@@ -5433,7 +5442,7 @@ function renderDM(){
       mo.x=x; mo.y=y; mo.placed=true;
       if(s.battle.active && !mfly){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ mo.hp=0; Events.emit({type:'hazard', unitId:mo.id, terrain:ter, deadly:true}); flashBanner(mo.name+' fell into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; mo.hp=Math.max(0,mo.hp-d); Events.emit({type:'hazard', unitId:mo.id, terrain:ter, dmg:d}); flashBanner((tdef.e||'🔥')+' '+mo.name+' takes '+d+' from '+tdef.name); } checkTerrainHazardCond(s,mo,x,y,false); checkTrapTrigger(s,mo,x,y,false); }
       Events.emit({type:'move', id:mo.id, by:mo.name, to:{x:mo.x,y:mo.y}, fly:mfly});
-      if(wasBattle){ const leaving=s.players.filter(p=>(p.hpCur||0)>0 && leavesReach(fromX,fromY,mo.x,mo.y,p.x,p.y,1)); leaving.forEach(p=>dmSend(p.id,{t:'oachance',mon:mo.id,name:mo.name,ac:mo.ac})); if(leaving.length) flashBanner('⚔ '+mo.name+' provokes opportunity attack'+(leaving.length>1?'s':'')+' from '+leaving.map(p=>p.name).join(', ')); }
+      if(wasBattle && !mo.disengaged){ const leaving=s.players.filter(p=>(p.hpCur||0)>0 && leavesReach(fromX,fromY,mo.x,mo.y,p.x,p.y,1)); leaving.forEach(p=>dmSend(p.id,{t:'oachance',mon:mo.id,name:mo.name,ac:mo.ac})); if(leaving.length) flashBanner('⚔ '+mo.name+' provokes opportunity attack'+(leaving.length>1?'s':'')+' from '+leaving.map(p=>p.name).join(', ')); }
     } }
     else { const p=s.players.find(pp=>pp.id===net.sel.slice(1)); if(p){ if(s.battle.active && isFullWall(ter)){ flashBanner('Wall is impassable'); return; } p.x=x; p.y=y; p.placed=true;
       if(s.battle.active){ const tdef=TERRAIN[ter]; if(tdef&&tdef.deadly){ dmSend(p.id,{t:'apply',delta:-9999}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, deadly:true}); flashBanner(p.name+' pushed into the void! 💀'); } else if(tdef&&tdef.dmg){ const d=(rollNotation(tdef.dmg)||{total:0}).total; dmSend(p.id,{t:'apply',delta:-d}); Events.emit({type:'hazard', unitId:p.id, terrain:ter, dmg:d}); flashBanner(p.name+' pushed into '+tdef.name+' — '+d+'!'); } sendTerrainHazardCheck(s,p,x,y); sendTrapTriggerCheck(s,p,x,y); } } }
@@ -5970,7 +5979,7 @@ function startQuickBattle(c, crMax, count, mapKey){
   // Same leak applied to c.effects (Haste/Rage/Sanctuary/etc.) and concentration — only
   // conditions were being cleared, so a buff from the previous fight (or an active
   // concentration lock) silently carried over too.
-  clearBattleState(c);   // one list, three call sites (v120.278)
+  clearBattleState(c);   // one list, three call sites (v120.279)
   // Don't open a fight already dead — 0 HP left over from the last battle made the UI look
   // like the encounter "instantly ended" (lose screen) the moment anything checked end state.
   if(!c.hp) c.hp={max:8,cur:8,temp:0};
@@ -6020,7 +6029,7 @@ function startQuickBattle(c, crMax, count, mapKey){
 function qbBeginTurn(){ const o=qbCurrent(); if(!o) return;
   // Camera follows the spotlight — pan to whoever's turn is starting (PC or monster).
   frameCameraOnActiveUnit(QB, 1.55);
-  if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } mo.attacksLeft=mo.attacks||1; mo.moveLeft=speedBlocked(mo)?0:(mo.speed||30); mo.reactionUsed=false; render();
+  if(o.k==='m'){ const mo=QB.monsters.find(m=>m.id===o.id); if(!mo||mo.hp<=0){ qbNextTurn(); return; } freshMonsterTurn(mo); render();
     setTimeout(()=>qbRunBrain(mo), 500); }
   else { const pcU=QB.players[0], c=pcU.c;   // PC turn — refresh resources, then wait for input
     resetTurnState(c,{ignoreEffects:inAntimagicField(QB,pcU.x,pcU.y)});
@@ -6921,7 +6930,7 @@ function qbExit(){
   // fight resolves, rather than only once the player closes the screen.
   const pc=(QB && QB.players && QB.players[0]) ? QB.players[0].c : null;
   if(pc){
-    clearBattleState(pc);   // one list, three call sites (v120.278)
+    clearBattleState(pc);   // one list, three call sites (v120.279)
     if(typeof longRest==='function') longRest(pc);
     if(typeof save==='function') save();
   }

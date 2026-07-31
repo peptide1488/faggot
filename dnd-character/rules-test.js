@@ -37,7 +37,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.freshMonsterTurn=freshMonsterTurn;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
@@ -4770,6 +4770,70 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const useHead=useFn.slice(0, useFn.indexOf('const foes'));
   T("openAdjacentUseUI supports DM-hosted (mode 'dm' bound to sessionAdapter)",
     /'dm'/.test(useHead) && /sessionAdapter/.test(useHead));
+}
+
+
+/* ---- General actions belong to every creature, not just PCs (v120.279) ----
+   Found by running all three modes side by side and diffing the Use menu rather than reading
+   code: Hide and Search appeared in QB, player-net AND DM, but Dodge, Disengage and Ready
+   appeared only for PCs. Cause was the gate `mode && c.battle && hasAction(c)` - a DM-driven
+   monster has no c.battle and no character action economy, so all three silently vanished.
+   RAW these are general actions any creature can take. ---- */
+{
+  const uiSrc=fs.readFileSync(path.join(__dirname,'ui.js'),'utf8');
+
+  // 1. No general-action gate may require c.battle - that is what excluded monsters.
+  const gated=[];
+  uiSrc.split('\n').forEach((ln,i)=>{
+    if(/id="use(Dodge|Disengage|Ready)"/.test(ln) && /c\.battle/.test(ln))
+      gated.push('ui.js:'+(i+1));
+  });
+  T('Dodge/Disengage/Ready are not gated on c.battle (excludes DM monsters)'
+    +(gated.length?' - STILL GATED: '+gated.join(', '):''), gated.length===0);
+
+  // 2. They must resolve budget/flags through the actor-aware helpers, so the same button works
+  //    whichever kind of unit is acting.
+  const useFn=uiSrc.slice(uiSrc.indexOf('function openAdjacentUseUI'));
+  const useBody=useFn.slice(0, useFn.indexOf(String.fromCharCode(10)+'}'));
+  ['actorHasAction','actorSpendAction','actorFlag','setActorFlag'].forEach(h=>{
+    T('openAdjacentUseUI defines '+h+' (actor-aware action budget)', useBody.indexOf(h+' =')>0 || useBody.indexOf(h+'=')>0);
+  });
+  // Behavioural, not textual: the earlier text-only version of this check passed even when the
+  // call was disabled with `if(false)`, which is exactly the kind of guard that proves nothing.
+  T('a monster carrying Dodge imposes disadvantage on attacks against it',
+    attackAdvantage(new Set(), new Set(['Dodge']), true).adv < 0);
+  T('the Dodge disadvantage is attributed, so the log can explain it',
+    (attackAdvantage(new Set(), new Set(['Dodge']), true).why||[]).some(w=>/dodg/i.test(w)));
+  T('Dodge reaches monsters through the adapter (they have no effects list)',
+    /if\(mode==='dm' && actorIsMonster\) ad\.addCond\(me,'Dodge'\)/.test(useBody));
+
+  // 3. A monster that Disengages must actually stop provoking on the DM's move path - the whole
+  //    point of the action. This is the consumer half that the invisibility/altitude bugs missed.
+  T('the DM move path honours a monster Disengage', /wasBattle && !mo\.disengaged/.test(uiSrc));
+
+  // 4. Those flags must clear when the monster's turn comes round again, or it disengages once
+  //    and never provokes an opportunity attack for the rest of the fight.
+  const rulesSrc=fs.readFileSync(path.join(__dirname,'rules.js'),'utf8');
+  T('freshMonsterTurn exists and clears the per-turn general-action flags',
+    /function freshMonsterTurn/.test(rulesSrc)
+    && /m\.disengaged=false/.test(rulesSrc) && /m\.readied=false/.test(rulesSrc));
+  const m={id:'m1',name:'Ogre',attacks:2,speed:40,disengaged:true,readied:true,reactionUsed:true,attacksLeft:0,moveLeft:0};
+  freshMonsterTurn(m);
+  T('freshMonsterTurn resets budget and clears disengaged/readied',
+    m.attacksLeft===2 && m.moveLeft===40 && m.reactionUsed===false
+    && m.disengaged===false && m.readied===false);
+  T('freshMonsterTurn tolerates a missing monster', (()=>{ try{ freshMonsterTurn(null); return true; }catch(e){ return false; } })());
+
+  // 5. Both refresh points must go through it rather than re-listing the fields inline.
+  const inline=[];
+  uiSrc.split('\n').forEach((ln,i)=>{
+    if(/attacksLeft\s*=\s*(m|mo)\.attacks\s*\|\|\s*1/.test(ln)) inline.push('ui.js:'+(i+1));
+  });
+  T('no monster turn-refresh keeps its own inline field list (use freshMonsterTurn)'
+    +(inline.length?' - INLINE: '+inline.join(', '):''), inline.length===0);
+
+  // 6. DM mutations have to reach the players.
+  T('afterManeuver broadcasts in DM mode', /if\(mode==='dm'\) dmBroadcast\(\)/.test(useBody));
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
