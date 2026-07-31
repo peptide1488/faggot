@@ -4285,11 +4285,11 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     sessionAdapter:{
       // Intentional: enemy selection is Quick Battle's AI concern. In DM-hosted play a human
       // picks targets, so there is no "who are my enemies" question for the Engine to ask.
-      enemiesOf:'intentional — QB AI target selection only; DM-hosted has a human choosing',
+      enemiesOf:'intentional — QB-only. NOTE (v120.281): verified uncalled anywhere; BRAINS picks targets by other means. Kept for the side/ally logic it encodes, not load-bearing.',
     },
     playerNetAdapter:{
       damageMult:'intentional — DM is authoritative and applies resist/vuln/imm to raw damage',
-      enemiesOf:'intentional — no local AI on a player device',
+      enemiesOf:'intentional — no local AI on a player device (and uncalled anywhere, see sessionAdapter note)',
       findGrappler:'intentional — grapple bookkeeping is resolved DM-side',
       // cover / sanctuaryDC / holyAuraDC were listed here as confirmed bugs and are now
       // IMPLEMENTED (v120.234) — removed from this list, which is exactly what the
@@ -4835,6 +4835,7 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   // 6. DM mutations have to reach the players.
   T('afterManeuver broadcasts in DM mode', /if\(mode==='dm'\) dmBroadcast\(\)/.test(useBody));
 }
+
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
 process.exit(fails?1:0);
