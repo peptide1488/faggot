@@ -2182,18 +2182,42 @@ BRAINS.tactical = function(qb, u){
   const dist=f=>gridDist(u.x,u.y,f.x,f.y);
   const canHitFrom=(x,y,f,a)=>{ const d=gridDist(x,y,f.x,f.y); if(d>a.tiles) return false; if(a.tiles>1) return losClear(qb,x,y,f.x,f.y); return true; };
   const blocked=(x,y)=> qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y);
-  // 1) can we attack someone right now? prefer the lowest-HP foe we can hit
+  // 1) can we attack someone right now? prefer the lowest-HP foe we can hit.
+  // A foe it can't see is only a candidate when ADJACENT (v120.266): RAW you may swing at the
+  // square you think someone occupies, but a monster shouldn't be able to pick an unseen target
+  // out of a crowd at 30 ft. Adjacent means it has effectively bumped into them.
+  const atkFoes=foes.filter(f=>!unseenBy(u,f) || gridDist(u.x,u.y,f.x,f.y)<=1);
   let best=null;
-  foes.forEach(f=>usable.forEach(a=>{ if(canHitFrom(u.x,u.y,f,a)){ if(!best||qbHP(f)<qbHP(best.f)) best={f,a}; } }));
+  atkFoes.forEach(f=>usable.forEach(a=>{ if(canHitFrom(u.x,u.y,f,a)){ if(!best||qbHP(f)<qbHP(best.f)) best={f,a}; } }));
   if(best){ const out=[]; for(let k=0;k<(u.attacksLeft||1);k++) out.push({type:'attack', targetId:best.f.id, atk:best.a}); return out; }
   // 2) move to a cell from which we can attack the nearest foe, then attack
   const ufly=monsterFlies(u)||!!u.fly;
-  const target=foes.slice().sort((a,b)=>dist(a)-dist(b))[0];
+  const target0=foes.slice().sort((a,b)=>dist(a)-dist(b))[0];
+  // "Every enemy still found me." (v120.266) Preferring visible foes (v120.261) does nothing in
+  // Quick Battle, which is solo — the invisible PC is the ONLY foe, so the AI fell back to them and
+  // pathfound straight to their exact tile. It never attacked, but walking unerringly to your
+  // square reads as being found, and RAW a creature that can't see you doesn't know where you are.
+  //
+  // So a monster now remembers where it last SAW each foe and hunts that instead. It updates the
+  // memory only while the foe is actually visible, so slipping away invisible leaves the monster
+  // converging on a stale spot. No memory yet (invisible before it was ever seen) means it doesn't
+  // know at all, and it holds position rather than being handed a free lock-on.
+  const seesTarget=!unseenBy(u, target0);
+  if(!u._lastSeen) u._lastSeen={};
+  if(seesTarget) u._lastSeen[target0.id]={x:target0.x, y:target0.y};
+  const remembered=u._lastSeen[target0.id];
+  const target = seesTarget ? target0
+    : (remembered ? Object.assign(Object.create(Object.getPrototypeOf(target0)||Object.prototype), target0, {x:remembered.x, y:remembered.y}) : null);
+  if(!target) return [];
   const reach=reachableCells(qb, u.x, u.y, u.moveLeft||0, ufly, u);
   let spot=null, spotCost=1e9, spotAtk=null;
   Object.keys(reach).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(blocked(x,y)) return;
     usable.forEach(a=>{ if(canHitFrom(x,y,target,a)){ const cost=reach[k]; if(cost<spotCost){ spot={x,y}; spotCost=cost; spotAtk=a; } } }); });
-  if(spot){ const out=[{type:'move', to:spot}]; for(let k=0;k<(u.attacksLeft||1);k++) out.push({type:'attack', targetId:target.id, atk:spotAtk}); return out; }
+  // Moving to where you were last seen is fine; swinging at a foe it still can't see is not,
+  // unless it ends up adjacent (see atkFoes above). Otherwise the monster just relocates.
+  if(spot){ const out=[{type:'move', to:spot}]; const canSwing=!unseenBy(u,target0)||gridDist(spot.x,spot.y,target0.x,target0.y)<=1;
+    if(canSwing) for(let k=0;k<(u.attacksLeft||1);k++) out.push({type:'attack', targetId:target0.id, atk:spotAtk});
+    return out; }
   // 3) can't reach — step as close as possible toward the nearest foe (Dash if truly stuck)
   let stepTo=null, bestD=dist(target);
   Object.keys(reach).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(blocked(x,y)) return; const d=gridDist(x,y,target.x,target.y); if(d<bestD){ bestD=d; stepTo={x,y}; } });
@@ -2399,7 +2423,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.265';
+const APP_VERSION='v120.266';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That

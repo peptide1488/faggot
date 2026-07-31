@@ -3868,12 +3868,55 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
       !atk || atk.targetId==='Solid');
     setQB(null); }
 
-  // Only an invisible target: RAW still allows attacking the guessed square, so it must not freeze.
+  /* v120.266 — the solo case, which is what Quick Battle always is. Preferring visible foes does
+     nothing when the invisible PC is the ONLY foe: the AI fell back to them and walked straight to
+     their exact tile. Monsters now hunt the last position they actually SAW you at. */
+  {
+    const s2=base();
+    const pc=mkPc('Ghost',false);           // starts VISIBLE so the monster can form a memory
+    pc.x=4; s2.players=[pc];
+    setQB(s2);
+    const mo=getQB().monsters[0];
+    BRAINS.tactical(getQB(), mo);                       // sees them at x=4 and remembers it
+    T('AI memory: a monster records where it last saw a visible foe',
+      !!(mo._lastSeen && mo._lastSeen['Ghost'] && mo._lastSeen['Ghost'].x===4));
+
+    // Now vanish AND move. The monster should still be heading for x=4, not the new spot.
+    pc.c.conditions={Invisible:true}; pc.conds=[{name:'Invisible',rounds:9}];
+    pc.x=7;
+    const intents=BRAINS.tactical(getQB(), mo)||[];
+    const mv=intents.find(i=>i.type==='move');
+    const atk=intents.find(i=>i.type==='attack');
+    T('AI memory: after you vanish and move, it does NOT beeline to your new square',
+      !mv || mv.to.x<7);
+    T('AI memory: and it does not attack a foe it cannot see', !atk);
+    T('AI memory: the remembered spot is not updated while you are unseen',
+      mo._lastSeen['Ghost'].x===4);
+    setQB(null);
+  }
+  // A foe invisible from the very start was never seen, so there is nothing to hunt.
+  { const s3=base(); const pc=mkPc('Never',true); pc.x=5; s3.players=[pc];
+    setQB(s3);
+    const mo=getQB().monsters[0];
+    const intents=BRAINS.tactical(getQB(), mo)||[];
+    T('AI memory: a foe never seen gives no lock-on (no attack intent)',
+      !intents.find(i=>i.type==='attack'));
+    setQB(null); }
+
+  /* This assertion was reversed in v120.266, deliberately. At v120.261 it read "with ONLY an
+     invisible foe the monster still acts (RAW: guess the square)". That was wrong in the case that
+     matters: you can only guess a square if you have some idea where the target is, and a monster
+     that has NEVER seen this foe has none. Beelining to their exact tile — which is what "still
+     acts" produced in solo Quick Battle — is precisely the "every enemy still found me" bug.
+     A monster that has seen you hunts your last known position (tested above); one that never has
+     holds still. Changing the expectation, not softening it. */
   { const s=base(); s.players=[mkPc('Ghost',true)];
     setQB(s);
     const intents=BRAINS.tactical(getQB(), getQB().monsters[0])||[];
-    T('AI targeting: with ONLY an invisible foe the monster still acts (RAW: guess the square)',
-      Array.isArray(intents) && intents.length>0);
+    T('AI targeting: a monster that has NEVER seen the invisible foe does not attack it',
+      !intents.find(i=>i.type==='attack'));
+    T('AI targeting: ...and does not path to their exact tile (no free lock-on)',
+      !intents.find(i=>i.type==='move' && i.to && i.to.x===2 && i.to.y===0));
     setQB(null); }
 
   // And the roll it makes is still at disadvantage — the preference doesn't replace the penalty.
