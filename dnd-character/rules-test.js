@@ -37,7 +37,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
@@ -3760,6 +3760,23 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('QB end: HP is restored by the long rest', c.hp.cur===c.hp.max);
   T('QB end: long-rest resources come back (Lucky points)', (c.luckUsed||0)===0);
   setQB(null);
+
+  /* v120.265: LEAVING a battle must rest too. v120.264 only covered a fight resolving in win/lose,
+     so quitting mid-fight kept every condition — reported from play as "I'm still invisible" with
+     QB already torn down. qbExit is the single path every departure goes through. */
+  { const c3=newCharacter('Quitter');
+    c3.hp.cur=1; c3.conditions={Invisible:true, Hidden:true}; c3.hiddenDC=15;
+    c3.effects=[{name:'Invisibility', conc:true}]; c3.concentration={active:true, spell:'Invisibility'};
+    setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},
+      monsters:[{id:'m1',side:'mon',name:'Orc',base:'Orc',hp:9,max:9,x:2,y:2,conds:[]}],   // still ALIVE — unresolved
+      players:[{id:'pc',side:'pc',name:c3.name,c:c3,x:0,y:0}]});
+    qbExit();
+    T('QB exit: quitting an UNRESOLVED fight still clears Invisible/Hidden',
+      !c3.conditions.Invisible && !c3.conditions.Hidden);
+    T('QB exit: hiddenDC is cleared on the way out too', c3.hiddenDC===null);
+    T('QB exit: effects and concentration are dropped on exit', c3.effects.length===0 && c3.concentration.active===false);
+    T('QB exit: the long rest runs on exit as well', c3.hp.cur===c3.hp.max);
+    T('QB exit: the battle is actually torn down', (typeof QB==='undefined')||QB===null); }
 
   // It must fire ONCE, not on every subsequent qbCheckEnd call while the result stands.
   { const c2=newCharacter('Once'); c2.hp.cur=c2.hp.max;

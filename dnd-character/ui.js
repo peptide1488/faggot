@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.264';
+const UI_BUILD='v120.265';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -6171,7 +6171,9 @@ function renderQuickBattle(){
   </div>`;
   $('#qbExit').onclick=qbExit;
   $('#qbSheet').onclick=()=>openQbSheet(c);
-  { const a=$('#qbAgain'); if(a) a.onclick=()=>{ QB=null; openQuickBattle(); }; }
+  // "Fight again" also leaves the battle, so it must go through qbExit rather than nulling QB
+  // itself — otherwise it skips the rest/cleanup exactly like the old exit path did (v120.265).
+  { const a=$('#qbAgain'); if(a) a.onclick=()=>{ qbExit(); openQuickBattle(); }; }
   { const d=$('#qbDone'); if(d) d.onclick=qbExit; }
   { const mv=$('#qbMove'); if(mv&&myTurn) mv.onclick=()=>{ s.moveMode=!s.moveMode; render(); }; }
   { const rv=$('#qbRotBtn'); if(rv) rv.onclick=rotateMap; }
@@ -6667,6 +6669,19 @@ function qbSpellTarget(c,name,level){ level=Number(level)||0; const s=QB, me=s.p
 }
 
 function qbExit(){
+  // Rest on the way OUT as well, not only when a fight resolves in win/lose (v120.265). v120.264
+  // put the cleanup in qbCheckEnd, which never runs if you simply LEAVE a Quick Battle — reported
+  // from play as "I'm still invisible" with QB already torn down: conditions and hiddenDC survived
+  // because the fight never reached an ending. qbExit is the one path every departure goes
+  // through, so it belongs here; qbCheckEnd keeps its copy so the sheet is correct the moment a
+  // fight resolves, rather than only once the player closes the screen.
+  const pc=(QB && QB.players && QB.players[0]) ? QB.players[0].c : null;
+  if(pc){
+    pc.conditions={}; pc.hiddenDC=null;
+    pc.effects=[]; pc.concentration={active:false, spell:''};
+    if(typeof longRest==='function') longRest(pc);
+    if(typeof save==='function') save();
+  }
   QB=null;
   // Apply deferred service-worker reload after the fight so mid-battle updates
   // don't wipe QB (see controllerchange handler).
