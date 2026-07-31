@@ -1,3 +1,8 @@
+// Build stamp (v120.259). index.html compares every module's stamp against APP_VERSION and
+// flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
+// stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
+// with holes in it is worse than none, because it reads as an all-clear.
+const NET_BUILD='v120.259';
 // Grimoire — extracted multiplayer/networking functions (Stage 2 of index.html modularization).
 // DM-hosted session handling, player-net messaging, campaign persistence. See AUDIT.md.
 // Loaded via <script src> after data.js/rules.js, before ui.js/the main script.

@@ -1,3 +1,8 @@
+// Build stamp (v120.259). index.html compares every module's stamp against APP_VERSION and
+// flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
+// stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
+// with holes in it is worse than none, because it reads as an all-clear.
+const ISOR_BUILD='v120.259';
 // Grimoire — standalone isometric battle-map renderer.
 //
 // Deliberately separate from index.html: this file owns ONLY "given a grid of terrain +

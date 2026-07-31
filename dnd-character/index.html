@@ -2389,7 +2389,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.258';
+const APP_VERSION='v120.259';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That
@@ -2398,7 +2398,10 @@ const APP_VERSION='v120.258';
 // happens again (a third-party cache, a proxy, a half-updated install).
 {
   const stamps={ 'ui.js':(typeof UI_BUILD!=='undefined')?UI_BUILD:null,
-                 'rules.js':(typeof RULES_BUILD!=='undefined')?RULES_BUILD:null };
+                 'rules.js':(typeof RULES_BUILD!=='undefined')?RULES_BUILD:null,
+                 'data.js':(typeof DATA_BUILD!=='undefined')?DATA_BUILD:null,
+                 'net.js':(typeof NET_BUILD!=='undefined')?NET_BUILD:null,
+                 'iso-renderer.js':(typeof ISOR_BUILD!=='undefined')?ISOR_BUILD:null };
   const stale=Object.keys(stamps).filter(k=>stamps[k] && stamps[k]!==APP_VERSION);
   if(stale.length){
     const msg='Stale code: index.html is '+APP_VERSION+' but '+stale.map(k=>k+' is '+stamps[k]).join(', ')

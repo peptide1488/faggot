@@ -4185,15 +4185,58 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   T('sw.js ASSETS covers every local <script src> in index.html (offline-cache drift guard)'
     +(unlisted.length?' — MISSING: '+unlisted.join(', '):''), unlisted.length===0);
 
+  /* ---- iso3d version-drift lock (v120.259) ----
+     This is the WORST version of the staleness bug, found by looking for the same shape elsewhere
+     after the sw.js incident. iso3d/ is served CACHE-FIRST because its URLs carry a ?v= that is
+     supposed to change when the code does. If someone edits iso3d/src/*.js and doesn't bump that
+     ?v=, the URL is identical, so every user holding a cached copy keeps the OLD engine FOREVER —
+     not until the next reload, permanently. And nothing else would notice: ASSETS still matches
+     the import graph, so the existing precache test stays green.
+
+     So: pin a content hash. Change iso3d source and this fails until you bump the ?v= AND update
+     the two constants below together — which is exactly the moment the cache-buster is supposed
+     to move. Deliberately a lock rather than an auto-derived value; auto-deriving would silently
+     accept the drift it exists to catch. */
+  {
+    const crypto=require('crypto');
+    const isoDir=path.join(__dirname,'iso3d');
+    if(fs.existsSync(isoDir)){
+      const files=['boot.js'].concat(fs.readdirSync(path.join(isoDir,'src')).filter(f=>f.endsWith('.js')).map(f=>'src/'+f)).sort();
+      const h=crypto.createHash('sha256');
+      for(const f of files) h.update(f+':'+fs.readFileSync(path.join(isoDir,f),'utf8'));
+      const hash=h.digest('hex').slice(0,16);
+      const declaredV=(html.match(/iso3d\/boot\.js\?v=([0-9.]+)/)||[])[1];
+
+      const LOCKED_V='0.6.16', LOCKED_HASH='0ee3fa4e2dccbdf9';
+      T(`iso3d drift lock: source content matches the pinned hash for ?v=${LOCKED_V}`
+        +(hash===LOCKED_HASH?'':` — iso3d source CHANGED (${hash}). Bump the ?v= in index.html + sw.js, then update LOCKED_V/LOCKED_HASH here. Without a ?v= bump, cached users keep the old engine forever.`),
+        hash===LOCKED_HASH);
+      T(`iso3d drift lock: the ?v= in index.html still matches the lock (${declaredV})`
+        +(declaredV===LOCKED_V?'':` — version moved to ${declaredV}; update LOCKED_HASH too or the lock is meaningless`),
+        declaredV===LOCKED_V);
+    }
+  }
+
   /* v120.256: the build stamps must stay in lockstep with APP_VERSION, or the stale-code detector
      itself becomes the false alarm — bumping the version and forgetting a stamp would warn users
      about a problem that doesn't exist, which is worse than no detector at all. */
   {
     const appV=(html.match(/const APP_VERSION='([^']+)'/)||[])[1];
-    const uiV=(fs.readFileSync(path.join(__dirname,'ui.js'),'utf8').match(/const UI_BUILD='([^']+)'/)||[])[1];
-    const ruV=(fs.readFileSync(path.join(__dirname,'rules.js'),'utf8').match(/const RULES_BUILD='([^']+)'/)||[])[1];
-    T('build stamps: ui.js matches APP_VERSION'+(uiV===appV?'':` — ${uiV} vs ${appV}`), uiV===appV);
-    T('build stamps: rules.js matches APP_VERSION'+(ruV===appV?'':` — ${ruV} vs ${appV}`), ruV===appV);
+    // Every module that sw.js serves network-first needs a stamp, or the detector has a hole and
+    // reads as an all-clear while that file is stale (v120.256 stamped only 2 of the 5).
+    const MODULES=[['ui.js','UI_BUILD'],['rules.js','RULES_BUILD'],['data.js','DATA_BUILD'],
+                   ['net.js','NET_BUILD'],['iso-renderer.js','ISOR_BUILD']];
+    const bad=[];
+    for(const [file,konst] of MODULES){
+      const v=(fs.readFileSync(path.join(__dirname,file),'utf8').match(new RegExp('const '+konst+"='([^']+)'"))||[])[1];
+      if(v!==appV) bad.push(`${file}=${v||'(no stamp)'}`);
+    }
+    T(`build stamps: all ${MODULES.length} network-first modules match APP_VERSION (${appV})`
+      +(bad.length?' — '+bad.join(', '):''), bad.length===0);
+    // The detector in index.html must actually READ every stamp, or the stamp is decorative.
+    const unchecked=MODULES.filter(([,k])=>!new RegExp('typeof '+k+"!=='undefined'").test(html)).map(([f])=>f);
+    T('build stamps: index.html checks every module\'s stamp'+(unchecked.length?' — not checked: '+unchecked.join(', '):''),
+      unchecked.length===0);
   }
 
   /* v120.255: the app's own JS must be network-first, or a reload pairs the newest index.html
