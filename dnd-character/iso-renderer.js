@@ -2,7 +2,7 @@
 // flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
 // stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
 // with holes in it is worse than none, because it reads as an all-clear.
-const ISOR_BUILD='v120.279';
+const ISOR_BUILD='v120.280';
 // Grimoire — standalone isometric battle-map renderer.
 //
 // Deliberately separate from index.html: this file owns ONLY "given a grid of terrain +
@@ -52,8 +52,18 @@ function stageSize(cols, rows, rot){
   return { w: (rcols - 1 + rrows - 1) * ISO_X + 80, h: (rcols - 1 + rrows - 1) * ISO_Y + 80 + ISO_PAD };
 }
 
+// Which terrain kinds actually ship a tile sprite (v120.280). Everything else is painted from
+// TERRAIN's palette colour, which already worked - but tileImg still fired a request for it, so
+// loading any map with pits/dirt/web/void logged a 404 per kind. Requesting an image we know is
+// absent is pure noise, so ask this first.
+//
+// rules-test.js asserts this list matches sprites/tiles/ exactly, so dropping a new .png in the
+// folder without adding it here fails the suite instead of silently never being drawn.
+const TILE_SPRITES = new Set(['brush', 'cave_wall', 'grass', 'ice', 'lava', 'low_wall', 'mud', 'rubble', 'sand', 'snow', 'stone', 'wall', 'water', 'window', 'wood']);
+
 const TILE_IMG = {};
 function tileImg(key){
+  if(!TILE_SPRITES.has(key)) return null;   // palette colour handles it; don't fetch a 404
   let im = TILE_IMG[key];
   if(im) return im;
   im = new Image();
@@ -75,7 +85,7 @@ function isoDiamondPath(ctx, cx, cy){
 function isoTopFill(ctx, ter, palette){
   if(ter){
     const img = tileImg(ter);
-    if(img.complete && img.naturalWidth) return ctx.createPattern(img, 'repeat');
+    if(img && img.complete && img.naturalWidth) return ctx.createPattern(img, 'repeat');
   }
   return (ter && palette[ter]) || '#e2d0a6';
 }

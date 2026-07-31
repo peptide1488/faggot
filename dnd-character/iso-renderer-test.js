@@ -73,4 +73,28 @@ function fakeCanvas(cols,rows,rot,heights,tiles){
   T('raising a tile 2 levels lifts it on screen by exactly 2*ISO_ELEV', Math.abs((flat.cy-rise.cy)-2*ISO_ELEV)<0.01);
 })();
 
+/* ---- Tile sprite manifest (v120.279) ----
+   Requesting a PNG that isn't there logged a 404 for every terrain kind without a sprite (pit,
+   dirt, void, web, ...) on every map load. TILE_SPRITES gates the request; the palette colour
+   already handled the drawing. This keeps the list honest in BOTH directions: a sprite added to
+   the folder but not the list would silently never be drawn, which is the worse failure. ---- */
+(function tileManifest(){
+  const fs=require('fs'), path=require('path');
+  const onDisk=fs.readdirSync(path.join(__dirname,'sprites','tiles'))
+    .filter(f=>f.endsWith('.png')).map(f=>f.replace(/\.png$/,'')).sort();
+  const src=fs.readFileSync(path.join(__dirname,'iso-renderer.js'),'utf8');
+  const m=src.match(/const TILE_SPRITES = new Set\(\[([^\]]*)\]\)/);
+  T('iso-renderer.js declares a TILE_SPRITES manifest', !!m);
+  if(!m) return;
+  const listed=m[1].split(',').map(x=>x.trim().replace(/^'|'$/g,'')).filter(Boolean).sort();
+  const missing=onDisk.filter(f=>listed.indexOf(f)<0);      // on disk, never drawn
+  const ghosts=listed.filter(f=>onDisk.indexOf(f)<0);       // listed, would 404
+  T('every tile sprite on disk is listed (otherwise it is never drawn)'
+    +(missing.length?' - NOT LISTED: '+missing.join(', '):''), missing.length===0);
+  T('every listed tile sprite exists on disk (otherwise it 404s on every map load)'
+    +(ghosts.length?' - MISSING FILE: '+ghosts.join(', '):''), ghosts.length===0);
+  T('tileImg refuses to fetch a sprite that is not in the manifest',
+    /if\(!TILE_SPRITES\.has\(key\)\) return null/.test(src));
+})();
+
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
