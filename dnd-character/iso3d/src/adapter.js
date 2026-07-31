@@ -3,9 +3,9 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.6.16';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.16';
-import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.16';
+import { TERRAIN, createMap } from './map.js?v=0.6.17';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.17';
+import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.17';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {
@@ -313,6 +313,24 @@ export function normalizeFacing(f) {
  * @param {object} session - Grimoire session { map, players, monsters, order, turn, battle }
  * @param {{ assetBase?: string, spritePaths?: Record<string,string> }} [opts]
  */
+
+/**
+ * Is this Grimoire unit invisible? Mirrors unitIsInvisible() on the Grimoire side, but the engine
+ * can't import it (separate module graph), so it reads the same three shapes directly: a monster
+ * keeps conds[] as objects, a Quick Battle PC keeps them on c.conditions, and a DM-side player
+ * mirror gets a flat array of strings. Kept here rather than in host.js so both unit paths share
+ * one answer. (Iso3D 0.6.17)
+ */
+function isUnitInvisible(raw) {
+  if (!raw) return false;
+  const list = raw.conds || [];
+  for (const cnd of list) {
+    const n = typeof cnd === 'string' ? cnd : cnd && cnd.name;
+    if (n === 'Invisible') return true;
+  }
+  return !!(raw.c && raw.c.conditions && raw.c.conditions.Invisible);
+}
+
 export function grimoireSessionToView(session, opts = {}) {
   const assetBase = opts.assetBase || '';
   const paths = { ...DEFAULT_SPRITE_PATHS, ...(opts.spritePaths || {}) };
@@ -361,6 +379,7 @@ export function grimoireSessionToView(session, opts = {}) {
       id: `p:${pl.id || pl.cid || pl.name}`,
       source: 'player',
       raw: pl,
+      invisible: isUnitInvisible(pl),
       col: pl.x | 0,
       row: pl.y | 0,
       team: 'player',
@@ -393,6 +412,7 @@ export function grimoireSessionToView(session, opts = {}) {
       id: `m:${mo.id}`,
       source: 'monster',
       raw: mo,
+      invisible: isUnitInvisible(mo),
       col: mo.x | 0,
       row: mo.y | 0,
       team: 'enemy',

@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.16';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.16';
+import { Renderer } from './renderer.js?v=0.6.17';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.17';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.16';
+} from './adapter.js?v=0.6.17';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.16';
+} from './sprites.js?v=0.6.17';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.16';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.16';
-import { APP_VERSION } from './version.js?v=0.6.16';
-import { resolveLighting } from './lighting.js?v=0.6.16';
+} from './fx.js?v=0.6.17';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.17';
+import { APP_VERSION } from './version.js?v=0.6.17';
+import { resolveLighting } from './lighting.js?v=0.6.17';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -1207,7 +1207,12 @@ export class Iso3DHost {
               // Lighting is GPU point lights (same as terrain) — no per-sprite bake
               darken: 1,
               emissive: false,
-              alpha: 1,
+              // Invisible units draw at 25% (Iso3D 0.6.17). The billboard shader already takes a
+              // per-sprite alpha uniform, so this needs no blending or depth-sort work — the
+              // CSS-class approach used for the flat map can never show here, because 3D mode
+              // hides the DOM tokens (.iso3dmode .isoContent{opacity:0}) and draws characters
+              // as GL billboards instead.
+              alpha: u.invisible ? 0.25 : 1,
               depth,
             });
           }
@@ -1729,4 +1734,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.16';
+export { Renderer } from './renderer.js?v=0.6.17';
