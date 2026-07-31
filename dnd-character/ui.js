@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.270';
+const UI_BUILD='v120.271';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -1674,6 +1674,11 @@ function rollDeathSave(c){
 function render(){
   if(_suppressRender) return;
   try{
+  // Mark the body while a fight is on so modals can get out of the way (v120.271). Requested from
+  // play: roll and menu popups covered the battle map, which is the thing you're trying to look at
+  // while deciding. Outside battle the full-height sheet is right, so this is scoped, not global.
+  { const fighting=!!((typeof QB!=='undefined'&&QB&&QB.active)||(net&&net.session&&net.session.battle&&net.session.battle.active));
+    document.body.classList.toggle('inBattle', fighting); }
   renderHeader();
   renderNetBar();
   if(QB && QB.active){ $('#tabs').style.display='none'; const fab0=$('#diceFab'); if(fab0) fab0.style.display='none'; renderQuickBattle(); return; }
@@ -2028,6 +2033,50 @@ function advLabel(adv, why, opts){
   const list = (why||[]).filter(Boolean);
   const reason = list.length ? ' — '+list.join(', ') : '';
   return (opts&&opts.bare) ? tag+reason : ' ['+tag+reason+']';
+}
+
+
+/**
+ * "What is currently affecting me?" (v120.271, requested from play). The information existed but
+ * was scattered: conditions on the sheet, spell effects in another card, concentration somewhere
+ * else, and advantage nowhere at all until v120.268. One panel, read from the same helpers combat
+ * uses, so it can't drift from what the dice actually do.
+ */
+function openStatusPanel(c, s, unit){
+  const conds=[...unitConds(unit||{c})];
+  const effects=(c.effects||[]).map(e=>e.name+(e.rounds!=null?' ('+e.rounds+' rd)':''));
+  const conc=(c.concentration&&c.concentration.active)?c.concentration.spell:null;
+
+  // Advantage is situational, so show it against the nearest living foe rather than in the
+  // abstract — an "advantage: none" with no target would be meaningless.
+  let advLine='No foe in sight to measure against.';
+  try{
+    const foes=((s&&s.monsters)||[]).filter(m=>m.hp>0);
+    const near=foes.slice().sort((a,b)=>gridDist(unit.x,unit.y,a.x,a.y)-gridDist(unit.x,unit.y,b.x,b.y))[0];
+    if(near){
+      const pv=Engine.hitResult(qbAdapter, unit.id, near.id, {name:'probe', toHit:0, dmg:'1d4', tiles:1}, 10);
+      const lbl=advLabel(pv.adv, pv.advWhy, {bare:true});
+      advLine='vs '+esc(near.name)+': '+(lbl||'normal roll')+(pv.cover?' · cover +'+pv.cover+' AC':'');
+    }
+  }catch(e){ advLine='(could not measure — no active battle)'; }
+
+  const row=(label, items, empty)=>`<div class="card" style="padding:10px;margin-bottom:8px">
+    <b style="font-size:12.5px">${label}</b>
+    <div style="margin-top:6px">${items.length? items.map(x=>`<span class="pill" style="margin:2px 4px 2px 0">${esc(x)}</span>`).join('') : `<span class="muted" style="font-size:12px">${empty}</span>`}</div>
+  </div>`;
+
+  $('#modalRoot').innerHTML=`<div class="modal" id="stModal"><div class="sheet"><div class="grip"></div>
+    <h2>🩺 Status — ${esc(c.name)}</h2>
+    ${row('Conditions', conds, 'None.')}
+    ${row('Spell effects', effects, 'None active.')}
+    ${row('Concentration', conc?[conc]:[], 'Not concentrating.')}
+    <div class="card" style="padding:10px;margin-bottom:8px"><b style="font-size:12.5px">Attack roll right now</b>
+      <div class="muted" style="font-size:12px;margin-top:6px">${advLine}</div></div>
+    <button class="btn ghost block" id="stClose">Close</button>
+  </div></div>`;
+  const close=()=>{ $('#modalRoot').innerHTML=''; };
+  $('#stClose').onclick=close;
+  $('#stModal').onclick=e=>{ if(e.target.id==='stModal') close(); };
 }
 
 function renderSheet(c){
@@ -6175,6 +6224,7 @@ function renderQuickBattle(){
       <button class="btn" id="qbAttack" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>⚔ Attack</button>
       ${(isCaster(c)||c.spells.length)?`<button class="btn" id="qbCast" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'}>✨ Spells</button>`:''}
       <button class="btn ghost" id="qbUse" style="flex:1" ${myTurn?'':'disabled style="opacity:.5"'} title="Interact with adjacent objects, or Shove/Grapple an adjacent foe">🖐 Use</button>
+      <button class="btn ghost" id="qbStatus" style="flex:1" title="Everything currently affecting you — conditions, spell effects, concentration, and your current advantage state">🩺 Status</button>
     </div>
     <div class="row2" style="margin-top:8px">
       <button class="btn ghost" id="qbEnd" ${myTurn?'':'disabled style="opacity:.5"'}>End turn ▶</button>
@@ -6203,6 +6253,7 @@ function renderQuickBattle(){
   { const at=$('#qbAttack'); if(at&&myTurn) at.onclick=()=>qbOpenAttack(c); }
   { const ca=$('#qbCast'); if(ca&&myTurn) ca.onclick=()=>qbOpenSpells(c); }
   { const us=$('#qbUse'); if(us&&myTurn) us.onclick=()=>openAdjacentUseUI(c,s,pc); }
+  { const st=$('#qbStatus'); if(st) st.onclick=()=>openStatusPanel(c, s, pc); }
   { const en=$('#qbEnd'); if(en&&myTurn) en.onclick=qbEndPcTurn; }
   { const un=$('#qbUndo'); if(un&&myTurn&&qbUndoAvailable()) un.onclick=qbUndoTurn; }
   if(myTurn) app.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{

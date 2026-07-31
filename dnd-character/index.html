@@ -159,6 +159,16 @@
   .modal{position:fixed;inset:0;z-index:50;background:rgba(40,28,12,.55);display:flex;align-items:flex-end;justify-content:center;padding:0;animation:fadein .18s ease}
   .modal .sheet{background:var(--panel);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:760px;max-height:90vh;overflow:auto;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
   @media(min-width:560px){.modal{align-items:center;padding:16px}.modal .sheet{border-radius:18px}}
+  /* In battle, popups get out of the way (v120.271). Requested from play: roll and menu popups
+     covered the map, which is exactly what you're studying while you decide. They stay bottom-
+     anchored (already were) but are capped to the lower half and the backdrop stops dimming the
+     board, so the battlefield remains readable behind them. Scoped to .inBattle because outside a
+     fight the full-height sheet is the right call. */
+  body.inBattle .modal{background:rgba(40,28,12,.18)}
+  body.inBattle .modal .sheet{max-height:52vh}
+  /* The floating roll banner sits above the sheet rather than over the board. */
+  body.inBattle .rollbanner{bottom:calc(52vh + 10px)}
+  @media (max-height:620px){ body.inBattle .modal .sheet{max-height:62vh} }
   .modal h2{font-size:16px;color:var(--ink);text-transform:none;letter-spacing:0;margin-bottom:14px}
   .modal .grip{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px}
 
@@ -2432,7 +2442,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.270';
+const APP_VERSION='v120.271';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That
