@@ -2,7 +2,7 @@
 // flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
 // stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
 // with holes in it is worse than none, because it reads as an all-clear.
-const DATA_BUILD='v120.269';
+const DATA_BUILD='v120.270';
 // Grimoire — extracted data tables (Stage 1 of index.html modularization).
 // Pure content: spells, monsters, classes, items, maps, terrain. No app logic here —
 // see AUDIT.md for the modularization writeup. Loaded via <script src> before the main
@@ -960,6 +960,11 @@ const TERRAIN={
   snow:  {name:'Snow',   c:'#dfe9f2', e:'', diff:true},
   mud:   {name:'Mud',    c:'#7a5a32', e:'', diff:true},
   rubble:{name:'Rubble', c:'#9a8c74', e:'', diff:true},
+  // Plant Growth (v120.270). Mechanically it is just difficult terrain, which the engine
+  // already models — the spell simply had no way to express that, so casting it did nothing
+  // at all. Distinct from `grease` (which also knocks prone) and from `web` (which restrains):
+  // overgrowth only slows you down.
+  overgrowth:{name:'Overgrowth', c:'#3f7a34', e:'', diff:true},
   water: {name:'Water',  c:'#3a6ea5', e:'', diff:true},
   // Brush = undergrowth: difficult + soft cover, does NOT block spell LoE (see blocksLoE)
   brush: {name:'Brush',  c:'#4d6b2c', e:'', diff:true, opaque:true, softCover:true},
@@ -1194,7 +1199,10 @@ const DECOR_TO_INTERACT=(()=>{ const m={}; Object.keys(INTERACT_TYPES).forEach(t
   Object.keys(def.decor||{}).forEach(state=>{ const dk=def.decor[state]; if(dk&&!(dk in m)) m[dk]={type,state}; }); });
   return m; })();
 
-const SPELL_TERRAIN={'Grease':{terrain:'grease', rounds:10}, 'Web':{terrain:'web', rounds:600},
+const SPELL_TERRAIN={'Grease':{terrain:'grease', rounds:10},
+  // 10 minutes of difficult terrain (PHB is 8 hours; capped like the other zone spells so a
+  // sandbox fight doesn't carry it forever).
+  'Plant Growth':{terrain:'overgrowth', rounds:100}, 'Web':{terrain:'web', rounds:600},
   'Wall of Force':{terrain:'wall_force', rounds:600}, 'Wall of Ice':{terrain:'wall_ice', rounds:100},
   'Wall of Stone':{terrain:'wall_stone', rounds:Infinity}, 'Wind Wall':{terrain:'wind_wall', rounds:100}};
 // Real 5e walls are precise player-drawn panels/lines; this app approximates one as a small

@@ -1553,6 +1553,15 @@ const SPELL_LIGHTS={
   // --- 2nd ---
   'Continual Flame':{bright:4, dim:8, rounds:null, color:[1.0,0.72,0.35], intensity:1.2, place:true, note:'permanent heatless flame 20/40'},
   'Darkness':{dark:3, rounds:10, conc:true, place:true, note:'magical dark 15 ft — blocks darkvision'},
+  // Fog Cloud (v120.270): RAW it is HEAVILY OBSCURED, which for game purposes means you can't
+  // see through it — the same practical consequence this engine already models as a darkness
+  // zone (light level 0 => can't see, attacks at disadvantage, hiding qualifies). It was
+  // previously documented as "radius is flavor only" because nothing could express an
+  // obscuring volume; darkZones now can, so it costs one table row.
+  // Deliberate simplification: darkvision DOES pierce fog in RAW but not magical darkness.
+  // Treating them identically overstates fog slightly against darkvision creatures — noted
+  // rather than silently wrong, and still far closer than doing nothing at all.
+  'Fog Cloud':{dark:4, rounds:100, conc:true, place:true, note:'heavily obscured 20 ft — blocks sight'},
   'Darkvision':{grantDarkvision:true, rounds:4800, note:'grant 60-ft darkvision (effect)'},
   'Flaming Sphere':{bright:4, dim:8, rounds:10, color:[1.0,0.45,0.15], intensity:1.35, conc:true, place:true, note:'sphere 20/40'},
   'Moonbeam':{bright:0, dim:1, rounds:10, color:[0.75,0.85,1.0], intensity:1.0, conc:true, place:true, note:'dim 5-ft cylinder'},
@@ -2423,7 +2432,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.269';
+const APP_VERSION='v120.270';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That
