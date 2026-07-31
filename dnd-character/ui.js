@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.267';
+const UI_BUILD='v120.268';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -2016,6 +2016,20 @@ function longRest(c){
     logChange(c, 'Long rest — HP, slots & hit dice restored');
 }
 
+/**
+ * Render an advantage/disadvantage state for humans (v120.268). Engine.hitResult already returns
+ * `adv` and `advWhy` (e.g. ["target prone", "you are invisible"]) and every caller was throwing
+ * the reasons away, so a log line read "hits for 7 (18 vs AC 14)" with no hint that it was rolled
+ * at advantage — and no way to tell whether a rule had even applied. Requested from play.
+ */
+function advLabel(adv, why, opts){
+  if(!adv) return '';
+  const tag = adv>0 ? 'ADV' : 'DIS';
+  const list = (why||[]).filter(Boolean);
+  const reason = list.length ? ' — '+list.join(', ') : '';
+  return (opts&&opts.bare) ? tag+reason : ' ['+tag+reason+']';
+}
+
 function renderSheet(c){
   const pend=pendingChoiceSpecs(c);
   app.innerHTML = `
@@ -3778,7 +3792,7 @@ function playerAttackMenu(c){
       actions.map((a,i)=>{ const n=monstersInRange(me,a.tiles).length; return `<div class="spell"><div class="nm"><b>${esc(a.label)}</b><small>${esc(a.sub)} · range ${a.tiles*5} ft</small></div><button class="btn sm" data-pa="${i}">${n} in range</button></div>`; }).join(''); }
     else { const inr=monstersInRange(me,pick.tiles);
       body+=`<p class="muted" style="font-size:12px;margin:0 0 8px"><b>${esc(pick.label)}</b> — range ${pick.tiles*5} ft. Pick a target:</p>`;
-      body+= inr.length? inr.map(mo=>`<div class="spell"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):''}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max} · ${gridDist(me.x,me.y,mo.x,mo.y)*5} ft away</small></div><button class="btn sm" data-pt="${mo.id}">Attack</button></div>`).join('')
+      body+= inr.length? inr.map(mo=>`<div class="spell"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):''}</span><div class="nm"><b>${esc(mo.name)}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max} · ${gridDist(me.x,me.y,mo.x,mo.y)*5} ft away${(()=>{ try{ const pv=Engine.hitResult(playerNetAdapter,'me',mo.id,{name:pick.label,toHit:0,dmg:'1d4',tiles:pick.tiles},10); const bits=[]; const al=advLabel(pv.adv,pv.advWhy,{bare:true}); if(al) bits.push(al); if(pv.cover) bits.push('cover +'+pv.cover+' AC'); return bits.length? ' · '+bits.join(' · ') : ''; }catch(e){ return ''; } })()}</small></div><button class="btn sm" data-pt="${mo.id}">Attack</button></div>`).join('')
         : '<div class="empty">No targets in range — move closer (or pick a longer-ranged attack).</div>';
       body+=`<button class="btn ghost block" id="paBack" style="margin-top:8px">← Back</button>`;
     }
@@ -6103,13 +6117,13 @@ function qbResolveAttack(att, tgt, atk, done){
         qbLog('🛡️ '+qbName(att)+' can’t bring itself to attack '+qbName(tgt)+' — Sanctuary holds (Wis '+ev.sanctuary.roll+' vs DC '+ev.sanctuary.dc+')');
       } else if(ev.hit){
         const rv=ev.mult===0?' — immune!':ev.mult===0.5?' (resisted)':ev.mult===2?' (vulnerable!)':'';
-        qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')');
+        qbLog((ev.crit?'💥 ':'')+qbName(att)+' '+(ev.crit?'crits':'hits')+' '+qbName(tgt)+' for '+ev.dmg+rv+' ('+ev.total+' vs AC '+ev.ac+')'+advLabel(useAdv,useWhy));
         if(atk.cond && tgt.side==='mon'){ /* applied via spell path */ }
         if(ev.holyAura) qbLog(ev.holyAura.blinded?'☀️ Holy Aura blinds '+qbName(att):qbName(att)+' resists Holy Aura');
       } else {
-        qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')');
+        qbLog(qbName(att)+' misses '+qbName(tgt)+' ('+ev.total+' vs AC '+ev.ac+')'+advLabel(useAdv,useWhy));
       }
-      pushRoll({label:atk.name+' attack', total:ev.total, detail:'d20 ('+ev.d20+') '+sgn(effAtk.toHit||0)+' vs AC '+ev.ac, crit:ev.crit?'crit':ev.d20===1?'fumble':null, kind:'check', bonus:effAtk.toHit||0});
+      pushRoll({label:atk.name+' attack', total:ev.total, detail:'d20 ('+ev.d20+') '+sgn(effAtk.toHit||0)+' vs AC '+ev.ac+advLabel(useAdv,useWhy), crit:ev.crit?'crit':ev.d20===1?'fumble':null, kind:'check', bonus:effAtk.toHit||0});
       if(ev.hit) pushRoll({label:atk.name+' damage', total:ev.dmg, detail:(atk.dmg||'')+(ev.crit?' crit':''), kind:'dmg', notation:ev.crit?critNotation(atk.dmg||'1d6'):(atk.dmg||'1d6')});
       return ev;
     },

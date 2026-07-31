@@ -3809,6 +3809,22 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     setQB(null); }
 }
 
+/* ---- Advantage is now visible, not just applied (v120.268) ----
+   Engine.hitResult already returned `adv` and `advWhy` (["target prone"], …) and every caller
+   discarded the reasons, so a log line read "hits for 7 (18 vs AC 14)" with no hint it was rolled
+   at advantage — you couldn't tell whether a rule had applied at all. Requested from play. */
+{
+  T('advLabel: no advantage renders nothing', advLabel(0,[])==='');
+  T('advLabel: advantage is tagged ADV with its reasons',
+    /ADV/.test(advLabel(1,['target prone'])) && /target prone/.test(advLabel(1,['target prone'])));
+  T('advLabel: disadvantage is tagged DIS', /DIS/.test(advLabel(-1,['target is invisible'])));
+  T('advLabel: several reasons are listed together',
+    /prone.*invisible|invisible.*prone/.test(advLabel(1,['target prone','you are invisible'])));
+  T('advLabel: bare mode omits the brackets (for inline menu text)',
+    advLabel(1,['x'],{bare:true}).indexOf('[')===-1);
+  T('advLabel: survives a missing reason list rather than throwing', typeof advLabel(1,null)==='string');
+}
+
 /* ---- No opportunity attacks against a creature you can't see (v120.263) ----
    Reported from play: successfully Hidden, walked past an enemy, still ate an OA. RAW you can't
    make an opportunity attack against a creature you can't see. */
