@@ -2165,7 +2165,17 @@ BRAINS.tactical = function(qb, u){
     : qb.players.filter(p=>p.c.hp.cur>0).concat(qb.monsters.filter(m=>m.id!==u.id&&isPartyAlly(m)));
   // A hidden PC (see maneuverHide) can't be targeted unless this unit's passive Perception beats
   // their Stealth total — otherwise every monster would just ignore Hide entirely.
-  const foes = foes0.filter(f=>!(f.c && f.c.conditions && f.c.conditions.Hidden && monsterPassivePerception(u) < (f.c.hiddenDC||0)));
+  const foesVisible = foes0.filter(f=>!(f.c && f.c.conditions && f.c.conditions.Hidden && monsterPassivePerception(u) < (f.c.hiddenDC||0)));
+  // Invisibility should actually help (v120.261). Attacks against an invisible target already roll
+  // at disadvantage via attackAdvantage, but the AI was picking targets as if it could see fine —
+  // so a monster would walk straight at an invisible PC and swing, which reads as "invisibility
+  // does nothing". RAW an invisible creature CAN still be attacked (you guess its square, at
+  // disadvantage), so this is a preference, not a filter: go for anyone you can actually see, and
+  // only swing at an invisible foe when there's no visible alternative. A monster that can see
+  // invisible ignores all of this.
+  const seesInv = typeof hasSeesInvisible==='function' && hasSeesInvisible(u);
+  const canSee = seesInv ? foesVisible : foesVisible.filter(f=>!unitIsInvisible(f));
+  const foes = canSee.length ? canSee : foesVisible;
   if(!foes.length) return [];
   const atks=parseMonsterAttacks(u.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:a.tiles||1, dtype:a.dtype, cond:a.cond})).filter(a=>true);
   const usable=atks.length?atks:[{name:'Attack',toHit:0,dmg:'1d6',tiles:1}];
@@ -2389,7 +2399,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.260';
+const APP_VERSION='v120.261';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That

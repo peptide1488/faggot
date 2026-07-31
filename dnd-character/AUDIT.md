@@ -359,6 +359,37 @@ identical in both directions without changing which cells a given line samples. 
 all 2,288 pairs and includes a guard against passing vacuously (i.e. because nothing found cover
 at all).
 
+## Anything visual must be verified in the mode the user actually plays (v120.250 → v120.260)
+
+Making invisible units look invisible took **eleven versions**, almost entirely because of where
+it was verified. Worth reading before touching anything visual.
+
+**The trap: there are two renderers, and CSS only reaches one.** The flat/classic map draws tokens
+as DOM (`.mcell .isoContent`), so a CSS class works. **3D mode — which Quick Battle defaults to
+(`useIso3d:true`) — sets `.iso3dmode`, which hides those DOM tokens outright
+(`.isoContent{opacity:0}`) and draws characters as WebGL billboards.** A CSS class on a hidden
+element is invisible by definition. v120.250 shipped a `.invisTok` class, and every check said it
+worked: the class was applied, computed opacity was 0.25, tests passed. On the user's screen,
+nothing changed, because they were in 3D.
+
+**The fix was cheap once found.** `_drawBillboardsGL` already reads `b.alpha` into a shader
+uniform and `host.js` was passing a hardcoded `alpha: 1`. So per-sprite transparency needed no
+shader, blending or depth-sort work — which mattered, since depth-sorting translucent geometry is
+what killed the CSS-3D map in v115.3/v116. `adapter.js` computes an `invisible` flag per unit,
+`host.js` draws those billboards at 0.25.
+
+**Verification rules this produced, in order of how much time each would have saved:**
+1. **Check the mode the user is in.** `document.querySelector('.iso3dmode')` decides whether DOM or
+   WebGL draws characters. A DOM assertion proves nothing about 3D.
+2. **Screenshot it.** DOM assertions confirmed a pill existed and was styled while it was dark text
+   on a dark chip — unreadable. "Is the element styled" and "can a human see it" are different
+   questions.
+3. **Headless WebGL screenshots come out blank** (`preserveDrawingBuffer` is false), so for 3D the
+   best available proof is reading the live billboard list:
+   `window.__iso3dHost.renderer._billboards.map(b => b.alpha)` — two identical sprites, one
+   Invisible, should give `[0.25, 1]`. That is one step short of photons; the user confirms the
+   rest.
+
 ## Stress test: 100 monsters, 600 tiles (v120.249)
 
 First real performance measurement of the app. Driven in a live browser: a DM session with **100

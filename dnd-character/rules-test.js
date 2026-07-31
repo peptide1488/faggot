@@ -3731,6 +3731,46 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     attackAdvantage(new Set(['Invisible']), new Set(), true, {}).adv>0);
 }
 
+/* ---- Invisibility actually helps against the AI (v120.261) ----
+   Attacks on an invisible target already rolled at disadvantage, but BRAINS.tactical picked
+   targets as if it could see perfectly — so a monster walked straight at an invisible PC and swung
+   anyway, which reads as "invisibility does nothing". RAW an invisible creature CAN still be
+   attacked (guess the square, at disadvantage), so this is a PREFERENCE, not immunity. */
+{
+  const mkPc=(name,invis)=>{ const c=newCharacter(name); c.hp.cur=c.hp.max=20;
+    if(invis){ c.conditions={Invisible:true}; }
+    return {id:name, side:'pc', name, c, x:2, y:0, conds:invis?[{name:'Invisible',rounds:9}]:[]}; };
+
+  const base=()=>({active:true, over:null, log:[], map:{cols:8,rows:1,tiles:{},light:{mode:'day'}},
+    battle:{active:true,round:1}, order:[], turn:0, lights:[],
+    monsters:[{id:'m1',side:'mon',name:'Orc',base:'Orc',hp:15,max:15,ac:13,x:0,y:0,conds:[],
+               attacksLeft:1,moveLeft:30,speed:30,atk:'Greataxe +5 (1d12+3)'}]});
+
+  // Both targets available: the AI must go for the one it can see.
+  { const s=base(); s.players=[mkPc('Ghost',true), mkPc('Solid',false)];
+    s.players[1].x=3;
+    setQB(s);
+    const intents=BRAINS.tactical(getQB(), getQB().monsters[0])||[];
+    const atk=intents.find(i=>i.type==='attack');
+    T('AI targeting: with a visible and an invisible foe, the monster goes for the VISIBLE one',
+      !atk || atk.targetId==='Solid');
+    setQB(null); }
+
+  // Only an invisible target: RAW still allows attacking the guessed square, so it must not freeze.
+  { const s=base(); s.players=[mkPc('Ghost',true)];
+    setQB(s);
+    const intents=BRAINS.tactical(getQB(), getQB().monsters[0])||[];
+    T('AI targeting: with ONLY an invisible foe the monster still acts (RAW: guess the square)',
+      Array.isArray(intents) && intents.length>0);
+    setQB(null); }
+
+  // And the roll it makes is still at disadvantage — the preference doesn't replace the penalty.
+  T('attacking an invisible target is still at disadvantage',
+    attackAdvantage(new Set(), new Set(['Invisible']), true, {}).adv<0);
+  T('...unless the attacker can see invisible',
+    attackAdvantage(new Set(), new Set(['Invisible']), true, {seesInvisible:true}).adv===0);
+}
+
 /* ---- Legendary & lair actions (v120.247) ----
    The last real combat gap: boss monsters had no mechanics, only a prose note telling the DM to
    adjudicate. Two RAW rules are easy to get wrong and are pinned here — a legendary creature may
