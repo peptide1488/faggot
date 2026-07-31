@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.276';
+const RULES_BUILD='v120.277';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -2870,6 +2870,55 @@ function syncInteractDecor(s){
   });
 }
 
+/**
+ * Keep a cell's LIGHT in step with the decor sitting on it (v120.277).
+ *
+ * Reported: "in the map editor i added torch to wall but it didnt add light." The editor wrote
+ * s.map.decor[key] and stopped there, but light does not come from decor at all - it comes from
+ * map.light.points, which only ever got written by the interact-state sync. So an editor torch
+ * was scenery: no light, and no interact entry either, so it could not be lit or snuffed.
+ *
+ * DECOR already declares which kinds emit light (`light:true` on torch and campfire), so this
+ * reads that flag rather than hardcoding a second list. Radius/colour match data.js's torchPt
+ * and campPt so an editor-placed torch is indistinguishable from a preset one.
+ */
+const DECOR_LIGHT={
+  torch:   {radius:5.0, color:[1.0,0.55,0.22], intensity:1.55, kind:'torch'},
+  campfire:{radius:4.5, color:[1.0,0.50,0.18], intensity:1.40, kind:'campfire'},
+};
+/**
+ * Which Engine adapter drives THIS session (v120.277)?
+ *
+ * Shared UI kept hardcoding `qbAdapter`, which silently produced Quick-Battle answers inside a
+ * DM-hosted fight (openStatusPanel's advantage probe did exactly that). One picker so a shared
+ * panel behaves the same in all three modes instead of quietly reading the wrong session.
+ */
+function battleAdapter(s){
+  try{
+    if(typeof QB!=='undefined' && QB && s===QB) return qbAdapter;
+    if(typeof net!=='undefined' && net){
+      if(net.role==='player') return playerNetAdapter;
+      if(net.session && s===net.session) return sessionAdapter;
+    }
+  }catch(e){}
+  return typeof qbAdapter!=='undefined' ? qbAdapter : null;
+}
+
+function syncDecorLight(s, key, kind){
+  if(!s||!s.map) return;
+  if(!s.map.light) s.map.light={mode:'dungeon', points:[]};
+  if(!Array.isArray(s.map.light.points)) s.map.light.points=[];
+  const [cs,rs]=String(key).split(','); const col=Number(cs), row=Number(rs);
+  if(!isFinite(col)||!isFinite(row)) return;
+  // Drop whatever flame was on this cell first, so repainting never stacks two lights.
+  s.map.light.points=s.map.light.points.filter(p=>!(p&&(p.col|0)===col&&(p.row|0)===row
+    &&(p.kind==='torch'||p.kind==='campfire'||!p.kind)));
+  const def=(typeof DECOR!=='undefined'&&DECOR[kind])||null;
+  if(!def||!def.light) return;                     // torch_unlit, erase, or plain scenery
+  const L=DECOR_LIGHT[kind]; if(!L) return;
+  s.map.light.points.push(Object.assign({col,row}, L));
+}
+
 function syncTorchLightPoint(s, key, lit){
   if(!s.map.light) s.map.light={mode:(s.map.light&&s.map.light.mode)||'dungeon', points:[]};
   if(!Array.isArray(s.map.light.points)) s.map.light.points=[];
@@ -3442,7 +3491,7 @@ function qbCheckEnd(){ if(!QB) return;
   // instead means the sheet is correct the moment the fight ends, not retroactively.
   if(!wasOver && QB.over){
     const pc=QB.players[0].c;
-    clearBattleState(pc);   // one list, three call sites (v120.276)
+    clearBattleState(pc);   // one list, three call sites (v120.277)
     if(typeof longRest==='function') longRest(pc);   // full recovery between sandbox fights
     if(typeof save==='function') save();
     qbLog('🛌 Long rest — HP, slots and abilities restored, all effects cleared');
@@ -3987,7 +4036,7 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
    them, and they're written adapter-free so Quick Battle can use them unchanged later. */
 
 /**
- * Everything that belongs to ONE fight and must not survive it (v120.276).
+ * Everything that belongs to ONE fight and must not survive it (v120.277).
  *
  * This exists because the list kept being forgotten a field at a time. First conditions carried
  * between Quick Battles ("in every map i am restrained"), then Invisible did, and then altitude —
@@ -4003,7 +4052,7 @@ function clearBattleState(c){
   if(!c) return;
   c.conditions={};
   c.hiddenDC=null;
-  c.altitude=0;              // flight — the v120.276 report
+  c.altitude=0;              // flight — the v120.277 report
   c.effects=[];
   c.concentration={active:false, spell:''};
   c.mountedOn=null;          // dismount; a steed doesn't follow you out of the arena

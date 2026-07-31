@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.276';
+const UI_BUILD='v120.277';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -2051,10 +2051,17 @@ function openStatusPanel(c, s, unit){
   // abstract — an "advantage: none" with no target would be meaningless.
   let advLine='No foe in sight to measure against.';
   try{
-    const foes=((s&&s.monsters)||[]).filter(m=>m.hp>0);
+    // Measure against the OPPOSING side. A monster's advantage is judged against the party,
+    // not against the monster standing next to it (v120.277, now that the DM can open this
+    // panel on its own monsters).
+    const isMon=((s&&s.monsters)||[]).some(m=>m.id===(unit&&unit.id));
+    const foes=isMon ? ((s&&s.players)||[]).filter(p=>(p.hpCur||0)>0 && p.x!=null)
+                     : ((s&&s.monsters)||[]).filter(m=>m.hp>0);
     const near=foes.slice().sort((a,b)=>gridDist(unit.x,unit.y,a.x,a.y)-gridDist(unit.x,unit.y,b.x,b.y))[0];
     if(near){
-      const pv=Engine.hitResult(qbAdapter, unit.id, near.id, {name:'probe', toHit:0, dmg:'1d4', tiles:1}, 10);
+      // Adapter must follow the session, not assume Quick Battle (v120.277) - this panel is
+      // shared with DM-hosted and player-net battles, where qbAdapter reads the wrong state.
+      const pv=Engine.hitResult(battleAdapter(s), unit.id, near.id, {name:'probe', toHit:0, dmg:'1d4', tiles:1}, 10);
       const lbl=advLabel(pv.adv, pv.advWhy, {bare:true});
       advLine='vs '+esc(near.name)+': '+(lbl||'normal roll')+(pv.cover?' · cover +'+pv.cover+' AC':'');
     }
@@ -3049,7 +3056,7 @@ function renderNotes(c){
   { const cl=$('#clearLog'); if(cl) cl.addEventListener('click',()=>{ if(confirm('Clear the change log?')){ c.log=[]; save(); render(); } }); }
   $('#exportBtn').addEventListener('click',exportData);
   $('#importBtn').addEventListener('click',()=>$('#importFile').click());
-    // Destructive controls bind with onclick, NOT addEventListener (v120.276). onclick is
+    // Destructive controls bind with onclick, NOT addEventListener (v120.277). onclick is
   // idempotent -- rebinding replaces -- whereas addEventListener STACKS, so an element bound
   // twice fires its handler twice and queues two confirm() dialogs. Reset dialogs were seen
   // stacking during testing, including a second 'delete this character' prompt. For anything
@@ -3867,6 +3874,10 @@ function renderPlayerBattle(c){
   if(!c.battle) c.battle={round:s.battle.round||1, action:false, bonus:false, reaction:false, actionsMax:actionsPerTurn(c), actionsUsed:0, surged:false, attacksLeft:extraAttacks(c)+1, move:effSpeed(c,spdOpts), moveUsed:0};
   if(c.battle.move==null) c.battle.move=effSpeed(c,spdOpts);
   const b=c.battle;
+  // Built once and shared by BOTH renderers below. Previously the DOM grid got the move range
+  // and syncIso3DHost got nothing, so in iso3d - the view people actually play in - the player's
+  // move grid simply never appeared (v120.277).
+  const pbMoveOpts = net.moveMode ? buildMoveRangeOpts(s,me,b.move||0,hasAction(c),effSpeed(c),isFlying(c)) : {};
   $('#tabs').style.display='none'; const fab=$('#diceFab'); if(fab) fab.style.display='';
   app.className='fade'; void app.offsetWidth;
   const myTurn = s.order&&s.order.length&&s.order[s.turn]&&s.order[s.turn].id===net.peer.id;
@@ -3890,8 +3901,7 @@ function renderPlayerBattle(c){
   </div>
   <div class="card">
     <h2>Battlefield <button class="btn sm" id="pbMoveBtn" style="float:right;${net.moveMode?'background:var(--bad);border-color:var(--bad)':''}">🥾 ${net.moveMode?'Moving… ('+(b.move||0)+' ft)':'Move'}</button><button class="btn ghost sm" id="pbRotBtn" style="float:right;margin-right:6px">🔄 Rotate</button><button class="btn ghost sm" id="pbFogBtn" style="float:right;margin-right:6px" title="Show only what your character can see">${net.fogOff?'🌐 Fog off':'🌫 Fog on'}</button></h2>
-    ${mapGridHTML(s,false, Object.assign(
-        net.moveMode?buildMoveRangeOpts(s,me,b.move||0,hasAction(c),effSpeed(c),isFlying(c)):{},
+    ${mapGridHTML(s,false, Object.assign({}, pbMoveOpts,
         // Fog of war (v120.241): the player's own map shows only what their character can see,
         // with previously-explored squares dimmed. `me` carries x/y from the DM broadcast, and
         // `c` supplies darkvision. Opt-in per call site, so the DM view is unaffected.
@@ -3907,6 +3917,7 @@ function renderPlayerBattle(c){
       ${(isCaster(c)||c.spells.length)?`<button class="btn" id="pbSpells">✨ Spells</button>`:''}
     </div>
     <button class="btn ghost block" id="pbUse" style="margin-top:8px">🖐 Use<small style="display:block;opacity:.75">Objects, Shove/Grapple/Hide/Recall Knowledge, Stabilize a downed ally</small></button>
+    <button class="btn ghost block" id="pbStatus" style="margin-top:8px">🩺 Status<small style="display:block;opacity:.75">Conditions, spell effects, concentration and your current advantage state</small></button>
     ${c.cls==='Barbarian'?`<button class="btn block" id="pbRage" style="margin-top:8px;${isRaging(c)?'background:var(--bad);border-color:var(--bad)':''}">🪓 ${isRaging(c)?'Raging — tap to stop':'Enter Rage'}</button>`:''}
     <div class="hpbtns" style="margin-top:8px"><button class="btn bad sm" id="pbDmg">– Damage</button><input type="number" id="pbAmt" value="1" min="1" inputmode="numeric"><button class="btn sm" id="pbHeal" style="background:#16352b;border-color:#14532d;color:#bbf7d0">+ Heal</button></div>
     ${c.hp.cur<=0&&!c.stable?`<button class="btn block" id="pbDeath" style="margin-top:8px">🎲 Roll death save (${c.death.succ||0}✓/${c.death.fail||0}✗)</button>`:''}
@@ -3962,10 +3973,11 @@ function renderPlayerBattle(c){
   { const fg=$('#pbFogBtn'); if(fg) fg.onclick=()=>{ net.fogOff=!net.fogOff;
       try{ localStorage.setItem('grimoire.fogOff', net.fogOff?'1':''); }catch(e){}
       render(); }; }
-  if(isoView&&iso3dView&&net&&net.session) syncIso3DHost(net.session);
+  if(isoView&&iso3dView&&net&&net.session) syncIso3DHost(net.session, pbMoveOpts);
   { const a=$('#pbAttack'); if(a) a.onclick=()=>playerAttackMenu(c); }
   { const sp=$('#pbSpells'); if(sp) sp.onclick=()=>openQuickSpells(c); }
   { const us=$('#pbUse'); if(us) us.onclick=()=>openAdjacentUseUI(c, net.session, Object.assign({}, me, {me:true, c, id:'me'})); }
+  { const st=$('#pbStatus'); if(st) st.onclick=()=>openStatusPanel(c, net.session, Object.assign({}, me, {me:true, c, id:'me'})); }
   { const rg=$('#pbRage'); if(rg) rg.onclick=()=>rageButtonClick(c); }
   { const et=$('#pbEndTurn'); if(et) et.onclick=()=>{ if(timeStopExtraTurn(c)) return; if(net.conn){ try{ net.conn.send({t:'endturn'}); }catch(e){} } net.moveMode=false; flashBanner('Turn ended'); }; }
   { const d=$('#pbDmg'); if(d) d.onclick=()=>applyHp(c,-Math.abs(Number($('#pbAmt').value)||0)); }
@@ -3993,11 +4005,23 @@ function openAdjacentUseUI(c, s, me){
   // Hide/Study/Stabilize) — same functions in Quick Battle and player-net, just a different
   // adapter/log. DM-hosted has no PC of its own to "Use" with (see dmMonsterAttack instead,
   // where the DM's monsters get their own Shove/Grapple options).
+  // DM-hosted joined this in v120.277 ("in the dm mode need to be able to have the use and
+  // status button for each one"). Every maneuver below is already adapter-driven, so the DM
+  // needs a mode + adapter, not a parallel copy of this menu.
   const mode = (typeof QB!=='undefined' && s===QB) ? 'qb'
-    : (net && net.role==='player' && s===net.session) ? 'player' : null;
-  const ad = mode==='qb' ? qbAdapter : mode==='player' ? playerNetAdapter : null;
-  const log = mode==='qb' ? qbLog : mode==='player' ? (m=>logChange(c,m)) : ()=>{};
-  const foes=mode ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=1) : [];
+    : (net && net.role==='player' && s===net.session) ? 'player'
+    : (net && net.role==='dm' && s===net.session) ? 'dm' : null;
+  const ad = mode==='qb' ? qbAdapter : mode==='player' ? playerNetAdapter
+    : mode==='dm' ? sessionAdapter : null;
+  const log = mode==='qb' ? qbLog : mode==='player' ? (m=>logChange(c,m))
+    : mode==='dm' ? (m=>qbLog(m,s)) : ()=>{};
+  // Whose foes? A DM-driven MONSTER is shoving/grappling the party, not its own side, so the
+  // adjacency list flips. Everything else (a PC in QB, a player on their own device, or a DM
+  // moving a player token) is looking at monsters.
+  const actorIsMonster = mode==='dm' && (s.monsters||[]).some(m=>m.id===(me&&me.id));
+  const foes = !mode ? []
+    : actorIsMonster ? (s.players||[]).filter(p=>(p.hpCur||0)>0 && p.x!=null && gridDist(me.x,me.y,p.x,p.y)<=1)
+    : s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=1);
   // Path of the Berserker — Intimidating Presence reaches 30 ft (6 tiles), unlike every other
   // maneuver here which is adjacency-only — a separate wider-range list, not folded into foes.
   const intimidateTargets = mode && isBerserker(c,10) ? s.monsters.filter(mo=>mo.hp>0 && isHostile(mo) && gridDist(me.x,me.y,mo.x,mo.y)<=6 && !mo.intimidateImmune) : [];
@@ -4007,8 +4031,11 @@ function openAdjacentUseUI(c, s, me){
   if(mode && isLifeCleric(c,2) && c.channelDivinityLeft==null) c.channelDivinityLeft=channelDivinityMax(c);
   const preserveLifeTargets = (mode && isLifeCleric(c,2)) ? [{self:true, id:'me', name:c.name, hpCur:c.hp.cur, hpMax:c.hp.max}]
     .concat(mode==='player' ? (s.players||[]).filter(p=>p.id!==net.peer.id && gridDist(me.x,me.y,p.x,p.y)<=6).map(p=>({self:false, id:p.id, name:p.name, hpCur:p.hpCur, hpMax:p.hpMax})) : []) : [];
-  const grappled=!!mode && !!(c.conditions&&c.conditions.Grappled);
-  const canHide=!!mode && !(c.conditions&&c.conditions.Hidden); // maneuverHide itself checks cover/darkness and bails with a banner if ineligible
+  // unitConds reads BOTH shapes (character .conditions object, monster .conds array), which
+  // matters now that the actor here can be a monster.
+  const actorConds=(typeof unitConds==='function') ? unitConds(me||{c}) : new Set(Object.keys((c&&c.conditions)||{}));
+  const grappled=!!mode && actorConds.has('Grappled');
+  const canHide=!!mode && !actorConds.has('Hidden'); // maneuverHide itself checks cover/darkness and bails with a banner if ineligible
   // Stabilize only ever makes sense against ANOTHER party member at 0 HP — Quick Battle has
   // no second ally, so this is player-net only. stable/deathFail ride along on playerHello()'s
   // mirror payload specifically so this filter can tell "needs stabilizing" apart from
@@ -5013,6 +5040,22 @@ function mapGridHTML(s, isDM, opts){ opts=opts||{}; const {cols,rows}=s.map; con
 
 function renderDM(){
   const s=net.session; app.className='fade'; void app.offsetWidth;
+  // Move grid for whatever token the DM has selected - monster OR player (v120.277).
+  // Was built inline inside the map template and only for monsters, so the DM got no reach
+  // preview when moving a character, and syncIso3DHost never received it at all, which meant
+  // the grid was invisible in iso3d for both the DM and the players.
+  const dmMoveOpts=(()=>{
+    if(!s||!s.battle||!s.battle.active||!net.sel) return {};
+    const id=net.sel.slice(1);
+    if(net.sel[0]==='m'){ const mo=(s.monsters||[]).find(m=>m.id===id); if(!mo) return {};
+      return buildMoveRangeOpts(s,mo,mo.moveLeft||0,(mo.attacksLeft||0)>0,mo.speed||30,monsterFlies(mo)); }
+    if(net.sel[0]==='p'){ const pl=(s.players||[]).find(pp=>pp.id===id||pp.cid===id); if(!pl||pl.x==null) return {};
+      // The DM places player tokens freely (no budget is deducted), so this is a reach PREVIEW:
+      // full speed, no Dash band, rather than a spend-tracking grid like the player's own view.
+      const spd=pl.speed||30;
+      return buildMoveRangeOpts(s,pl,pl.moveLeft!=null?pl.moveLeft:spd,false,spd,!!pl.flying); }
+    return {};
+  })();
   app.innerHTML=`
   <div class="card" style="border:2px solid var(--accent2)">
     <div class="row between"><h2 style="margin:0;color:var(--accent2)">🎲 DM Mode</h2><button class="btn ghost sm" id="dmExit" style="color:var(--bad)">Exit</button></div>
@@ -5043,11 +5086,11 @@ function renderDM(){
     </div>`; })() : (s.battle.active?'<div class="card"><div class="empty">No combatants. Deploy monsters and have players join, then ↻ re-roll.</div></div>':'')}
   <div class="card">
     <h2>Players ${s.players.length?`<span class="muted" style="text-transform:none;font-size:11px">— ${s.players.length}</span>`:''}</h2>
-    ${s.players.length? s.players.map(p=>`<div class="spell" style="${p.online===false?'opacity:.5':''}"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}${p.online===false?' <span class="sub">offline</span>':''}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button><button class="del" data-pdel="${p.cid||p.id}" title="Remove player">✕</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
+    ${s.players.length? s.players.map(p=>`<div class="spell" style="${p.online===false?'opacity:.5':''}"><span style="flex:none">${classEmblem(p.cls,3)}</span><div class="nm"><b>${esc(p.name)}${p.online===false?' <span class="sub">offline</span>':''}</b><small>Lv ${p.level} ${esc(p.cls)} · AC ${p.ac} · HP ${p.hpCur}/${p.hpMax}${p.target?' · 🎯 '+esc((s.monsters.find(m=>m.id===p.target)||{}).name||''):''}</small></div><button class="btn ghost sm" data-puse="${p.id}" title="Interact with adjacent objects, or Shove/Grapple an adjacent foe">🖐</button><button class="btn ghost sm" data-pstat="${p.id}" title="Conditions, spell effects, concentration and current advantage">🩺</button><button class="btn bad sm" data-pdmg="${p.id}">–</button><input type="number" class="pamt" data-pamt="${p.id}" value="1" style="max-width:48px"><button class="btn sm" data-pheal="${p.id}">+</button><button class="del" data-pdel="${p.cid||p.id}" title="Remove player">✕</button></div>`).join('') : '<div class="empty">No players yet — share the code.</div>'}
   </div>
   <div class="card">
     <h2>Monsters <button class="btn sm" id="bestiaryBtn" style="float:right">📖 Bestiary</button><button class="btn ghost sm" id="encBuilderBtn" style="float:right;margin-right:6px">🎯 Encounter</button><button class="btn ghost sm" id="npcBtn" style="float:right;margin-right:6px">🧑 New NPC</button></h2>
-    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn ghost sm" data-msheet="${mo.id}" title="View full stat block">📋</button><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn ghost sm" data-mhide="${mo.id}" title="Take the Hide action (needs darkness or full cover)">🫥</button><button class="btn ghost sm" data-mloot="${mo.id}" title="Inventory / loot">🎒${(mo.items&&mo.items.length)?' '+mo.items.length:''}</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
+    ${s.monsters.length? s.monsters.map(mo=>`<div class="spell" style="flex-wrap:wrap;${mo.hp<=0?'opacity:.5':''}"><span class="tok" style="flex:none;${mo.sprite?'background:none;box-shadow:none':''}">${mo.sprite?pixelArt(monsterSprite(mo.sprite),2):`<span class="tok mon">${esc((mo.name[0]||'M').toUpperCase())}</span>`}</span><div class="nm"><b>${esc(mo.name)}${mo.hp<=0?' 💀':''}</b><small>AC ${mo.ac} · HP ${mo.hp}/${mo.max}${mo.atk?'<br>'+esc(mo.atk):''}${(mo.conds&&mo.conds.length)?'<br>'+mo.conds.map(x=>'<span class="pill" style="font-size:10px;padding:1px 6px" data-mclr="'+mo.id+'|'+esc(x.name)+'">🌀 '+esc(x.name)+(x.rounds!=null?' '+x.rounds:'')+' ✕</span>').join(' '):''}</small></div><button class="btn ghost sm" data-msheet="${mo.id}" title="View full stat block">📋</button><button class="btn sm" data-matk="${mo.id}" title="Roll this monster's attack">⚔</button><button class="btn ghost sm" data-mmove="${mo.id}" title="Move on map">📍</button><button class="btn ghost sm" data-mhide="${mo.id}" title="Take the Hide action (needs darkness or full cover)">🫥</button><button class="btn ghost sm" data-muse="${mo.id}" title="Interact with adjacent objects, or Shove/Grapple an adjacent foe">🖐</button><button class="btn ghost sm" data-mstat="${mo.id}" title="Conditions, effects and current advantage">🩺</button><button class="btn ghost sm" data-mloot="${mo.id}" title="Inventory / loot">🎒${(mo.items&&mo.items.length)?' '+mo.items.length:''}</button><button class="btn bad sm" data-mdmg="${mo.id}">–</button><input type="number" class="mamt" data-mamt="${mo.id}" value="1" style="max-width:44px"><button class="btn sm" data-mheal="${mo.id}">+</button><button class="del" data-mdel="${mo.id}">✕</button></div>`).join('') : '<div class="empty">No monsters. Add from the 📖 Bestiary or below.</div>'}
     <div class="addrow"><input id="mName" placeholder="Name" style="flex:2"><input id="mHp" type="number" placeholder="HP" style="max-width:60px"><input id="mAc" type="number" placeholder="AC" style="max-width:52px"><button class="btn sm" id="mAdd">Add</button></div>
   </div>
   <div class="card">
@@ -5057,7 +5100,7 @@ function renderDM(){
       // what that character can actually see before describing the room. mapGridHTML only applies
       // fog when isDM is false, so this deliberately renders as a player view for the preview.
       const asId=net.viewAs, asP=asId&&(s.players||[]).find(p=>p.id===asId||p.cid===asId);
-      const base=(s.battle.active&&net.sel&&net.sel[0]==='m')?(()=>{ const mo=s.monsters.find(m=>m.id===net.sel.slice(1)); if(!mo) return {}; const dashAvail=(mo.attacksLeft||0)>0; return buildMoveRangeOpts(s,mo,mo.moveLeft||0,dashAvail,mo.speed||30,monsterFlies(mo)); })():{};
+      const base=dmMoveOpts;   // hoisted above so the 3D host gets the same grid (v120.277)
       if(asP && asP.x!=null)
         return mapGridHTML(s,false, Object.assign({}, base,
           {fog:{viewer:{x:asP.x,y:asP.y,darkvision:!!asP.darkvision}, viewerId:'dmview:'+(asP.id||asP.cid)}}));
@@ -5117,7 +5160,7 @@ function renderDM(){
       setTimeout(()=>frameCameraOnMapCenter(s, 1.1), 60); }
     dmBroadcast(); render(); flashBanner(s.battle.active?'Battle started for all players':'Battle ended'); };
   { const rv=$('#dmRotBtn'); if(rv) rv.onclick=rotateMap; }
-  if(isoView&&iso3dView) syncIso3DHost(s);
+  if(isoView&&iso3dView) syncIso3DHost(s, dmMoveOpts);
   { const rr=$('#dmReroll'); if(rr) rr.onclick=rollInitiative; }
   document.querySelectorAll('[data-initedit]').forEach(el=>el.onchange=()=>{
     const i=Number(el.dataset.initedit), v=Number(el.value); if(isNaN(v)) return;
@@ -5143,6 +5186,20 @@ function renderDM(){
   { const eb=$('#encBuilderBtn'); if(eb) eb.onclick=openEncounterBuilder; }
   { const nb=$('#npcBtn'); if(nb) nb.onclick=openNpcBuilder; }
   app.querySelectorAll('[data-msheet]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.msheet); if(mo) openMonsterSheet(mo); });
+  // Use + Status per unit (v120.277) - the SAME shared panels Quick Battle uses, bound to the
+  // DM's session rather than a second DM-only implementation.
+  app.querySelectorAll('[data-muse]').forEach(el=>el.onclick=()=>{
+    const mo=s.monsters.find(m=>m.id===el.dataset.muse); if(!mo) return;
+    if(mo.x==null){ flashBanner('Place '+mo.name+' on the map first'); return; }
+    openAdjacentUseUI(mo, s, mo); });
+  app.querySelectorAll('[data-mstat]').forEach(el=>el.onclick=()=>{
+    const mo=s.monsters.find(m=>m.id===el.dataset.mstat); if(mo) openStatusPanel(mo, s, mo); });
+  app.querySelectorAll('[data-puse]').forEach(el=>el.onclick=()=>{
+    const pl=(s.players||[]).find(p=>p.id===el.dataset.puse); if(!pl) return;
+    if(pl.x==null){ flashBanner('Place '+pl.name+' on the map first'); return; }
+    openAdjacentUseUI(pl, s, pl); });
+  app.querySelectorAll('[data-pstat]').forEach(el=>el.onclick=()=>{
+    const pl=(s.players||[]).find(p=>p.id===el.dataset.pstat); if(pl) openStatusPanel(pl, s, pl); });
   app.querySelectorAll('[data-mloot]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.mloot); if(mo) openMonsterLoot(mo); });
   app.querySelectorAll('[data-matk]').forEach(el=>el.onclick=()=>{ const mo=s.monsters.find(m=>m.id===el.dataset.matk); if(mo) dmMonsterAttack(mo); });
   // Hide (v120.237): the watchers are the connected players, since they're who the monster is
@@ -5202,9 +5259,17 @@ function renderDM(){
       if(key==='elev+'||key==='elev-'){ if(!s.map.height) s.map.height={}; const cur=s.map.height[x+','+y]||0; const nh=Math.max(-4,Math.min(4, cur+(key==='elev+'?1:-1))); if(nh) s.map.height[x+','+y]=nh; else delete s.map.height[x+','+y]; dmBroadcast(); render(); return; }
       if(!s.map.tiles) s.map.tiles={}; if(key==='floor') delete s.map.tiles[x+','+y]; else s.map.tiles[x+','+y]=key; dmBroadcast(); render(); return; }   // paint terrain/elevation, keep brush
     if(net.sel.slice(0,2)==='d:'){ const key=net.sel.slice(2); if(!s.map.decor) s.map.decor={};
-      if(key==='erase') delete s.map.decor[x+','+y];
+      const dk=x+','+y;
+      // Decor alone is scenery. Light lives in map.light.points and interactability in
+      // map.interact, so painting a torch has to write all three or it just sits there dark
+      // and unusable (v120.277 — "i added torch to wall but it didnt add light").
+      if(key==='erase'){ delete s.map.decor[dk]; if(s.map.interact) delete s.map.interact[dk]; }
       else { if((key==='torch'||key==='torch_unlit') && !nextToWall(s,x,y)){ flashBanner('🔥 Torches mount on a wall — pick a tile next to one'); return; }
-        s.map.decor[x+','+y]=key; }
+        s.map.decor[dk]=key;
+        if(key==='torch'||key==='torch_unlit'){ s.map.interact=s.map.interact||{};
+          s.map.interact[dk]={type:'torch', state:key==='torch'?'lit':'unlit'}; }
+        else if(s.map.interact) delete s.map.interact[dk]; }
+      syncDecorLight(s, dk, key==='erase'?null:key);
       dmBroadcast(); render(); return; }
     if(net.sel.slice(0,2)==='x:'){ const key=net.sel.slice(2); s.traps=s.traps||[];
       s.traps=s.traps.filter(t=>!(t.x===x&&t.y===y));   // one trap per tile — placing/erasing replaces whatever was there
@@ -5758,7 +5823,7 @@ function startQuickBattle(c, crMax, count, mapKey){
   // Same leak applied to c.effects (Haste/Rage/Sanctuary/etc.) and concentration — only
   // conditions were being cleared, so a buff from the previous fight (or an active
   // concentration lock) silently carried over too.
-  clearBattleState(c);   // one list, three call sites (v120.276)
+  clearBattleState(c);   // one list, three call sites (v120.277)
   // Don't open a fight already dead — 0 HP left over from the last battle made the UI look
   // like the encounter "instantly ended" (lose screen) the moment anything checked end state.
   if(!c.hp) c.hp={max:8,cur:8,temp:0};
@@ -6753,7 +6818,7 @@ function qbExit(){
   // fight resolves, rather than only once the player closes the screen.
   const pc=(QB && QB.players && QB.players[0]) ? QB.players[0].c : null;
   if(pc){
-    clearBattleState(pc);   // one list, three call sites (v120.276)
+    clearBattleState(pc);   // one list, three call sites (v120.277)
     if(typeof longRest==='function') longRest(pc);
     if(typeof save==='function') save();
   }

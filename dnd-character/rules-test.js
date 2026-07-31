@@ -37,7 +37,7 @@ eval(src.replace('"use strict";','')+
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
@@ -4687,6 +4687,80 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   const callers=((uiSrc+rulesSrc).match(/clearBattleState\(/g)||[]).length;
   T('all three cleanup paths (qbExit, qbCheckEnd, startQuickBattle) call clearBattleState'
     +' - found '+callers+' references', callers>=4);   // 3 call sites + the declaration
+}
+
+
+/* ---- Mode parity: QB / DM-hosted / player-net must offer the same battle features (v120.277)
+   Reported: "the dm mode for both player and dm are missing move grid" and "in the dm mode need
+   to be able to have the use and status button for each one".
+
+   Root cause was never missing logic - buildMoveRangeOpts, openAdjacentUseUI and openStatusPanel
+   are all shared and were already being CALLED. The move range was computed and then handed only
+   to mapGridHTML, while syncIso3DHost (the renderer people actually play in) got nothing in two
+   of the three modes. Same seam as the invisibility/altitude bugs: state produced, consumer
+   never told. These guards pin the wiring, not the logic. ---- */
+{
+  const uiSrc=fs.readFileSync(path.join(__dirname,'ui.js'),'utf8');
+
+  // 1. Every syncIso3DHost call that sits in a battle renderer must pass the highlight opts.
+  //    A bare syncIso3DHost(s) inside a render*Battle/renderDM is exactly the bug.
+  const syncCalls=[];
+  uiSrc.split('\n').forEach((ln,i)=>{
+    const m=ln.match(/syncIso3DHost\(([^)]*)\)/g);
+    if(m) m.forEach(call=>syncCalls.push({line:i+1, call}));
+  });
+  T('syncIso3DHost is called in more than one mode (sanity: the survey below means something)',
+    syncCalls.length>=3);
+
+  const modeSync=[
+    ['Quick Battle', /syncIso3DHost\(s, *moveOpts\)/],
+    ['DM-hosted',    /syncIso3DHost\(s, *dmMoveOpts\)/],
+    ['player-net',   /syncIso3DHost\(net\.session, *pbMoveOpts\)/],
+  ];
+  const noGrid=modeSync.filter(p=>!p[1].test(uiSrc)).map(p=>p[0]);
+  T('every mode hands its move grid to the 3D renderer, not just to the DOM grid'
+    +(noGrid.length?' - NOT WIRED: '+noGrid.join(', '):''), noGrid.length===0);
+
+  // 2. The move opts must be built ONCE per render and shared, so the DOM grid and the 3D view
+  //    can never show different reachable squares.
+  const shared=[['Quick Battle','moveOpts'],['DM-hosted','dmMoveOpts'],['player-net','pbMoveOpts']];
+  const notShared=shared.filter(p=>{
+    const uses=(uiSrc.match(new RegExp('\\b'+p[1]+'\\b','g'))||[]).length;
+    return uses<3;   // declaration + mapGridHTML + syncIso3DHost
+  }).map(p=>p[0]);
+  T('each mode builds its move grid once and shares it with both renderers'
+    +(notShared.length?' - NOT SHARED: '+notShared.join(', '):''), notShared.length===0);
+
+  // 3. Use + Status must be reachable in all three modes.
+  const controls=[
+    ['Quick Battle Use',    /id="qbUse"/],      ['Quick Battle Status', /id="qbStatus"/],
+    ['player-net Use',      /id="pbUse"/],      ['player-net Status',   /id="pbStatus"/],
+    ['DM monster Use',      /data-muse=/],      ['DM monster Status',   /data-mstat=/],
+    ['DM player Use',       /data-puse=/],      ['DM player Status',    /data-pstat=/],
+  ];
+  const missing=controls.filter(p=>!p[1].test(uiSrc)).map(p=>p[0]);
+  T('Use and Status exist in all three modes'
+    +(missing.length?' - MISSING: '+missing.join(', '):''), missing.length===0);
+
+  // 4. Those buttons must actually be bound, or they are decoration (the dmLog lesson).
+  const bound=['data-muse','data-mstat','data-puse','data-pstat'].filter(d=>
+    !new RegExp("querySelectorAll\\('\\["+d+"\\]'\\)").test(uiSrc));
+  T('every new DM Use/Status button has a handler bound'
+    +(bound.length?' - UNBOUND: '+bound.join(', '):''), bound.length===0);
+
+  // 5. Shared panels must follow the session's adapter. Hardcoding qbAdapter inside a panel that
+  //    DM-hosted also opens silently reads Quick Battle state.
+  T('battleAdapter exists so shared panels can follow the session', typeof battleAdapter==='function');
+  const statusFn=uiSrc.slice(uiSrc.indexOf('function openStatusPanel'));
+  const statusBody=statusFn.slice(0, statusFn.indexOf('\n}'));
+  T('openStatusPanel picks its adapter by session, not hardcoded qbAdapter',
+    /battleAdapter\(/.test(statusBody) && !/Engine\.hitResult\(qbAdapter/.test(statusBody));
+
+  // 6. openAdjacentUseUI must recognise the DM as a real mode with a real adapter.
+  const useFn=uiSrc.slice(uiSrc.indexOf('function openAdjacentUseUI'));
+  const useHead=useFn.slice(0, useFn.indexOf('const foes'));
+  T("openAdjacentUseUI supports DM-hosted (mode 'dm' bound to sessionAdapter)",
+    /'dm'/.test(useHead) && /sessionAdapter/.test(useHead));
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
