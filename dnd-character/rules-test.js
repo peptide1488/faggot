@@ -3778,6 +3778,25 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     T('QB exit: the long rest runs on exit as well', c3.hp.cur===c3.hp.max);
     T('QB exit: the battle is actually torn down', (typeof QB==='undefined')||QB===null); }
 
+  /* v120.267: starting a NEW Quick Battle straight from the menu never touches qbExit, so the
+     v120.264/265 rest didn't apply — reported as "still not resetting my stats/spells after QB".
+     startQuickBattle cleared conditions but only restored HP at 0, so spent slots and class
+     resources carried into the next fight. Resting on entry too makes it independent of how you
+     got here. */
+  { const c4=newCharacter('Fresh');
+    c4.hp.cur=3; c4.luckUsed=3; c4.conditions={Invisible:true}; c4.hiddenDC=12;
+    if(c4.slots && c4.slots[1]) c4.slots[1].used=2;
+    if(typeof startQuickBattle==='function'){
+      startQuickBattle(c4, '1', 1, Object.keys(MAP_PRESETS)[0]);
+      T('QB start: entering a new fight restores HP even when not at 0', c4.hp.cur===c4.hp.max);
+      T('QB start: spent spell slots are restored on entry',
+        !c4.slots || !c4.slots[1] || c4.slots[1].used===0);
+      T('QB start: long-rest resources are restored on entry', (c4.luckUsed||0)===0);
+      T('QB start: leftover conditions and hiddenDC are cleared',
+        !c4.conditions.Invisible && c4.hiddenDC===null);
+      setQB(null);
+    } else T('QB start: (startQuickBattle unavailable in this harness — skipped)', true); }
+
   // It must fire ONCE, not on every subsequent qbCheckEnd call while the result stands.
   { const c2=newCharacter('Once'); c2.hp.cur=c2.hp.max;
     setQB({active:true, over:null, log:[], map:{cols:5,rows:5,tiles:{}}, battle:{active:true,round:1},

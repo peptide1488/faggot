@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const UI_BUILD='v120.266';
+const UI_BUILD='v120.267';
 // Grimoire — extracted UI/rendering functions (Stage 2 of index.html modularization).
 // Modal builders, render()/renderSheet/renderCombat/etc., anything touching document/$()/
 // innerHTML. See AUDIT.md. Loaded via <script src> after data.js/rules.js/net.js, before
@@ -5697,6 +5697,15 @@ function startQuickBattle(c, crMax, count, mapKey){
   // like the encounter "instantly ended" (lose screen) the moment anything checked end state.
   if(!c.hp) c.hp={max:8,cur:8,temp:0};
   if((c.hp.cur|0)<=0){ c.hp.cur=c.hp.max|0; c.death={succ:0,fail:0}; }
+  // Rest on the way IN as well (v120.267). v120.264/265 rested on the way out, which covers
+  // finishing or leaving a fight — but NOT starting a new Quick Battle straight from the menu
+  // while one is already open, which never touches qbExit. Reported as "still not resetting my
+  // stats/spells after QB": conditions were cleared here but HP was only restored at 0, so spent
+  // slots and class resources carried into the next fight. Quick Battle is a sandbox; every fight
+  // starts fresh regardless of how you got here. Cheap and idempotent, so doing it at both ends is
+  // fine — and resting here means the fix works even from a stale entry point I haven't found.
+  c.hiddenDC=null;
+  if(typeof longRest==='function') longRest(c);
   const presetKeys=Object.keys(MAP_PRESETS);
   const key=mapKey&&MAP_PRESETS[mapKey]?mapKey:(MAP_PRESETS['Mechanics Lab']?'Mechanics Lab':rndPick(presetKeys));
   const map=MAP_PRESETS[key];
