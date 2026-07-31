@@ -3,14 +3,14 @@
  * Units walk along pathfinded routes (no teleport snaps).
  */
 
-import { Renderer } from './renderer.js?v=0.6.19';
-import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.19';
+import { Renderer } from './renderer.js?v=0.6.20';
+import { transformMat4, gridToWorld, getCameraMatrix } from './math.js?v=0.6.20';
 import {
   grimoireSessionToView,
   rotationToYaw,
   makeDemoGrimoireSession,
   grimoireMapToIso,
-} from './adapter.js?v=0.6.19';
+} from './adapter.js?v=0.6.20';
 import {
   loadSprite,
   drawSpriteFrame,
@@ -21,7 +21,7 @@ import {
   setNearestNeighbor,
   getSpriteFrameUV,
   getFullImageUV,
-} from './sprites.js?v=0.6.19';
+} from './sprites.js?v=0.6.20';
 import {
   createFxState,
   spawnFloater,
@@ -31,10 +31,10 @@ import {
   fxFromGameEvent,
   drawFx,
   colorForDtype,
-} from './fx.js?v=0.6.19';
-import { findPath, facingFromStep } from './pathfinding.js?v=0.6.19';
-import { APP_VERSION } from './version.js?v=0.6.19';
-import { resolveLighting } from './lighting.js?v=0.6.19';
+} from './fx.js?v=0.6.20';
+import { findPath, facingFromStep } from './pathfinding.js?v=0.6.20';
+import { APP_VERSION } from './version.js?v=0.6.20';
+import { resolveLighting } from './lighting.js?v=0.6.20';
 
 // Doors are real 3D wall-oriented quads built in buildMapMesh (renderer.js) now, not
 // billboards — see that file for why the old rotation-lookup approach was replaced.
@@ -1378,6 +1378,20 @@ export class Iso3DHost {
       else if (info.adv === -1) bits.push({ t: 'DIS', c: '#5c1a12', bg: '#ff9a7a' });
       if (info.cover) bits.push({ t: `C+${info.cover}`, c: '#10243a', bg: '#8ab4ff' });
       if (info.sneak) bits.push({ t: 'SNEAK', c: '#2a1040', bg: '#d4a0ff' });
+      // Condition badges (0.6.20). The pill row existed but only ever showed TARGETING state, so
+      // in 3D — where the DOM token's 🌀 marker is hidden by .iso3dmode — a restrained, grappled,
+      // stunned or concentrating creature looked completely normal. Abbreviated to 3-4 chars
+      // because the row sits over the battlefield and long words would cover it; the full name is
+      // still on the sheet and in the Status panel.
+      const CONDABBR = {
+        Prone: 'PRN', Restrained: 'RSTR', Grappled: 'GRAP', Stunned: 'STUN', Poisoned: 'PSN',
+        Frightened: 'FEAR', Charmed: 'CHRM', Blinded: 'BLND', Deafened: 'DEAF', Paralyzed: 'PARA',
+        Petrified: 'PETR', Incapacitated: 'INCP', Unconscious: 'UNCO', Invisible: 'INVIS',
+        Hidden: 'HIDE', Concentrating: 'CONC', 'Wild Shape': 'WILD', Mounted: 'MNT',
+      };
+      for (const cn of (u.conditionNames || []).slice(0, 3)) {
+        bits.push({ t: CONDABBR[cn] || cn.slice(0, 4).toUpperCase(), c: '#3a2a08', bg: '#f0c869' });
+      }
     }
     if (!bits.length) return;
     let x = scr.x - (bits.length * 22) / 2;
@@ -1742,4 +1756,4 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export { Renderer } from './renderer.js?v=0.6.19';
+export { Renderer } from './renderer.js?v=0.6.20';

@@ -4457,7 +4457,7 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
       const hash=h.digest('hex').slice(0,16);
       const declaredV=(html.match(/iso3d\/boot\.js\?v=([0-9.]+)/)||[])[1];
 
-      const LOCKED_V='0.6.19', LOCKED_HASH='fca1ed6f57ee7053';
+      const LOCKED_V='0.6.20', LOCKED_HASH='3bb0d811b787d74a';
       T(`iso3d drift lock: source content matches the pinned hash for ?v=${LOCKED_V}`
         +(hash===LOCKED_HASH?'':` — iso3d source CHANGED (${hash}). Bump the ?v= in index.html + sw.js, then update LOCKED_V/LOCKED_HASH here. Without a ?v= bump, cached users keep the old engine forever.`),
         hash===LOCKED_HASH);

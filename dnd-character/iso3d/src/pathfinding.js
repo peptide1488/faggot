@@ -7,7 +7,7 @@
  * - Difficult terrain: 10 ft enter
  */
 
-import { heightAt, isWalkable, moveCost } from './map.js?v=0.6.19';
+import { heightAt, isWalkable, moveCost } from './map.js?v=0.6.20';
 
 /**
  * @param {object} map

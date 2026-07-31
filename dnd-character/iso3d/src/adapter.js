@@ -3,9 +3,9 @@
  * Presentation only — no rules.
  */
 
-import { TERRAIN, createMap } from './map.js?v=0.6.19';
-import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.19';
-import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.19';
+import { TERRAIN, createMap } from './map.js?v=0.6.20';
+import { DIR_ORDER_8 } from './pathfinding.js?v=0.6.20';
+import { MESH_DECOR_KINDS } from './terrainTextures.js?v=0.6.20';
 
 /** Grimoire terrain key → Iso3D TERRAIN id */
 export const GRIMOIRE_TERRAIN_MAP = {
@@ -328,6 +328,28 @@ export function normalizeFacing(f) {
  * correctly by the rules (melee reach, fall damage) while its sprite stayed glued to the ground.
  * Monsters use a plain `altitude` on the unit; a PC keeps it on the character sheet.
  */
+
+/**
+ * Condition names for a Grimoire unit (Iso3D 0.6.20). The 3D view drew targeting pills (ADV/DIS/
+ * cover/SNEAK) but never a single condition badge, and .iso3dmode hides the DOM token that carries
+ * the flat view's 🌀 marker — so in 3D you could not see that anyone was restrained, grappled,
+ * stunned, poisoned or concentrating. Same three shapes unitConds normalises on the Grimoire side.
+ */
+function unitConditionNames(raw) {
+  if (!raw) return [];
+  const out = [];
+  for (const cnd of raw.conds || []) {
+    const n = typeof cnd === 'string' ? cnd : cnd && cnd.name;
+    if (n) out.push(n);
+  }
+  const cc = raw.c && raw.c.conditions;
+  if (cc) for (const k of Object.keys(cc)) if (cc[k] && out.indexOf(k) < 0) out.push(k);
+  if (raw.c && raw.c.concentration && raw.c.concentration.active) out.push('Concentrating');
+  if (raw.c && raw.c.wildShape) out.push('Wild Shape');
+  if (raw.c && raw.c.mountedOn) out.push('Mounted');
+  return out;
+}
+
 function unitAltitudeFt(raw) {
   if (!raw) return 0;
   const a = raw.altitude != null ? raw.altitude : (raw.c && raw.c.altitude);
@@ -395,6 +417,7 @@ export function grimoireSessionToView(session, opts = {}) {
       raw: pl,
       invisible: isUnitInvisible(pl),
       altitudeFt: unitAltitudeFt(pl),
+      conditionNames: unitConditionNames(pl),
       col: pl.x | 0,
       row: pl.y | 0,
       team: 'player',
@@ -429,6 +452,7 @@ export function grimoireSessionToView(session, opts = {}) {
       raw: mo,
       invisible: isUnitInvisible(mo),
       altitudeFt: unitAltitudeFt(mo),
+      conditionNames: unitConditionNames(mo),
       col: mo.x | 0,
       row: mo.y | 0,
       team: 'enemy',
