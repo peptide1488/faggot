@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.282';
+const RULES_BUILD='v120.283';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -1895,7 +1895,39 @@ function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by))
 
 function inBlast(cx,cy,x,y,r){ if(r<=1) return gridDist(cx,cy,x,y)<=r; return Math.hypot(cx-x,cy-y)<=r+0.0001; }
 
-function leavesReach(fromX,fromY,toX,toY,ex,ey,reach){ reach=reach||1; return gridDist(fromX,fromY,ex,ey)<=reach && gridDist(toX,toY,ex,ey)>reach; }
+/**
+ * Altitude in feet for ANY unit shape (v120.283): a character (c.altitude), a Quick Battle
+ * player wrapper (u.c.altitude), or a monster (u.altitude). One reader, because the last three
+ * altitude bugs were all "this code path never heard about altitude".
+ */
+function altitudeFtOf(u){
+  if(!u) return 0;
+  const a=(u.altitude!=null) ? u.altitude : (u.c && u.c.altitude);
+  const n=Number(a);
+  return (isFinite(n) && n>0) ? n : 0;
+}
+
+/**
+ * Did the mover leave the observer's reach — in THREE dimensions?
+ *
+ * Reported: "i tried fly, even tho im like 40 feet above the creatures they get opportunity
+ * attacks when i move." This was pure 2D Chebyshev, so a creature standing under a flier counted
+ * as adjacent and got an attack it could not possibly make. RAW you provoke by leaving reach, and
+ * something 40 ft below you was never in reach to begin with.
+ *
+ * Vertical separation is measured in tiles (5 ft each) and folded into the same Chebyshev metric
+ * the grid already uses, so a flier 10 ft up is 2 tiles away from a 5-ft-reach creature below.
+ * `opts` is optional purely so old call sites keep compiling — but every real one passes it, and
+ * rules-test enforces that, because "producer knows, consumer doesn't" is exactly how this bug
+ * and the invisibility/move-grid ones happened.
+ */
+function leavesReach(fromX,fromY,toX,toY,ex,ey,reach,opts){
+  reach=reach||1;
+  const dv = opts ? Math.abs(altitudeFtOf(opts.mover)-altitudeFtOf(opts.observer))/5 : 0;
+  const before=Math.max(gridDist(fromX,fromY,ex,ey), dv);
+  const after =Math.max(gridDist(toX,toY,ex,ey),   dv);
+  return before<=reach && after>reach;
+}
 
 function terrainAt(s,x,y){ return (s.map.tiles||{})[x+','+y]||''; }
 
@@ -2871,7 +2903,7 @@ function syncInteractDecor(s){
 }
 
 /**
- * Keep a cell's LIGHT in step with the decor sitting on it (v120.282).
+ * Keep a cell's LIGHT in step with the decor sitting on it (v120.283).
  *
  * Reported: "in the map editor i added torch to wall but it didnt add light." The editor wrote
  * s.map.decor[key] and stopped there, but light does not come from decor at all - it comes from
@@ -2887,14 +2919,14 @@ const DECOR_LIGHT={
   campfire:{radius:4.5, color:[1.0,0.50,0.18], intensity:1.40, kind:'campfire'},
 };
 /**
- * Which Engine adapter drives THIS session (v120.282)?
+ * Which Engine adapter drives THIS session (v120.283)?
  *
  * Shared UI kept hardcoding `qbAdapter`, which silently produced Quick-Battle answers inside a
  * DM-hosted fight (openStatusPanel's advantage probe did exactly that). One picker so a shared
  * panel behaves the same in all three modes instead of quietly reading the wrong session.
  */
 /**
- * A monster's turn starts clean (v120.282).
+ * A monster's turn starts clean (v120.283).
  *
  * The character side has had freshTurnState since forever; monsters had their per-turn fields
  * re-set inline at two call sites instead, which is the same shape as the battle-state leak that
@@ -2906,7 +2938,7 @@ function freshMonsterTurn(m){
   m.attacksLeft=m.attacks||1;
   m.moveLeft=speedBlocked(m)?0:(m.speed||30);
   m.reactionUsed=false;
-  m.disengaged=false;   // general actions, v120.282
+  m.disengaged=false;   // general actions, v120.283
   m.readied=false;
   return m;
 }
@@ -3509,7 +3541,7 @@ function qbCheckEnd(){ if(!QB) return;
   // instead means the sheet is correct the moment the fight ends, not retroactively.
   if(!wasOver && QB.over){
     const pc=QB.players[0].c;
-    clearBattleState(pc);   // one list, three call sites (v120.282)
+    clearBattleState(pc);   // one list, three call sites (v120.283)
     if(typeof longRest==='function') longRest(pc);   // full recovery between sandbox fights
     if(typeof save==='function') save();
     qbLog('🛌 Long rest — HP, slots and abilities restored, all effects cleared');
@@ -3660,7 +3692,7 @@ function qbApplyIntent(u, it, done){
     const cost=reachableCells(QB,u.x,u.y,(u.moveLeft||0)+(it.dash?(u.speed||30):0),ufly,u)[it.to.x+','+it.to.y]; if(cost==null){ done(); return; }
     if(it.dash){ u.moveLeft=(u.moveLeft||0)+(u.speed||30); u.attacksLeft=0; qbLog('🏃 '+u.name+' dashes'); }
     const fromX=u.x, fromY=u.y; u.moveLeft=Math.max(0,(u.moveLeft||0)-cost);
-    const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,1);
+    const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,1,{mover:u, observer:pc});
     // Camera follows the spotlight at turn START (qbBeginTurn) but nothing kept it on the
     // unit as it actually walked — a live report confirmed this exactly ("moves to where
     // the creature was then doesn't follow them once creature moves"). Re-frame on every
@@ -4054,7 +4086,7 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
    them, and they're written adapter-free so Quick Battle can use them unchanged later. */
 
 /**
- * Everything that belongs to ONE fight and must not survive it (v120.282).
+ * Everything that belongs to ONE fight and must not survive it (v120.283).
  *
  * This exists because the list kept being forgotten a field at a time. First conditions carried
  * between Quick Battles ("in every map i am restrained"), then Invisible did, and then altitude —
@@ -4070,7 +4102,7 @@ function clearBattleState(c){
   if(!c) return;
   c.conditions={};
   c.hiddenDC=null;
-  c.altitude=0;              // flight — the v120.282 report
+  c.altitude=0;              // flight — the v120.283 report
   c.effects=[];
   c.concentration={active:false, spell:''};
   c.mountedOn=null;          // dismount; a steed doesn't follow you out of the arena

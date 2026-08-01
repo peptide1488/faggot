@@ -1,7 +1,7 @@
 // Grimoire combat FX — screen shake, hitstop, and (2D view only) impact frames and numbers.
 // Loaded via <script src> like data/rules/net/ui, so everything here is a plain global.
 //
-// SCOPE, and why it is narrower than it first looks (v120.282):
+// SCOPE, and why it is narrower than it first looks (v120.283):
 // The iso3d WebGL renderer ALREADY has a full effects system of its own — iso3d/src/fx.js draws
 // projectiles by weapon kind, impacts, explosions, damage floaters and damage-type colours, fed
 // by fxFromGameEvent() on the very same 'attack' events. It draws them with the real camera
@@ -21,7 +21,7 @@
 // number, shake that scales with the size of the hit. Nothing here blocks input or delays game
 // state, every node self-removes, and the whole layer is skipped under prefers-reduced-motion or
 // when switched off.
-const FX_BUILD='v120.282';
+const FX_BUILD='v120.283';
 
 const FX = {
   // ---- tunables (a "feel" table, deliberately in one place) ----

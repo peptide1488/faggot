@@ -2,7 +2,7 @@
 // flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
 // stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
 // with holes in it is worse than none, because it reads as an all-clear.
-const NET_BUILD='v120.282';
+const NET_BUILD='v120.283';
 // Grimoire — extracted multiplayer/networking functions (Stage 2 of index.html modularization).
 // DM-hosted session handling, player-net messaging, campaign persistence. See AUDIT.md.
 // Loaded via <script src> after data.js/rules.js, before ui.js/the main script.
@@ -146,7 +146,7 @@ function playerHello(){ const c=playerChar(); if(!c||!net.conn) return;
   // The DM never holds the real sheet, so hasDarkvision() is not computable DM-side -- same
   // reason sanctuaryDC/holyAuraDC are synced here rather than derived.
   const dark=hasDarkvision(c);
-  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.wildShape?c.wildShape.hpCur:c.hp.cur,hpMax:c.wildShape?c.wildShape.hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),darkvision:!!dark,sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed,wildShapeName:c.wildShape?c.wildShape.name:null,healerFeatSpent:!!c.healerFeatSpent,shieldReady:shieldEligible(c),absorbReady:reactionSpellReady(c,'Absorb Elements'),rebukeReady:reactionSpellReady(c,'Hellish Rebuke')}}); }catch(e){} }
+  try{ net.conn.send({t:'hello',char:{cid:clientId(),name:c.name,cls:c.cls,level:c.level,hpCur:c.wildShape?c.wildShape.hpCur:c.hp.cur,hpMax:c.wildShape?c.wildShape.hpMax:c.hp.max,ac:computeAC(c),init:initiative(c),conds:Object.keys(c.conditions||{}),darkvision:!!dark,sanctuaryDC:sanc?sanc.dc:null,holyAuraDC:holy?holy.dc:null,stable:!!c.stable,deathFail:(c.death&&c.death.fail)||0,hiddenDC:c.hiddenDC||null,altitude:c.altitude||0,shadowMartyrArmed:!!c.shadowMartyrArmed,cuttingWordsArmed:!!c.cuttingWordsArmed,wildShapeName:c.wildShape?c.wildShape.name:null,healerFeatSpent:!!c.healerFeatSpent,shieldReady:shieldEligible(c),absorbReady:reactionSpellReady(c,'Absorb Elements'),rebukeReady:reactionSpellReady(c,'Hellish Rebuke')}}); }catch(e){} }
 
 function battleSession(){ return (typeof QB!=='undefined'&&QB&&QB.active)?QB:(net&&net.session)||null; }
 

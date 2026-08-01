@@ -37,7 +37,7 @@ eval(fs.readFileSync(path.join(__dirname,'fx.js'),'utf8')+';'+src.replace('"use 
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.freshMonsterTurn=freshMonsterTurn;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.freshMonsterTurn=freshMonsterTurn;globalThis.altitudeFtOf=altitudeFtOf;globalThis.leavesReach=leavesReach;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
@@ -4935,6 +4935,73 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
     T('the coalesce window is short enough to stay responsive',
       FX.cfg.shakeCoalesceMs>=60 && FX.cfg.shakeCoalesceMs<=250);
   }
+}
+
+
+/* ---- Opportunity attacks respect altitude (v120.283) ----
+   Reported: "i tried fly, even tho im like 40 feet above the creatures they get opportunity
+   attacks when i move." leavesReach was pure 2D Chebyshev, so a creature standing underneath a
+   flier counted as adjacent and got an attack it could not possibly make.
+
+   Fourth bug of this exact shape (invisibility, altitude-in-the-renderer, the move grid, now
+   reach): state is produced in one place and a consumer is never told. Hence the last assertion
+   here, which fails if ANY opportunity-attack site forgets to pass the units. ---- */
+{
+  // altitudeFtOf must read every unit shape, or a mode silently sees 0.
+  T('altitudeFtOf reads a bare character', altitudeFtOf({altitude:30})===30);
+  T('altitudeFtOf reads a QB player wrapper (u.c.altitude)', altitudeFtOf({c:{altitude:15}})===15);
+  T('altitudeFtOf reads a monster', altitudeFtOf({id:'m1',altitude:10})===10);
+  T('altitudeFtOf is 0 for grounded/absent/garbage',
+    altitudeFtOf(null)===0 && altitudeFtOf({})===0 && altitudeFtOf({altitude:-5})===0
+    && altitudeFtOf({altitude:'high'})===0);
+
+  // The report itself: 40 ft up, walking past a creature directly below.
+  const flier={altitude:40}, ground={altitude:0};
+  T('a flier 40 ft up does NOT provoke from a creature below',
+    leavesReach(5,5, 8,5, 5,5, 1, {mover:flier, observer:ground})===false);
+  T('...and neither does one only 10 ft up (2 tiles of separation vs 5 ft reach)',
+    leavesReach(5,5, 8,5, 5,5, 1, {mover:{altitude:10}, observer:ground})===false);
+
+  // 5 ft up is still within a 5 ft reach - the fix must not make fliers untouchable.
+  T('5 ft up is still in reach of a 5 ft reach creature',
+    leavesReach(5,5, 8,5, 5,5, 1, {mover:{altitude:5}, observer:ground})===true);
+
+  // Ground-to-ground behaviour must be completely unchanged.
+  T('a grounded creature still provokes normally',
+    leavesReach(5,5, 8,5, 5,5, 1, {mover:ground, observer:ground})===true);
+  T('leaving nobody\'s reach still provokes nothing',
+    leavesReach(5,5, 8,5, 1,1, 1, {mover:ground, observer:ground})===false);
+  T('moving WITHIN reach does not provoke',
+    leavesReach(5,5, 5,6, 5,5, 1, {mover:ground, observer:ground})===false);
+
+  // Two fliers at the same height are simply adjacent to each other.
+  T('two fliers at the same altitude provoke each other normally',
+    leavesReach(5,5, 8,5, 5,5, 1, {mover:{altitude:40}, observer:{altitude:40}})===true);
+  T('a flier provokes from another flier 5 ft below it',
+    leavesReach(5,5, 8,5, 5,5, 1, {mover:{altitude:40}, observer:{altitude:35}})===true);
+
+  // Called the old way it must behave exactly as before, so nothing silently changed meaning.
+  T('omitting the units keeps the original 2D behaviour', leavesReach(5,5, 8,5, 5,5, 1)===true);
+
+  // The DM only knows what the player mirrors to it. Without altitude in that payload, DM-side
+  // reach checks think every flier is standing on the floor.
+  const netSrc=fs.readFileSync(path.join(__dirname,'net.js'),'utf8');
+  T('altitude is mirrored to the DM in the hello payload', /altitude:c\.altitude\|\|0/.test(netSrc));
+
+  // Every opportunity-attack site must pass the units. This is the guard that would have caught
+  // the original bug, and it fails the moment a new site forgets.
+  const uiSrc=fs.readFileSync(path.join(__dirname,'ui.js'),'utf8');
+  const rulesSrc=fs.readFileSync(path.join(__dirname,'rules.js'),'utf8');
+  const bare=[];
+  [['ui.js',uiSrc],['rules.js',rulesSrc]].forEach(([file,txt])=>{
+    txt.split('\n').forEach((ln,i)=>{
+      if(!/leavesReach\(/.test(ln)) return;
+      if(/function leavesReach/.test(ln)) return;             // the declaration itself
+      if(!/\{\s*mover:/.test(ln)) bare.push(file+':'+(i+1));
+    });
+  });
+  T('every opportunity-attack check passes the units, so altitude is always considered'
+    +(bare.length?' - NOT ALTITUDE-AWARE: '+bare.join(', '):''), bare.length===0);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

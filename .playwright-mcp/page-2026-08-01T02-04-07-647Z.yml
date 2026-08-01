@@ -1,0 +1,38 @@
+- generic [active] [ref=f21e1]:
+  - banner [ref=f21e2]:
+    - generic [ref=f21e3]:
+      - generic [ref=f21e10]:
+        - generic [ref=f21e11]: Grimoire v120.282
+        - generic [ref=f21e12]: D&D 5e character keeper · v120.282
+      - generic [ref=f21e13]:
+        - button "🔍" [ref=f21e14] [cursor=pointer]
+        - button "＋" [ref=f21e15] [cursor=pointer]
+        - button "⚙" [ref=f21e16] [cursor=pointer]
+  - main [ref=f21e17]:
+    - generic [ref=f21e18]:
+      - img [ref=f21e19]:
+        - generic [ref=f21e20]: "20"
+      - heading "Welcome, adventurer" [level=1] [ref=f21e26]
+      - paragraph [ref=f21e27]: Create a character to track abilities, skills, hit points, spell slots, inventory and more. Everything is saved on this device and works offline.
+      - button "Create a character" [ref=f21e28] [cursor=pointer]
+      - button "🎲 Surprise me — random hero" [ref=f21e29] [cursor=pointer]
+      - generic [ref=f21e30]:
+        - button "🎲 Host (DM)" [ref=f21e31] [cursor=pointer]
+        - button "🔗 Join game" [ref=f21e32] [cursor=pointer]
+  - navigation [ref=f21e623]:
+    - button "🪪 Sheet" [ref=f21e624] [cursor=pointer]:
+      - generic [ref=f21e625]: 🪪
+      - text: Sheet
+    - button "⚔️ Combat" [ref=f21e626] [cursor=pointer]:
+      - generic [ref=f21e627]: ⚔️
+      - text: Combat
+    - button "✨ Spells" [ref=f21e628] [cursor=pointer]:
+      - generic [ref=f21e629]: ✨
+      - text: Spells
+    - button "🎒 Items" [ref=f21e630] [cursor=pointer]:
+      - generic [ref=f21e631]: 🎒
+      - text: Items
+    - button "📜 Notes" [ref=f21e632] [cursor=pointer]:
+      - generic [ref=f21e633]: 📜
+      - text: Notes
+  - button "🎲" [ref=f21e634] [cursor=pointer]
