@@ -137,7 +137,15 @@ usage burns tokens fast. Follow this order:
    comments/strings/template literals with regex mangles the source and reported 195 false
    positives (`flashBanner`, `render`, `esc` …). That's the same known-hard problem the
    modularization note above warns about — don't retry it without a real parser.
-8. **Deploying takes TWO pushes.** Work happens on `iso3d-engine`; GitHub Pages serves
+8. **When a fix "doesn't work", check you're running it before debugging it.** A stale
+   service-worker copy made a verification run disprove a correct fix TWICE in one session
+   (fx.js, then rules.js), and it is the same mechanism as the three-day "publish lag" that was
+   really an unpushed branch. Comparing build stamps does NOT catch it: the SW serves a whole
+   stale generation, so every stamp agrees with every other one. Use `tools/fresh.js` — in the
+   page run `fetch('tools/fresh.js').then(r=>r.text()).then(eval)` then `await grimoireFresh()`,
+   which fetches each module with `no-store` and checks the RUNNING function bodies appear in the
+   server's copy. `await grimoireUncache()` unregisters the SW, clears caches and reloads.
+9. **Deploying takes TWO pushes.** Work happens on `iso3d-engine`; GitHub Pages serves
    `claude/elegant-bohr-zx67jk` (verified via the Pages API — `build_type: legacy`, path `/`).
    A push to `iso3d-engine` alone changes nothing the user can see:
    `git push origin iso3d-engine && git push origin iso3d-engine:claude/elegant-bohr-zx67jk`

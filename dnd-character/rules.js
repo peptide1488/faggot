@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.283';
+const RULES_BUILD='v120.284';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -1896,7 +1896,7 @@ function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by))
 function inBlast(cx,cy,x,y,r){ if(r<=1) return gridDist(cx,cy,x,y)<=r; return Math.hypot(cx-x,cy-y)<=r+0.0001; }
 
 /**
- * Altitude in feet for ANY unit shape (v120.283): a character (c.altitude), a Quick Battle
+ * Altitude in feet for ANY unit shape (v120.284): a character (c.altitude), a Quick Battle
  * player wrapper (u.c.altitude), or a monster (u.altitude). One reader, because the last three
  * altitude bugs were all "this code path never heard about altitude".
  */
@@ -1905,6 +1905,47 @@ function altitudeFtOf(u){
   const a=(u.altitude!=null) ? u.altitude : (u.c && u.c.altitude);
   const n=Number(a);
   return (isFinite(n) && n>0) ? n : 0;
+}
+
+/**
+ * How far does this unit THREATEN, in tiles (v120.284)?
+ *
+ * Every opportunity-attack site hardcoded 1 tile, so a Hill Giant's 10 ft greatclub and a
+ * Glaive-wielding fighter both threatened 5 ft. One reader for both unit kinds, because the
+ * alternative is four call sites each deciding for themselves — which is how the altitude bug
+ * that prompted this got in.
+ *
+ * Monsters: from the parsed attack list, which already turns "reach" in the prose into 2 tiles.
+ * Breath weapons and thrown rocks are NOT reach — a Dragon's 30 ft cone parses as 6 tiles and a
+ * Giant hurling a rock isn't threatening the square next to it — so anything that reads as ranged
+ * or area is skipped, and the result is capped at 3 tiles (15 ft, the longest RAW melee reach in
+ * this bestiary: a Young Red Dragon's tail).
+ *
+ * Characters: reach weapons (Glaive, Whip) grant 10 ft, per the weapon's own `props`.
+ */
+const AOE_OR_RANGED_ATTACK=/breath|cone|line|rock|bolt|arrow|bow|sling|spit|web|ray|beam|hurl|thrown/i;
+function reachTilesOf(u){
+  if(!u) return 1;
+  const c=(u.c && typeof u.c==='object') ? u.c : (u.abilities ? u : null);
+  if(c){
+    let r=1;
+    try{
+      equippedWeapons(c).forEach(({it})=>{
+        const w=(typeof WEAPONS!=='undefined') ? WEAPONS.find(x=>x.n===(it.weapon||it.name)) : null;
+        if(w && w.type!=='ranged' && /reach/i.test(w.props||'')) r=Math.max(r,2);
+      });
+    }catch(e){}
+    return r;
+  }
+  let r=1;
+  try{
+    (parseMonsterAttacks(u.atk||'')||[]).forEach(a=>{
+      if(AOE_OR_RANGED_ATTACK.test(a.name||'')) return;
+      const t=Number(a.tiles)||1;
+      if(t>r && t<=3) r=t;
+    });
+  }catch(e){}
+  return r;
 }
 
 /**
@@ -2903,7 +2944,7 @@ function syncInteractDecor(s){
 }
 
 /**
- * Keep a cell's LIGHT in step with the decor sitting on it (v120.283).
+ * Keep a cell's LIGHT in step with the decor sitting on it (v120.284).
  *
  * Reported: "in the map editor i added torch to wall but it didnt add light." The editor wrote
  * s.map.decor[key] and stopped there, but light does not come from decor at all - it comes from
@@ -2919,14 +2960,14 @@ const DECOR_LIGHT={
   campfire:{radius:4.5, color:[1.0,0.50,0.18], intensity:1.40, kind:'campfire'},
 };
 /**
- * Which Engine adapter drives THIS session (v120.283)?
+ * Which Engine adapter drives THIS session (v120.284)?
  *
  * Shared UI kept hardcoding `qbAdapter`, which silently produced Quick-Battle answers inside a
  * DM-hosted fight (openStatusPanel's advantage probe did exactly that). One picker so a shared
  * panel behaves the same in all three modes instead of quietly reading the wrong session.
  */
 /**
- * A monster's turn starts clean (v120.283).
+ * A monster's turn starts clean (v120.284).
  *
  * The character side has had freshTurnState since forever; monsters had their per-turn fields
  * re-set inline at two call sites instead, which is the same shape as the battle-state leak that
@@ -2938,7 +2979,7 @@ function freshMonsterTurn(m){
   m.attacksLeft=m.attacks||1;
   m.moveLeft=speedBlocked(m)?0:(m.speed||30);
   m.reactionUsed=false;
-  m.disengaged=false;   // general actions, v120.283
+  m.disengaged=false;   // general actions, v120.284
   m.readied=false;
   return m;
 }
@@ -3541,7 +3582,7 @@ function qbCheckEnd(){ if(!QB) return;
   // instead means the sheet is correct the moment the fight ends, not retroactively.
   if(!wasOver && QB.over){
     const pc=QB.players[0].c;
-    clearBattleState(pc);   // one list, three call sites (v120.283)
+    clearBattleState(pc);   // one list, three call sites (v120.284)
     if(typeof longRest==='function') longRest(pc);   // full recovery between sandbox fights
     if(typeof save==='function') save();
     qbLog('🛌 Long rest — HP, slots and abilities restored, all effects cleared');
@@ -3692,7 +3733,7 @@ function qbApplyIntent(u, it, done){
     const cost=reachableCells(QB,u.x,u.y,(u.moveLeft||0)+(it.dash?(u.speed||30):0),ufly,u)[it.to.x+','+it.to.y]; if(cost==null){ done(); return; }
     if(it.dash){ u.moveLeft=(u.moveLeft||0)+(u.speed||30); u.attacksLeft=0; qbLog('🏃 '+u.name+' dashes'); }
     const fromX=u.x, fromY=u.y; u.moveLeft=Math.max(0,(u.moveLeft||0)-cost);
-    const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,1,{mover:u, observer:pc});
+    const pc=QB.players[0]; const provokePc = pc.c.hp.cur>0 && leavesReach(fromX,fromY,it.to.x,it.to.y,pc.x,pc.y,reachTilesOf(pc),{mover:u, observer:pc});
     // Camera follows the spotlight at turn START (qbBeginTurn) but nothing kept it on the
     // unit as it actually walked — a live report confirmed this exactly ("moves to where
     // the creature was then doesn't follow them once creature moves"). Re-frame on every
@@ -4086,7 +4127,7 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
    them, and they're written adapter-free so Quick Battle can use them unchanged later. */
 
 /**
- * Everything that belongs to ONE fight and must not survive it (v120.283).
+ * Everything that belongs to ONE fight and must not survive it (v120.284).
  *
  * This exists because the list kept being forgotten a field at a time. First conditions carried
  * between Quick Battles ("in every map i am restrained"), then Invisible did, and then altitude —
@@ -4102,7 +4143,7 @@ function clearBattleState(c){
   if(!c) return;
   c.conditions={};
   c.hiddenDC=null;
-  c.altitude=0;              // flight — the v120.283 report
+  c.altitude=0;              // flight — the v120.284 report
   c.effects=[];
   c.concentration={active:false, spell:''};
   c.mountedOn=null;          // dismount; a steed doesn't follow you out of the arena

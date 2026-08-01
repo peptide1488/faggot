@@ -2,7 +2,7 @@
 // flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
 // stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
 // with holes in it is worse than none, because it reads as an all-clear.
-const ISOR_BUILD='v120.283';
+const ISOR_BUILD='v120.284';
 // Grimoire — standalone isometric battle-map renderer.
 //
 // Deliberately separate from index.html: this file owns ONLY "given a grid of terrain +
@@ -52,7 +52,7 @@ function stageSize(cols, rows, rot){
   return { w: (rcols - 1 + rrows - 1) * ISO_X + 80, h: (rcols - 1 + rrows - 1) * ISO_Y + 80 + ISO_PAD };
 }
 
-// Which terrain kinds actually ship a tile sprite (v120.283). Everything else is painted from
+// Which terrain kinds actually ship a tile sprite (v120.284). Everything else is painted from
 // TERRAIN's palette colour, which already worked - but tileImg still fired a request for it, so
 // loading any map with pits/dirt/web/void logged a 404 per kind. Requesting an image we know is
 // absent is pure noise, so ask this first.

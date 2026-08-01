@@ -37,7 +37,7 @@ eval(fs.readFileSync(path.join(__dirname,'fx.js'),'utf8')+';'+src.replace('"use 
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.freshMonsterTurn=freshMonsterTurn;globalThis.altitudeFtOf=altitudeFtOf;globalThis.leavesReach=leavesReach;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.freshMonsterTurn=freshMonsterTurn;globalThis.altitudeFtOf=altitudeFtOf;globalThis.leavesReach=leavesReach;globalThis.reachTilesOf=reachTilesOf;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
@@ -5002,6 +5002,91 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   });
   T('every opportunity-attack check passes the units, so altitude is always considered'
     +(bare.length?' - NOT ALTITUDE-AWARE: '+bare.join(', '):''), bare.length===0);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   UNIT-STATE CONTRACT (v120.283)
+
+   Four bugs this session had ONE shape: a piece of unit state is produced in one place, and some
+   consumer is never told about it.
+
+     invisibility  -> rules gated on it; the renderer drew the token at full opacity
+     altitude      -> flight changed the rules; the renderer drew the sprite on the ground
+     move grid     -> computed in every mode; only Quick Battle handed it to the 3D renderer
+     reach         -> altitude existed; opportunity-attack checks measured in 2D
+
+   Each was fixed with its own guard, one at a time, AFTER the user hit it. This table is the
+   generalisation: for every piece of unit state, name the consumers that MUST know about it. A
+   new field with no entry fails; an entry whose consumer stops referencing it fails.
+
+   It is deliberately coarse - it proves a consumer MENTIONS the state, not that it does the right
+   thing with it. That is still enough to have caught all four, because in every case the consumer
+   didn't mention it at all. Behavioural depth belongs in the per-feature tests above.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+{
+  const rulesSrc=fs.readFileSync(path.join(__dirname,'rules.js'),'utf8');
+  const uiSrc=fs.readFileSync(path.join(__dirname,'ui.js'),'utf8');
+  const netSrc=fs.readFileSync(path.join(__dirname,'net.js'),'utf8');
+  const adapterSrc=fs.readFileSync(path.join(__dirname,'iso3d','src','adapter.js'),'utf8');
+  const hostSrc=fs.readFileSync(path.join(__dirname,'iso3d','src','host.js'),'utf8');
+
+  // Named consumers. Each is "the place that would silently ignore this state if not wired".
+  const CONSUMER={
+    'renderer (adapter exposes)': adapterSrc,
+    'renderer (host consumes)':   hostSrc,
+    'DM mirror (net.js hello)':   netSrc,
+    'between-fight cleanup':      rulesSrc.slice(rulesSrc.indexOf('function clearBattleState'),
+                                                rulesSrc.indexOf('function clearBattleState')+900),
+    'reach / opportunity attacks': rulesSrc.slice(rulesSrc.indexOf('function leavesReach')-2600,
+                                                 rulesSrc.indexOf('function leavesReach')+700),
+  };
+
+  // state -> [pattern that proves a consumer knows about it, consumers that must know]
+  const CONTRACT=[
+    ['invisibility', /invisib/i, ['renderer (adapter exposes)','renderer (host consumes)','between-fight cleanup']],
+    ['altitude',     /altitude/i, ['renderer (adapter exposes)','renderer (host consumes)',
+                                   'DM mirror (net.js hello)','between-fight cleanup',
+                                   'reach / opportunity attacks']],
+    ['conditions',   /cond/i,     ['renderer (adapter exposes)','renderer (host consumes)',
+                                   'DM mirror (net.js hello)','between-fight cleanup']],
+    ['hidden',       /hidden|hiddenDC/i, ['DM mirror (net.js hello)','between-fight cleanup']],
+    ['alive/dead',   /alive|dead|hp/i,   ['renderer (adapter exposes)','renderer (host consumes)']],
+  ];
+
+  const holes=[];
+  CONTRACT.forEach(([state, pattern, consumers])=>{
+    consumers.forEach(name=>{
+      const src=CONSUMER[name];
+      if(src==null){ holes.push(state+' -> '+name+' (consumer source not found)'); return; }
+      if(!pattern.test(src)) holes.push(state+' -> '+name);
+    });
+  });
+  T('every piece of unit state reaches every consumer that must know about it'
+    +(holes.length?' - NOT WIRED: '+holes.join(' | '):''), holes.length===0);
+
+  // The four regressions, pinned individually so a failure names the actual bug rather than just
+  // "the contract broke".
+  T('regression: invisibility reaches the renderer (v120.250)',
+    /invisib/i.test(adapterSrc) && /invisible/i.test(hostSrc));
+  T('regression: altitude reaches the renderer (v120.272)',
+    /altitude/i.test(adapterSrc) && /altitudeFt|altStep/i.test(hostSrc));
+  T('regression: altitude reaches the DM (v120.283)', /altitude/i.test(netSrc));
+  T('regression: altitude reaches reach checks (v120.283)',
+    /altitudeFtOf\(opts\.mover\)/.test(rulesSrc));
+  T('regression: the move grid reaches the 3D host in every mode (v120.277)',
+    /syncIso3DHost\(x\.s, *moveOpts\)/.test(uiSrc) && /syncIso3DHost\(s, *dmMoveOpts\)/.test(uiSrc));
+
+  // Reach itself must be read from the unit, not hardcoded - the v120.283 follow-up.
+  const oaLines=[];
+  [['ui.js',uiSrc],['rules.js',rulesSrc]].forEach(([file,txt])=>{
+    txt.split('\n').forEach((ln,i)=>{
+      if(!/leavesReach\(/.test(ln) || /function leavesReach/.test(ln)) return;
+      if(!/reachTilesOf\(/.test(ln)) oaLines.push(file+':'+(i+1));
+    });
+  });
+  T('every opportunity-attack check uses the observer\'s real reach, not a hardcoded 1 tile'
+    +(oaLines.length?' - HARDCODED: '+oaLines.join(', '):''), oaLines.length===0);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');

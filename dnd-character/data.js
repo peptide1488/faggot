@@ -2,7 +2,7 @@
 // flags the version badge if any disagree. v120.256 only stamped ui.js and rules.js, so a
 // stale data.js/net.js/iso-renderer.js would have passed the check silently -- a detector
 // with holes in it is worse than none, because it reads as an all-clear.
-const DATA_BUILD='v120.283';
+const DATA_BUILD='v120.284';
 // Grimoire — extracted data tables (Stage 1 of index.html modularization).
 // Pure content: spells, monsters, classes, items, maps, terrain. No app logic here —
 // see AUDIT.md for the modularization writeup. Loaded via <script src> before the main
@@ -625,7 +625,7 @@ const MONSTER_MECH={
   'Bite +5 (1 + DC10 Con 2d4 poison)':[{name:'Bite',hit:5,dc:{n:10,ab:'Con'},dmg:'2d4',dtype:'poison',tiles:1}],
   'Greatclub +6 (2d8+4)':[{name:'Greatclub',hit:6,dmg:'2d8+4',dtype:'bludgeoning',tiles:1}],
   'Claw +7 (2d6+4) · Bite +7 (1d6+4)':[{name:'Claw',hit:7,dmg:'2d6+4',dtype:'slashing',tiles:1},{name:'Bite',hit:7,dmg:'1d6+4',dtype:'piercing',tiles:1}],
-  'Greatclub +8 (3d8+5) · Rock +8 (3d10+5)':[{name:'Greatclub',hit:8,dmg:'3d8+5',dtype:'bludgeoning',tiles:1},{name:'Rock',hit:8,dmg:'3d10+5',dtype:'bludgeoning',tiles:1}],
+  'Greatclub +8 (3d8+5) · Rock +8 (3d10+5)':[{name:'Greatclub',hit:8,dmg:'3d8+5',dtype:'bludgeoning',tiles:2},{name:'Rock',hit:8,dmg:'3d10+5',dtype:'bludgeoning',tiles:1}],
   'Pseudopod +3 (2d6+1 acid, corrodes metal)':[{name:'Pseudopod',hit:3,dmg:'2d6+1',dtype:'acid',tiles:1}],
   'Pseudopod +4 (3d6 acid) · Engulf (DC 12 Dex)':[{name:'Pseudopod',hit:4,dmg:'3d6',dtype:'acid',tiles:1},{name:'Engulf',dc:{n:12,ab:'Dex'},tiles:1}],
   'Sting +5 (1d4+3 + DC11 Con 3d6 poison)':[{name:'Sting',hit:5,dc:{n:11,ab:'Con'},dmg:'1d4+3',dtype:'poison',tiles:1}],
@@ -634,7 +634,7 @@ const MONSTER_MECH={
   'Spear +4 (1d6+2) · Bite +4 (1d6+2)':[{name:'Spear',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:1},{name:'Bite',hit:4,dmg:'1d6+2',dtype:'piercing',tiles:1}],
   'Bite +7 (2d6+4) · Stinger +7 (2d6+4 + DC15 Con 7d6 poison)':[{name:'Bite',hit:7,dmg:'2d6+4',dtype:'piercing',tiles:1},{name:'Stinger',hit:7,dc:{n:15,ab:'Con'},dmg:'2d6+4',dtype:'poison',tiles:2}],
   'Bite +6 (1d10+4 + 1d6 fire) · Fire Breath (DC13 Dex, 7d6)':[{name:'Bite',hit:6,dmg:'1d10+4',dtype:'fire',tiles:1},{name:'Fire Breath',dc:{n:13,ab:'Dex'},dmg:'7d6',dtype:'fire',tiles:6}],
-  'Bite +10 (2d10+6 + 1d6 fire) · Claw +10 (2d6+6) · Fire Breath (DC17 Dex, 16d6)':[{name:'Bite',hit:10,dmg:'2d10+6',dtype:'fire',tiles:1},{name:'Claw',hit:10,dmg:'2d6+6',dtype:'slashing',tiles:1},{name:'Fire Breath',dc:{n:17,ab:'Dex'},dmg:'16d6',dtype:'fire',tiles:6}],
+  'Bite +10 (2d10+6 + 1d6 fire) · Claw +10 (2d6+6) · Fire Breath (DC17 Dex, 16d6)':[{name:'Bite',hit:10,dmg:'2d10+6',dtype:'fire',tiles:2},{name:'Claw',hit:10,dmg:'2d6+6',dtype:'slashing',tiles:1},{name:'Fire Breath',dc:{n:17,ab:'Dex'},dmg:'16d6',dtype:'fire',tiles:6}],
   'Eye Rays +5 (1d6) · Bite +1 (1)':[{name:'Eye Rays',hit:5,dmg:'1d6',tiles:24},{name:'Bite',hit:1,dtype:'piercing',tiles:1}],
   'Eye Rays +9 (3 of 10, ~4d8 each) · Bite +5 (4d6)':[{name:'Eye Rays',hit:9,dmg:'4d8',tiles:24},{name:'Bite',hit:5,dmg:'4d6',dtype:'piercing',tiles:1}]
 };
