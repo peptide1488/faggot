@@ -1797,7 +1797,7 @@ try{ if(typeof window!=='undefined') window.GrimoireEvents=Events; }catch(e){}
 // actorId, so the immediately-preceding attack event is used to recover who did it. This is
 // the one central choke point every attack in every mode (QB, player-net) already funnels
 // through, so no per-mode wiring is needed.
-// Combat juice (v120.284). One subscriber, so Quick Battle, DM-hosted and player-net all get
+// Combat juice (v120.285). One subscriber, so Quick Battle, DM-hosted and player-net all get
 // impact frames/hitstop/shake without any per-mode wiring - the same reason Dark One's Blessing
 // below is a subscriber rather than three hooks. FX is defensive internally and never delays
 // game state, only visuals.
@@ -1873,8 +1873,9 @@ const Engine = {
     // way, a documented simplification, not silently wrong: this app has no way to know how
     // high a monster is flying since it never tracks it).
     const attackerAlt=(armorSubj&&armorSubj.altitude)||0, targetAlt=(targetSubj&&targetSubj.altitude)||0;
-    const reachFt=(atk.tiles||1)>1?10:5;
-    const altitudeBlocked = melee && Math.abs(attackerAlt-targetAlt)>reachFt;
+    // Shared with BRAINS.tactical (v120.285) so the AI never picks a target the resolver will
+    // then refuse — that mismatch cost a monster its whole turn, every round.
+    const altitudeBlocked = melee && meleeAltitudeBlocked(attackerAlt, targetAlt, atk.tiles);
     // Lighting (PHB: heavily obscured is the softer "disadvantage" approximation this app
     // already uses, not a hard block on targeting — see visionLevel/tileLightLevel). This was
     // previously computed ad hoc ONLY inside Quick Battle's own interactive PC-attack UI, never
@@ -2206,7 +2207,11 @@ BRAINS.tactical = function(qb, u){
   const atks=parseMonsterAttacks(u.atk).map(a=>({name:a.name, toHit:a.hit||0, dmg:a.dmg||'1d6', tiles:a.tiles||1, dtype:a.dtype, cond:a.cond})).filter(a=>true);
   const usable=atks.length?atks:[{name:'Attack',toHit:0,dmg:'1d6',tiles:1}];
   const dist=f=>gridDist(u.x,u.y,f.x,f.y);
-  const canHitFrom=(x,y,f,a)=>{ const d=gridDist(x,y,f.x,f.y); if(d>a.tiles) return false; if(a.tiles>1) return losClear(qb,x,y,f.x,f.y); return true; };
+  const canHitFrom=(x,y,f,a)=>{ const d=gridDist(x,y,f.x,f.y); if(d>a.tiles) return false;
+    // Melee can't reach across an altitude gap — same predicate Engine uses to refuse the swing,
+    // so the brain stops choosing targets it cannot actually hit (v120.285).
+    if((a.tiles||1)<=1 && meleeAltitudeBlocked(altitudeFtOf(u), altitudeFtOf(f), a.tiles)) return false;
+    if(a.tiles>1) return losClear(qb,x,y,f.x,f.y); return true; };
   const blocked=(x,y)=> qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y);
   // 1) can we attack someone right now? prefer the lowest-HP foe we can hit.
   // A foe it can't see is only a candidate when ADJACENT (v120.266): RAW you may swing at the
@@ -2253,6 +2258,14 @@ BRAINS.tactical = function(qb, u){
   const reachD=reachableCells(qb, u.x, u.y, (u.moveLeft||0)+(u.speed||30), ufly, u); let dashTo=null, dd=dist(target);
   Object.keys(reachD).forEach(k=>{ const [x,y]=k.split(',').map(Number); if(blocked(x,y)) return; const d=gridDist(x,y,target.x,target.y); if(d<dd){ dd=d; dashTo={x,y}; } });
   if(dashTo) return [{type:'move', to:dashTo, dash:true}];
+  // Nothing to hit and nowhere better to stand: brace instead of standing and staring. Only when
+  // a foe WOULD have been attacked but for the altitude gap (v120.285) - a melee monster under a
+  // flier previously burned its whole turn doing nothing at all. Dodge is a general action any
+  // creature can take (v120.279), and attackAdvantage already honours it for monsters.
+  if((u.attacksLeft||0)>0 && atkFoes.some(f=>usable.some(a=>(a.tiles||1)<=1
+      && gridDist(u.x,u.y,f.x,f.y)<=(a.tiles||1)
+      && meleeAltitudeBlocked(altitudeFtOf(u), altitudeFtOf(f), a.tiles))))
+    return [{type:'dodge'}];
   return [];
 };
 
@@ -2449,7 +2462,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.284';
+const APP_VERSION='v120.285';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That

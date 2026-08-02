@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.284';
+const RULES_BUILD='v120.285';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -1896,7 +1896,7 @@ function gridDist(ax,ay,bx,by){ return Math.max(Math.abs(ax-bx),Math.abs(ay-by))
 function inBlast(cx,cy,x,y,r){ if(r<=1) return gridDist(cx,cy,x,y)<=r; return Math.hypot(cx-x,cy-y)<=r+0.0001; }
 
 /**
- * Altitude in feet for ANY unit shape (v120.284): a character (c.altitude), a Quick Battle
+ * Altitude in feet for ANY unit shape (v120.285): a character (c.altitude), a Quick Battle
  * player wrapper (u.c.altitude), or a monster (u.altitude). One reader, because the last three
  * altitude bugs were all "this code path never heard about altitude".
  */
@@ -1908,7 +1908,25 @@ function altitudeFtOf(u){
 }
 
 /**
- * How far does this unit THREATEN, in tiles (v120.284)?
+ * Is a MELEE attack blocked by the vertical gap (v120.285)?
+ *
+ * Engine already refused these, but the monster AI didn't know the rule, so a melee brain would
+ * happily select a flier 40 ft overhead, swing, and have the swing rejected downstream — a wasted
+ * turn every round and a log full of attacks that never had a chance. Exactly the "every enemy
+ * still attacks me" complaint, this time from the AI side.
+ *
+ * One predicate, used by BOTH the resolver and the brain, so the thing that decides and the thing
+ * that acts can never disagree about who is reachable. Feet in, matching Engine's original rule:
+ * a 2-tile (reach) weapon spans 10 ft of altitude, everything else 5 ft. Ranged attacks are never
+ * blocked by altitude — an archer can shoot upward just fine.
+ */
+function meleeAltitudeBlocked(attackerAltFt, targetAltFt, atkTiles){
+  const reachFt=(Number(atkTiles)||1)>1 ? 10 : 5;
+  return Math.abs((Number(attackerAltFt)||0)-(Number(targetAltFt)||0)) > reachFt;
+}
+
+/**
+ * How far does this unit THREATEN, in tiles (v120.285)?
  *
  * Every opportunity-attack site hardcoded 1 tile, so a Hill Giant's 10 ft greatclub and a
  * Glaive-wielding fighter both threatened 5 ft. One reader for both unit kinds, because the
@@ -2944,7 +2962,7 @@ function syncInteractDecor(s){
 }
 
 /**
- * Keep a cell's LIGHT in step with the decor sitting on it (v120.284).
+ * Keep a cell's LIGHT in step with the decor sitting on it (v120.285).
  *
  * Reported: "in the map editor i added torch to wall but it didnt add light." The editor wrote
  * s.map.decor[key] and stopped there, but light does not come from decor at all - it comes from
@@ -2960,14 +2978,14 @@ const DECOR_LIGHT={
   campfire:{radius:4.5, color:[1.0,0.50,0.18], intensity:1.40, kind:'campfire'},
 };
 /**
- * Which Engine adapter drives THIS session (v120.284)?
+ * Which Engine adapter drives THIS session (v120.285)?
  *
  * Shared UI kept hardcoding `qbAdapter`, which silently produced Quick-Battle answers inside a
  * DM-hosted fight (openStatusPanel's advantage probe did exactly that). One picker so a shared
  * panel behaves the same in all three modes instead of quietly reading the wrong session.
  */
 /**
- * A monster's turn starts clean (v120.284).
+ * A monster's turn starts clean (v120.285).
  *
  * The character side has had freshTurnState since forever; monsters had their per-turn fields
  * re-set inline at two call sites instead, which is the same shape as the battle-state leak that
@@ -2979,7 +2997,7 @@ function freshMonsterTurn(m){
   m.attacksLeft=m.attacks||1;
   m.moveLeft=speedBlocked(m)?0:(m.speed||30);
   m.reactionUsed=false;
-  m.disengaged=false;   // general actions, v120.284
+  m.disengaged=false;   // general actions, v120.285
   m.readied=false;
   return m;
 }
@@ -3582,7 +3600,7 @@ function qbCheckEnd(){ if(!QB) return;
   // instead means the sheet is correct the moment the fight ends, not retroactively.
   if(!wasOver && QB.over){
     const pc=QB.players[0].c;
-    clearBattleState(pc);   // one list, three call sites (v120.284)
+    clearBattleState(pc);   // one list, three call sites (v120.285)
     if(typeof longRest==='function') longRest(pc);   // full recovery between sandbox fights
     if(typeof save==='function') save();
     qbLog('🛌 Long rest — HP, slots and abilities restored, all effects cleared');
@@ -3725,6 +3743,16 @@ function qbMonsterOAonPc(mo, pc){ if(mo.reactionUsed||mo.hp<=0) return; const a=
 function qbPcOAonMonster(pc, mo){ const c=pc.c; if(c.battle.reaction||c.hp.cur<=0) return; const melee=qbPcAttacks(c).filter(a=>a.melee); if(!melee.length) return; c.battle.reaction=true; qbLog('⚔ Opportunity: '+c.name); qbResolveAttack(pc, mo, melee[0]); }
 
 function qbApplyIntent(u, it, done){
+  // A monster that can't reach anyone braces instead of standing there (v120.285). Dodge is a
+  // general action any creature can take (v120.279), and attackAdvantage already reads the Dodge
+  // condition for ANY unit — so this needs no special-case resolver support.
+  if(it.type==='dodge'){
+    if((u.attacksLeft||0)>0){
+      u.attacksLeft=0;
+      u.conds=(u.conds||[]).filter(x=>x.name!=='Dodge').concat([{name:'Dodge',rounds:1}]);
+      qbLog('🛡 '+qbName(u)+' takes the Dodge action — attacks against it have disadvantage');
+    }
+    done(); return; }
   if(it.type==='attack'){ const tgt=qbUnitById(it.targetId); if(!tgt||qbHP(tgt)<=0||(u.attacksLeft||0)<=0){ done(); return; }
     u.attacksLeft--;   // Sanctuary's save-or-lose-the-attack gate lives in Engine.attack now (qbAdapter.sanctuaryDC)
     qbResolveAttack(u, tgt, it.atk, done); return; }
@@ -4127,7 +4155,7 @@ function maneuverSearch(ad, pcUnit, skillKey, log){
    them, and they're written adapter-free so Quick Battle can use them unchanged later. */
 
 /**
- * Everything that belongs to ONE fight and must not survive it (v120.284).
+ * Everything that belongs to ONE fight and must not survive it (v120.285).
  *
  * This exists because the list kept being forgotten a field at a time. First conditions carried
  * between Quick Battles ("in every map i am restrained"), then Invisible did, and then altitude —
@@ -4143,7 +4171,7 @@ function clearBattleState(c){
   if(!c) return;
   c.conditions={};
   c.hiddenDC=null;
-  c.altitude=0;              // flight — the v120.284 report
+  c.altitude=0;              // flight — the v120.285 report
   c.effects=[];
   c.concentration={active:false, spell:''};
   c.mountedOn=null;          // dismount; a steed doesn't follow you out of the arena

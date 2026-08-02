@@ -37,7 +37,7 @@ eval(fs.readFileSync(path.join(__dirname,'fx.js'),'utf8')+';'+src.replace('"use 
   'globalThis.Engine=Engine;globalThis.qbAdapter=qbAdapter;globalThis.sessionAdapter=sessionAdapter;globalThis.SPELL_TELEPORT=SPELL_TELEPORT;globalThis.BRAINS=BRAINS;globalThis.SPELL_CHOICES=SPELL_CHOICES;globalThis.SPELL_DTYPE=SPELL_DTYPE;globalThis.SPELL_MECH=SPELL_MECH;globalThis.MONSTER_MECH=MONSTER_MECH;globalThis.LEGENDARY=LEGENDARY;globalThis.LAIR=LAIR;globalThis.MONSTERS_5E=MONSTERS_5E;globalThis.SPELL_EFFECTS=SPELL_EFFECTS;globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;'+
   'globalThis.SPELL_DESC=SPELL_DESC;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.TERRAIN=TERRAIN;globalThis.MAP_PRESETS=MAP_PRESETS;globalThis.isPitTerrain=isPitTerrain;globalThis.SPELL_LIGHTS=SPELL_LIGHTS;globalThis.SPELL_COND=SPELL_COND;globalThis.SPELL_TERRAIN=SPELL_TERRAIN;globalThis.qbPaintTerrain=qbPaintTerrain;globalThis.qbHazardAt=qbHazardAt;globalThis.qbExpireHazards=qbExpireHazards;globalThis.qbCheckTerrainProne=qbCheckTerrainProne;'+
   'globalThis.SPELL_GAS=SPELL_GAS;globalThis.paintHazardTerrain=paintHazardTerrain;globalThis.hazardAt=hazardAt;globalThis.expireHazards=expireHazards;globalThis.checkTerrainHazardCond=checkTerrainHazardCond;globalThis.tickGasHazards=tickGasHazards;'+
-  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.freshMonsterTurn=freshMonsterTurn;globalThis.altitudeFtOf=altitudeFtOf;globalThis.leavesReach=leavesReach;globalThis.reachTilesOf=reachTilesOf;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
+  'globalThis.speedBlocked=speedBlocked;globalThis.getQB=()=>QB;globalThis.qbExit=qbExit;globalThis.clearBattleState=clearBattleState;globalThis.battleAdapter=battleAdapter;globalThis.freshMonsterTurn=freshMonsterTurn;globalThis.altitudeFtOf=altitudeFtOf;globalThis.leavesReach=leavesReach;globalThis.reachTilesOf=reachTilesOf;globalThis.meleeAltitudeBlocked=meleeAltitudeBlocked;globalThis.setQB=v=>{QB=v;};globalThis.POWER_WORD_HP=POWER_WORD_HP;globalThis.EYEBITE_OPTIONS=EYEBITE_OPTIONS;'+
   'globalThis.MOUNT_CATALOG=MOUNT_CATALOG;globalThis.MAGIC_ITEMS=MAGIC_ITEMS;globalThis.TRAP_CATALOG=TRAP_CATALOG;globalThis.FIND_STEED_CATALOG=FIND_STEED_CATALOG;'+
   'globalThis.BEAST_SHAPES=BEAST_SHAPES;globalThis.ELEMENTAL_SHAPES=ELEMENTAL_SHAPES;'+
   'globalThis.concQueueLen=()=>concQueue.length;globalThis.resetConc=()=>{concActive=false;concQueue.length=0;};'+
@@ -5087,6 +5087,47 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   });
   T('every opportunity-attack check uses the observer\'s real reach, not a hardcoded 1 tile'
     +(oaLines.length?' - HARDCODED: '+oaLines.join(', '):''), oaLines.length===0);
+}
+
+
+/* ---- The AI must not pick targets the resolver will refuse (v120.285) ----
+   Engine already blocked melee across an altitude gap, but BRAINS.tactical had zero altitude
+   awareness (literally 0 mentions), so a melee monster would select a flier 40 ft overhead, swing,
+   and have the swing rejected downstream - a wasted turn every round. Same "decider and actor
+   disagree" shape as the earlier bugs, so they now share one predicate. ---- */
+{
+  T('a 5 ft weapon cannot reach 40 ft up', meleeAltitudeBlocked(0, 40, 1)===true);
+  T('a 5 ft weapon cannot reach 10 ft up', meleeAltitudeBlocked(0, 10, 1)===true);
+  T('a 5 ft weapon CAN reach 5 ft up (the gap equals the reach)', meleeAltitudeBlocked(0, 5, 1)===false);
+  T('a reach weapon spans 10 ft of altitude', meleeAltitudeBlocked(0, 10, 2)===false);
+  T('...but not 15 ft', meleeAltitudeBlocked(0, 15, 2)===true);
+  T('it is symmetric - a flier striking down is the same gap',
+    meleeAltitudeBlocked(40, 0, 1)===meleeAltitudeBlocked(0, 40, 1));
+  T('ground-to-ground is never blocked', meleeAltitudeBlocked(0, 0, 1)===false);
+  T('garbage altitudes are treated as ground, not NaN',
+    meleeAltitudeBlocked(null, undefined, 1)===false && meleeAltitudeBlocked('x','y',1)===false);
+
+  // Both consumers must use the SHARED predicate, or they drift apart again.
+  const html=fs.readFileSync(path.join(__dirname,'index.html'),'utf8');
+  T('Engine refuses melee across the gap via the shared predicate',
+    /altitudeBlocked = melee && meleeAltitudeBlocked\(/.test(html));
+  T('BRAINS.tactical uses the SAME predicate when choosing a target',
+    /meleeAltitudeBlocked\(altitudeFtOf\(u\), altitudeFtOf\(f\)/.test(html));
+  T('the old hardcoded reachFt rule is gone from Engine', !/const reachFt=\(atk\.tiles\|\|1\)>1\?10:5;/.test(html));
+
+  const rulesSrc=fs.readFileSync(path.join(__dirname,'rules.js'),'utf8');
+  // Blocking the swing is only half the fix: a monster that can't reach used to burn its whole
+  // turn standing still. It now braces instead, using the Dodge action monsters gained in
+  // v120.279 - no new resolver concept, and attackAdvantage already honours it for any unit.
+  T('the brain falls back to Dodge when only the altitude gap stops it', /return \[\{type:'dodge'\}\];/.test(html));
+  T('the Dodge fallback is gated on a foe it would OTHERWISE have attacked',
+    /meleeAltitudeBlocked\(altitudeFtOf\(u\), altitudeFtOf\(f\), a\.tiles\)\)\)/.test(html));
+  T('the monster-turn executor understands a dodge intent', /if\(it\.type==='dodge'\)/.test(rulesSrc));
+  T('dodging costs the monster its attack, so it is a real action not a free buff',
+    /u\.attacksLeft=0;/.test(rulesSrc.slice(rulesSrc.indexOf("if(it.type==='dodge')"),
+                                             rulesSrc.indexOf("if(it.type==='dodge')")+420)));
+  T('a dodging monster imposes disadvantage (same condition the PC Dodge uses)',
+    attackAdvantage(new Set(), new Set(['Dodge']), true).adv < 0);
 }
 
 console.log(fails? ('\n'+fails+' FAILURE'+(fails>1?'S':'')) : '\nALL TESTS PASSED');
