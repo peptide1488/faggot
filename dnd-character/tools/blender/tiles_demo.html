@@ -1500,10 +1500,15 @@ document.getElementById("ver").textContent=VERSION;
         // light source, not something standing in front of one.
         // ONE caster, slot 0, and written out rather than looped. This is inside
         // a 28-step march that is itself inside the light loop, so the compiler
-        // emits this body 28 times per light: at two slots it cost a third of
-        // the frame rate whether or not a second actor existed, because the code
-        // is generated whether or not the runtime cap lets it run. Slot 0 is the
-        // nearest actor, which is the one whose shadow anyone is looking at.
+        // emits this body 28 times per light and it is the most expensive place
+        // in the shader to add anything. Slot 0 is the nearest actor, which is
+        // the one whose shadow anyone is looking at.
+        //
+        // THIS MARCH IS THE FRAME. Measured with __engine.bench (a readback, not
+        // a frame counter): 3.99ms a frame at 7.2 megapixels, and 0.22ms with
+        // shadows off -- so 94% of the cost is here, and everything else in this
+        // file put together is the other 6%. If the renderer ever needs to be
+        // faster, it is this and nothing else.
         if(uNCast>0.5){
           vec2 su=(sp-uSpRect[0].xy)/uSpRect[0].zw;
           if(su.x>=0.0&&su.x<=1.0&&su.y>=0.0&&su.y<=1.0){
@@ -1613,11 +1618,19 @@ document.getElementById("ver").textContent=VERSION;
       // is hidden by it. That is the same argument that made trees geometry.
       //
       // Both used to be their own loop. They are one because GLSL ES UNROLLS
-      // every loop: two bodies of NSPR iterations is twice the emitted code, and
-      // this shader is fill-rate bound on a full-screen quad, so it cost real
-      // frame rate even with nothing standing in any of the slots. Merging works
-      // because the slot order already puts every solid before every emitter, so
-      // by the time an emissive slot is reached zBest is final for this pixel.
+      // every loop, so two bodies of NSPR iterations is twice the emitted code
+      // for no gain. Merging works because the slot order already puts every
+      // solid before every emitter, so by the time an emissive slot is reached
+      // zBest is final for this pixel.
+      //
+      // It was originally done for a frame-rate regression that turned out not
+      // to exist: the numbers came from counting requestAnimationFrame callbacks
+      // in an automated browser, which clamps them to about 1fps whenever the
+      // page is not visibly composited. That measured the clamp, not the
+      // renderer. The merge is still the right shape -- less emitted code, one
+      // pass over the slots, the winner's normal fetched once outside it -- but
+      // on real hardware the sprite slots are a rounding error next to the
+      // shadow march. Use __engine.bench for anything like this.
       vec4 sp=vec4(0.0); float hSpr=0.0, zSpr=1e9;
       vec2 spUV=vec2(0.0);
       vec3 fxAdd=vec3(0.0);
@@ -3402,6 +3415,29 @@ document.getElementById("ver").textContent=VERSION;
     step:(n,dt)=>{ const was=paused; paused=false;
                    for(let k=0;k<(n||1);k++) tick(dt||0.05); paused=was; },
     view0:()=>({panX,panY,zoom:zoom.value/100}),
+    // HOW LONG A FRAME ACTUALLY TAKES. Counting requestAnimationFrame callbacks
+    // measures the browser's willingness to schedule them, not the renderer:
+    // Chromium clamps rAF to about 1fps whenever a page is not visibly
+    // composited, which is always true in an automated browser. Every frame-rate
+    // number taken that way in here was really that clamp, including the ones
+    // used to chase a regression. Drawing n frames back to back with a finish()
+    // at the end asks the GPU instead.
+    // The sync is a one-pixel readPixels, NOT gl.finish(): finish is advisory in
+    // ANGLE and returns before the work is done, which reported 0.05ms a frame
+    // for seven megapixels of shadow-marched shader -- twenty thousand frames a
+    // second, and obviously not true. A readback cannot return until the frame it
+    // reads has actually been drawn.
+    bench:(n)=>{ n=n||30;
+      const px=new Uint8Array(4);
+      const sync=()=>gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);
+      drawGL(); sync();
+      const t0=performance.now();
+      for(let k=0;k<n;k++){ drawGL(); }
+      sync();
+      const ms=(performance.now()-t0)/n;
+      return {msPerFrame:+ms.toFixed(2), fps:+(1000/ms).toFixed(1),
+              canvas:[glc.width,glc.height],
+              megapixels:+(glc.width*glc.height/1e6).toFixed(2)}; },
     // What the shader was actually handed this frame. "It is in the list" and
     // "it is in a slot" are different claims, and only this one answers the
     // second: the compositor trims, reorders and clears slots behind you.

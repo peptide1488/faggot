@@ -40,6 +40,7 @@ if the lighting looks wrong after a refresh, toggle daylight to reset it.
 | `blender -b -P check_seams.py -- --theme grass10A` | for every pair of VARIANTS whose sockets say they may abut — all 160, not just rotation 0 — samples both edge profiles and reports the worst height disagreement. Expect **0 of 14496** |
 | `blender -b -P check_profile.py -- --theme grass10A` | what SHAPE each level change is: its gradient, and for one asked to shelve, how much of its dry ledge an actor could stand on |
 | `python socket_spec.py out/grass10A -o SOCKETS.md` | rewrites the edge/connection spec from the manifest: every socket, every piece, and which corners no tile can make |
+| `__engine.bench(30)` in the page | ms per frame, synced with a readback. The honest answer; see the note under Bake about why counting frames is not |
 
 These exist because **every bug worth the name here was a claim that nothing
 checked**: a comment describing what the code did not do, a shore that agreed
@@ -166,12 +167,18 @@ he reads from the same `out/actors/` bake the goblin does. Effects bake larger
 (640) because a blast expands past a figure's frame, so the atlas cell is the
 largest over the manifests and each sprite occupies the top-left res x res of it.
 
-Two things cost real frame rate, and neither is where you would look. GLSL ES
-UNROLLS every loop, so a second per-pixel sprite pass cost half the frame rate
-**with every slot empty** — the code is generated whether or not the runtime cap
-lets it run. Same for a shadow-caster loop inside the 28-step march: it is one
-caster, written out rather than looped. If you add per-sprite work, measure it
-with everything switched off before assuming a cap protects you.
+**Do not measure frame rate by counting requestAnimationFrame callbacks.** An
+automated browser clamps rAF to about 1fps whenever the page is not visibly
+composited, so every number taken that way is the clamp, not the renderer — a
+whole regression hunt in here was chasing exactly that. `__engine.bench(n)` draws
+n frames and syncs with a one-pixel `readPixels`; `gl.finish()` will not do, it
+is advisory in ANGLE and cheerfully reports twenty thousand frames a second.
+
+What it actually costs, on a 3090 at 7.2 megapixels: **3.99ms a frame, and
+0.22ms with shadows off.** The 28-step shadow march is 94% of the frame and
+everything else put together is the other 6%. That is the only knob worth
+turning, and it is why the caster inside it is one slot written out rather than
+a loop.
 
 `__engine.pause()` / `.step(n)` stop time and hand-crank it. Not a debug hook:
 without them a screenshot lands after the animation it was meant to photograph,
