@@ -31,7 +31,7 @@ _spec.loader.exec_module(bw)
 
 scene, new_obj, tube = bw.scene, bw.new_obj, bw.tube
 
-EFFECTS = {"fireball": 7, "bolt": 5, "heal": 6, "frost": 6}
+EFFECTS = {"fireball": 7, "bolt": 5, "heal": 6, "frost": 6, "arrow": 5}
 
 
 def emat(name, rgb, strength):
@@ -180,7 +180,34 @@ def fx_frost(t):
              cx=math.cos(a) * rr, cy=math.sin(a) * rr)
 
 
-FX = {"fireball": fx_fireball, "bolt": fx_bolt, "heal": fx_heal, "frost": fx_frost}
+def fx_arrow(t):
+    """A shaft with a head and fletching, flying along +X like the bolt.
+
+    NOT EMISSIVE THE WAY A SPELL IS. An arrow is a physical object, lit by the
+    scene rather than by itself -- but every effect here goes through the additive
+    path, so a dark arrow would not appear at all. The compromise is a low, cool
+    strength: enough to read against grass and stone, not enough to glow like a
+    bolt. It is the one thing in this file that is an object rather than a light,
+    which is why its numbers look out of place next to the others.
+
+    Built from spheres laid along X rather than one rotated tube, because tube()
+    stands things up in Z and every part staying axis-aligned is what keeps the
+    height pass honest -- the same reason the bolt's tail is spheres.
+    """
+    shaft = emat("fx_shaft", (0.42, 0.30, 0.18), 0.85)
+    head = emat("fx_head_i", (0.72, 0.74, 0.80), 1.05)
+    flet = emat("fx_flet", (0.80, 0.78, 0.70), 0.95)
+    x = -0.95 + 2.1 * t
+    z = 0.62 + 0.22 * math.sin(math.pi * t)      # a shallow arc: loosed, not fired
+    for k in range(5):
+        sphere("shaft%d" % k, x - 0.085 * k, 0.0, z, 0.020, shaft, 40 + k, wob=0.0)
+    sphere("head", x + 0.075, 0.0, z, 0.030, head, 46, wob=0.0)
+    for k, dy in ((0, 0.035), (1, -0.035)):
+        sphere("flet%d" % k, x - 0.40, dy, z + 0.02, 0.026, flet, 47 + k, wob=0.05)
+
+
+FX = {"fireball": fx_fireball, "bolt": fx_bolt, "heal": fx_heal, "frost": fx_frost,
+      "arrow": fx_arrow}
 
 
 # A BLAST NEEDS MORE CANVAS THAN A FIGURE. The camera frames RES/PPU world units,
@@ -218,7 +245,7 @@ def main():
     with open(os.path.join(outdir, "effects.json"), "w") as fh:
         json.dump({"res": bw.RES, "ppu": bw.PPU, "effects": EFFECTS,
                    "additive": True, "radial": True,
-                   "aimed": ["bolt"]}, fh, indent=1)
+                   "aimed": ["bolt", "arrow"]}, fh, indent=1)
     print("DONE ->", outdir)
 
 

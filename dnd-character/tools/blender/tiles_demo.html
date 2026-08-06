@@ -62,6 +62,7 @@
     <label style="display:inline-flex"><input type="radio" name="spell" value="bolt"> bolt</label>
     <label style="display:inline-flex"><input type="radio" name="spell" value="heal"> heal</label>
     <label style="display:inline-flex"><input type="radio" name="spell" value="frost"> frost</label>
+    <label style="display:inline-flex"><input type="radio" name="spell" value="arrow"> arrow</label>
   </div>
   <label>you are <select id="who"></select></label>
   <button id="spawn">spawn a monster</button>
@@ -1339,8 +1340,11 @@ const FURNITURE=["barrel","crate","chest","table"];
 // units long, so blocking a single 1.0 square left its ends poking into walkable
 // ground -- which is what "walking over props" actually was.
 const FURN_FOOT={ barrel:[1,1], crate:[1,1], chest:[1,1], table:[2,1],
-                  tree:[1,1], pine:[1,1], shrub:[1,1], boulder:[1,1], stump:[1,1] };
-const OUTDOOR_PROPS=["tree","pine","shrub","boulder","stump"];
+                  tree:[1,1], pine:[1,1], shrub:[1,1], boulder:[1,1], stump:[1,1],
+                  block:[1,1], rocks:[1,1], bush:[1,1], sapling:[1,1],
+                  ruin:[1,1], entrance:[1,1] };
+const OUTDOOR_PROPS=["tree","pine","shrub","boulder","stump",
+                     "block","rocks","bush","sapling","ruin","entrance"];
 const PROP_NAMES=["torch_Y+","torch_X+","torch_Y-","torch_X-"]
   .concat(FURNITURE).concat(OUTDOOR_PROPS);
 // ?goblins=N -- how crowded the map starts. Parsed once at load (see PARAMS);
@@ -1375,7 +1379,12 @@ const FXDEF={
   fireball:{ light:[2.2,0.95,0.30], r:7.0, z:0.0 },
   bolt:    { light:[0.55,0.80,2.0], r:5.0, z:0.0, aimed:true },
   heal:    { light:[0.45,1.9,0.70], r:5.0, z:0.0 },
-  frost:   { light:[0.70,1.1,2.0],  r:5.0, z:0.0 }
+  frost:   { light:[0.70,1.1,2.0],  r:5.0, z:0.0 },
+  // An arrow is an OBJECT, not a spell: it throws almost no light, and what
+  // little it does is there so it is not a black streak at night. Aimed, like
+  // the bolt, so it flies from the hand to the target rather than appearing in
+  // the gap between them.
+  arrow:   { light:[0.30,0.28,0.24], r:2.2, z:0.0, aimed:true }
 };
 const OVER_Z=2.8;                    // build_tiles.py OVER_Z (upper floor height)
 // Where this set's water surface sits, from its manifest. -0.42 is the dungeon
@@ -2047,7 +2056,11 @@ document.getElementById("ver").textContent=VERSION;
       vec3 outc = lit + fxAdd;
       if(uFog > 0.0){
         float dist = max(0.0, uCam - zBest);
-        float f = 1.0 - exp(-dist * dist * uFog * 0.0025);
+        // Quadratic in distance, so it ramps hard once the camera pulls back: at the
+        // old coefficient a wide shot of a nine-tile map was half fog. Tuned so the
+        // far corner of a full map is hazy rather than gone at the default, and the
+        // slider still reaches solid.
+        float f = 1.0 - exp(-dist * dist * uFog * 0.0014);
         f *= exp(-max(0.0, hgt - uFogHeight) * 0.55);
         outc = mix(outc, uFogCol, clamp(f, 0.0, 1.0));
       }
@@ -3089,11 +3102,20 @@ document.getElementById("ver").textContent=VERSION;
       // in it is not a path -- and off the transitions, where the ground is too
       // steep to root in and a trunk would hang off a cliff. Boulders are allowed
       // anywhere walkable, because a boulder does not care.
-      const PLANT={ ground:[["tree",0.10],["pine",0.08],["shrub",0.16],
-                            ["boulder",0.06],["stump",0.03]],
-                    high_ground:[["pine",0.13],["tree",0.06],["shrub",0.14],
-                                 ["boulder",0.08]],
-                    wallow:[["shrub",0.10],["stump",0.05]] };
+      // WHAT GROWS WHERE, by role. Cover is deliberately rarer than scatter --
+      // a block you can hide behind is a tactical feature, and one per few tiles
+      // is a battlefield while one per tile is a maze. The scale range matters as
+      // much as the count: rocks, then shrub, then bush, then sapling, then tree
+      // is what stops a meadow reading as grass with lollipops on it.
+      const PLANT={ ground:[["tree",0.07],["pine",0.05],["sapling",0.05],
+                            ["shrub",0.10],["bush",0.07],["rocks",0.08],
+                            ["block",0.05],["boulder",0.04],["stump",0.02],
+                            ["ruin",0.02]],
+                    high_ground:[["pine",0.10],["tree",0.04],["shrub",0.09],
+                                 ["bush",0.06],["rocks",0.07],["block",0.06],
+                                 ["boulder",0.05],["ruin",0.03],
+                                 ["entrance",0.02]],
+                    wallow:[["shrub",0.09],["rocks",0.06],["stump",0.04]] };
       for(const c of cells){
         const table=PLANT[c.role];
         if(!table) continue;
@@ -3501,7 +3523,11 @@ document.getElementById("ver").textContent=VERSION;
       cast(name,wx,wy,z,hero.wx,hero.wy);
       // Splash. heal is the one that helps, which is the cheapest possible way
       // to prove the damage path and the effect are not the same switch.
-      const R = name==="fireball" ? 2.6 : name==="frost" ? 2.0 : 1.2;
+      // A shot hits WHAT IT WAS AIMED AT. A blast has a radius; an arrow has a
+      // point, and giving it one anyway meant it clipped whatever happened to be
+      // standing near the target as well.
+      const R = name==="fireball" ? 2.6 : name==="frost" ? 2.0
+              : name==="arrow" ? 0.6 : 1.2;
       for(const a of actors){
         if(a.dead || (a===hero && name!=="heal")) continue;
         if((a.wx-wx)**2+(a.wy-wy)**2 > R*R) continue;
@@ -3547,7 +3573,7 @@ document.getElementById("ver").textContent=VERSION;
   function applyDaylight(on){
     if(on){ amb.value=52; rng.value=rng.min; shd.value=60; sun.value=85;
             sunel.value=38; suncol.value="#fff0cc"; ambcol.value="#8899cc";
-            fog.value=10; fogcol.value="#a8bccc"; }
+            fog.value=6;  fogcol.value="#a8bccc"; }
     else  { amb.value=NIGHT.amb; rng.value=NIGHT.rng; shd.value=NIGHT.shd; sun.value=0;
             sunel.value=38; suncol.value="#ffd9a0"; ambcol.value="#5566aa";
             fog.value=8;  fogcol.value="#0d1016"; }

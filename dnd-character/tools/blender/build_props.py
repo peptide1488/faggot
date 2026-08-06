@@ -267,6 +267,82 @@ def prop_stump():
     return {"foot": 1.0}
 
 
+def prop_block():
+    """A boulder you can get BEHIND. The existing one is knee-high scatter -- it
+    dresses the ground and hides nothing. Cover has to be chest-high on the figure
+    that hides behind it and read as solid from every one of the eight directions,
+    so this is one squat mass with a smaller one shouldered against it rather than
+    a scatter of pebbles. Faceted, like the crags: rock parts along planes."""
+    rock = mkmat("block_rock", STONE, 0.90, mottle=0.28, poster=POSTER)
+    blob("block", 0.0, 0.0, 0.42, 0.52, 0.46, 0.44, rock, 51, rough=0.26,
+         rings=6, segs=7, smooth=False)
+    blob("block_b", 0.34, 0.20, 0.24, 0.28, 0.26, 0.26, rock, 52, rough=0.30,
+         rings=5, segs=7, smooth=False)
+    return {"foot": 1.0}
+
+
+def prop_rocks():
+    """Three low stones together -- scatter, not cover. Between bare ground and a
+    boulder there was nothing, and a meadow of grass and full-sized trees has a
+    scale gap in it you can see."""
+    rock = mkmat("rocks_rock", STONE, 0.90, mottle=0.34, poster=POSTER)
+    for k, (x, y, r) in enumerate(((0.0, 0.0, 0.17), (0.22, 0.13, 0.11),
+                                   (-0.16, 0.18, 0.09))):
+        blob("rock%d" % k, x, y, r * 0.6, r, r * 0.86, r * 0.7, rock, 55 + k,
+             rough=0.36, rings=5, segs=7, smooth=False)
+    return {"foot": 1.0}
+
+
+def prop_bush():
+    """A bigger, rounder shrub. `shrub` is ankle height; this is waist height, so
+    the two together give the undergrowth a range instead of one note."""
+    leaf = mkmat("bush", LEAF2, 0.95, mottle=0.34, poster=POSTER)
+    blob("bush_a", 0.0, 0.0, 0.34, 0.42, 0.40, 0.32, leaf, 61, rough=0.32)
+    blob("bush_b", 0.24, 0.16, 0.26, 0.26, 0.25, 0.20, leaf, 62, rough=0.34)
+    blob("bush_c", -0.20, -0.14, 0.24, 0.24, 0.23, 0.19, leaf, 63, rough=0.34)
+    return {"foot": 1.0}
+
+
+def prop_sapling():
+    """A young tree: one thin trunk, one small canopy. Fills the gap between shrub
+    and tree, and a wood made only of full-grown trees looks planted."""
+    bark = mkmat("bark", BARK, 0.92, mottle=0.30, poster=POSTER)
+    leaf = mkmat("leaf", LEAF, 0.95, mottle=0.34, poster=POSTER)
+    tube("sap_trunk", 0.0, 0.62, 0.055, 0.038, 6, bark)
+    blob("sap_canopy", 0.02, 0.0, 0.84, 0.30, 0.29, 0.26, leaf, 65, rough=0.32)
+    return {"foot": 1.0}
+
+
+def prop_ruin():
+    """A broken wall corner: two stubs of masonry meeting, both snapped off at
+    different heights. RUINS ARE READ BY THEIR BREAK, not by their stone -- a wall
+    that ends level looks unfinished, one that ends ragged looks old -- so the two
+    arms stop at different heights and the taller one loses a block off its top."""
+    stone = mkmat("ruin_stone", STONE, 0.88, mottle=0.26, poster=POSTER)
+    box("ruin_a", 0.0, -0.30, 0.34, 0.30, 0.62, 0.68, stone)
+    box("ruin_b", 0.30, 0.0, 0.22, 0.62, 0.30, 0.44, stone)
+    box("ruin_cap", -0.02, -0.52, 0.72, 0.26, 0.20, 0.16, stone)
+    box("fallen", -0.42, 0.34, 0.07, 0.34, 0.24, 0.14, stone, rotz=0.5)
+    return {"foot": 1.0}
+
+
+def prop_entrance():
+    """A way underground: two jambs, a lintel, and DARKNESS between them.
+
+    The dark is the whole prop. A doorway made of stone with the ground showing
+    through it reads as a gate; what says "this goes down" is that you cannot see
+    into it, so the void is an actual black face set back between the jambs rather
+    than a gap left for the terrain behind to show through."""
+    stone = mkmat("ent_stone", STONE, 0.88, mottle=0.24, poster=POSTER)
+    dark = mkmat("ent_dark", (0.02, 0.02, 0.025), 1.0, mottle=0.0, poster=POSTER)
+    box("jamb_l", 0.0, 0.34, 0.42, 0.34, 0.20, 0.84, stone)
+    box("jamb_r", 0.0, -0.34, 0.42, 0.34, 0.20, 0.84, stone)
+    box("lintel", 0.0, 0.0, 0.92, 0.40, 0.90, 0.18, stone)
+    box("void", 0.06, 0.0, 0.40, 0.10, 0.50, 0.78, dark)
+    box("step", -0.30, 0.0, 0.06, 0.26, 0.62, 0.10, stone)
+    return {"foot": 1.0}
+
+
 # ---------------------------------------------------------------- the props
 
 def prop_torch(face):
@@ -355,6 +431,12 @@ PROPS = {
     "shrub": prop_shrub,
     "boulder": prop_boulder,
     "stump": prop_stump,
+    "block": prop_block,
+    "rocks": prop_rocks,
+    "bush": prop_bush,
+    "sapling": prop_sapling,
+    "ruin": prop_ruin,
+    "entrance": prop_entrance,
 }
 TORCH_FACES = ["Y+", "X+", "Y-", "X-"]
 
