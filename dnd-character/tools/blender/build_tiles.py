@@ -264,8 +264,41 @@ def outdoor_tiles(sid):
     add("track", 540, terrain="track", arms=["Y+"])                  # dead end
     add("track", 550, terrain="track", arms=["Y+", "Y-"], high=["Y+"],
         lo=0, hi=1)                                                  # climbing
+    # THE SAME JUNCTIONS AGAIN, ON HIGH GROUND. Without these G1+P could not meet
+    # itself in a corner or a span: the only face in the set presenting it was the
+    # climbing tile above, whose far edge is G0+P, so a track that climbed onto a
+    # plateau had nothing to continue with and had to turn straight back down.
+    # A track on a plateau is not a different kind of track, so this is the same
+    # five shapes at lo=1 -- the sockets follow from the band.
+    for n, arms in ((570, ["Y+", "Y-"]), (571, ["Y+", "X+"]),
+                    (572, ["Y+", "Y-", "X+"]), (573, ["Y+", "Y-", "X+", "X-"]),
+                    (574, ["Y+"])):
+        add("track", n, terrain="track", arms=arms, lo=1, hi=1)
     add("ford", 560, terrain="track", arms=["Y+", "Y-"], high=["Y+"],
         lo=-1, hi=0, water=True)                                     # through water
+    # A FORD WIDER THAN ONE TILE. W+P could not meet itself either, so the ford
+    # above -- which climbs out of the water on one side -- was the only piece
+    # carrying a track over water, and a crossing could never be more than a
+    # single tile long. This is the middle of it: the track continues, the water
+    # does not end. Its W edges sit at the bed, so it abuts open water; its W+P
+    # edges match the ford's, so a crossing is ford - middle... - ford.
+    add("ford", 561, terrain="track", arms=["Y+", "Y-"], lo=-1, hi=-1,
+        water=True)
+    add("ford", 562, terrain="track", arms=["Y+", "X+"], lo=-1, hi=-1,
+        water=True)                                  # ... and one that turns
+    # A PATH UP OFF THE BEACH. A track that climbs the whole way from the water to
+    # the cliff top, which is the only piece that puts a track alongside a sea
+    # cliff -- it fills four of the seven corners left after the headland, because
+    # its X edges carry Xw1 while the track arms present G1+P at the top and W+P
+    # at the water.
+    add("track", 563, terrain="track", arms=["Y+", "Y-"], high=["Y+"],
+        lo=-1, hi=1, water=True)
+
+    # ---- where a cliff comes down to the sea. Both chiralities: the mirror is
+    # NOT a rotation, because rotating turns all four edges together and the
+    # corner (Xw1 then X01) stays in the same order however far you turn it.
+    add("headland", 450, terrain="headland", shore="Y+", cliff="X+", water=True)
+    add("headland", 460, terrain="headland", shore="Y+", cliff="X-", water=True)
 
     # ---- wet ground
     add("mire", 600, terrain="mire", water=True)
@@ -1319,7 +1352,35 @@ def _ground(u, v, seed, amp, octaves=5):
     return edge + (amp * b - edge) * w
 
 
-def _scarp(u, v, seed, sides, join="max"):
+# HOW A LEVEL CHANGE RUNS OUT, PER BAND PAIR. (run, shelf): run scales the
+# horizontal distance the change takes, shelf bends the profile so it flattens
+# toward the HIGH side.
+#
+# Keyed by the band pair and nothing else, because every piece that presents a
+# given crossing socket -- Xw0 is on the strand, the shoal AND the ford -- has to
+# have the same cross-section where they meet. Taking it from the band pair makes
+# that true by construction rather than by everybody remembering to pass the same
+# argument, which is the mistake that produced the smooth-wall bug.
+#
+# A CLIFF AND A SHORE ARE NOT THE SAME SHAPE. They were: the shore used the
+# cliff's run-out, so it dropped 0.95 units over 0.37-1.18 world units, and 78% of
+# that drop is below the water surface (bed -0.95, surface -0.20). What was left
+# above water was 0.08-0.25 units of beach -- nine to twenty-eight pixels -- so
+# land ended and water began over a near-vertical face and a pond read as a hole
+# cut in the map. A real beach is defined by being GENTLE, which is the opposite
+# of how a cliff is defined, so it cannot share the number.
+SHELF = {
+    (0, 1): (1.0, 1.0),      # scarp: a cliff, steep and straight
+    (-1, 0): (2.5, 2.5),     # strand/shoal/ford: a beach, wide and shelving
+    (-1, 1): (1.0, 1.0),     # bluff: a sea cliff, still a cliff
+}
+
+
+def _shelf(lo, hi):
+    return SHELF.get((lo, hi), (1.0, 1.0))
+
+
+def _scarp(u, v, seed, sides, join="max", run=1.0, shelf=1.0):
     """Height 0..1 of ground rising toward each edge in `sides`.
 
     The break line MEANDERS: its position along the edge is periodic noise of the
@@ -1344,8 +1405,14 @@ def _scarp(u, v, seed, sides, join="max"):
     for e in sides:
         t = {"Y+": v, "Y-": 1.0 - v, "X+": u, "X-": 1.0 - u}[e]
         a = {"Y+": u, "Y-": 1.0 - u, "X+": v, "X-": 1.0 - v}[e]
-        line, w = _scarp_line(a, seed)
+        line, w = _scarp_line(a, seed, width=run)
         p = _sstep((t - line) / w + 0.5)
+        # SHELVE TOWARD THE HIGH SIDE. Flattens the top of the profile without
+        # moving either end, so the piece still arrives at exactly the two band
+        # heights its sockets promise -- a beach that changed where it met the
+        # water would step at every seam.
+        if shelf != 1.0:
+            p = 1.0 - (1.0 - p) ** shelf
         steep = 4.0 * p * (1.0 - p)               # 0 at crest and toe, 1 mid-face
         # Bedding and gullies are SHARED too. They are part of the cross-section,
         # so a per-tile seed here reintroduces exactly the step the shared break
@@ -1432,7 +1499,7 @@ def field_flat(seed, z=0.0, ripple=0.0):
 
 
 def field_step(seed, sides, z_lo=0.0, z_hi=None, join="max", ramp=None,
-               channel=0.0):
+               channel=0.0, run=1.0, shelf=1.0):
     """Ground climbing from `z_lo` to `z_hi` toward `sides`.
 
     This one function is the cliff, the shore and the sea cliff -- only the two
@@ -1451,7 +1518,7 @@ def field_step(seed, sides, z_lo=0.0, z_hi=None, join="max", ramp=None,
             s = _ramp(u, v, seed, ramp)
             steep = 0.0
         else:
-            s = _scarp(u, v, seed, sides, join)
+            s = _scarp(u, v, seed, sides, join, run, shelf)
             steep = 4.0 * s * (1.0 - s)
             if channel > 0.0:
                 cut = _arms(u, v, seed, [sides[0], _opposite(sides[0])], channel)
@@ -1463,7 +1530,45 @@ def field_step(seed, sides, z_lo=0.0, z_hi=None, join="max", ramp=None,
     return f
 
 
-def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None):
+def field_headland(seed, shore, cliff, join="max"):
+    """Three bands in one tile: water, then beach, then a cliff up to high ground.
+
+    THE SHAPE THE SET COULD NOT MAKE. Every transition piece carries exactly one
+    band pair, so scarps chain to scarps and strands chain to strands and the two
+    rings can never touch -- a plateau edge could not reach the water, and six of
+    the sixteen missing corners were that one fact (X01 against Xw0, Xw0 against
+    Xw1, and their reverses).
+
+    `shore` is the edge the water lies beyond; `cliff` is the edge the high ground
+    lies beyond, and they are ADJACENT, which is what makes this a corner piece
+    rather than a terrace.
+
+    The cliff is multiplied by the shore's own progress, and that is the whole
+    trick. Added independently, the corner where the shore is still water but the
+    cliff has topped out would sit at bed + STEP -- a band that does not exist,
+    with high ground meeting open water along a seam no socket describes. Gating
+    it means the climb cannot start until the ground has come ashore, so the tile
+    reads as what it is: a headland, water to beach to cliff top, in that order.
+
+    Both halves use the run and shelf of their OWN band pair, so the beach here is
+    the same beach a strand makes and the cliff is the same cliff a scarp makes --
+    which is what lets this piece stand between them."""
+    z_bed, z_mid, z_top = _band_z(-1), _band_z(0), _band_z(1)
+    run_s, shelf_s = _shelf(-1, 0)
+    run_c, shelf_c = _shelf(0, 1)
+
+    def f(u, v):
+        s = _scarp(u, v, seed, [shore], join, run_s, shelf_s)   # water -> beach
+        c = _scarp(u, v, seed, [cliff], join, run_c, shelf_c)   # beach -> top
+        z = z_bed + (z_mid - z_bed) * s + (z_top - z_mid) * s * c
+        steep = 4.0 * c * (1.0 - c) * s + 4.0 * s * (1.0 - s)
+        z += _ground(u, v, seed, RELIEF) * (1.0 - 0.8 * min(1.0, steep))
+        return z, 0.0
+    return f
+
+
+def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None,
+                run=1.0, shelf=1.0):
     """A worn track: turf scraped off, ground packed down, a rut down the crown.
 
     `arms` is the junction vocabulary. `sides`/`ramp` let the same track climb --
@@ -1481,7 +1586,7 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
         if ramp:
             z += (z_hi - z_lo) * _ramp(u, v, seed, ramp)
         elif sides:
-            s = _scarp(u, v, seed, sides, join)
+            s = _scarp(u, v, seed, sides, join, run, shelf)
             r = _ramp(u, v, seed, sides[0])
             z += (z_hi - z_lo) * (s + (r - s) * mud)
         return z, mud
@@ -1531,13 +1636,17 @@ FIELDS = {
                                       _band_z(sp.get("lo", 0)),
                                       _band_z(sp.get("hi", 1)),
                                       sp.get("join", "max"),
-                                      sp.get("ramp"), sp.get("channel", 0.0)),
+                                      sp.get("ramp"), sp.get("channel", 0.0),
+                                      *_shelf(sp.get("lo", 0), sp.get("hi", 1))),
     "track": lambda sp, sd: field_track(sd, sp.get("arms", ["Y+", "Y-"]),
                                         sp.get("high", ()),
                                         _band_z(sp.get("lo", 0)),
                                         _band_z(sp.get("hi", 1)),
-                                        sp.get("join", "max"), sp.get("ramp")),
+                                        sp.get("join", "max"), sp.get("ramp"),
+                                        *_shelf(sp.get("lo", 0), sp.get("hi", 1))),
     "mire": lambda sp, sd: field_mire(sd),
+    "headland": lambda sp, sd: field_headland(sd, sp["shore"], sp["cliff"],
+                                              sp.get("join", "max")),
 }
 
 
@@ -1680,7 +1789,7 @@ def _lump(name, cx, cy, cz, r, mat, seed, squash=0.6, rough=0.30, rings=9, segs=
     return ob
 
 
-def _scarp_line(a, seed=None, freq_scale=1.0):
+def _scarp_line(a, seed=None, freq_scale=1.0, width=1.0):
     """Where the break runs, and how far it takes to run out, at along-edge `a`.
 
     SEEDED FOR THE WHOLE SET, not per tile -- `seed` is accepted and ignored, so
@@ -1703,7 +1812,7 @@ def _scarp_line(a, seed=None, freq_scale=1.0):
     line = (0.52
             + 0.115 * (_fbm1(a, SEAM_SEED + 31, 2, 2) - 0.5) * 2.0
             + 0.045 * (_fbm1(a, SEAM_SEED + 57, 2, 5) - 0.5) * 2.0)
-    w = SCARP_W * (0.60 + 1.30 * _fbm1(a, SEAM_SEED + 83, 2, 3))
+    w = SCARP_W * width * (0.60 + 1.30 * _fbm1(a, SEAM_SEED + 83, 2, 3))
     return line, w
 
 
@@ -3255,6 +3364,28 @@ def tile_sockets(spec):
 
     if kind == "mire":
         return {e: "G0" for e in EDGE_ORDER}
+
+    if kind == "headland":
+        # Three bands, so three different crossings, one per edge that a band
+        # boundary reaches. `shore` is the edge the ground rises TOWARD out of the
+        # water and `cliff` the edge the high ground rises toward; they are
+        # adjacent, so the two boundaries leave the tile on four different edges:
+        #   shore edge        beach all along it, the cliff crossing it     -> X01
+        #   opposite shore    still water                                   -> W
+        #   cliff edge        the cliff has topped out, the shore crosses   -> Xw1
+        #   opposite cliff    no cliff yet, the shore crosses               -> Xw0
+        shore, cliff = spec["shore"], spec["cliff"]
+        out = {}
+        for e in EDGE_ORDER:
+            if e == shore:
+                out[e] = "X01"
+            elif e == _opposite(shore):
+                out[e] = "W"
+            elif e == cliff:
+                out[e] = "Xw1"
+            else:
+                out[e] = "Xw0"
+        return out
 
     lo, hi = spec.get("lo", 0), spec.get("hi", 1)
     cross = "X%s%s" % ("w" if lo == -1 else lo, hi)
