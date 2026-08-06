@@ -46,13 +46,25 @@
   <label>move <input id="mv" type="range" min="2" max="20" value="8"></label>
   <button id="endturn">end turn</button> <span id="mvleft"></span>
   <label><input id="wander" type="checkbox"> wander on his own</label>
+  <!-- What a click DOES. Arming a spell rather than opening a target picker
+       keeps one click handler: the ground and a goblin are the same gesture,
+       and only the payload differs. -->
+  <div style="margin:4px 0">click casts:
+    <label style="display:inline-flex"><input type="radio" name="spell" value="melee" checked> walk/hit</label>
+    <label style="display:inline-flex"><input type="radio" name="spell" value="fireball"> fireball</label>
+    <label style="display:inline-flex"><input type="radio" name="spell" value="bolt"> bolt</label>
+    <label style="display:inline-flex"><input type="radio" name="spell" value="heal"> heal</label>
+    <label style="display:inline-flex"><input type="radio" name="spell" value="frost"> frost</label>
+  </div>
+  <button id="spawn">spawn a goblin</button>
   <label><input id="dbg" type="checkbox"> debug: tile roles</label>
   <label><input id="dbgE" type="checkbox"> debug: edge colours</label>
   <button id="regen">regenerate map</button>
   <label>seed <input id="seed" type="text" size="10" spellcheck="false"></label>
   <div id="msg" style="color:#e8b06a;min-height:1.4em"></div>
   <div style="margin-top:4px;color:#7a7a8a">
-    <b>click</b> a square to walk there · <b>drag</b> scrolls · <b>wheel</b> zooms<br>
+    <b>click</b> a square to walk there, or a <b>goblin</b> to hit it<br>
+    <b>drag</b> scrolls · <b>wheel</b> zooms<br>
     arrows/WASD pan · <kbd>0</kbd> refit · <kbd>F</kbd> freeze light<br>
     <kbd>Q</kbd>/<kbd>E</kbd> rotate the view
   </div>
@@ -60,7 +72,7 @@
 </div>
 <div id="stage"><canvas id="gl"></canvas></div>
 <script>
-const VERSION = "0.51.0";
+const VERSION = "0.52.0";
 
 // ---- tile SET ------------------------------------------------------------
 // build_tiles.py bakes each named look into its own directory (--theme NAME),
@@ -1059,6 +1071,36 @@ function connectRegions(cells, W, H){
 const load=src=>new Promise((ok,no)=>{const im=new Image();
   im.onload=()=>ok(im); im.onerror=()=>no(new Error("failed: "+src)); im.src=src;});
 const DIRS=["east","south-east","south","south-west","west","north-west","north","north-east"];
+
+// ---- actors and effects: the asset half -----------------------------------
+// build_actors.py bakes BODY x ACTION x 8 DIRECTIONS x frames, three buffers
+// each: 960 images, 45 MB. Fetching all of it before the map appears is ten
+// seconds of black screen for art that the first turn will not use, so an ACTION
+// is the unit of loading and it is memoised -- walk for every body before the
+// map draws, everything else in the background behind it. An actor asked to play
+// an action it does not have yet keeps walking and starts the moment it lands,
+// which is the only failure mode here that does not show as a missing frame.
+let ACTMAN=null, FXMAN=null;
+const ACT={};                     // ACT[body][action][dir][frame] = {a,n,h}
+const FXIMG={};                   // FXIMG[name][frame]     = {a,n,h}
+const actLoading={};
+const triple=base=>Promise.all([load(base+".png"),load(base+"_NRM.png"),load(base+"_H.png")])
+  .then(([a,n,h])=>({a,n,h}));
+function loadAction(body,action){
+  const key=body+"/"+action;
+  if(actLoading[key]) return actLoading[key];
+  const n=ACTMAN.actions[action];
+  return actLoading[key]=Promise.all(DIRS.map(d=>
+      Promise.all(Array.from({length:n},(_,f)=>
+        triple("out/actors/"+body+"_"+action+"_"+d+"_f"+f))).then(fr=>[d,fr])))
+    .then(pairs=>{ (ACT[body]=ACT[body]||{})[action]=Object.fromEntries(pairs); });
+}
+// Effects are radial -- one render, no directions -- so a whole effect is about
+// as much art as one direction of one action, and they all load up front.
+const loadEffect=name=>Promise.all(
+    Array.from({length:FXMAN.effects[name]},(_,f)=>triple("out/effects/"+name+"_f"+f)))
+  .then(fr=>{ FXIMG[name]=fr; });
+
 // ---- elevation (must match build_tiles.py) --------------------------------
 const STEP=1.8, PITZ=3.4;   // MUST match build_tiles.py STEP/PIT
 // A tile is (wall-set, level, kind). kind: ""|"stairs"|"pit"|"bridge".
@@ -1118,10 +1160,28 @@ const OUTDOOR_PROPS=["tree","pine","shrub","boulder","stump"];
 const PROP_NAMES=["torch_Y+","torch_X+","torch_Y-","torch_X-"]
   .concat(FURNITURE).concat(OUTDOOR_PROPS);
 const PROP_RES=768;                  // build_props.py RES
-const WALK_FRAMES=6;                 // build_wizard.py FRAMES
 const STRIDE_WORLD=0.9;              // world units per full step -- ties the
                                      // cycle to distance travelled so he does
                                      // not skate or moonwalk
+const ACT_FPS=12;                    // one-shot actions run on the clock; only
+                                     // walking is driven by distance
+// ---- sprite slots ---------------------------------------------------------
+// ONE number, read by both the shader and the compositor. The shader's #define
+// is interpolated from these rather than typed twice: a mismatch between the
+// atlas the JS packs and the loop bound the GLSL unrolls is a silent wrong
+// picture, not an error.
+const SPR_RES=384;                   // build_actors.py RES; the tiles' own PPU
+const ATL_COLS=8, ATL_ROWS=1, NSPR=ATL_COLS*ATL_ROWS;
+const NCAST=2;                       // of those, how many may cast a shadow
+// What each effect is FOR, at runtime. The bake knows the shapes; this knows
+// where a cast lands and what colour it throws on the walls -- an emissive
+// sprite that lights nothing reads as a decal stuck to the screen.
+const FXDEF={
+  fireball:{ light:[2.2,0.95,0.30], r:7.0, z:0.0 },
+  bolt:    { light:[0.55,0.80,2.0], r:5.0, z:0.0, aimed:true },
+  heal:    { light:[0.45,1.9,0.70], r:5.0, z:0.0 },
+  frost:   { light:[0.70,1.1,2.0],  r:5.0, z:0.0 }
+};
 const OVER_Z=2.8;                    // build_tiles.py OVER_Z (upper floor height)
 let propMeta=null; const propImg={};
 let RIFT_CELLS=null, RIFT_W=0, RIFT_H=0;   // rimArt needs neighbour context
@@ -1140,7 +1200,7 @@ document.getElementById("ver").textContent=VERSION;
 })();
 
 (async function main(){
-  const imgs={}, wiz={};
+  const imgs={};
   // The manifest is fetched BEFORE anything is loaded, because it decides WHAT to
   // load. A set that ships sockets is driven entirely by it; a set without one is
   // a dungeon set and keeps the wall contract.
@@ -1204,20 +1264,19 @@ document.getElementById("ver").textContent=VERSION;
       const b=imgs[n].box;
       MAXR = Math.max(MAXR, 2*Math.max(Math.abs(b[0]), Math.abs(b[1]), b[0]+b[2], b[1]+b[3]));
     }));
-    // The wizard is a 3D model rendered from the SAME camera as the tiles, so he
-    // ships with the same three buffers they do. No alpha-bbox cropping and no
-    // billboard normal: the image centre is his feet by construction, and his
-    // per-pixel normal and height come from real geometry.
-    // 8 directions x WALK_FRAMES of a walk cycle, three buffers each
-    await Promise.all(DIRS.map(async d=>{
-      wiz[d]=[];
-      for(let f=0; f<WALK_FRAMES; f++){
-        const base="out/wizard3d/wizard_"+d+"_f"+f;
-        wiz[d].push({ a:await load(base+".png"),
-                      n:await load(base+"_NRM.png"),
-                      h:await load(base+"_H.png") });
-      }
-    }));
+    // Actors are 3D models rendered from the SAME camera as the tiles, so they
+    // ship with the same three buffers the tiles do. No alpha-bbox cropping and
+    // no billboard normal: the image centre is the model's feet by construction,
+    // and its per-pixel normal and height come from real geometry -- which is
+    // what lets one depth test serve the map and everything standing on it.
+    // The hero reads from this bake too. out/wizard3d/ was the same model with
+    // only a walk cycle, and keeping him on it would have meant a second sprite
+    // path that could not swing a sword.
+    ACTMAN = await (await fetch("out/actors/actors.json")).json();
+    FXMAN  = await (await fetch("out/effects/effects.json")).json();
+    status.textContent="loading actors…";
+    await Promise.all(ACTMAN.bodies.map(b=>loadAction(b,"walk")));
+    await Promise.all(Object.keys(FXMAN.effects).map(loadEffect));
     propMeta = await (await fetch("out/props/props.json")).json();
     await Promise.all(PROP_NAMES.map(async p=>{
       propImg[p]={ a:await load("out/props/"+p+".png"),
@@ -1232,7 +1291,7 @@ document.getElementById("ver").textContent=VERSION;
   const gl=glc.getContext("webgl",{alpha:false});
   if(!gl){ status.textContent="no WebGL"; return; }
 
-  let cells, sq, CW, CH, OX, OY, texA, texN, texH, texS=null;
+  let cells, sq, CW, CH, OX, OY, texA, texN, texH;
   let hgtCtx=null;                    // the composited height buffer, for heightAt
   let sqZ=null;                       // per-square ground height, from that buffer
   // How far up you can step. About a third of a level: enough for a bank or the lip
@@ -1245,6 +1304,12 @@ document.getElementById("ver").textContent=VERSION;
   // One fullscreen pass: light the room, and composite the sprite with a REAL
   // depth test derived from the height buffer -- no painter order anywhere.
   const FS=`precision highp float;
+    #define NSPR ${NSPR}
+    // How many of those may cast a shadow, as a COMPILE-TIME bound. GLSL ES
+    // unrolls every loop, and this one sits inside a 28-step march that is itself
+    // inside the light loop, so at NSPR it emits 224 inlined sprite tests. The
+    // runtime cap uNCast cannot help with that: the code is generated either way.
+    #define NCAST ${NCAST}
     uniform sampler2D uAlb,uNrm,uHgt,uSpr,uSprNrm,uSprHgt;
     uniform sampler2D uAlb1,uNrm1,uHgt1;   // UPPER LAYER
     uniform sampler2D uMove; uniform vec2 uMoveSize; uniform float uMoveOn;
@@ -1253,7 +1318,7 @@ document.getElementById("ver").textContent=VERSION;
     uniform float uZoom;
     uniform float uPPU,uAmb,uMode,uHoff,uHrange,uCam,uShadow;
     uniform vec3 uSunDir, uSunCol;
-    uniform float uPixel,uLevels,uDither,uBands,uLightDither,uHeroZ;
+    uniform float uPixel,uLevels,uDither,uBands,uLightDither;
     uniform float uTime,uWater;
 
     // ---- PS1 output stage ---------------------------------------------------
@@ -1271,9 +1336,47 @@ document.getElementById("ver").textContent=VERSION;
     uniform vec3 uLp[8],uLc[8];
     uniform float uLr[8];
     uniform float uNL;            // how many of the 8 slots are live
-    uniform vec4 uSprRect;        // x,y,w,h in canvas px
+
+    // ---- sprite slots ---------------------------------------------------------
+    // Every moving thing -- the hero, each goblin, each spell effect -- is the same
+    // kind of object here: a 384px triple (albedo, normal, height) pasted into one
+    // ATLAS and given a screen rect. One slot was enough while the wizard was the
+    // only thing that moved; a fight has several, and adding a second uniform set
+    // per creature would have been the parallel-copy mistake. So the hero is slot 0
+    // and nothing about him is special-cased below.
+    //   uSpRect  x,y,w,h on the composite, in canvas px
+    //   uSpAtlas u0,v0,du,dv -- where this slot's cell lives in the atlas
+    //   uSpMeta  x: z, the world height its feet stand at
+    //            y: 0 for a solid slot; for an emitter, how brightly it burns
+    //               right now -- the tail of a blast is smoke, and smoke added
+    //               at full strength is a pale slab lying over the map
+    //            zw: a rotate-and-scale applied to the SAMPLE, which is how a
+    //                bolt baked along +X gets pointed at a target
+    // Solid slots still come FIRST even though a flag now says which is which:
+    // the single pass below depth-tests solids as it goes and needs every one of
+    // them settled before it reaches an emitter.
+    uniform vec4 uSpRect[NSPR], uSpAtlas[NSPR], uSpMeta[NSPR];
+    uniform float uNSpr;          // live slots, solid ones first
+    uniform float uNCast;         // whether slot 0 casts a shadow (see occluded())
 
     const float COS30=0.8660254, SIN30=0.5, COS45=0.7071068;
+
+    // Pixel P -> this slot's atlas UV. Returns false when P is outside the slot,
+    // which is the common case: the loop runs for every pixel and almost every
+    // pixel misses almost every sprite.
+    bool sprUV(vec4 rect, vec4 atl, vec4 meta, vec2 P, out vec2 uv){
+      if(rect.z<=0.0) return false;
+      vec2 su=(P-rect.xy)/rect.zw;
+      if(su.x<0.0||su.x>1.0||su.y<0.0||su.y>1.0) return false;
+      // The rotation is applied to the SAMPLE, not the image, so it runs backwards
+      // (P -> texel). meta.zw carry cos,sin already multiplied by the rect's
+      // oversize, so an image rotated 45 degrees still has its corners inside.
+      vec2 c=su-0.5;
+      su=vec2(c.x*meta.z - c.y*meta.w, c.x*meta.w + c.y*meta.z)+0.5;
+      if(su.x<0.0||su.x>1.0||su.y<0.0||su.y>1.0) return false;
+      uv=atl.xy+su*atl.zw;
+      return true;
+    }
 
     // ---- water ---------------------------------------------------------------
     // WATER IS FOUND IN THE HEIGHT BUFFER, not in a mask pass. The baked water
@@ -1351,12 +1454,23 @@ document.getElementById("ver").textContent=VERSION;
         if(uHasUpper>0.5 && texture2D(uAlb1,uv).a>0.03){
           if(texture2D(uHgt1,uv).r*uHrange-uHoff > rh+0.14) return 1.0;
         }
-        // the character casts too: his height map is not in the scene buffer
-        if(uSprRect.z>0.0){
-          vec2 su=(sp-uSprRect.xy)/uSprRect.zw;
+        // Actors cast too: their height maps are not in the scene buffer. Capped
+        // at uNCast rather than run over every slot -- this is inside a 28-step
+        // march that already runs per pixel per light, so each extra caster is
+        // 28 more texture fetches everywhere. Effects never cast: they are the
+        // light source, not something standing in front of one.
+        // ONE caster, slot 0, and written out rather than looped. This is inside
+        // a 28-step march that is itself inside the light loop, so the compiler
+        // emits this body 28 times per light: at two slots it cost a third of
+        // the frame rate whether or not a second actor existed, because the code
+        // is generated whether or not the runtime cap lets it run. Slot 0 is the
+        // nearest actor, which is the one whose shadow anyone is looking at.
+        if(uNCast>0.5){
+          vec2 su=(sp-uSpRect[0].xy)/uSpRect[0].zw;
           if(su.x>=0.0&&su.x<=1.0&&su.y>=0.0&&su.y<=1.0){
-            if(texture2D(uSpr,su).a>0.5 && texture2D(uSprHgt,su).r*uHrange-uHoff > rh+0.14)
-              return 1.0;
+            vec2 uv2=uSpAtlas[0].xy+su*uSpAtlas[0].zw;
+            if(texture2D(uSpr,uv2).a>0.5 &&
+               texture2D(uSprHgt,uv2).r*uHrange-uHoff+uSpMeta[0].x > rh+0.14) return 1.0;
           }
         }
       }
@@ -1450,26 +1564,56 @@ document.getElementById("ver").textContent=VERSION;
       float h1 = texture2D(uHgt1,vUv).r * uHrange - uHoff;
       float z1 = (uHasUpper<0.5 || a1.a<0.03) ? 1e9 : depthAt(P,h1);
 
-      // the character: sampled and depth-tested EXACTLY like the scene
-      vec4 sp=vec4(0.0); vec3 spN=vec3(0.0,0.0,1.0); float hSpr=0.0, zSpr=1e9;
-      if(uSprRect.z>0.0){
-        vec2 su=(P-uSprRect.xy)/uSprRect.zw;
-        if(su.x>=0.0&&su.x<=1.0&&su.y>=0.0&&su.y<=1.0){
-          sp=texture2D(uSpr,su);
-          if(sp.a>0.35){
-            spN=normalize(texture2D(uSprNrm,su).rgb*2.0-1.0);
-            // his model heights are measured from his own feet, so standing on a
-            // raised tile has to add that tile's height or he depth-tests as if
-            // he were still on the ground floor
-            hSpr=texture2D(uSprHgt,su).r*uHrange - uHoff + uHeroZ;
-            zSpr=depthAt(P,hSpr);
-          }
+      // ---- every sprite, in ONE pass ----------------------------------------
+      // Actors are depth-tested exactly like the scene and against each other, so
+      // a goblin behind the hero is hidden by him for the same reason a goblin
+      // behind a boulder is, with no sort order anywhere. Effects are ADDED
+      // instead of composited -- they are the one thing here that makes its own
+      // light, and a fireball in a dark room is bright -- but they are still
+      // depth-tested, because a blast has volume and one going off behind a scarp
+      // is hidden by it. That is the same argument that made trees geometry.
+      //
+      // Both used to be their own loop. They are one because GLSL ES UNROLLS
+      // every loop: two bodies of NSPR iterations is twice the emitted code, and
+      // this shader is fill-rate bound on a full-screen quad, so it cost real
+      // frame rate even with nothing standing in any of the slots. Merging works
+      // because the slot order already puts every solid before every emitter, so
+      // by the time an emissive slot is reached zBest is final for this pixel.
+      vec4 sp=vec4(0.0); float hSpr=0.0, zSpr=1e9;
+      vec2 spUV=vec2(0.0);
+      vec3 fxAdd=vec3(0.0);
+      float zBest = min(zScene, z1);
+      for(int i=0;i<NSPR;i++){
+        if(float(i)>=uNSpr) break;
+        vec2 uv2;
+        if(!sprUV(uSpRect[i],uSpAtlas[i],uSpMeta[i],P,uv2)) continue;
+        vec4 s=texture2D(uSpr,uv2);
+        if(s.a<=0.02) continue;
+        // A model's heights are measured from its own feet, so standing on a
+        // raised tile has to add that tile's height or it depth-tests as if it
+        // were still on the ground floor.
+        float h2=texture2D(uSprHgt,uv2).r*uHrange - uHoff + uSpMeta[i].x;
+        float z2=depthAt(P,h2);
+        if(uSpMeta[i].y>0.0){
+          // The 0.02 slack matches the solid test: exactly-equal depths are a
+          // coin toss in floating point, and an effect centred on a token would
+          // otherwise flicker in and out along its own silhouette.
+          if(z2<=zBest+0.02) fxAdd += s.rgb*s.a*uSpMeta[i].y;
+        }else if(s.a>0.35 && z2<zSpr){
+          sp=s; hSpr=h2; zSpr=z2; spUV=uv2;
+          zBest=min(zBest,z2+0.02);
         }
       }
       // nearest of the three surfaces at this pixel wins
-      float zBest = zScene; int which = 0;              // 0 ground, 1 upper, 2 hero
+      int which = 0;                          // 0 ground, 1 upper, 2 actor
+      zBest = zScene;
       if(z1 < zBest){ zBest = z1; which = 1; }
       if(sp.a>0.35 && zSpr <= zBest+0.02){ zBest = zSpr; which = 2; }
+      // The winner's NORMAL is fetched once, out here. Inside the loop it was a
+      // third texture read per slot per pixel, emitted NSPR times, to be thrown
+      // away for every slot but one.
+      vec3 spN = which==2 ? normalize(texture2D(uSprNrm,spUV).rgb*2.0-1.0)
+                          : vec3(0.0,0.0,1.0);
 
       vec3 col, nrm; float hgt; bool empty=false;
       if(which==2){ col=sp.rgb;  nrm=spN; hgt=hSpr; }
@@ -1504,10 +1648,12 @@ document.getElementById("ver").textContent=VERSION;
         gloss = uWater*(0.30+3.2*fres);
       }
 
+      // Height and normals are DATA views -- an emissive glow has no business in
+      // either, and drawing it there would hide the buffer being inspected.
       if(uMode>2.5){ gl_FragColor=vec4(vec3(hgt/uHrange+0.5),1.0); return; }
-      if(empty){ gl_FragColor=vec4(0.03,0.03,0.04,1.0); return; }
+      if(empty){ gl_FragColor=vec4(vec3(0.03,0.03,0.04)+fxAdd,1.0); return; }
       if(uMode>1.5){ gl_FragColor=vec4(nrm*0.5+0.5,1.0); return; }
-      if(uMode>0.5){ gl_FragColor=vec4(post(col),1.0); return; }
+      if(uMode>0.5){ gl_FragColor=vec4(post(col+fxAdd),1.0); return; }
       vec3 lit = shade(col,nrm,worldAt(P,hgt),hgt,gloss);
       // move range: sample the tiny per-square mask by this pixel's world square
       if(uMoveOn>0.5 && which!=2){
@@ -1530,7 +1676,7 @@ document.getElementById("ver").textContent=VERSION;
           }
         }
       }
-      gl_FragColor=vec4(post(lit),1.0);
+      gl_FragColor=vec4(post(lit+fxAdd),1.0);
     }`;
 
   const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
@@ -1771,7 +1917,10 @@ document.getElementById("ver").textContent=VERSION;
     return best===null ? [] : rebuildPath(prev,from,best);
   }
 
-  let hero, path=[], reach=[], torches=[], blocked=null, sqLevel=null;
+  // actors[0] IS the hero. Keeping a separate `hero` variable is a name, not a
+  // second object -- every path that moves, draws or lights him runs over the
+  // whole list, so a goblin cannot fall out of step with him by construction.
+  let hero, actors=[], fx=[], reach=[], torches=[], blocked=null, sqLevel=null;
   let texA1=null, texN1=null, texH1=null, hasUpper=0;
 
   // ---- elevation ----------------------------------------------------------
@@ -2215,13 +2364,21 @@ document.getElementById("ver").textContent=VERSION;
     }
     cells=out; RIFT_CELLS=cells;
     buildDraws(); passable=buildSquares();
-    // the hero rides along: square (X,Y) -> (SH-1-Y, X)
-    const X=sqX(hero.sq), Y=sqY(hero.sq), L=sqL(hero.sq);
-    const nX=SH-1-Y, nY=X;
-    hero.sq=sqId(nX,nY,L);
-    const [wx,wy]=sqWorld(nX,nY);
-    hero.wx=wx; hero.wy=wy; hero.z=squareZ(nX,nY,L);
-    path=[];
+    // everyone rides along: square (X,Y) -> (SH-1-Y, X)
+    for(const a of actors){
+      const X=sqX(a.sq), Y=sqY(a.sq), L=sqL(a.sq);
+      const nX=SH-1-Y, nY=X;
+      a.sq=sqId(nX,nY,L);
+      const [wx,wy]=sqWorld(nX,nY);
+      a.wx=wx; a.wy=wy; a.z=squareZ(nX,nY,L);
+      // The path was a list of squares in the OLD frame and every one of them is
+      // now somewhere else. Dropping it is the honest answer; remapping it would
+      // be a walk the player never asked for.
+      a.path=[];
+    }
+    // A spell in flight is dropped for the same reason, and it is a quarter of a
+    // second of animation, not a decision anyone will miss.
+    fx.length=0;
     // carry the props round with the world
     const rotE = e => ORDER[(ORDER.indexOf(e)+1)%4];
     for(const pp of propPlan){
@@ -2500,9 +2657,8 @@ document.getElementById("ver").textContent=VERSION;
     // start on the most-connected square
     // start in the largest connected component, decided by the repair pass above
     const start = flood ? flood.s0 : 0;
-    const [wx,wy]=sqWorld(sqX(start),sqY(start));
-    hero={sq:start, wx, wy, z:squareZ(sqX(start),sqY(start),sqL(start)), dir:"south"};
-    path=[];
+    hero=newActor("wizard",start);
+    actors=[hero]; fx=[];
     const seen=new Set([start]), st=[start];
     while(st.length){
       const n=st.pop(), X=sqX(n), Y=sqY(n), L=sqL(n);
@@ -2515,6 +2671,11 @@ document.getElementById("ver").textContent=VERSION;
       }
     }
     reach=[...seen];
+    // ?goblins=N -- how crowded the map starts. A slot in the sprite atlas costs
+    // per-pixel shader work whether or not anything is standing in it, so this is
+    // the knob a performance measurement turns, not just a difficulty setting.
+    spawnGoblins(Math.max(0, Math.min(NSPR-1,
+      parseInt(new URLSearchParams(location.search).get("goblins") ?? "3", 10)||0)));
     const nUp=cells.filter(c=>c.level===1).length,
           nSt=cells.filter(c=>c.kind==="stairs").length,
           nPit=cells.filter(c=>c.kind==="pit").length,
@@ -2526,50 +2687,305 @@ document.getElementById("ver").textContent=VERSION;
     return true;
   }
 
-  // ---- sprite -------------------------------------------------------------
-  let lastDir=null, texSN=null, texSH=null;
-  const SPR_RES = 384;                // build_wizard.py RES; rendered at the tiles' PPU
-  function spriteRect(){
-    // image centre == his feet, and the render used the same PPU, so this is 1:1.
-    // Standing on a raised tile lifts him up-screen by his world Z, exactly the
-    // way the projection lifts a wall of that height.
-    const [sx,sy]=worldToScreen(hero.wx,hero.wy);
-    return [sx-SPR_RES/2, sy-SPR_RES/2 - (hero.z||0)*COS30*PPU, SPR_RES, SPR_RES];
+  // ---- sprites: one atlas, eight slots ------------------------------------
+  // The hero used to own the only sprite slot in the shader. A fight has several
+  // things in it, and giving each a uniform set of its own would have been the
+  // parallel-copy mistake -- so there is ONE atlas of NSPR cells, the hero is
+  // slot 0, and a goblin, a fireball and the wizard go through identical code.
+  // Cells are uploaded with texSubImage2D when an actor changes frame, never
+  // per frame wholesale: the atlas is 4.7 MB per buffer and re-uploading three
+  // of those at 60fps is not a thing a browser will do.
+  const ATL_W=ATL_COLS*SPR_RES, ATL_H=ATL_ROWS*SPR_RES;
+  const atlasTex=[], atlasHeld=new Array(NSPR).fill(null);
+  for(let u=0;u<3;u++){
+    const t=gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0+3+u); gl.bindTexture(gl.TEXTURE_2D,t);
+    // Same rule the tiles follow: colour NEAREST (crunchy), normal and height
+    // LINEAR, because they are data and point-sampling them makes the depth
+    // test and the lighting jitter at every texel edge.
+    const f=u===0 ? gl.NEAREST : gl.LINEAR;
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,f);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,f);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,ATL_W,ATL_H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    atlasTex.push(t);
   }
-  let lastFrame=-1;
-  function syncSprite(){
-    // Frame is driven by DISTANCE WALKED, not by a timer: tie it to the clock
-    // and he slides whenever speed and cycle rate disagree.
-    const f = path.length || hero.moving
-      ? (Math.floor((hero.dist||0)/STRIDE_WORLD*WALK_FRAMES) % WALK_FRAMES)
-      : 0;
-    if(hero.dir===lastDir && f===lastFrame) return;
-    const s=wiz[hero.dir][f];
-    texS=upload(s.a,3,texS,true); texSN=upload(s.n,4,texSN); texSH=upload(s.h,5,texSH);
-    lastDir=hero.dir; lastFrame=f;
+  function blit(i,tri){
+    if(atlasHeld[i]===tri) return;
+    const x=(i%ATL_COLS)*SPR_RES, y=((i/ATL_COLS)|0)*SPR_RES, src=[tri.a,tri.n,tri.h];
+    for(let u=0;u<3;u++){
+      gl.activeTexture(gl.TEXTURE0+3+u); gl.bindTexture(gl.TEXTURE_2D,atlasTex[u]);
+      gl.texSubImage2D(gl.TEXTURE_2D,0,x,y,gl.RGBA,gl.UNSIGNED_BYTE,src[u]);
+    }
+    atlasHeld[i]=tri;
   }
 
-  function stepHero(dt){
-    hero.moving=false;
-    if(!path.length){
-      if(!document.getElementById("wander").checked) return;
-      const t=reach[(Math.random()*reach.length)|0];
-      if(t!==hero.sq) path=bfsSq(hero.sq,t);
-      if(!path.length) return;
+  // Which image an actor is showing. An action that has not finished loading
+  // falls back to the walk cycle rather than to nothing, so a click during the
+  // first second of the page produces a lunge late, not a hole in the map.
+  function actorFrame(a){
+    const body=ACT[a.body]; if(!body) return null;
+    const set=body[a.action]||body.walk; if(!set) return null;
+    const fr=set[a.dir];
+    return fr[Math.min(a.frame|0, fr.length-1)];
+  }
+  function spriteRect(o){
+    // image centre == the model's feet, and the render used the same PPU, so
+    // this is 1:1. Standing on a raised tile lifts it up-screen by its world Z,
+    // exactly the way the projection lifts a wall of that height.
+    const [sx,sy]=worldToScreen(o.wx,o.wy), w=SPR_RES*(o.k||1);
+    return [sx-w/2, sy-w/2 - (o.z||0)*COS30*PPU, w, w];
+  }
+  const spRect=new Float32Array(NSPR*4), spAtlas=new Float32Array(NSPR*4),
+        spMeta=new Float32Array(NSPR*4);
+  let lastSlots=0;
+  function syncSprites(){
+    // SOLID FIRST. The shader makes one pass over the slots, settling the depth
+    // of every solid as it goes, so an emitter must not appear before one --
+    // it is tested against a zBest that has to be final. Effects are guaranteed
+    // room even in a crowd, because the actor list is trimmed to leave it.
+    const solid=[];
+    for(const a of actors){
+      const t=actorFrame(a);
+      if(t) solid.push({t, wx:a.wx, wy:a.wy, z:a.z||0,
+                        d:(a.wx-hero.wx)**2+(a.wy-hero.wy)**2});
     }
-    const X=sqX(path[0]), Y=sqY(path[0]), L=sqL(path[0]);
+    solid.sort((p,q)=>p.d-q.d);                    // the hero is his own zero
+    const emit=[];
+    for(const e of fx){
+      const set=FXIMG[e.name]; if(!set) continue;
+      emit.push({t:set[Math.min(e.frame|0,set.length-1)], wx:e.wx, wy:e.wy, z:e.z,
+                 k:e.k, rot:e.rot, add:fxBurn(e)});
+    }
+    const list=solid.slice(0,NSPR-Math.min(emit.length,2)).concat(emit).slice(0,NSPR);
+    for(let i=0;i<list.length;i++){
+      const o=list[i];
+      blit(i,o.t);
+      const [rx,ry,rw,rh]=spriteRect(o);
+      spRect.set([rx,ry,rw,rh], i*4);
+      spAtlas.set([(i%ATL_COLS)/ATL_COLS, ((i/ATL_COLS)|0)/ATL_ROWS,
+                   1/ATL_COLS, 1/ATL_ROWS], i*4);
+      // meta.zw is the sample rotation with the rect's oversize folded in, so a
+      // bolt baked along +X can be pointed anywhere without its corners clipping.
+      const c=Math.cos(o.rot||0)*(o.k||1), s=Math.sin(o.rot||0)*(o.k||1);
+      spMeta.set([o.z||0, o.add||0, c, s], i*4);
+    }
+    // Stale slots must be CLEARED, not left: the shader reads uNSpr slots and a
+    // rect left behind from a busier frame draws a corpse that is not there.
+    for(let i=list.length;i<lastSlots;i++) spRect.set([0,0,0,0], i*4);
+    lastSlots=Math.max(lastSlots, list.length);
+    gl.uniform4fv(U("uSpRect[0]"),spRect);
+    gl.uniform4fv(U("uSpAtlas[0]"),spAtlas);
+    gl.uniform4fv(U("uSpMeta[0]"),spMeta);
+    gl.uniform1f(U("uNSpr"),list.length);
+    // Only slot 0 -- the actor nearest the hero, which is the hero himself
+    // whenever he is on screen -- casts. See the note in occluded().
+    gl.uniform1f(U("uNCast"),Math.min(1,solid.length));
+  }
+
+  // ---- actors --------------------------------------------------------------
+  // One step function for every body on the map. The hero is actors[0] and is
+  // not a special case: he differs only in being the one the click handler
+  // gives a path to, and in `wander` being a checkbox instead of always on.
+  function play(a,action){
+    if(a.dead) return;
+    if(!(ACT[a.body]&&ACT[a.body][action])){    // not loaded yet -- start when it is
+      loadAction(a.body,action).then(()=>play(a,action));
+      return;
+    }
+    a.action=action; a.t=0; a.frame=0; a.path=[];
+    if(action==="death") a.dead=true;
+  }
+  function stepActor(a,dt){
+    a.moving=false;
+    // A one-shot action OWNS the actor until it ends: no walking mid-swing, and
+    // nothing re-aims him. hold_last is why a death stays dead -- a death that
+    // loops is a resurrection.
+    if(a.action!=="walk"){
+      const n=ACTMAN.actions[a.action]||1;
+      a.t+=dt*ACT_FPS;
+      if(a.t<n){ a.frame=Math.floor(a.t); return; }
+      if(ACTMAN.hold_last.indexOf(a.action)>=0){ a.frame=n-1; return; }
+      a.action="walk"; a.t=0; a.frame=0;
+    }
+    if(a.dead) return;
+    if(!a.path.length){
+      if(!a.wander || !reach.length) return;
+      const t=reach[(Math.random()*reach.length)|0];
+      if(t!==a.sq) a.path=bfsSq(a.sq,t);
+      if(!a.path.length) return;
+    }
+    const X=sqX(a.path[0]), Y=sqY(a.path[0]), L=sqL(a.path[0]);
     const [tx,ty]=sqWorld(X,Y);
     const tz=squareZ(X,Y,L);
-    const dx=tx-hero.wx, dy=ty-hero.wy, d=Math.hypot(dx,dy), spd=3.2*dt;
-    hero.z += (tz-(hero.z||0))*Math.min(1,dt*8);     // ease up the treads
-    if(d<=spd){ hero.wx=tx; hero.wy=ty; hero.z=tz; hero.sq=path.shift(); }
+    const dx=tx-a.wx, dy=ty-a.wy, d=Math.hypot(dx,dy), spd=(a.speed||3.2)*dt;
+    a.z += (tz-(a.z||0))*Math.min(1,dt*8);           // ease up the treads
+    if(d<=spd){ a.wx=tx; a.wy=ty; a.z=tz; a.sq=a.path.shift(); }
     else{
-      hero.wx+=dx/d*spd; hero.wy+=dy/d*spd;
-      hero.dist=(hero.dist||0)+spd; hero.moving=true;
-      const [ax,ay]=worldToScreen(0,0), [bx,by]=worldToScreen(dx,dy);
-      const a=Math.atan2(by-ay,bx-ax);
-      hero.dir=DIRS[((Math.round(a/(Math.PI/4))%8)+8)%8];
+      a.wx+=dx/d*spd; a.wy+=dy/d*spd;
+      a.dist=(a.dist||0)+spd; a.moving=true;
+      a.dir=faceDir(dx,dy);
     }
+    // Frame is driven by DISTANCE WALKED, not by a timer: tie it to the clock
+    // and he slides whenever speed and cycle rate disagree.
+    const n=ACTMAN.actions.walk;
+    a.frame = (a.path.length||a.moving)
+      ? Math.floor((a.dist||0)/STRIDE_WORLD*n) % n : 0;
+  }
+  // World delta -> the screen direction its art was baked for. Screen, not
+  // world: the art faces the camera, and the camera is what rotates on Q/E.
+  function faceDir(dx,dy){
+    const [ax,ay]=worldToScreen(0,0), [bx,by]=worldToScreen(dx,dy);
+    const a=Math.atan2(by-ay,bx-ax);
+    return DIRS[((Math.round(a/(Math.PI/4))%8)+8)%8];
+  }
+  function newActor(body,sq,opt){
+    const [wx,wy]=sqWorld(sqX(sq),sqY(sq));
+    return Object.assign({body, sq, wx, wy, z:squareZ(sqX(sq),sqY(sq),sqL(sq)),
+                          dir:"south", action:"walk", frame:0, t:0, path:[],
+                          hp:3, dead:false, wander:false}, opt||{});
+  }
+  function spawnGoblins(n){
+    for(let k=0;k<n && reach.length;k++){
+      // Not on top of the hero: a goblin that starts inside him is invisible
+      // until one of them moves, which reads as the spawn having failed.
+      let sq=null;
+      for(let tries=0;tries<40;tries++){
+        const s=reach[(Math.random()*reach.length)|0];
+        const [wx,wy]=sqWorld(sqX(s),sqY(s));
+        if(Math.hypot(wx-hero.wx,wy-hero.wy)>3){ sq=s; break; }
+      }
+      if(sq===null) continue;
+      actors.push(newActor("goblin",sq,{wander:true, speed:2.4, hp:3}));
+    }
+  }
+
+  // ---- effects -------------------------------------------------------------
+  // A cast is: an animation at a place, a point light while it burns, and
+  // whatever it does to whoever is standing there. The first two are this
+  // function; the third is the caller's business.
+  function cast(name,wx,wy,z,fromWx,fromWy){
+    if(!FXIMG[name]) return null;
+    const def=FXDEF[name]||{};
+    const e={name, wx, wy, z:(z||0)+(def.z||0), t:0, frame:0, k:1, rot:0};
+    if(def.aimed && fromWx!==undefined){
+      // The bolt is baked as a streak along world +X. Point it by rotating the
+      // SAMPLE in screen space -- the art is a 2D image from a fixed camera, so
+      // the honest rotation is the one the viewer sees. It sits at the midpoint
+      // of the flight, and the rect grows by root-2 so the corners survive.
+      const [ax,ay]=worldToScreen(0,0), [bx,by]=worldToScreen(1,0);
+      const [cx,cy]=worldToScreen(fromWx,fromWy), [dx2,dy2]=worldToScreen(wx,wy);
+      e.rot=Math.atan2(dy2-cy,dx2-cx)-Math.atan2(by-ay,bx-ax);
+      e.k=1.42;
+      e.wx=(wx+fromWx)/2; e.wy=(wy+fromWy)/2;
+    }
+    fx.push(e);
+    return e;
+  }
+  // How brightly an effect burns at its current frame. ONE curve, used by both
+  // the sprite and the light it throws: they are the same flash, and a blast
+  // whose glow fades while its art stays at full strength reads as a decal.
+  // Peaks early and dies with the smoke -- a flash that ends on full is a lamp
+  // being switched off.
+  function fxBurn(e){
+    const n=FXMAN.effects[e.name], u=Math.min(1,e.t/Math.max(1,n-1));
+    return Math.max(0.06, Math.sin(Math.min(1,u*1.9)*Math.PI*0.85)*(1-u*0.55));
+  }
+  function stepEffects(dt){
+    for(let i=fx.length-1;i>=0;i--){
+      const e=fx[i];
+      e.t+=dt*ACT_FPS;
+      const n=FXMAN.effects[e.name];
+      if(e.t>=n){ fx.splice(i,1); continue; }
+      e.frame=Math.floor(e.t);
+    }
+  }
+
+  // ---- fighting ------------------------------------------------------------
+  // Impacts land PART WAY THROUGH the swing, so they need to happen later than
+  // the click. On the frame clock, not setTimeout: a backgrounded tab throttles
+  // timers but stops rendering too, and a blow that lands while nothing is
+  // drawing is a goblin that dies off-screen between two frames.
+  const soon=[];
+  const after=(secs,fn)=>soon.push({t:secs,fn});
+  function stepPending(dt){
+    for(let i=soon.length-1;i>=0;i--)
+      if((soon[i].t-=dt)<=0){ const f=soon[i].fn; soon.splice(i,1); f(); }
+  }
+  const REACH=1.9;                                  // world units; ~a square and a half
+  const dist2=(a,b)=>(a.wx-b.wx)**2+(a.wy-b.wy)**2;
+
+  // The actor nearest a click, in SCREEN space. His own sprite rect is the
+  // hitbox, shrunk to the middle of it -- a 384px cell is mostly empty air
+  // around a figure, and a full-cell hitbox swallows clicks on the ground beside
+  // him. Live actors only: a corpse is scenery and you can walk over it.
+  function pickActor(cx,cy){
+    let best=null, bestD=Infinity;
+    for(const a of actors){
+      if(a.dead) continue;
+      const [sx,sy]=worldToScreen(a.wx,a.wy);
+      const y=sy-(a.z||0)*COS30*PPU;
+      const dx=cx-sx, dy=cy-(y-SPR_RES*0.22);       // aim at the chest, not the feet
+      if(Math.abs(dx)>SPR_RES*0.22 || Math.abs(dy)>SPR_RES*0.30) continue;
+      const d=dx*dx+dy*dy;
+      if(d<bestD){ bestD=d; best=a; }
+    }
+    return best;
+  }
+
+  function damage(tgt,n){
+    tgt.hp-=(n||1);
+    // hold_last is why the death sticks. Playing "hit" on a corpse would rewind
+    // it to standing, which is the same bug as a looping death animation.
+    play(tgt, tgt.hp<=0 ? "death" : "hit");
+    if(tgt.hp<=0) flash(tgt.body+" down");
+  }
+  function heroAttack(tgt){
+    if(hero.dead||tgt.dead) return;
+    if(dist2(hero,tgt)>REACH*REACH){
+      // Walk into reach and swing on arrival. Storing the intent rather than
+      // refusing the click is the difference between a game and a diagram.
+      const p=pathToward(hero.sq,sqX(tgt.sq),sqY(tgt.sq),sqL(hero.sq));
+      if(!p.length){ flash("no way to reach it"); return; }
+      hero.path=p.slice(0,Math.max(1,p.length-1));
+      hero.intent={attack:tgt};
+      return;
+    }
+    hero.intent=null;
+    hero.dir=faceDir(tgt.wx-hero.wx, tgt.wy-hero.wy);
+    play(hero,"attack");
+    after(0.28,()=>{ if(!tgt.dead && dist2(hero,tgt)<=(REACH+0.6)**2) damage(tgt,1); });
+  }
+  function heroCast(name,wx,wy,z,tgt){
+    if(hero.dead) return;
+    hero.intent=null;
+    hero.path=[];
+    hero.dir=faceDir(wx-hero.wx, wy-hero.wy);
+    play(hero,"attack");                            // the cast is the same gesture
+    after(0.20,()=>{
+      cast(name,wx,wy,z,hero.wx,hero.wy);
+      // Splash. heal is the one that helps, which is the cheapest possible way
+      // to prove the damage path and the effect are not the same switch.
+      const R = name==="fireball" ? 2.6 : name==="frost" ? 2.0 : 1.2;
+      for(const a of actors){
+        if(a.dead || (a===hero && name!=="heal")) continue;
+        if((a.wx-wx)**2+(a.wy-wy)**2 > R*R) continue;
+        if(name==="heal"){ a.hp=Math.min(3,a.hp+1); continue; }
+        damage(a, name==="fireball" ? 2 : 1);
+      }
+      if(tgt && tgt.dead===false && name!=="heal" && (tgt.wx-wx)**2+(tgt.wy-wy)**2>R*R)
+        damage(tgt,1);                              // a bolt hits what it was aimed at
+    });
+  }
+  // Walked-into-reach: the swing the click asked for, fired when the walk ends.
+  function checkIntent(){
+    const it=hero.intent;
+    if(!it||!it.attack) return;
+    if(it.attack.dead){ hero.intent=null; return; }
+    if(hero.path.length) return;
+    if(dist2(hero,it.attack)<=(REACH+0.4)**2) heroAttack(it.attack);
+    else hero.intent=null;                          // it moved; do not chase forever
   }
 
   const amb=document.getElementById("amb"), rng=document.getElementById("rng"),
@@ -2599,10 +3015,10 @@ document.getElementById("ver").textContent=VERSION;
   daylight.onchange = () => { applyDaylight(daylight.checked);
                               flash(daylight.checked?"daylight":"torchlight"); };
   applyDaylight(daylight.checked);
-  let mouse=[6,-6], frozen=false, clock=0;
+  let mouse=[6,-6], frozen=false, clock=0, paused=false;
 
   function drawGL(){
-    syncSprite();
+    syncSprites();
     gl.uniform1f(U("uAmb"),amb.value/100);
     // Sun direction in WORLD space, matching the light positions the torches use.
     // Elevation is fixed at a late-afternoon 38 degrees: high enough that flat
@@ -2629,6 +3045,18 @@ document.getElementById("ver").textContent=VERSION;
       {p:[hero.wx+0.45,hero.wy+0.45,1.5+(hero.z||0)], c:[1.25,0.85,0.48], r:rng.value/10},
       {p:[mouse[0],mouse[1],3.0],         c:[0.35,0.55,1.15], r:9.0}
     ];
+    // A LIVE SPELL IS A LIGHT. The effect sprite is emissive and gets ADDED to
+    // the frame, which makes it bright but leaves the room it went off in dark --
+    // and a fireball that lights nothing reads as a decal on the glass. These go
+    // in before the torches so a blast always gets a slot: it is the thing the
+    // eye is on. Brightness follows the animation, peaking early and dying with
+    // the smoke, because a flash that ends on full is a lamp switching off.
+    for(const e of fx){
+      const def=FXDEF[e.name]; if(!def) continue;
+      const k=fxBurn(e);
+      lights.push({p:[e.wx,e.wy,(e.z||0)+0.8],
+                   c:def.light.map(v=>v*k), r:def.r});
+    }
     torches.map(t=>({t,d:(t[0]-hero.wx)*(t[0]-hero.wx)+(t[1]-hero.wy)*(t[1]-hero.wy)}))
            .sort((a,b)=>a.d-b.d).slice(0,6)
            .forEach(({t})=>lights.push({p:t, c:[1.5,0.82,0.34], r:8.0}));
@@ -2639,8 +3067,6 @@ document.getElementById("ver").textContent=VERSION;
       gl.uniform1f(U("uLr["+k+"]"),lights[k].r);
     }
     gl.uniform1f(U("uNL"),NL);
-    gl.uniform4fv(U("uSprRect"),spriteRect());
-    gl.uniform1f(U("uHeroZ"),hero.z||0);
     gl.uniform1f(U("uHasUpper"),hasUpper);
     gl.uniform1i(U("uMove"),9);
     gl.uniform2f(U("uMoveSize"),SW,SH);
@@ -2714,6 +3140,16 @@ document.getElementById("ver").textContent=VERSION;
         const d=(px-cx)*(px-cx)+(py-zz-cy)*(py-zz-cy);
         if(d<bestD){ bestD=d; X=sx2; Y=sy2; }
       }
+      // Clicking a LIVE GOBLIN attacks it, or throws the armed spell at it; the
+      // square under him is not what you meant. Matched against the actor's
+      // screen anchor rather than his square, because he is between squares for
+      // most of every step and the square he is nearest is not where he looks.
+      const tgt=pickActor(cx,cy);
+      if(tgt && tgt!==hero){
+        const armed=document.querySelector('input[name="spell"]:checked').value;
+        if(armed==="melee") heroAttack(tgt); else heroCast(armed,tgt.wx,tgt.wy,tgt.z,tgt);
+        drag=null; downAt=null; return;
+      }
       // clicking a door works it rather than walking to it
       const dt = (X>=0&&X<SW&&Y>=0&&Y<SH) ? cells[((Y/CELLS)|0)*W+((X/CELLS)|0)] : null;
       if(dt && dt.kind==="door"){
@@ -2724,6 +3160,15 @@ document.getElementById("ver").textContent=VERSION;
         drag=null; downAt=null; return;
       }
       if(X>=0&&X<SW&&Y>=0&&Y<SH){
+        // An armed spell lands on the GROUND you clicked -- that is the whole
+        // difference between a fireball and a sword, and it is why the ground
+        // click and the actor click above run the same cast function.
+        const armed=document.querySelector('input[name="spell"]:checked').value;
+        if(armed!=="melee"){
+          const [wx2,wy2]=sqWorld(X,Y);
+          heroCast(armed,wx2,wy2,squareZ(X,Y,sqL(hero.sq)),null);
+          drag=null; downAt=null; return;
+        }
         // A click is ambiguous when two floors overlap on screen: try the layer
         // he is standing on first, then the other one.
         const hereL=sqL(hero.sq);
@@ -2732,7 +3177,7 @@ document.getElementById("ver").textContent=VERSION;
           p=p.slice(0,moveLeft);          // spend only what is left this turn
         if(p.length){
           const end=p[p.length-1];
-          path=p;
+          hero.path=p;
           flash(sqX(end)===X && sqY(end)===Y ? "" : "as close as I can get");
         } else flash("nowhere to go");
       } else flash("outside the map");
@@ -2768,13 +3213,15 @@ document.getElementById("ver").textContent=VERSION;
   const refit=()=>{ zoom.value=Math.round(fitZoom()*100); centreView(); fit(); refreshMoveRange(); };
   // regenerate = a NEW seed; typing a seed and pressing enter = that exact map
   document.getElementById("regen").onclick=()=>{ SEED=(Math.random()*1e9)|0; if(build()) refit(); };
+  document.getElementById("spawn").onclick=()=>{ spawnGoblins(1); flash("goblin"); };
   seedBox.onchange=()=>{ const v=parseInt(seedBox.value,10); if(!isNaN(v)){ SEED=v; if(build()) refit(); } };
 
   // How many pixels of the sprite actually survive the depth test: render the
   // frame with and without the sprite and diff. This is the only honest way to
   // tell "correctly occluded" apart from "never drawn".
-  function spriteVisiblePixels(){
-    const [rx,ry,rw,rh]=spriteRect();
+  function spriteVisiblePixels(who){
+    const a=who||hero;
+    const [rx,ry,rw,rh]=spriteRect(a);
     const z=zoom.value/100;
     // pan/zoom are CSS px but readPixels wants BACKING-STORE px, and with
     // supersampling those differ by ss/pix. Mixing them made this read the wrong
@@ -2786,7 +3233,11 @@ document.getElementById("ver").textContent=VERSION;
     const grab=()=>{ const b=new Uint8Array(w*h*4);
       gl.readPixels(x0,glc.height-y0-h,w,h,gl.RGBA,gl.UNSIGNED_BYTE,b); return b; };
     drawGL(); const A=grab();
-    gl.uniform4fv(U("uSprRect"),[0,0,0,0]); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    // Hide EVERY sprite for the control frame, not just this one: with several
+    // actors on the map a diff that leaves the others in still reports their
+    // pixels as this one's whenever two overlap.
+    gl.uniform1f(U("uNSpr"),0); gl.uniform1f(U("uNCast"),0);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
     const B=grab();
     let diff=0;
     for(let k=0;k<A.length;k+=4)
@@ -2795,19 +3246,72 @@ document.getElementById("ver").textContent=VERSION;
     return {visible:diff, area:w*h, pct:+(100*diff/(w*h)).toFixed(1)};
   }
 
-  window.__engine={hero:()=>hero,cells:()=>cells,path:()=>path,reach:()=>reach,
+  window.__engine={hero:()=>hero,cells:()=>cells,path:()=>hero.path,reach:()=>reach,
     worldToScreen,sqWorld,bfsSq,SW,SH,spriteVisiblePixels,spriteRect,
     standable:(X,Y,L)=>passable(X,Y,L||0,X,Y,L||0),
     propPlan:()=>propPlan, draws:()=>lastDraws,
     pathToward,
     sqId:(X,Y,L)=>(L||0)*SW*SH+Y*SW+X,
-    goto:s=>{const p=bfsSq(hero.sq,s); if(p.length) path=p; return p;},
-    view:(z,px,py)=>{zoom.value=Math.round(z*100);panX=px;panY=py;fit();}};
+    goto:s=>{const p=bfsSq(hero.sq,s); if(p.length) hero.path=p; return p;},
+    view:(z,px,py)=>{zoom.value=Math.round(z*100);panX=px;panY=py;fit();},
+    // Actors and effects, for shot.py -- the browser is not the only witness,
+    // and "did the goblin die" has to be answerable without reading pixels.
+    actors:()=>actors.map(a=>({body:a.body,action:a.action,frame:a.frame,dir:a.dir,
+                               hp:a.hp,dead:a.dead,wx:+a.wx.toFixed(2),wy:+a.wy.toFixed(2),
+                               z:+(a.z||0).toFixed(2),sq:a.sq})),
+    fx:()=>fx.map(e=>({name:e.name,frame:e.frame,wx:+e.wx.toFixed(2),wy:+e.wy.toFixed(2),
+                       rot:+e.rot.toFixed(3)})),
+    loaded:()=>Object.keys(actLoading).filter(k=>{
+      const [b,a]=k.split("/"); return ACT[b]&&ACT[b][a]; }),
+    goblins:()=>actors.filter(a=>a.body==="goblin"),
+    spawn:(body,sq)=>{ const a=newActor(body, sq===undefined
+                         ? reach[(Math.random()*reach.length)|0] : sq, {wander:true});
+                       actors.push(a); return a; },
+    attack:a=>heroAttack(typeof a==="number"?actors[a]:(a||actors[1])),
+    cast:(n,x,y)=>heroCast(n, x===undefined?hero.wx+2:x, y===undefined?hero.wy:y,
+                           hero.z||0, null),
+    play:(i,act)=>play(actors[i],act),
+    // Hand-cranked time, for a witness that is not a browser at 60fps: pause,
+    // then step the simulation an exact number of ticks and screenshot that.
+    pause:v=>{ paused=v!==false; return paused; },
+    step:(n,dt)=>{ const was=paused; paused=false;
+                   for(let k=0;k<(n||1);k++) tick(dt||0.05); paused=was; },
+    view0:()=>({panX,panY,zoom:zoom.value/100}),
+    // What the shader was actually handed this frame. "It is in the list" and
+    // "it is in a slot" are different claims, and only this one answers the
+    // second: the compositor trims, reorders and clears slots behind you.
+    slots:()=>Array.from({length:lastSlots},(_,i)=>({
+      rect:[...spRect.slice(i*4,i*4+4)].map(v=>+v.toFixed(1)),
+      atlas:[...spAtlas.slice(i*4,i*4+4)].map(v=>+v.toFixed(3)),
+      meta:[...spMeta.slice(i*4,i*4+4)].map(v=>+v.toFixed(3))}))};
 
   if(!build()) return;
   zoom.value=Math.round(fitZoom()*100); centreView(); fit();
 
+  // The rest of the actor art comes in behind the map. Walk was enough to draw
+  // the first frame; a swing needs attack, and it is 30 MB that nobody should
+  // wait on to see a meadow.
+  (async()=>{ for(const b of ACTMAN.bodies)
+                for(const act of Object.keys(ACTMAN.actions))
+                  await loadAction(b,act); })();
+
   endTurn();                      // start the first turn with a full move budget
+  // ONE tick, so a headless caller advances the world exactly the way the frame
+  // loop does. A test that steps the simulation by hand and a browser running at
+  // 60fps must not be able to disagree about what happened.
+  function tick(dt){
+    // PAUSED still draws, it just stops time. Without this a screenshot cannot
+    // catch a transient: an eval that sets up a blast returns, the frame loop
+    // keeps running while the screenshot is taken, and the picture arrives after
+    // the animation has ended -- which looks exactly like the effect never
+    // rendering, and cost an afternoon of debugging a working shader.
+    if(paused) return;
+    hero.wander=document.getElementById("wander").checked;
+    stepPending(dt);
+    for(const a of actors) stepActor(a,dt);
+    checkIntent();
+    stepEffects(dt);
+  }
   let last=performance.now(), fps=0, acc=0, frames=0;
   const fpsEl=document.getElementById("fps");
   (function loop(t){
@@ -2815,7 +3319,7 @@ document.getElementById("ver").textContent=VERSION;
     acc+=dt; frames++;
     if(acc>0.5){ fps=Math.round(frames/acc); fpsEl.textContent=fps+" fps"; acc=0; frames=0; }
     clock+=dt;
-    stepHero(dt); drawGL();
+    tick(dt); drawGL();
     requestAnimationFrame(loop);
   })(last);
 })();
