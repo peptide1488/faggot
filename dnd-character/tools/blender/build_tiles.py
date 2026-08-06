@@ -3530,9 +3530,15 @@ def write_manifest(outdir):
             # Rotations are emitted too. The solver should never have to know that
             # r90 means "shift the socket list by one" -- that is a fact about how
             # this baker names files, not about the tileset.
-            ent["sockets"] = {str(r): {e: sock[EDGE_ORDER[
-                (EDGE_ORDER.index(e) - (r // 90)) % 4]] for e in EDGE_ORDER}
-                for r in ROTATIONS}
+            # DERIVED PER ROTATION, not permuted from r0. Permuting the edge
+            # KEYS was right while a socket was just a name; now that a crossing
+            # carries the world edge it rises toward, the VALUE has to turn with
+            # the tile too -- X01>Y+ at r90 is X01>X+. Permuting alone left every
+            # rotated variant advertising the r0 direction, so the manifest and
+            # check_seams.py (which builds the rotated spec properly) disagreed
+            # about which pieces may abut.
+            ent["sockets"] = {str(r): tile_sockets(rotate_spec(spec, r))
+                              for r in ROTATIONS}
             ent["band"] = spec.get("band", spec.get("lo", 0))
         man["tiles"][name] = ent
     # WHERE THIS SET'S WATER SURFACE SITS. There are two of them and always have

@@ -97,11 +97,26 @@ T('every tile declares sockets for every rotation',
     !t.sockets || [0, 90, 180, 270].every(r => t.sockets[r] &&
       S.ORDER.every(e => typeof t.sockets[r][e] === 'string'))));
 
-T('rotating a tile permutes its sockets rather than inventing them',
+// A CROSSING NAMES THE WORLD EDGE IT RISES TOWARD -- X01>Y+ -- so turning a tile
+// has to turn that name too: at r90 the same face is X01>X+. This used to assert
+// that the multiset of sockets was IDENTICAL at every rotation, which was right
+// while a socket was just a label and became wrong the moment one carried a
+// direction. Rotating the orientations before comparing says the same thing the
+// old test meant (rotation rearranges, it does not invent) while actually
+// checking the part that can now go wrong: build_tiles.py used to permute the
+// r0 socket map to make the rotated ones, which left every rotated variant
+// advertising the r0 direction.
+const ROT_EDGE = (e, r) => S.ORDER[(S.ORDER.indexOf(e) + ((r / 90) | 0)) % 4];
+const ROT_SOCK = (v, r) => {
+  const i = v.indexOf('>');
+  return i < 0 ? v : v.slice(0, i + 1) + ROT_EDGE(v.slice(i + 1), r);
+};
+T('rotating a tile turns its sockets rather than inventing them',
   Object.entries(man.tiles).every(([, t]) => {
     if (!t.sockets) return true;
-    const bag = r => S.ORDER.map(e => t.sockets[r][e]).sort().join('|');
-    return [90, 180, 270].every(r => bag(r) === bag(0));
+    const bag = (r, turn) => S.ORDER.map(e => ROT_SOCK(t.sockets[r][e], turn))
+      .sort().join('|');
+    return [90, 180, 270].every(r => bag(r, 0) === bag(0, r));
   }));
 
 // ---- the invariant ----------------------------------------------------------

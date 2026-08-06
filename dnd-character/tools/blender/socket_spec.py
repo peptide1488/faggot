@@ -65,9 +65,56 @@ BANDS = {
 }
 
 
-def compatible(a, b):
-    """Could one tile present these two sockets at once?"""
-    return bool(BANDS.get(a, set()) & BANDS.get(b, set()))
+def base(sock):
+    """`X01>Y+` -> `X01`. A crossing carries the world edge it rises toward, so
+    that two faces running opposite ways cannot abut; which bands it touches is
+    the same question either way. Without this every oriented socket fell out of
+    BANDS, compatible() said no to all of them, and the corner table reported a
+    serene 0 missing because it had quietly decided nothing was possible."""
+    return sock.split(">")[0]
+
+
+AXIS = {"X+": "X", "X-": "X", "Y+": "Y", "Y-": "Y"}
+OPP = {"X+": "X-", "X-": "X+", "Y+": "Y-", "Y-": "Y+"}
+
+
+def rises(sock):
+    """The world edge a crossing rises toward, or None for a flat band."""
+    return sock.split(">")[1] if ">" in sock else None
+
+
+def compatible(a, b, ea="X+", eb="Y+"):
+    """Could one tile present these two sockets on these two adjacent edges?
+
+    Two tests, and the second only exists because orienting the crossings
+    multiplied the vocabulary and the band test alone started reporting 68
+    missing corners, most of which no tile could ever have:
+
+      BANDS    some height has to be common to both, or the tile would be at two
+               heights at once with nothing declared between them.
+      AXIS     a crossing names which END of ITS OWN edge is the high one, so an
+               edge running in Y can only rise toward Y+ or Y-. `X01>Y+` on a Y
+               edge is not a piece nobody has built, it is a sentence that does
+               not parse -- and listing it as missing sends somebody off to model
+               a tile that cannot exist.
+    """
+    if not (BANDS.get(base(a), set()) & BANDS.get(base(b), set())):
+        return False
+    for sock, edge in ((a, ea), (b, eb)):
+        d = rises(sock)
+        if d is not None and AXIS[d] == AXIS[edge]:
+            return False
+    # TWO CROSSINGS MEETING MUST POINT AT THE SAME CORNER. A level change on each
+    # of two adjacent edges means one high region, and the pair only describes a
+    # region if both arrows agree where it is: toward the corner they share
+    # (an outside corner, the nub you walk around) or toward the opposite one
+    # (an inside corner, the notch you stand in). Anything else says the ground
+    # is high in two places that do not touch, which is two landforms, not one --
+    # and it was 22 entries on a list of tiles to go and model.
+    da, db = rises(a), rises(b)
+    if da and db:
+        return (da == eb and db == ea) or (da == OPP[eb] and db == OPP[ea])
+    return True
 
 
 def load(setdir):
@@ -126,7 +173,7 @@ def main():
     w("|---|---|---:|---|")
     for v, c in sorted(supply.items(), key=lambda kv: -kv[1]):
         w("| `%s` | %s | %d | %s |"
-          % (v, MEANING.get(v, "?"), c, ", ".join(sorted(presenters[v]))))
+          % (v, MEANING.get(base(v), "?"), c, ", ".join(sorted(presenters[v]))))
     w("")
     thin = [v for v, c in supply.items() if c <= 4]
     if thin:
@@ -203,11 +250,11 @@ def main():
         w("| first edge | next edge | the shape that is missing |")
         w("|---|---|---|")
         for a, b in ranked:
-            base = {"G0+P": "G0", "G1+P": "G1", "W+P": "W"}
+            plain = {"G0+P": "G0", "G1+P": "G1", "W+P": "W"}
             xs = [s for s in (a, b) if s.startswith("X")]
             if a == b and "+P" in a:
                 note = ("a track turning a corner on %s"
-                        % MEANING[base[a]].split(",")[0])
+                        % MEANING[plain[a]].split(",")[0])
             elif a == b:
                 note = "a run of `%s` that turns a corner" % a
             elif len(xs) == 2:
