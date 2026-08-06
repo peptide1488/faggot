@@ -285,14 +285,45 @@ const ROLE_W = { ground:18, high_ground:9, liquid:3.4, track:3.0, transition:4.5
 // to spend a tile on a ramp in the first place. Placing one up front inverts it:
 // the ramp exists, and the plateau grows around it because that is the only thing
 // its high edge can connect to.
-const MAP_SEEDS = { slope:[2,4], high_ground:[1,2], liquid:[1,2] };
-// LAND IS EVERYTHING THAT IS NOT WATER. A transition tile is not an obstacle -- it
-// is walkable ground that happens to change level partway across -- and counting it
-// as "not land" is what made 97 maps out of 112 fail this test while the checks
-// that were actually interesting never even ran. The tally said so in one run,
-// after two rounds of tuning had guessed at the wrong clause.
-const MAP_MIX = { land:[0.62, 1.0], high:[0.04, 0.46], water:[0.0, 0.34] };
+// Point seeds: features that want to EXIST somewhere, with no shape to them.
+// Water is not one of these any more -- seeding it as loose cells is what made
+// ponds spatter across the map. It gets a path instead, below.
+const MAP_SEEDS = { slope:[2,4], high_ground:[1,2] };
 
+// What a finished tiling has to look like to be accepted, as fractions of the
+// board. LAND IS EVERYTHING THAT IS NOT WATER -- a transition tile is walkable
+// ground that happens to change level partway across, and counting it as "not
+// land" is what made 97 maps in 112 fail this test while the interesting checks
+// never ran at all.
+const MAP_MIX = { land:[0.62, 1.0], high:[0.04, 0.46],
+                  // Water is a RIVER now rather than scattered ponds, so the band
+                  // it may occupy is much narrower: a tenth of the map is a
+                  // watercourse, a third of it was a swamp.
+                  // A one-tile river that meanders lays down more cells than a
+                  // straight one -- every sideways step is another tile -- so a
+                  // nine-span river is twelve to fifteen tiles before WFC adds a
+                  // single pool of its own. Capping at 13 rejected the shape that
+                  // had just been asked for, and the fallback then returned maps
+                  // wetter than either number.
+                  water:[0.01, 0.21],
+                  // PLAIN LOW GROUND IS A FEATURE, and counted on its own -- not
+                  // together with high ground, which let a map of plateau, road
+                  // and river through with literally no grass on it. Without a
+                  // floor under everything the map is busy edge to edge and reads
+                  // as texture rather than terrain: nowhere for the eye, or a
+                  // fight, to rest.
+                  open:[0.10, 1.0] };
+
+// A RIVER AND A ROAD ARE PATHS, NOT QUANTITIES. Weighting water up gives you more
+// water everywhere; it cannot give you one river. Weighting was tried three times
+// on this set and failed for exactly that reason -- it can say how MUCH, never
+// where or what shape. A path seeded before the solve says both, and WFC then has
+// to grow banks and verges around it because the sockets leave it no choice.
+//
+// Seeded SOFTLY: each cell on the path is narrowed to the role, not pinned to one
+// variant, so the solver still picks which piece of that role fits its
+// neighbours. Pinning a whole line of exact tiles over-constrains the board and
+// the attempt just fails.
 function buildSocketVariants(man){
   SVAR.length = 0;
   for(const [name,t] of Object.entries(man.tiles)){
@@ -307,14 +338,89 @@ function buildSocketVariants(man){
   return SVAR.length;
 }
 
-// Same shape as wfc() below -- lowest-entropy cell, weighted pick, propagate,
-// retry on contradiction -- but the compatibility test is socket equality and the
-// domain is a plain array of sets rather than a bitmask, because a socket set has
-// more than 32 variants (28 tiles x 4 rotations = 112).
-function socketWfc(W,H,tries=120){
+function seedPath(dom, propagate, W, H, want, down, wobble, joined){
+  const idx=(i,j)=>j*W+i;
+  const N=SVAR.length;
+  // ONE ORTHOGONAL STEP AT A TIME. The first version advanced along the span and
+  // wobbled sideways in the same move, so consecutive cells were DIAGONAL -- and
+  // a diagonal pair shares no edge, so the arms it then demanded were on edges
+  // that do not touch. Nothing could satisfy that and every seed failed to solve.
+  // Either go forward or go sideways; never both.
+  const span = down ? H : W, cross = down ? W : H;
+  const cell = (a, c) => down ? [c, a] : [a, c];
+  const path = [];
+  let a = 0, c = 1 + ((rnd()*(cross-2))|0);
+  path.push(cell(a, c));
+  let guard = 0;
+  while(a < span-1 && guard++ < span*4){
+    if(rnd() < wobble){
+      const nc = c + (rnd()<0.5 ? -1 : 1);
+      if(nc >= 1 && nc <= cross-2){ c = nc; path.push(cell(a, c)); continue; }
+    }
+    a++; path.push(cell(a, c));
+  }
+  // Which edge of THIS cell faces that one. j increases toward Y-, which is the
+  // convention the neighbour table uses.
+  const edgeTo = (p, q) => q[0] > p[0] ? "X+" : q[0] < p[0] ? "X-"
+                         : q[1] > p[1] ? "Y-" : "Y+";
+  for(let k=0; k<path.length; k++){
+    const me = path[k], prev = path[k-1], next = path[k+1];
+    const need = [];
+    if(prev) need.push(edgeTo(me, prev));
+    if(next) need.push(edgeTo(me, next));
+    // the ends run off the map, so the road meets the border rather than stopping
+    if(!prev) need.push(down ? "Y+" : "X-");
+    if(!next) need.push(down ? "Y-" : "X+");
+    const n = idx(me[0], me[1]);
+    const keep = [...dom[n]].filter(v => {
+      if(!want(SVAR[v])) return false;
+      return !joined || need.every(e => /\+P/.test(SVAR[v].sock[e]));
+    });
+    if(!keep.length) return false;
+    dom[n] = new Set(keep);
+    if(!propagate([[me[0], me[1]]])) return false;
+  }
+  return true;
+}
+
+// Do the tiles of these two cells form a ROAD between them? A track's edge carries
+// +P only where an arm actually leaves it, and the socket rule makes two abutting
+// edges equal -- so a shared socket with +P in it is a join you could walk, and
+// anything else is two roads that happen to be next to each other.
+function roadCrosses(dom, W, H){
+  const idx=(i,j)=>j*W+i, at=n=>SVAR[[...dom[n]][0]];
+  // EITHER WAY ACROSS. This only ever looked west to east, and the road runs
+  // perpendicular to the river -- so whenever the river went east-west the road
+  // ran north-south and a perfectly good crossing was rejected. It threw out
+  // about one attempt in fifteen for being the wrong shape of right.
+  const reach = (starts, done) => {
+    const seen=new Uint8Array(W*H), st=[];
+    for(const [i,j] of starts){ st.push([i,j]); seen[idx(i,j)]=1; }
+    while(st.length){
+      const [i,j]=st.pop();
+      if(done(i,j)) return true;
+      for(const nb of NEIGH){
+        const ni=i+nb.di, nj=j+nb.dj;
+        if(ni<0||ni>=W||nj<0||nj>=H) continue;
+        const m=idx(ni,nj); if(seen[m]) continue;
+        // a shared socket carrying +P is a join you could walk; anything else is
+        // two roads that happen to be next to each other
+        if(!/\+P/.test(at(idx(i,j)).sock[nb.edge])) continue;
+        seen[m]=1; st.push([ni,nj]);
+      }
+    }
+    return false;
+  };
+  const west=[], north=[];
+  for(let j=0;j<H;j++) west.push([0,j]);
+  for(let i=0;i<W;i++) north.push([i,0]);
+  return reach(west, (i)=>i===W-1) || reach(north, (i,j)=>j===H-1);
+}
+
+function socketWfc(W,H,tries=300){
   const N=SVAR.length, idx=(i,j)=>j*W+i;
   let accepted=null;
-  const rej={land:0, ways:0, low:0, flat:0};
+  const rej={land:0, ways:0, low:0, flat:0, river:0, road:0, nocross:0, busy:0};
   // Precompute compatibility once: OK[e][a] is the set of b that may sit across
   // edge e from a. Recomputing this inside propagate was the whole cost.
   const OK={};
@@ -350,21 +456,53 @@ function socketWfc(W,H,tries=120){
     // ---- seeds. Kept off the border: a feature pinned against the edge of the map
     // has only half its neighbourhood to grow into, and a plateau needs room for a
     // whole ring of transitions before it can exist at all.
+    // THE PATHS GO IN FIRST, before the point seeds. They are far the most
+    // constrained things on the board -- a river is a line of tiles that present
+    // water on all four edges, so it dictates its neighbours for its whole length
+    // -- and a plateau seeded into the middle of one leaves the river's cells with
+    // no water variant left. Seeded second, it failed 100 attempts in 120 and the
+    // whole solve came back empty. A scarp can find somewhere else to be; a river
+    // that has been cut in half cannot.
+    // WATER ALL THE WAY ACROSS, which is not the same as "the open-water tile".
+    // Pinning the river to role `liquid` pins it to the mere, whose four edges are
+    // plain W -- and W cannot carry a track, so the road had nothing to cross the
+    // river WITH and failed 90 attempts in 120. A ford is water with a crossing on
+    // it: its arms are W+P and its sides are W. Asking for "every edge is water,
+    // with or without a track on it" lets the two paths meet where they should,
+    // at a ford, instead of making them rivals for the same cell.
+    const isWater = v => ORDER.every(e => /^W(\+P)?$/.test(v.sock[e]));
+    const isTrack = v => /track/.test(v.role);
+    // ACROSS EACH OTHER, NOT ALONG. Each picked its own direction, so half the
+    // time the river and the road ran parallel -- and since a ford is both, they
+    // merged into one long wet street: twenty ford tiles on a nine by nine board
+    // and no grass at all. Crossing at right angles they meet once, which is a
+    // ford, which is the thing worth having.
+    const riverDown = rnd()<0.5;
+    if(!seedPath(dom, propagate, W, H, isWater, riverDown, 0.30, false)){ rej.river++; continue; }
+    if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true)){ rej.road++; continue; }
+
     let seeded=true;
     for(const [role,[lo,hi]] of Object.entries(MAP_SEEDS)){
       const pool=[]; for(let v=0;v<N;v++) if(SVAR[v].role===role) pool.push(v);
       if(!pool.length) continue;
       const count=lo+((rnd()*(hi-lo+1))|0);
       for(let k=0;k<count && seeded;k++){
-        const i=1+((rnd()*(W-2))|0), j=1+((rnd()*(H-2))|0), n=idx(i,j);
-        const keep=pool.filter(v=>dom[n].has(v));
-        if(!keep.length) continue;              // already decided; leave it alone
-        dom[n]=new Set([keep[(rnd()*keep.length)|0]]);
-        if(!propagate([[i,j]])) seeded=false;
+        // LOOK FOR SOMEWHERE IT FITS, rather than trying one cell and shrugging.
+        // The river and the road go in first and take a lot of the board with
+        // them, so a single random pick lands on an already-decided cell most of
+        // the time -- and a plateau that never got placed is a flat map, which is
+        // three of twelve seeds rejected for want of about ten lines.
+        for(let tryN=0; tryN<14; tryN++){
+          const i=1+((rnd()*(W-2))|0), j=1+((rnd()*(H-2))|0), n=idx(i,j);
+          const keep=pool.filter(v=>dom[n].has(v));
+          if(!keep.length) continue;            // already decided; leave it alone
+          dom[n]=new Set([keep[(rnd()*keep.length)|0]]);
+          if(!propagate([[i,j]])) seeded=false;
+          break;
+        }
       }
     }
     if(!seeded) continue;
-
     let ok=true;
     while(true){
       let best=-1,bestC=1e9;
@@ -381,7 +519,7 @@ function socketWfc(W,H,tries=120){
     // ---- acceptance. Only the last few attempts are allowed to settle for
     // anything, so a stubborn set still returns a map rather than nothing.
     if(attempt < tries-8){
-      let land=0, high=0, water=0, low=0, ways=0;
+      let land=0, high=0, water=0, low=0, ways=0, open=0;
       for(let n=0;n<W*H;n++){
         const r=SVAR[[...dom[n]][0]].role;
         if(r!=="liquid") land++;
@@ -389,6 +527,9 @@ function socketWfc(W,H,tries=120){
         if(r==="liquid") water++;
         if(r==="ground"||r==="track"||r==="wallow") low++;
         if(r==="slope"||r==="track_slope") ways++;
+        // PLAIN LOW GROUND, and not high ground as well -- counting both let a
+        // map of plateau, road and river pass with literally zero grass on it.
+        if(r==="ground") open++;
       }
       const T=W*H;
       // Count WHY maps are rejected. Two rounds of tuning were spent guessing which
@@ -406,10 +547,19 @@ function socketWfc(W,H,tries=120){
       // the seed failed to place at all.
       if(high && !ways){ rej.ways++; continue; }
       if(high && low < T*0.12){ rej.low++; continue; }
+      // A ROAD THAT DOES NOT ARRIVE IS A LAY-BY. Seeding the line only asks for
+      // track tiles along it; whether their ARMS line up into something you could
+      // walk from one edge to the other is a different question, and the only one
+      // worth asking.
+      if(!roadCrosses(dom, W, H)){ rej.nocross++; continue; }
+      if(!inRange(open, MAP_MIX.open)){ rej.busy++; continue; }
       accepted = {attempt, land, high, water, ways};
     }
     // Publish which attempt was taken and why: "the map is flat" and "the map was
     // rejected 119 times and the fallback ran" look identical from the outside.
+    // ALSO published when nothing survives -- see the assignment after the loop.
+    // It used to sit only here, past every `continue`, so a set that rejected
+    // every single attempt left no tally at all: the one case the tally is for.
     window.__wfcDebug={attempt, accepted, tries, rej};
     const cells=[];
     for(let j=0;j<H;j++) for(let i=0;i<W;i++){
@@ -423,6 +573,9 @@ function socketWfc(W,H,tries=120){
     }
     return cells;
   }
+  // NOTHING SURVIVED. Publish the tally anyway -- this is the case it exists for,
+  // and it used to be the one case where it was never written.
+  window.__wfcDebug={attempt:tries, accepted:null, tries, rej};
   return null;
 }
 

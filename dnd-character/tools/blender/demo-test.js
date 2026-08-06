@@ -71,6 +71,11 @@ const src = [
   '  t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }',
   'function reseed(s){ _rs=s>>>0; }',
   grab('function buildSocketVariants(man)'),
+  // The two path seeders and the road check are part of the solver now, so the
+  // test has to lift them too -- otherwise it exercises a socketWfc that cannot
+  // run, which fails loudly, which is the point of grabbing by name.
+  grab('function seedPath(dom, propagate, W, H'),
+  grab('function roadCrosses(dom, W, H)'),
   grab('function socketWfc(W,H'),
   'module.exports = { SVAR, buildSocketVariants, socketWfc, reseed, ORDER, OPP, NEIGH };',
 ].join('\n');
@@ -122,6 +127,10 @@ T('rotating a tile turns its sockets rather than inventing them',
 // ---- the invariant ----------------------------------------------------------
 const W = 9, H = 9;
 let solved = 0, mismatches = [];
+// The two promises the seeding makes, checked on the SOLVED map rather than on
+// the seed -- seeding only asks for tiles of a role along a line; whether they
+// end up joined is the only question worth asking.
+let noRoad = [], noRiver = [], wetness = [];
 for (let seed = 1; seed <= 12; seed++) {
   S.reseed(seed * 7919);
   const cells = S.socketWfc(W, H);
@@ -133,6 +142,37 @@ for (let seed = 1; seed <= 12; seed++) {
   // not neighbours.
   const at = (i, j) => (i < 0 || i >= W || j < 0 || j >= H) ? null : cells[j * W + i];
   const sockOf = c => man.tiles[c.name].sockets[c.rot];
+
+  // Walk the road: an edge joins two tiles only where the shared socket carries
+  // +P, which is exactly where an arm leaves. Start from every cell on the west
+  // edge, see if any reach the east one.
+  {
+    // EITHER AXIS. The road runs perpendicular to the river, so it is north-south
+    // half the time and testing only west-to-east fails a perfectly good map.
+    const walk = (starts, done) => {
+      const seen = new Set(), st = [];
+      for (const [i, j] of starts) { st.push([i, j]); seen.add(j * W + i); }
+      while (st.length) {
+        const [i, j] = st.pop();
+        if (done(i, j)) return true;
+        for (const nb of S.NEIGH) {
+          const ni = i + nb.di, nj = j + nb.dj, n = at(ni, nj);
+          if (!n || seen.has(nj * W + ni)) continue;
+          if (!/\+P/.test(sockOf(at(i, j))[nb.edge])) continue;
+          seen.add(nj * W + ni); st.push([ni, nj]);
+        }
+      }
+      return false;
+    };
+    const west = [], north = [];
+    for (let j = 0; j < H; j++) west.push([0, j]);
+    for (let i = 0; i < W; i++) north.push([i, 0]);
+    const crossed = walk(west, i => i === W - 1) || walk(north, (i, j) => j === H - 1);
+    if (!crossed) noRoad.push(seed);
+    const wet = cells.filter(c => c.role === 'liquid').length;
+    wetness.push(wet);
+    if (!wet) noRiver.push(seed);
+  }
   for (const c of cells) {
     for (const nb of S.NEIGH) {
       const n = at(c.i + nb.di, c.j + nb.dj);
@@ -170,6 +210,18 @@ for (let seed = 1; seed <= 12; seed++) {
 T('maps are not flat', flat === 0, flat + '/12 had no high ground');
 T('high ground always has a way up', noway === 0, noway + '/12 were unclimbable');
 T('maps are not mostly water', drowned === 0, drowned + '/12 drowned');
+
+// ---- what the seeding PROMISED, checked on the solved map --------------------
+// Seeding only asks for tiles of a role along a line. Whether they end up joined
+// into something you could walk, or whether the river survived the solve at all,
+// is a different question and the only one worth asking.
+T('a road crosses the map, west edge to east',
+  noRoad.length === 0, noRoad.length ? 'seeds without one: ' + noRoad.join(',') : '');
+T('every map has water in it',
+  noRiver.length === 0, noRiver.length ? 'dry seeds: ' + noRiver.join(',') : '');
+T('and not too much of it -- a river, not a swamp',
+  wetness.every(w => w <= W * H * 0.23),
+  'water tiles per map: ' + wetness.join(',') + ' of ' + (W * H));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
