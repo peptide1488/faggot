@@ -96,7 +96,15 @@ const TSET = "out/" + TILESET + "/";
 // The hero's idle wander deliberately stays on Math.random. It is animation, not
 // world-building, and if it drew from this stream then how long you watched the
 // map would change the NEXT map you generated.
-let SEED = (new URLSearchParams(location.search).get("seed")|0) ||
+// EVERY URL SETTING IS READ ONCE, HERE, before anything rewrites the address
+// bar -- because build() does exactly that, replacing it with just ?set&seed to
+// make the current map shareable, and any parameter read AFTER that point is
+// simply gone. `goblins` was read later, inside finishBuild, so it never had a
+// value: ?goblins=0 spawned three, every "empty map" control had three actors
+// wandering through it, and the frame that would not hold still between loads
+// was them walking. Two hours of it looked like a renderer bug.
+const PARAMS = new URLSearchParams(location.search);
+let SEED = (PARAMS.get("seed")|0) ||
            ((Math.random()*1e9)|0);
 let _rs = SEED;
 function reseed(s){ SEED = s>>>0; _rs = SEED; }
@@ -1159,6 +1167,12 @@ const FURN_FOOT={ barrel:[1,1], crate:[1,1], chest:[1,1], table:[2,1],
 const OUTDOOR_PROPS=["tree","pine","shrub","boulder","stump"];
 const PROP_NAMES=["torch_Y+","torch_X+","torch_Y-","torch_X-"]
   .concat(FURNITURE).concat(OUTDOOR_PROPS);
+// ?goblins=N -- how crowded the map starts. Parsed once at load (see PARAMS);
+// a slot in the sprite atlas costs per-pixel shader work whether or not anything
+// is standing in it, so this is the knob a performance measurement turns as well
+// as a difficulty setting.
+const N_GOBLINS = Math.max(0, Math.min(7,
+  PARAMS.has("goblins") ? (parseInt(PARAMS.get("goblins"), 10) || 0) : 3));
 const PROP_RES=768;                  // build_props.py RES
 const STRIDE_WORLD=0.9;              // world units per full step -- ties the
                                      // cycle to distance travelled so he does
@@ -1488,6 +1502,12 @@ document.getElementById("ver").textContent=VERSION;
       // (one texture fetch instead of two) was four times the size and cost
       // nothing. If it is ever wanted, it belongs behind the shadow slider as a
       // quality setting, not hidden in the constant.
+      //
+      // 3614 pixels, measured against a control that was actually empty. The
+      // first time this was judged, three goblins were walking through the
+      // "empty" frame -- see PARAMS at the top -- and the number was 5522 with
+      // most of it being them. Same verdict, but the first run of it proved
+      // nothing.
       float dt=maxT/float(N);
       // (No backticks anywhere in this shader: it is a JS template literal, and
       // one inside a comment ends the string and breaks the page.)
@@ -1515,17 +1535,18 @@ document.getElementById("ver").textContent=VERSION;
         // expensive function in the shader that is half the memory traffic:
         // 3.99ms a frame to 2.78 at 7.2 megapixels.
         //
-        // NOT quite the same coverage, and it is worth being exact about since
-        // the whole file leans on measuring rather than assuming. Comparing the
-        // alpha of every baked tile against its _H pass: 648 of 648 tiles
-        // disagree somewhere, by at most 662 pixels of about 157000 -- 0.4%, all
-        // of it the antialiased rim where the two renders straddle the alpha
-        // threshold differently. So a shadow ray can treat half a texel of tile
-        // edge as covered when the albedo would not, inside a march that already
-        // carries a 0.14 height bias and a per-pixel jitter. That is below what
-        // this test resolves; a whole-frame diff of the outdoor set came out
-        // pixel-identical. It is a trade, not an identity -- if a silhouette ever
-        // needs to be exact, this is the line that made it approximate.
+        // NOT quite the same coverage, and worth being exact about. Comparing
+        // the alpha of every baked tile against its _H pass: all 648 disagree
+        // somewhere, by at most 662 pixels of about 157000 -- 0.4%, all of it the
+        // antialiased rim where the two renders straddle the alpha threshold
+        // differently. Those pixels are a tile's outer edge, which in a tiling is
+        // covered by its neighbour, and the march already carries a 0.14 height
+        // bias and a per-pixel jitter on top.
+        //
+        // So it does not reach the screen: whole-frame diffs against the previous
+        // shader are pixel-identical on BOTH the outdoor and the dungeon set,
+        // 0 of 912000. Still a trade rather than an identity -- if a silhouette
+        // ever has to be exact, this is the line that made it approximate.
         vec4 hs=texture2D(uHgt,uv);
         if(hs.a>0.03 && hs.r*uHrange-uHoff > rh+0.14) return 1.0;
         if(uHasUpper>0.5){
@@ -2579,7 +2600,11 @@ document.getElementById("ver").textContent=VERSION;
     // has to give the same map, however many maps were made in between.
     reseed(SEED);
     seedBox.value = SEED;
-    history.replaceState(null,"", "?set="+TILESET+"&seed="+SEED);
+    // Carry the whole scene in the address bar, not just the map: a link that
+    // silently drops the actor count reproduces a DIFFERENT scene, which is how
+    // the parameter came to be dropped in the first place.
+    history.replaceState(null,"", "?set="+TILESET+"&seed="+SEED+
+                                  "&goblins="+N_GOBLINS);
     if(SOCKET_SET){
       // An outdoor set is a LANDSCAPE, not a dungeon: no rooms to carve, no doors
       // to dress, no rift to gouge and no elevation pass, because every one of
@@ -2856,8 +2881,7 @@ document.getElementById("ver").textContent=VERSION;
     // ?goblins=N -- how crowded the map starts. A slot in the sprite atlas costs
     // per-pixel shader work whether or not anything is standing in it, so this is
     // the knob a performance measurement turns, not just a difficulty setting.
-    spawnGoblins(Math.max(0, Math.min(NSPR-1,
-      parseInt(new URLSearchParams(location.search).get("goblins") ?? "3", 10)||0)));
+    spawnGoblins(N_GOBLINS);
     const nUp=cells.filter(c=>c.level===1).length,
           nSt=cells.filter(c=>c.kind==="stairs").length,
           nPit=cells.filter(c=>c.kind==="pit").length,
