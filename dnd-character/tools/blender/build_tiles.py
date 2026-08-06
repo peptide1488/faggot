@@ -269,8 +269,8 @@ def outdoor_tiles(sid):
         lo=-1, hi=0, water=True)                                     # through water
 
     # ---- wet ground
-    add("mire", 600, terrain="mire")
-    add("mire", 601, terrain="mire")
+    add("mire", 600, terrain="mire", water=True)
+    add("mire", 601, terrain="mire", water=True)
     return T
 
 # Sets that own a bespoke vocabulary register a BUILDER here; anything absent falls
@@ -1473,11 +1473,25 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
 
 
 def field_mire(seed):
-    """Churned wet ground -- a hollow that holds water, hoof-poached at the rim."""
+    """A wallow: a basin that holds water, poached to mud around its rim.
+
+    A BASIN, not a noise threshold. Thresholding fbm cannot promise how much of the
+    tile it covers -- measured off the height pass, a threshold tuned to give a
+    puddle put 76% of the tile under water on one seed and would have given a
+    different answer on the next. Worse, it could wet the EDGES, and a mire presents
+    plain ground on all four sockets: whatever the middle does, the rim has to be
+    walkable or the tile is lying to the solver.
+
+    Distance from the centre, with a noisy radius, says both things at once."""
     def f(u, v):
-        b = _fbm(u, v, seed + 404, 3, 2)
-        mud = _sstep((b - 0.34) / 0.34)
-        z = MEADOW_RELIEF * _ground(u, v, seed) * (1.0 - 0.7 * mud) - 0.12 * mud
+        dx, dy = u - 0.5, v - 0.5
+        d = math.hypot(dx, dy) / 0.5                    # 0 centre, 1 at the edge
+        # the rim wanders, so it is a wallow and not a dinner plate
+        ang = math.atan2(dy, dx) / (2.0 * math.pi) + 0.5
+        r = 0.62 + 0.26 * (_fbm1(ang, seed + 404, 3, 3) - 0.5) * 2.0
+        mud = _sstep((r - d) / 0.30)
+        z = MEADOW_RELIEF * _ground(u, v, seed) * (1.0 - 0.7 * mud)
+        z -= 0.30 * mud * mud                            # the hollow
         z -= 0.035 * mud * (_fbm(u, v, seed + 909, 2, 9) - 0.5) * 2.0   # poaching
         return z, mud
     return f
@@ -1589,8 +1603,7 @@ def terrain_surface(field, base=0.0, name="ground", water=False):
     for k in range(len(ring) - 1):
         a = k * 2
         sf.append((a, a + 1, a + 3, a + 2))
-    new_obj(name + "_skirt", sv, sf, plant_material(
-        "subsoil", theme()["mortar"], spread=0.30, rough=0.96))
+    new_obj(name + "_skirt", sv, sf, subsoil_material())
 
     def sample(x, y):
         """(z, rock, mud) at a world point, from the same grid the mesh uses."""
@@ -1601,6 +1614,9 @@ def terrain_surface(field, base=0.0, name="ground", water=False):
         i = iy * (N + 1) + ix
         return zs[i], cols[i][0], cols[i][1]
 
+    # How deep this tile's own skirt hangs. The water volume needs it: its sides
+    # must not outrun the earth that is supposed to hide them.
+    sample.floor = drop
     return sample
 
 
@@ -1796,7 +1812,7 @@ def water_material():
     return m
 
 
-def add_water_plane(z=None):
+def add_water_plane(z=None, floor=None):
     """The water: a VOLUME, not a plane.
 
     A bare quad at the water line left the surface hovering over the bed with a
@@ -1813,7 +1829,11 @@ def add_water_plane(z=None):
     new_obj("water", top, [(0, 1, 2, 3)], water_material())
 
     ih = bh * 0.998
-    floor = BED_Z - 0.5
+    # Down to the TILE'S OWN skirt, not to a fixed depth. A pond in a meadow sits in
+    # ground that is barely cut at all, so a full-depth water box hung a band of
+    # blue below the earth all the way round the tile -- the wallow looked like it
+    # was floating on a lake.
+    floor = (BED_Z - 0.5) if floor is None else floor
     ring = [(-ih, -ih), (ih, -ih), (ih, ih), (-ih, ih), (-ih, -ih)]
     verts, faces = [], []
     for x, y in ring:
@@ -1879,11 +1899,23 @@ def terrain_scatter(sample, base, seed):
 # --- material ---------------------------------------------------------------
 
 def _objcoord(nt):
-    """One Object-space texture coordinate node per material, shared."""
+    """One Object-space texture coordinate per material, NORMALISED BY TILE SIZE.
+
+    Object coordinates run -HALF..HALF, four times the 0..1 range of the Generated
+    coordinates they replaced -- so every texture scale in this file, all of them
+    tuned against the old range, suddenly meant features four times too big and the
+    ground went almost uniform. Dividing by SIZE restores the range without having
+    to retune a dozen numbers, and keeps the property that actually matters: the
+    mapping is the same for every tile in the set, whatever shape its mesh is."""
     for n in nt.nodes:
-        if n.type == 'TEX_COORD':
-            return n.outputs["Object"]
-    return nt.nodes.new("ShaderNodeTexCoord").outputs["Object"]
+        if n.name.startswith("_objcoord"):
+            return n.outputs["Vector"]
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    mp = nt.nodes.new("ShaderNodeMapping")
+    mp.name = "_objcoord"
+    mp.inputs["Scale"].default_value = (1.0 / SIZE, 1.0 / SIZE, 1.0 / SIZE)
+    nt.links.new(tc.outputs["Object"], mp.inputs["Vector"])
+    return mp.outputs["Vector"]
 
 
 def _noise_node(nt, scale, detail=6.0, rough=0.55):
@@ -2130,6 +2162,60 @@ def _band(nt, sock, lo, hi, f0=None, f1=None):
     r.inputs["To Max"].default_value = hi
     nt.links.new(sock, r.inputs["Value"])
     return r.outputs["Result"]
+
+
+def subsoil_material():
+    """The cut face under the turf, seen wherever the ground drops away.
+
+    It was a flat brown wash, which is what made every level change read as a
+    cardboard box with a lawn on top. Real cut earth is BEDDED -- a dark humus lip
+    right under the grass, paler subsoil below it, and stones caught in the layers.
+    All three come from squashing the noise flat so it varies with height and barely
+    across the face, which is the same trick the rock uses for its bedding."""
+    m = bpy.data.materials.get("subsoil")
+    if m:
+        return m
+    t = theme()
+    e = t["mortar"]
+    g = t["stone"]
+    r = t.get("rock", (0.30, 0.20, 0.125))
+    m = bpy.data.materials.new("subsoil")
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    b.inputs["Roughness"].default_value = 0.97
+
+    # Two or three beds down the whole cut, not a stack of veneer: the skirt is
+    # only about half a unit deep, so a fine vertical frequency reads as plywood.
+    strat = _noise_node(nt, 3.0, 3.0, 0.55)
+    mp = nt.nodes.new("ShaderNodeMapping")
+    mp.inputs["Scale"].default_value = (0.25, 0.25, 2.2)
+    nt.links.new(_objcoord(nt), mp.inputs["Vector"])
+    nt.links.new(mp.outputs["Vector"], strat.inputs["Vector"])
+    grain = _noise_node(nt, 26.0, 5.0, 0.62).outputs["Fac"]
+
+    col = _mix(nt, tuple(c * 0.62 for c in e), tuple(min(1.0, c * 1.55) for c in e),
+               _band(nt, strat.outputs["Fac"], 0.0, 1.0, 0.40, 0.60))
+    col = _mix(nt, col, tuple(c * 0.55 for c in e), _band(nt, grain, 0.0, 0.35))
+    # stones caught in the bank
+    col = _mix(nt, col, tuple(min(1.0, c * 1.15) for c in r), _dots(nt, 20.0, 0.16, 0.28))
+    col = _mix(nt, col, tuple(c * 0.55 for c in r), _dots(nt, 31.0, 0.13, 0.22))
+    # the dark humus lip immediately under the turf: a band in the tile's own
+    # height, so it tracks the top of the cut however deep the cut happens to be
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(tc.outputs["Object"], sep.inputs["Vector"])
+    lip = nt.nodes.new("ShaderNodeMapRange")
+    lip.inputs["From Min"].default_value = -0.30
+    lip.inputs["From Max"].default_value = -0.02
+    nt.links.new(sep.outputs["Z"], lip.inputs["Value"])
+    col = _mix(nt, col, (g[0] * 0.85, g[1] * 0.70, g[2] * 0.60), lip.outputs["Result"])
+
+    steps = t.get("posterize")
+    if steps:
+        col = _posterize(nt, col, steps)
+    nt.links.new(col, b.inputs["Base Color"])
+    return m
 
 
 def rock_material():
@@ -2402,7 +2488,7 @@ def add_terrain(name, spec, rot):
         add_crags(seed, sample, _band_z(sp.get("hi", 1)) - 0.06)
     terrain_scatter(sample, 0.0, seed)
     if sp.get("water"):
-        add_water_plane()
+        add_water_plane(floor=getattr(sample, "floor", None))
 
 
 def add_floor(m_stone, m_mortar, base=0.0):
@@ -3029,7 +3115,11 @@ def tile_role(name, spec):
         if terrain == "flat":
             return {-1: "liquid", 0: "ground", 1: "high_ground"}[spec.get("band", 0)]
         if terrain == "mire":
-            return "ground"
+            # Its own role, not plain ground. A wallow is walkable and so shares
+            # ground's sockets, but the generator has to be able to want FEWER of
+            # them: reporting it as ground made ponds exactly as common as grass,
+            # and a map came out with six of them in a row.
+            return "wallow"
         if terrain == "track":
             return "track_slope" if spec.get("high") else "track"
         if spec.get("channel"):

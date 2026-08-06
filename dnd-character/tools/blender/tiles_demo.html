@@ -217,8 +217,52 @@ NV = VARIANTS.length;
 // so both live here and the manifest decides which one a set uses.
 let MAN = null, SOCKET_SET = false;
 const SVAR = [];                       // {name, rot, sock, w}
-const ROLE_W = { ground:10, high_ground:5, liquid:6, track:3, transition:2,
-                 slope:1.2, track_slope:0.8 };
+// Weights decide the CHARACTER of a map, not just its legality. Every role at a
+// similar weight gives a valid tiling that looks like static: a checkerboard of
+// one-tile ponds and one-tile meadows, because WFC has no notion of a landmass. So
+// open ground outweighs everything by a wide margin, and the features that need
+// company to make sense -- water, level changes -- are rare enough that when the
+// solver does reach for one it tends to have to commit to a run of them.
+// A PLATEAU COSTS A RING. High ground can only exist behind a closed loop of
+// transition tiles, so weighting transitions down -- which is the obvious way to
+// stop the map looking busy -- makes elevation impossible rather than rare, and the
+// solver returns a flat green field every time. Transitions have to be affordable
+// enough to buy the ring; it is open ground being MUCH cheaper that keeps the map
+// calm, not the features being expensive.
+const ROLE_W = { ground:18, high_ground:9, liquid:3.4, track:3.0, transition:4.5,
+                 slope:2.6, track_slope:1.8, wallow:1.4 };
+// ...and weights alone are not enough, and cannot be made enough.
+//
+// A weight says how often a tile is picked LOCALLY; it cannot say "roughly a third
+// of this map should be up a hill". Both failures came from trying: weighting
+// features down made elevation impossible rather than rare (a plateau needs a whole
+// ring of transitions before it can exist at all), and weighting it back up gave a
+// map where every one of the 68 land tiles was high -- one plateau, wall to wall.
+// Once WFC is up on high ground, staying there is locally cheap, and nothing in the
+// model ever argues for coming back down.
+//
+// Judging the finished tiling instead does not work either, and the reason is
+// worth writing down: WFC's output here is BIMODAL, so asking for 10-42% high
+// ground and 4-32% water at the same time is asking for a middle it almost never
+// lands in -- measured, 112 attempts produced zero acceptances.
+//
+// So stop sampling and start STATING. A handful of cells are collapsed to a chosen
+// role before the solve begins, and WFC grows a coherent region outward from each
+// because that is the one thing it is genuinely good at. Seeds say where the
+// features are; weights say what fills the space between them; and the acceptance
+// test drops to a sanity check rather than a filter doing work it cannot do.
+// The RAMP is seeded first, on purpose. Rejecting maps that have no way up cannot
+// conjure one -- 112 attempts in a row failed that test -- because WFC never wanted
+// to spend a tile on a ramp in the first place. Placing one up front inverts it:
+// the ramp exists, and the plateau grows around it because that is the only thing
+// its high edge can connect to.
+const MAP_SEEDS = { slope:[1,2], high_ground:[1,2], liquid:[1,2] };
+// LAND IS EVERYTHING THAT IS NOT WATER. A transition tile is not an obstacle -- it
+// is walkable ground that happens to change level partway across -- and counting it
+// as "not land" is what made 97 maps out of 112 fail this test while the checks
+// that were actually interesting never even ran. The tally said so in one run,
+// after two rounds of tuning had guessed at the wrong clause.
+const MAP_MIX = { land:[0.62, 1.0], high:[0.04, 0.46], water:[0.0, 0.34] };
 
 function buildSocketVariants(man){
   SVAR.length = 0;
@@ -238,8 +282,10 @@ function buildSocketVariants(man){
 // retry on contradiction -- but the compatibility test is socket equality and the
 // domain is a plain array of sets rather than a bitmask, because a socket set has
 // more than 32 variants (28 tiles x 4 rotations = 112).
-function socketWfc(W,H,tries=60){
+function socketWfc(W,H,tries=120){
   const N=SVAR.length, idx=(i,j)=>j*W+i;
+  let accepted=null;
+  const rej={land:0, ways:0, low:0, flat:0};
   // Precompute compatibility once: OK[e][a] is the set of b that may sit across
   // edge e from a. Recomputing this inside propagate was the whole cost.
   const OK={};
@@ -271,6 +317,25 @@ function socketWfc(W,H,tries=60){
       return true;
     };
     if(!propagate(Array.from({length:W*H},(_,n)=>[n%W,(n/W)|0]))) continue;
+
+    // ---- seeds. Kept off the border: a feature pinned against the edge of the map
+    // has only half its neighbourhood to grow into, and a plateau needs room for a
+    // whole ring of transitions before it can exist at all.
+    let seeded=true;
+    for(const [role,[lo,hi]] of Object.entries(MAP_SEEDS)){
+      const pool=[]; for(let v=0;v<N;v++) if(SVAR[v].role===role) pool.push(v);
+      if(!pool.length) continue;
+      const count=lo+((rnd()*(hi-lo+1))|0);
+      for(let k=0;k<count && seeded;k++){
+        const i=1+((rnd()*(W-2))|0), j=1+((rnd()*(H-2))|0), n=idx(i,j);
+        const keep=pool.filter(v=>dom[n].has(v));
+        if(!keep.length) continue;              // already decided; leave it alone
+        dom[n]=new Set([keep[(rnd()*keep.length)|0]]);
+        if(!propagate([[i,j]])) seeded=false;
+      }
+    }
+    if(!seeded) continue;
+
     let ok=true;
     while(true){
       let best=-1,bestC=1e9;
@@ -284,6 +349,39 @@ function socketWfc(W,H,tries=60){
       if(!propagate([[best%W,(best/W)|0]])){ ok=false; break; }
     }
     if(!ok) continue;
+    // ---- acceptance. Only the last few attempts are allowed to settle for
+    // anything, so a stubborn set still returns a map rather than nothing.
+    if(attempt < tries-8){
+      let land=0, high=0, water=0, low=0, ways=0;
+      for(let n=0;n<W*H;n++){
+        const r=SVAR[[...dom[n]][0]].role;
+        if(r!=="liquid") land++;
+        if(r==="high_ground") high++;
+        if(r==="liquid") water++;
+        if(r==="ground"||r==="track"||r==="wallow") low++;
+        if(r==="slope"||r==="track_slope") ways++;
+      }
+      const T=W*H;
+      // Count WHY maps are rejected. Two rounds of tuning were spent guessing which
+      // clause was doing the rejecting; the tally answers it in one run.
+      const inRange=(v,[lo,hi])=>v>=T*lo && v<=T*hi;
+      if(!inRange(land, MAP_MIX.land)){ rej.land++; continue; }
+      if(!inRange(water, MAP_MIX.water)){ rej.land++; continue; }
+      if(!inRange(high, MAP_MIX.high)){ rej.flat++; continue; }
+      // A PLATEAU YOU CANNOT CLIMB IS SCENERY, NOT TERRAIN. WFC will happily raise
+      // half the map and never spend a tile on a ramp -- measured, 592 of 1200
+      // squares unreachable on one seed. It will also raise ALL of it, leaving no
+      // low ground at all, because staying high is locally cheap once it is up
+      // there. Both are cheap to detect and cheap to reject.
+      // `ways` is guaranteed by the seed above, so this only catches the case where
+      // the seed failed to place at all.
+      if(high && !ways){ rej.ways++; continue; }
+      if(high && low < T*0.12){ rej.low++; continue; }
+      accepted = {attempt, land, high, water, ways};
+    }
+    // Publish which attempt was taken and why: "the map is flat" and "the map was
+    // rejected 119 times and the fallback ran" look identical from the outside.
+    window.__wfcDebug={attempt, accepted, tries, rej};
     const cells=[];
     for(let j=0;j<H;j++) for(let i=0;i<W;i++){
       const v=SVAR[[...dom[idx(i,j)]][0]];
