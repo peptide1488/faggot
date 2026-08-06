@@ -3,7 +3,7 @@
 // APP_VERSION while the behaviour was several versions old. index.html compares these and
 // warns loudly instead of leaving you to wonder whether a change deployed. A test keeps all
 // three in lockstep so bumping one and forgetting the others can't itself become the bug.
-const RULES_BUILD='v120.285';
+const RULES_BUILD='v120.286';
 // Grimoire — extracted rules/mechanics functions (Stage 2 of index.html modularization).
 // Character math, combat resolution, spellcasting, grid/movement math, monster AI — no DOM
 // or network code by heuristic. See AUDIT.md. Loaded via <script src> after data.js, before
@@ -1921,7 +1921,16 @@ function altitudeFtOf(u){
  * blocked by altitude — an archer can shoot upward just fine.
  */
 function meleeAltitudeBlocked(attackerAltFt, targetAltFt, atkTiles){
-  const reachFt=(Number(atkTiles)||1)>1 ? 10 : 5;
+  const tiles=Number(atkTiles)||1;
+  // Ranged attacks are never blocked by altitude, and the predicate decides that itself rather
+  // than making three call sites remember to (v120.286). Each one had guessed differently: Engine
+  // asked "is the target adjacent", which made a bow fired at a flier directly overhead count as
+  // melee and inherit a reach weapon's 10 ft; the two brain sites asked `tiles<=1`, which let a
+  // reach monster pick a target Engine would then refuse — the exact brain/resolver disagreement
+  // this predicate was extracted to prevent. 3 tiles is the 15 ft cap reachTilesOf documents as
+  // the longest RAW melee reach in this bestiary.
+  if(tiles>3) return false;
+  const reachFt=tiles>1 ? 10 : 5;
   return Math.abs((Number(attackerAltFt)||0)-(Number(targetAltFt)||0)) > reachFt;
 }
 

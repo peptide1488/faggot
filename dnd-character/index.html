@@ -1872,10 +1872,23 @@ const Engine = {
     // contribution correctly defaults to 0 (a flying monster isn't gated by this check either
     // way, a documented simplification, not silently wrong: this app has no way to know how
     // high a monster is flying since it never tracks it).
-    const attackerAlt=(armorSubj&&armorSubj.altitude)||0, targetAlt=(targetSubj&&targetSubj.altitude)||0;
+    // Read altitude off the UNIT, not off checkSubject's result. checkSubject answers "whose
+    // device has the real sheet", and it returns null for a player in DM-hosted/player-net by
+    // design — so sourcing altitude from it silently read 0 for every PC in both networked
+    // modes, and a monster could melee a PC hovering 30 ft up that Quick Battle correctly put
+    // out of reach (found by the parity pass, v120.286). The DM's mirror has carried `altitude`
+    // since the `hello` handshake; altitudeFtOf already reads all three unit shapes.
+    const attackerAlt=altitudeFtOf(a), targetAlt=altitudeFtOf(t);
     // Shared with BRAINS.tactical (v120.285) so the AI never picks a target the resolver will
     // then refuse — that mismatch cost a monster its whole turn, every round.
-    const altitudeBlocked = melee && meleeAltitudeBlocked(attackerAlt, targetAlt, atk.tiles);
+    // Deliberately NOT gated on the `melee` flag above: that one means "is the target adjacent"
+    // (dist<=1), which is the right question for the prone / ranged-in-melee advantage rules and
+    // the wrong one here. It made a bow fired at a flier directly overhead count as melee, so the
+    // arrow inherited a reach weapon's 10 ft of altitude and was refused; and it let a reach
+    // weapon swing across any vertical gap the moment the target was 2 tiles away horizontally.
+    // Horizontal range is already checked on its own — this is purely the vertical question, and
+    // the predicate now answers it for ranged weapons too (v120.286).
+    const altitudeBlocked = meleeAltitudeBlocked(attackerAlt, targetAlt, atk.tiles);
     // Lighting (PHB: heavily obscured is the softer "disadvantage" approximation this app
     // already uses, not a hard block on targeting — see visionLevel/tileLightLevel). This was
     // previously computed ad hoc ONLY inside Quick Battle's own interactive PC-attack UI, never
@@ -2210,7 +2223,7 @@ BRAINS.tactical = function(qb, u){
   const canHitFrom=(x,y,f,a)=>{ const d=gridDist(x,y,f.x,f.y); if(d>a.tiles) return false;
     // Melee can't reach across an altitude gap — same predicate Engine uses to refuse the swing,
     // so the brain stops choosing targets it cannot actually hit (v120.285).
-    if((a.tiles||1)<=1 && meleeAltitudeBlocked(altitudeFtOf(u), altitudeFtOf(f), a.tiles)) return false;
+    if(meleeAltitudeBlocked(altitudeFtOf(u), altitudeFtOf(f), a.tiles)) return false;
     if(a.tiles>1) return losClear(qb,x,y,f.x,f.y); return true; };
   const blocked=(x,y)=> qb.monsters.some(m=>m.hp>0&&m.id!==u.id&&m.x===x&&m.y===y)||qb.players.some(p=>p.x===x&&p.y===y);
   // 1) can we attack someone right now? prefer the lowest-HP foe we can hit.
@@ -2262,8 +2275,7 @@ BRAINS.tactical = function(qb, u){
   // a foe WOULD have been attacked but for the altitude gap (v120.285) - a melee monster under a
   // flier previously burned its whole turn doing nothing at all. Dodge is a general action any
   // creature can take (v120.279), and attackAdvantage already honours it for monsters.
-  if((u.attacksLeft||0)>0 && atkFoes.some(f=>usable.some(a=>(a.tiles||1)<=1
-      && gridDist(u.x,u.y,f.x,f.y)<=(a.tiles||1)
+  if((u.attacksLeft||0)>0 && atkFoes.some(f=>usable.some(a=>gridDist(u.x,u.y,f.x,f.y)<=(a.tiles||1)
       && meleeAltitudeBlocked(altitudeFtOf(u), altitudeFtOf(f), a.tiles))))
     return [{type:'dodge'}];
   return [];
@@ -2462,7 +2474,7 @@ $('#charSelect').addEventListener('change',e=>{ curId=e.target.value; localStora
 
 /* ---- service worker (auto-update on new version) ---- */
 // Must match sw.js CACHE suffix (grimoire-vXXX). Mismatch → install+claim → controllerchange → reload.
-const APP_VERSION='v120.285';
+const APP_VERSION='v120.286';
 { const vb=document.getElementById('verBadge'); if(vb) vb.textContent=APP_VERSION; }
 // Stale-code detector (v120.256). index.html is network-first while the JS modules used to be
 // cache-first, so a reload could pair a NEW header version with OLD behaviour — silently. That

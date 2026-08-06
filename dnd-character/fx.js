@@ -21,7 +21,7 @@
 // number, shake that scales with the size of the hit. Nothing here blocks input or delays game
 // state, every node self-removes, and the whole layer is skipped under prefers-reduced-motion or
 // when switched off.
-const FX_BUILD='v120.285';
+const FX_BUILD='v120.286';
 
 const FX = {
   // ---- tunables (a "feel" table, deliberately in one place) ----

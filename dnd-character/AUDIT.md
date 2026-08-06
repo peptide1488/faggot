@@ -329,6 +329,41 @@ deterministic mechanics. Each is embedded in the in-app spell description.
 
 ---
 
+## Altitude reaches every mode, and ranged attacks stopped inheriting a reach weapon's ceiling (v120.286)
+
+**Current ruling.** A melee attack is refused when the *vertical* gap between attacker and target
+exceeds the weapon's reach — 5 ft normally, 10 ft for a reach weapon, 15 ft for the longest melee
+reach in the bestiary (a Young Red Dragon's tail). Ranged attacks are never blocked by altitude:
+an archer standing directly under a hovering PC shoots straight up. `meleeAltitudeBlocked` in
+`rules.js` decides all of it, and it is the single reader for `Engine.hitResult` and both
+`BRAINS.tactical` target-selection sites, so the thing that decides and the thing that acts cannot
+disagree. Monsters still do not track altitude (documented simplification, unchanged) — the app
+has no way to know how high a flying monster is.
+
+Two real defects, both found by a parity pass rather than by play:
+
+- **Altitude never reached either networked mode.** `Engine` read it from `ad.checkSubject(unit)`,
+  whose contract is "whose device holds the real sheet" — it returns `null` for a *player* in
+  DM-hosted and player-net by design. So `targetAlt` fell to 0 for every PC and a ground monster
+  could melee a PC hovering 30 ft up that Quick Battle correctly put out of reach. The data was
+  never missing: the DM's mirror has carried `altitude` since the `hello` handshake and
+  `playerHello()` re-sends it on every climb/descend. It was being dropped by the reader. Altitude
+  now comes from `altitudeFtOf(unit)`, which already understood all three unit shapes.
+- **`melee` was the wrong question.** The gate was `melee && …`, and `melee` means *"is the target
+  adjacent"* (`dist<=1`) — right for the prone / ranged-in-melee advantage rules, wrong here. A bow
+  fired at a flier directly overhead is at distance 1, so it counted as melee and inherited a reach
+  weapon's 10 ft of altitude; the arrow was refused. The same flag let a reach weapon swing across
+  any vertical gap once the target was 2 tiles out. Horizontal range is checked separately, so the
+  predicate now answers the purely vertical question and settles ranged-ness itself (`tiles > 3`).
+
+The mode-parity scenario matrix gained three altitude rows and now compares `altitudeBlocked`
+alongside `ac`/`cover`/`hit`/`adv`. Matrix agreement alone would not have caught the first defect —
+both modes could have agreed on reading 0 — so the absolute rule is asserted separately in all
+three modes, including that DM-hosted reads the mirrored altitude as a *number* (a pike reaches
+10 ft up, a sword does not) rather than merely testing it for truthiness.
+
+---
+
 ## Cover was broken in every mode (fixed v120.235)
 
 `coverBetween`'s Bresenham line walk added **`dy` instead of `dx`** in its y-step. That is not a

@@ -4336,6 +4336,12 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
       {n:'target invisible',                 tiles:{}, mConds:[{name:'Invisible',rounds:5}], pConds:[], atk:atkMelee, light:'day'},
       {n:'darkness (lighting parity)',       tiles:{}, mConds:[], pConds:[], atk:atkRanged, light:'night'},
       {n:'target paralyzed (auto-crit path)',tiles:{}, mConds:[{name:'Paralyzed',rounds:5}], pConds:[], atk:atkMelee, light:'day'},
+      // Altitude (v120.286). The PC's height above the floor is the one attack input that lives
+      // on the SHEET rather than on the unit in Quick Battle, and the DM only ever holds a
+      // mirror of the sheet — which is exactly the shape of gap this matrix exists to catch.
+      {n:'target flying 30 ft up, melee',    tiles:{}, mConds:[], pConds:[], atk:atkMelee,  light:'day', alt:30},
+      {n:'target flying 30 ft up, ranged',   tiles:{}, mConds:[], pConds:[], atk:atkRanged, light:'day', alt:30},
+      {n:'target hovering 5 ft up (in reach)',tiles:{}, mConds:[], pConds:[], atk:atkMelee, light:'day', alt:5},
     ];
 
     let mismatches=[];
@@ -4347,23 +4353,81 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
       setQB({active:true, over:null, log:[], map:JSON.parse(JSON.stringify(geom)), battle:{active:true,round:1}, lights:[],
         players:[{id:'pc', side:'pc', name:'Matrix', c:pcQB, x:3,y:0, conds:sc.pConds.slice()}],
         monsters:[{id:'m1', side:'mon', name:'Orc', base:'Orc', hp:20,max:20, ac:13, x:0,y:0, conds:sc.mConds.slice()}]});
-      // Conditions on a QB PC live on the character, not the unit.
+      // Conditions on a QB PC live on the character, not the unit. So does altitude — which is
+      // the whole reason the DM-hosted side of this row is worth asserting.
       sc.pConds.forEach(c0=>{ pcQB.conditions[c0.name]=true; });
+      if(sc.alt) pcQB.altitude=sc.alt;
       const q=Engine.hitResult(qbAdapter,'m1','pc',sc.atk,11);
 
       // DM-hosted: identical geometry, mirror shapes.
       setNet({role:'dm', peer:{id:'x'}, session:{ map:JSON.parse(JSON.stringify(geom)), lights:[],
         players:[{id:'pc', cid:'pc', name:'Matrix', ac:computeAC(pcDM), hpCur:30, hpMax:30, x:3,y:0,
-                  conds:sc.pConds.map(c0=>c0.name)}],
+                  conds:sc.pConds.map(c0=>c0.name), altitude:sc.alt||0}],
         monsters:[{id:'m1', name:'Orc', base:'Orc', hp:20,max:20, ac:13, x:0,y:0, conds:sc.mConds.slice()}] }});
       const d=Engine.hitResult(sessionAdapter,'m1','pc',sc.atk,11);
 
       setQB(null); setNet(null);
-      if(q.ac!==d.ac || q.cover!==d.cover || q.hit!==d.hit || q.adv!==d.adv)
-        mismatches.push(`${sc.n}: QB{ac:${q.ac},cov:${q.cover},adv:${q.adv},hit:${q.hit}} vs DM{ac:${d.ac},cov:${d.cover},adv:${d.adv},hit:${d.hit}}`);
+      if(q.ac!==d.ac || q.cover!==d.cover || q.hit!==d.hit || q.adv!==d.adv || !!q.altitudeBlocked!==!!d.altitudeBlocked)
+        mismatches.push(`${sc.n}: QB{ac:${q.ac},cov:${q.cover},adv:${q.adv},hit:${q.hit},alt:${!!q.altitudeBlocked}} vs DM{ac:${d.ac},cov:${d.cover},adv:${d.adv},hit:${d.hit},alt:${!!d.altitudeBlocked}}`);
     }
     T(`mode parity matrix: all ${SCENARIOS.length} scenarios resolve identically in QB and DM-hosted`
       +(mismatches.length?' — '+mismatches.join(' | '):''), mismatches.length===0);
+  }
+
+  /* ---- Altitude reaches all three modes (v120.286) ----
+     The matrix above proves the modes AGREE. Agreement is not correctness: before this fix both
+     networked modes read altitude 0 for every PC, which is a state QB and DM-hosted could have
+     agreed on while both being wrong. So assert the ABSOLUTE rule as well, and in all three
+     modes rather than two — player-net resolves its own preview of the same shot.
+
+     The gap this pins down: Engine sourced altitude from `checkSubject`, whose contract is
+     "whose device holds the real sheet" — it returns null for a player in BOTH networked modes
+     by design. The DM's mirror has carried `altitude` since the `hello` handshake and
+     `playerHello()` re-sends it on every climb/descend, so the data was arriving and being
+     dropped on the floor by the reader. */
+  {
+    const savedNet=getNet();
+    const flier=()=>({ map:{cols:6,rows:1,tiles:{}},
+      monsters:[{id:'m1',name:'Orc',base:'Orc',hp:20,max:20,ac:13,x:0,y:0,conds:[]}],
+      players:[{id:'p1',cid:'p1',name:'Hover',ac:12,hpCur:30,hpMax:30,x:1,y:0,conds:[],altitude:30}] });
+    const sword={name:'Sword', toHit:5, dmg:'1d8', tiles:1};
+    const pike ={name:'Pike',  toHit:5, dmg:'1d10',tiles:2};   // reach: 10 ft of altitude
+    const bow  ={name:'Bow',   toHit:5, dmg:'1d8', tiles:12};
+
+    setNet({role:'dm', session:flier(), peer:{id:'other'}});
+    const dmMelee=Engine.hitResult(sessionAdapter,'m1','p1',sword,11);
+    const dmBow  =Engine.hitResult(sessionAdapter,'m1','p1',bow,11);
+    setNet({role:'player', session:flier(), peer:{id:'other'}});
+    const plMelee=Engine.hitResult(playerNetAdapter,'m1','p1',sword,11);
+
+    const qbPc=newCharacter('Hover'); qbPc.hp.cur=qbPc.hp.max=30; qbPc.altitude=30;
+    setQB({active:true, over:null, log:[], map:{cols:6,rows:1,tiles:{}}, battle:{active:true,round:1},
+      players:[{id:'p1', side:'pc', name:'Hover', c:qbPc, x:1,y:0, conds:[]}],
+      monsters:[{id:'m1', side:'mon', name:'Orc', base:'Orc', hp:20,max:20, ac:13, x:0,y:0, conds:[]}]});
+    const qbMelee=Engine.hitResult(qbAdapter,'m1','p1',sword,11);
+    setQB(null); setNet(savedNet);
+
+    T('altitude parity: a PC hovering 30 ft up is out of melee reach in Quick Battle', qbMelee.altitudeBlocked===true);
+    T('altitude parity: ...and in DM-hosted, where the DM holds only a mirror of the sheet (the real gap)', dmMelee.altitudeBlocked===true);
+    T('altitude parity: ...and on the player device resolving the same shot', plMelee.altitudeBlocked===true);
+    T('altitude parity: a bow is never blocked by altitude — an archer can shoot upward', !dmBow.altitudeBlocked);
+
+    // A mirror that predates the handshake field, or a monster (which never tracks altitude at
+    // all), must read as ground level rather than NaN-ing its way into a thrown resolver.
+    setNet({role:'dm', session:(()=>{ const s=flier(); delete s.players[0].altitude; return s; })(), peer:{id:'other'}});
+    const legacy=Engine.hitResult(sessionAdapter,'m1','p1',sword,11);
+    setNet(savedNet);
+    T('altitude parity: a mirror with no altitude field degrades to ground level, not a blocked swing', !legacy.altitudeBlocked);
+
+    // Reach spans 10 ft of altitude, so the SAME flier is reachable at 10 ft and not at 30 —
+    // proof the mirrored value is being read as a real number, not just tested for truthiness.
+    const low=()=>{ const s=flier(); s.players[0].altitude=10; return s; };
+    setNet({role:'dm', session:low(), peer:{id:'other'}});
+    const pikeLow=Engine.hitResult(sessionAdapter,'m1','p1',pike,11);
+    const swordLow=Engine.hitResult(sessionAdapter,'m1','p1',sword,11);
+    setNet(savedNet);
+    T('altitude parity: DM-hosted reads the mirrored altitude as a NUMBER — a pike reaches 10 ft up, a sword does not',
+      pikeLow.altitudeBlocked===false && swordLow.altitudeBlocked===true);
   }
 
   /* Behavioural parity, not just structural: the same geometry must produce the same to-hit
@@ -5110,7 +5174,13 @@ T("at radius 2, a DIAGONAL tile at distance 2√2≈2.83 is OUTSIDE — that's t
   // Both consumers must use the SHARED predicate, or they drift apart again.
   const html=fs.readFileSync(path.join(__dirname,'index.html'),'utf8');
   T('Engine refuses melee across the gap via the shared predicate',
-    /altitudeBlocked = melee && meleeAltitudeBlocked\(/.test(html));
+    /altitudeBlocked = meleeAltitudeBlocked\(/.test(html));
+  // The `melee &&` this guard used to pin is deliberately GONE (v120.286): `melee` means "target
+  // is adjacent", so it both refused an archer shooting straight up and waved a reach weapon
+  // across any gap once the target was 2 tiles out. The predicate now settles ranged-ness itself.
+  T('...and no longer re-derives ranged-ness at the call site', !/altitudeBlocked = melee &&/.test(html));
+  T('a bow is never altitude-blocked, even at point-blank under a flier', meleeAltitudeBlocked(0, 40, 12)===false);
+  T('a 15 ft reach (the bestiary cap) still counts as melee', meleeAltitudeBlocked(0, 40, 3)===true);
   T('BRAINS.tactical uses the SAME predicate when choosing a target',
     /meleeAltitudeBlocked\(altitudeFtOf\(u\), altitudeFtOf\(f\)/.test(html));
   T('the old hardcoded reachFt rule is gone from Engine', !/const reachFt=\(atk\.tiles\|\|1\)>1\?10:5;/.test(html));
