@@ -15,3 +15,11 @@
 **/.env.development.secrets
 **/tools/.env
 *.secrets
+
+# Baked tile art (dnd-character/tools/blender): ~1.2 GB of PNG/WebP that
+# build_tiles.py regenerates from source. The scripts and the manifests are the
+# artefacts worth versioning; the renders are not.
+dnd-character/tools/blender/out/
+dnd-character/tools/blender/bench/
+dnd-character/tools/blender/bench_out/
+dnd-character/tools/blender/sheets/

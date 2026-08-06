@@ -1,0 +1,167 @@
+"""
+Pack a baked tile set for the runtime.
+
+    python pack_tiles.py out/sandstone [--nrm-scale 0.5] [--albedo-q 90]
+
+The bake writes what Blender is good at writing: three full-canvas RGBA PNGs per
+tile. That is the right SOURCE format and a terrible delivery format -- a set
+came to 255 MB, which is most of a Diablo II install for one dungeon's worth of
+floor tiles. D2 shipped palettised 8-bit sprites, cropped per frame and RLE'd;
+the modern equivalent of that discipline is this file.
+
+Three separate wastes, each fixed by knowing what the pass actually contains:
+
+    CROP     a floor tile fills 643x324 of a 1024x1024 canvas -- 20%. The rest is
+             transparent padding that exists only so every tile can share one
+             anchor. Crop to the alpha box and record the offset instead; the
+             anchor stays exact because it is stored, not assumed.
+    HEIGHT   is ONE 8-bit value written into R=G=B=A. Stored as a single channel
+             it is 8x smaller before any codec gets involved. It must stay
+             LOSSLESS: the runtime reads it as a depth buffer, and a codec's idea
+             of an acceptable error is a sprite standing through a wall.
+    ALBEDO   is the only pass a human looks at, so it is the only one that can
+             take lossy compression. WebP q90 with its alpha plane (which WebP
+             keeps lossless regardless) is visually indistinguishable here.
+
+NORMALS are the awkward one. They are high-frequency by construction -- BUMP
+feeds surface grain into every texel -- so they compress worst and cost the most.
+Lossy WebP is the wrong tool: it encodes YUV 4:2:0, so it halves the resolution
+of exactly the X/Y components that ARE the signal, and the error shows up as
+lighting that swims. Half-resolution lossless is the better trade, and it is not
+even a loss in practice: the runtime samples normals LINEAR and supersamples the
+frame, so the fine grain was being averaged away anyway (it is what the
+anti-alias slider exists to fight).
+
+Writes <dir>/packed/<name>.webp plus <dir>/packed/pack.json:
+
+    {"tile": {"a": [dx, dy, w, h], "n": [...], "h": [...]}, ...}
+
+dx,dy are the crop's top-left RELATIVE TO THE CANVAS CENTRE, which is the anchor
+every tile is positioned by. The runtime adds them; nothing else changes.
+"""
+
+import glob
+import json
+import multiprocessing
+import os
+import sys
+import time
+
+from PIL import Image, ImageFilter
+
+
+def crop_box(im):
+    """Alpha bounding box, or None when the image is empty."""
+    a = im.getchannel("A")
+    return a.getbbox()
+
+
+def pack_one(job):
+    """One tile, three passes. Pure function of its inputs so it can run in a
+    worker process -- the work is CPU-bound encoding, and there are 8 cores
+    sitting idle while one of them does 172 tiles in sequence."""
+    dirpath, out, stem, nrm_scale, albedo_q, method = job
+    pa = os.path.join(dirpath, stem + ".png")
+    pn = os.path.join(dirpath, stem + "_NRM.png")
+    ph = os.path.join(dirpath, stem + "_H.png")
+    if not (os.path.exists(pn) and os.path.exists(ph)):
+        return stem, None, 0, 0, "missing a pass"
+    before = sum(os.path.getsize(p) for p in (pa, pn, ph))
+
+    alb = Image.open(pa).convert("RGBA")
+    box = crop_box(alb)
+    if box is None:
+        return stem, None, before, 0, "empty"
+    W, H = alb.size
+    cx, cy = W / 2.0, H / 2.0
+    x0, y0, _, _ = box
+
+    # ---- albedo: lossy is fine, alpha stays lossless in WebP either way
+    a = alb.crop(box)
+    a.save(os.path.join(out, stem + ".webp"), "WEBP", quality=albedo_q, method=method)
+
+    # EVERY PASS KEEPS ITS ALPHA. Cropping to the bounding box does not make the
+    # image solid: a tile is a diamond, so the corners of its own box are still
+    # transparent, and the composite relies on that to let the tile behind show
+    # through. Storing the normal as RGB and the height as L dropped the alpha,
+    # turned each crop into an opaque rectangle, and let every tile stamp its
+    # corners over its neighbours' normals and heights -- floors then faced the
+    # wrong way and lit black while the walls beside them lit correctly.
+    alpha = a.getchannel("A")
+
+    # ---- normal: crop to the SAME box (it must line up with the albedo),
+    # optionally halve, always lossless
+    n = Image.open(pn).convert("RGB").crop(box)
+    n.putalpha(alpha)
+    if nrm_scale != 1.0:
+        n = n.resize((max(1, round(n.width * nrm_scale)),
+                      max(1, round(n.height * nrm_scale))), Image.LANCZOS)
+        # Halving the mask and then drawing it back at full size spreads it by a
+        # texel, which is a ~2px fringe of this tile's normals lying over its
+        # neighbour along every join. Erode by one texel so the upscale lands
+        # inside the true footprint: losing the outermost antialiased pixel to
+        # the neighbour is invisible, seams are not.
+        na = n.getchannel("A").filter(ImageFilter.MinFilter(3))
+        n.putalpha(na)
+    n.save(os.path.join(out, stem + "_NRM.webp"), "WEBP",
+           lossless=True, quality=100, method=method)
+
+    # ---- height: one value, lossless, full resolution. This is a depth buffer,
+    # not a picture -- but it still needs the mask, for the same reason.
+    hl = Image.open(ph).convert("RGBA").crop(box).convert("L")
+    h = Image.merge("RGBA", (hl, hl, hl, alpha))
+    h.save(os.path.join(out, stem + "_H.webp"), "WEBP",
+           lossless=True, quality=100, method=method)
+
+    after = sum(os.path.getsize(os.path.join(out, stem + s + ".webp"))
+                for s in ("", "_NRM", "_H"))
+    # DEST size for every pass: the half-res normal is drawn scaled back up to
+    # exactly the albedo's footprint, so it shares one box.
+    e = [x0 - cx, y0 - cy, a.width, a.height]
+    return stem, {"a": e, "n": e, "h": e}, before, after, None
+
+
+def pack(dirpath, nrm_scale=0.5, albedo_q=90, method=4, jobs=None):
+    out = os.path.join(dirpath, "packed")
+    os.makedirs(out, exist_ok=True)
+    stems = sorted({os.path.basename(f)[:-4] for f in glob.glob(os.path.join(dirpath, "*.png"))
+                    if not f.endswith("_NRM.png") and not f.endswith("_H.png")
+                    and not os.path.basename(f).startswith("_")})
+    work = [(dirpath, out, s, nrm_scale, albedo_q, method) for s in stems]
+    jobs = jobs or max(1, (os.cpu_count() or 4))
+
+    manifest = {}
+    before = after = 0
+    t0 = time.time()
+    with multiprocessing.Pool(jobs) as pool:
+        for stem, entry, b, a_, err in pool.imap_unordered(pack_one, work, chunksize=2):
+            before += b
+            after += a_
+            if err:
+                print("SKIP", stem, "(%s)" % err)
+            else:
+                manifest[stem] = entry
+
+    with open(os.path.join(out, "pack.json"), "w") as f:
+        # `built` is a cache buster. Every pack rewrites the SAME filenames, so a
+        # browser will happily serve the previous bake's tiles and show no change
+        # at all -- which is indistinguishable from "the bake did nothing". The
+        # runtime appends this to each image URL, so a new pack is a new URL.
+        json.dump({"nrmScale": nrm_scale, "built": int(time.time()),
+                   "tiles": manifest}, f, separators=(",", ":"))
+    print("packed %d tiles on %d cores in %.0fs: %.1f MB -> %.1f MB  (%.1fx smaller)"
+          % (len(manifest), jobs, time.time() - t0,
+             before / 1e6, after / 1e6, before / max(after, 1)))
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    d = args[0] if args else "out/sandstone"
+    ns = float(args[args.index("--nrm-scale") + 1]) if "--nrm-scale" in args else 0.5
+    q = int(args[args.index("--albedo-q") + 1]) if "--albedo-q" in args else 90
+    # WebP's `method` trades encode time for a few percent of size. 6 is the
+    # slowest setting there is and bought ~5%; 4 is the sane default for a step
+    # that runs after every bake.
+    me = int(args[args.index("--method") + 1]) if "--method" in args else 4
+    js = int(args[args.index("--jobs") + 1]) if "--jobs" in args else None
+    pack(d, ns, q, me, js)

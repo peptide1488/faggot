@@ -1,0 +1,2373 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Iso tile test engine — WFC dungeon</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#08080a; color:#c9c9d2; font:13px/1.5 ui-monospace,Consolas,monospace; overflow:hidden; }
+  #stage { position:relative; width:100vw; height:100vh; overflow:hidden; }
+  canvas { position:absolute; top:0; left:0; transform-origin:0 0;
+           image-rendering:pixelated; image-rendering:crisp-edges; }
+  #hud { position:fixed; top:10px; left:10px; background:#12121aee; border:1px solid #2a2a38;
+         padding:10px 12px; border-radius:6px; z-index:5; width:300px; }
+  #hud h1 { font-size:13px; margin:0 0 6px; color:#eaeaf2; }
+  label { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  input[type=range], select { flex:1; }
+  #status { color:#7a7a8a; margin-bottom:6px; }
+  b { color:#e8b06a; } kbd { background:#22222e; border:1px solid #33334a; border-radius:3px; padding:0 4px; }
+  button { background:#22222e; color:#c9c9d2; border:1px solid #3a3a4e; border-radius:4px;
+           padding:4px 8px; cursor:pointer; font:inherit; }
+</style>
+<div id="hud">
+  <h1>Iso tile test engine — WFC dungeon</h1>
+  <div id="status">loading…</div>
+  <label>mode <select id="mode">
+      <option value="0">lit (normal-mapped)</option>
+      <option value="1">albedo only</option>
+      <option value="2">normals</option>
+      <option value="3">height / Z buffer</option></select></label>
+  <label>tile set <select id="tileset"></select></label>
+  <label>ambient <input id="amb" type="range" min="0" max="60" value="18"></label>
+  <label>torch <input id="rng" type="range" min="20" max="400" value="150"></label>
+  <label>shadows <input id="shd" type="range" min="0" max="100" value="80"></label>
+  <label>water <input id="water" type="range" min="0" max="100" value="60"></label>
+  <label>light bands <input id="bands" type="range" min="0" max="24" value="0"></label>
+  <label>band dither <input id="bdith" type="range" min="0" max="100" value="0"></label>
+  <!-- anti-alias defaults OFF: supersampling is a debugging aid here, not the
+       intended look, and it hides exactly the pixel-level faults worth seeing -->
+  <label>anti-alias <input id="ss" type="range" min="1" max="3" value="1"></label>
+  <label>pixel size <input id="pix" type="range" min="1" max="6" value="1"></label>
+  <label>colour bits <input id="bits" type="range" min="2" max="8" value="8"></label>
+  <label>dither <input id="dith" type="range" min="0" max="100" value="0"></label>
+  <label>zoom <input id="zoom" type="range" min="4" max="200" value="40"></label>
+  <label><input id="turn" type="checkbox" checked> turn-based (move range)</label>
+  <label>move <input id="mv" type="range" min="2" max="20" value="8"></label>
+  <button id="endturn">end turn</button> <span id="mvleft"></span>
+  <label><input id="wander" type="checkbox"> wander on his own</label>
+  <label><input id="dbg" type="checkbox"> debug: tile roles</label>
+  <label><input id="dbgE" type="checkbox"> debug: edge colours</label>
+  <button id="regen">regenerate map</button>
+  <label>seed <input id="seed" type="text" size="10" spellcheck="false"></label>
+  <div id="msg" style="color:#e8b06a;min-height:1.4em"></div>
+  <div style="margin-top:4px;color:#7a7a8a">
+    <b>click</b> a square to walk there · <b>drag</b> scrolls · <b>wheel</b> zooms<br>
+    arrows/WASD pan · <kbd>0</kbd> refit · <kbd>F</kbd> freeze light<br>
+    <kbd>Q</kbd>/<kbd>E</kbd> rotate the view
+  </div>
+  <div style="margin-top:6px;color:#55556a">v<span id="ver"></span> · <span id="fps"></span></div>
+</div>
+<div id="stage"><canvas id="gl"></canvas></div>
+<script>
+const VERSION = "0.51.0";
+
+// ---- tile SET ------------------------------------------------------------
+// build_tiles.py bakes each named look into its own directory (--theme NAME),
+// so a set is a path, not a rebuild: geometry, lattice and lighting are shared
+// and only the albedo changes. Props and the wizard are theme-independent and
+// stay at out/ -- a barrel is a barrel in a castle or a cave.
+const TILESETS = ["sandstone","stone"];
+let TILESET = new URLSearchParams(location.search).get("set")
+           || localStorage.getItem("iso.tileset") || TILESETS[0];
+if(!TILESETS.includes(TILESET)) TILESET = TILESETS[0];
+const TSET = "out/" + TILESET + "/";
+
+// ---- one seeded generator for the whole world ----------------------------
+// Every random decision the MAP makes goes through rnd(): rooms, doors, rifts,
+// causeways, elevation, props, torches. It used to be two generators -- bare
+// Math.random for terrain and an alias called rnd for props -- which meant "give
+// me that map again" was unanswerable. That cost a real comparison: an A/B of
+// the packed tiles against the raw ones measured a 59/255 difference that was
+// entirely two different maps, because seeding one generator never reached the
+// other.
+// The hero's idle wander deliberately stays on Math.random. It is animation, not
+// world-building, and if it drew from this stream then how long you watched the
+// map would change the NEXT map you generated.
+let SEED = (new URLSearchParams(location.search).get("seed")|0) ||
+           ((Math.random()*1e9)|0);
+let _rs = SEED;
+function reseed(s){ SEED = s>>>0; _rs = SEED; }
+function rnd(){                       // mulberry32
+  _rs = (_rs + 0x6D2B79F5) | 0;
+  let t = Math.imul(_rs ^ (_rs>>>15), 1 | _rs);
+  t = (t + Math.imul(t ^ (t>>>7), 61 | t)) ^ t;
+  return ((t ^ (t>>>14)) >>> 0) / 4294967296;
+}
+
+// ---- must match build_tiles.py -------------------------------------------
+const TILE_W = 640, RES = 1024, ANCHOR = RES/2;
+// Tiles are NOT all the same size any more: build_tiles.py sizes each canvas
+// from the geometry in it, so a raised wall gets a taller image than a floor
+// (it used to be clipped by a fixed 1024). What is invariant is the ANCHOR --
+// every tile's own centre is the image centre, at any resolution -- so the
+// composite positions each image by its own half-size, never by a constant.
+let MAXR = RES;
+const CELLS = 4;                          // squares per tile edge
+const TILE_U = 4.0;                       // world units per tile
+const PPU = TILE_W / (TILE_U*Math.SQRT2); // pixels per world unit
+const CAM_DIST = 30.0;
+// height encoding: (z + HEIGHT_OFF)/HEIGHT_RANGE, so negatives survive
+const HEIGHT_OFF = 4.0, HEIGHT_RANGE = 8.0;
+const COS30 = Math.cos(Math.PI/6), SIN30 = 0.5, COS45 = Math.SQRT1_2;
+
+const STEP_I = [ TILE_W/2,  TILE_W/4];    // world +X : screen right & down
+const STEP_J = [-TILE_W/2,  TILE_W/4];    // world -Y : screen left  & down
+const ORDER = ["Y+","X+","Y-","X-"];
+// The two walls nearest the camera. Their room-facing side points AWAY from it,
+// so anything mounted on that side is behind its own masonry. Rotation re-labels
+// prop edges with the world and buildDraws re-runs, so testing here stays correct
+// through Q/E rather than being baked into the map.
+const NEAR_EDGES = new Set(["Y-","X+"]);
+const OPP   = {"Y+":"Y-","Y-":"Y+","X+":"X-","X-":"X+"};
+// ---- THE ACTIVE TILESET ----------------------------------------------------
+// Tile names belong to the SET, not to this file. A set ships out/<id>/tiles.json
+// declaring each piece's name, its ROLE and the edges it blocks; this file only
+// ever asks for a role. That is what lets grass10A call its cliff a `scarp` and a
+// hell set call its wall an `obsidian_spire` while the solver below is unchanged.
+//
+// Weights are derived from the SHAPE of a wall set rather than looked up by name,
+// so a new set gets sensible ones without declaring any. Dead ends stay in the
+// vocabulary at near-zero weight: a three-walled cul-de-sac is almost never wanted,
+// but removing the variant outright causes WFC contradictions.
+// STAGED, NOT YET LIVE. buildTileSet below is complete and unit-checked, but the
+// name-resolution call sites (tileArt, the rim/span suffix builders, the loader's
+// name list) still use the dungeon's literal names -- so until those are converted
+// the vocabulary is still built the old way, from BASE. Converting half of them
+// would break every set, so this stays switched off until the rest lands.
+const BASE  = { floor:[], wall:["Y+"], corner:["Y+","X+"], corridor:["Y+","Y-"], deadend:["Y+","X+","X-"] };
+const WEIGHT= { floor:12, wall:4, corner:2, corridor:2, deadend:0.15 };
+
+const VARIANTS = [];
+let NV = 0, TS = null;
+const setKey = a => [...a].sort().join(",");
+function rotSet(edges, rot){ const s=((rot/90)%4+4)%4;
+  return edges.map(e=>ORDER[(ORDER.indexOf(e)+s)%4]); }
+function edgeWeight(n){ return n===0 ? 12 : n===1 ? 4 : n>=3 ? 0.15 : 2; }
+
+function buildTileSet(man){
+  const byRole={};
+  for(const [name,t] of Object.entries(man.tiles))
+    (byRole[t.role]=byRole[t.role]||[]).push(Object.assign({name},t));
+  const of = r => byRole[r]||[];
+
+  // Find the piece of `role` whose declared `field` set, turned by some rotation,
+  // lands exactly on the edges the map is asking for.
+  const find=(role,field,want,filter,fixedRot)=>{
+    const wk=setKey(want||[]);
+    for(const t of of(role)){
+      if(filter && !filter(t)) continue;
+      const rots = fixedRot==null ? [0,90,180,270] : [fixedRot];
+      for(const rot of rots)
+        if(setKey(rotSet(t[field]||[],rot))===wk) return {name:t.name, rot};
+    }
+    return null;
+  };
+  const fam=f=>t=>t.family===f;
+
+  TS={
+    id:man.set, label:man.label||man.set, tiles:man.tiles,
+    names:Object.keys(man.tiles),
+    ground:(walls,level)=>find(level?"high_ground":"ground","edges",walls),
+    hazard:(family,rims)=>find(family==="liquid"?"liquid":"drop","rims",rims,fam(family)),
+    span:(family,rims)=>find("span","rims",rims,fam(family)),
+    spanFlank:family=>{ const t=of("span_flank").find(fam(family)); return t?{name:t.name,rot:0}:null; },
+    // A feature with a direction (a stair rises one way, a door faces one way) has
+    // its rotation fixed by that direction; only the flanking walls are searched.
+    stair:(walls,rot)=>find("stair","edges",walls,null,rot),
+    opening:(walls,rot,closed)=>find("opening","edges",walls,t=>!!t.closed===!!closed,rot),
+    upper:(role,walls,rot)=>find(role,"edges",walls,null,rot)
+  };
+
+  VARIANTS.length=0;
+  for(const t of of("ground"))
+    for(const rot of [0,90,180,270]){
+      const walls=rotSet(t.edges||[],rot), key=setKey(walls);
+      if(!VARIANTS.some(v=>v.key===key))
+        VARIANTS.push({name:t.name,rot,key,walls:new Set(walls),w:edgeWeight(walls.length)});
+    }
+  NV=VARIANTS.length;
+  for(const v of VARIANTS) BY_KEY[v.key]=v;
+  return TS;
+}
+
+// The vocabulary as it is actually built TODAY, from the dungeon's literal names.
+// buildTileSet replaces this wholesale once the call sites are converted.
+for (const [name, edges] of Object.entries(BASE))
+  for (const rot of [0,90,180,270]) {
+    const walls=rotSet(edges,rot), key=setKey(walls);
+    if(!VARIANTS.some(v=>v.key===key))
+      VARIANTS.push({name,rot,key,walls:new Set(walls),w:WEIGHT[name]});
+  }
+NV = VARIANTS.length;
+const NEIGH = [ {di:1,dj:0,edge:"X+"}, {di:-1,dj:0,edge:"X-"},
+                {di:0,dj:1,edge:"Y-"}, {di:0,dj:-1,edge:"Y+"} ];
+
+
+
+
+// ---------------------------------------------------------------------------
+// EDGE CONTRACT
+// Every tile declares what each of its four edges offers, and neighbours must
+// agree. Choosing art per tile from its own neighbours -- with no contract --
+// is what let two adjacent causeway tiles run perpendicular to each other: each
+// was independently "correct" and the pair was nonsense.
+//
+//   "ground"  walkable floor at this tile's level
+//   "open"    a chasm/water edge: nothing to walk on
+//   "deck"    a causeway continues through this edge
+// ---------------------------------------------------------------------------
+const FAM = k => k==="bridge" ? "pit" : k==="water_bridge" ? "water" : k;
+function edgeKind(c, edge){
+  if(c.kind==="pit"||c.kind==="water") return "open";
+  if(c.kind==="bridge"||c.kind==="water_bridge"){
+    const along = (c.spanAxis==="y") ? (edge==="Y+"||edge==="Y-")
+                                     : (edge==="X+"||edge==="X-");
+    return along ? "deck" : "open";
+  }
+  return "ground";
+}
+// A deck must lead somewhere: ground, or more deck. Returns the offending pairs.
+function checkEdges(cells,W,H){
+  const bad=[];
+  for(const c of cells) for(const nb of NEIGH){
+    const ni=c.i+nb.di, nj=c.j+nb.dj;
+    if(ni<0||ni>=W||nj<0||nj>=H) continue;
+    const t=cells[nj*W+ni];
+    const a=edgeKind(c,nb.edge), b=edgeKind(t,OPP[nb.edge]);
+    if(a==="deck" && b==="open" && !isGround(t)) bad.push([c.i,c.j,nb.edge,a,b]);
+    if(b==="deck" && a==="open" && !isGround(c)) bad.push([t.i,t.j,OPP[nb.edge],b,a]);
+  }
+  return bad;
+}
+// Rebuild every crossing as a STRAIGHT run perpendicular to its own rift, from
+// ground on one side to ground on the other. Derived from the rift's recorded
+// orientation, never from whichever direction a repair happened to look in.
+function normaliseCrossings(cells,W,H){
+  const at=(i,j)=>cells[j*W+i];
+  for(const c of cells){
+    if(c.kind!=="bridge" && c.kind!=="water_bridge") continue;
+    const axis = bestSpanAxis(cells,W,H,c) || (c.riftHoriz ? "y" : "x");
+    const step = axis==="x" ? [1,0] : [0,1];
+    const fam = FAM(c.kind);
+    for(const dir of [1,-1]){
+      let i=c.i, j=c.j;
+      while(true){
+        const t=at(i,j);
+        if(!t || FAM(t.kind)!==fam) break;
+        t.kind = fam==="pit" ? "bridge" : "water_bridge";
+        t.spanAxis = axis;
+        i+=step[0]*dir; j+=step[1]*dir;
+      }
+    }
+  }
+}
+
+
+// HARD RULE, enforced to a fixpoint.
+//  (a) neighbouring causeways must agree on their span axis -- two decks side by
+//      side running at right angles was the visible "bridge rotated wrong" bug;
+//  (b) a causeway must reach WALKABLE GROUND at both ends, passing only through
+//      decks of its own rift. Running into a lake does not count as landing.
+// Anything failing either test is demoted back to chasm.
+const GROUND_KINDS = new Set(["", "stairs", "over_stairs", "arch", "door"]);  // all walkable tile kinds
+const isGround = t => t && GROUND_KINDS.has(t.kind||"");
+
+function enforceEdges(cells,W,H){
+  const at=(i,j)=>(i<0||i>=W||j<0||j>=H)?null:cells[j*W+i];
+  const isDeck = t => t && (t.kind==="bridge"||t.kind==="water_bridge");
+  let demoted=0;
+  for(let pass=0; pass<10; pass++){
+    let changed=false;
+    // (a) adjacent decks must share an axis; demote the later one deterministically
+    for(const c of cells){
+      if(!isDeck(c)) continue;
+      for(const nb of NEIGH){
+        const t=at(c.i+nb.di, c.j+nb.dj);
+        if(!isDeck(t) || FAM(t.kind)!==FAM(c.kind)) continue;
+        if(t.spanAxis===c.spanAxis) continue;
+        const later = (t.j*W+t.i) > (c.j*W+c.i) ? t : c;
+        later.kind=FAM(later.kind); delete later.spanAxis; demoted++; changed=true;
+      }
+    }
+    // (b) a deck must LAND: reach ground at both ends, through an edge that is
+    //     actually open. Checking only "is the next tile ground" let causeways
+    //     terminate against a wall face -- a bridge to nowhere.
+    // (c) and it must cross the rift, not run along it: a run longer than
+    //     MAX_SPAN means the deck is pointing down the chasm.
+    const MAX_SPAN = 4;
+    for(const c of cells){
+      if(!isDeck(c)) continue;
+      const axis=c.spanAxis, fam=FAM(c.kind);
+      const step = axis==="x" ? [1,0] : [0,1];
+      let ok = !!axis;
+      const landings=[];
+      if(ok) for(const dir of [1,-1]){
+        let i=c.i+step[0]*dir, j=c.j+step[1]*dir, run=0;
+        while(true){
+          const t=at(i,j);
+          if(isGround(t)){ landings.push({t, from:at(i-step[0]*dir, j-step[1]*dir),
+                                          edge: axis==="x" ? (dir>0?"X+":"X-")
+                                                           : (dir>0?"Y-":"Y+")}); break; }
+          if(!t){ ok=false; break; }
+          if(!isDeck(t) || FAM(t.kind)!==fam || t.spanAxis!==axis){ ok=false; break; }
+          if(++run>MAX_SPAN){ ok=false; break; }
+          i+=step[0]*dir; j+=step[1]*dir;
+        }
+        if(!ok) break;
+      }
+      if(ok){
+        // must be the SHORTER way across
+        const other = axis==="x" ? "y" : "x";
+        if(spanCost(cells,W,H,c,other) < spanCost(cells,W,H,c,axis)) ok=false;
+        // ...and it must actually CROSS: the chasm has to continue alongside it.
+        // On a wide lake both axes can be long, so "shorter" alone cannot tell a
+        // crossing from a causeway laid lengthwise down the channel -- which is
+        // what was rendering parallel to the water. A real crossing has rift on
+        // at least one perpendicular side; a lengthwise one has ground on both.
+        if(ok){
+          const perp = axis==="x" ? ["Y+","Y-"] : ["X+","X-"];
+          let touchesRift=false;
+          for(const e of perp){
+            const nb=NEIGH.find(n=>n.edge===e);
+            const t=at(c.i+nb.di, c.j+nb.dj);
+            if(t && FAM(t.kind)===fam && !isGround(t)) touchesRift=true;
+          }
+          if(!touchesRift) ok=false;
+        }
+      }
+      if(!ok){ c.kind=fam; delete c.spanAxis; demoted++; changed=true; continue; }
+      // open the wall the causeway lands against -- the bridge IS the doorway
+      for(const L of landings){
+        if(L.t.walls.has(OPP[L.edge])){
+          L.t.walls.delete(OPP[L.edge]); resync(L.t); changed=true;
+        }
+        if(L.from && L.from.walls && L.from.walls.has(L.edge)){
+          L.from.walls.delete(L.edge); resync(L.from);
+        }
+      }
+    }
+    if(!changed) break;
+  }
+  return demoted;
+}
+
+
+
+
+// Bridge art lookup keyed by (span axis, rim edges) -- the two were previously
+// derived from ONE rotation, so choosing rims correctly could silently rotate
+// the causeway. They are independent now: base spec s0..s3 puts rims on the
+// edges PERPENDICULAR to the span, and rotation moves both together.
+const BRIDGE_BY_KEY={};
+(function(){
+  const bases=[[],["X+"],["X-"],["X+","X-"]];      // rims, in the base orientation
+  for(let b=0;b<4;b++) for(const rot of [0,90,180,270]){
+    const st=(rot/90)%4;
+    const spanEdge = ORDER[(ORDER.indexOf("Y+")+st)%4];
+    const axis = (spanEdge==="Y+"||spanEdge==="Y-") ? "y" : "x";
+    const rims = bases[b].map(e=>ORDER[(ORDER.indexOf(e)+st)%4]).sort().join(",");
+    const key = axis+"|"+rims;
+    if(!(key in BRIDGE_BY_KEY)) BRIDGE_BY_KEY[key]={suf:"_s"+b, rot};
+  }
+})();
+function bridgeArt(cells,W,H,c,base){
+  const axis=c.spanAxis||"y";
+  const perp = axis==="y" ? ["X+","X-"] : ["Y+","Y-"];
+  const rims=[];
+  for(const e of perp){
+    const nb=NEIGH.find(n=>n.edge===e);
+    const t=(c.i+nb.di<0||c.i+nb.di>=W||c.j+nb.dj<0||c.j+nb.dj>=H)
+            ? null : cells[(c.j+nb.dj)*W+(c.i+nb.di)];
+    if(!t || FAM(t.kind)!==FAM(c.kind)) rims.push(e);   // chasm ends here
+  }
+  const v=BRIDGE_BY_KEY[axis+"|"+rims.sort().join(",")];
+  const art = v ? {name:base+v.suf, rot:v.rot} : {name:base+"_s0", rot:axis==="y"?0:90};
+  c.__art = art;          // stamped so the ART can be audited, not just the data
+  return art;
+}
+
+// Which way should a causeway run HERE?
+// Not "perpendicular to the rift" -- a rift wanders, so its global orientation
+// is wrong exactly where it turns, and that is where causeways came out facing
+// along the chasm. Ask the local question instead: along which axis is solid
+// ground closest on BOTH sides? That is the axis to span.
+function spanCost(cells,W,H,c,axis){
+  const at=(i,j)=>(i<0||i>=W||j<0||j>=H)?null:cells[j*W+i];
+  const isRiftish = t => t && (FAM(t.kind)===FAM(c.kind)) &&
+                         (t.kind==="pit"||t.kind==="water"||
+                          t.kind==="bridge"||t.kind==="water_bridge");
+  const step = axis==="x" ? [1,0] : [0,1];
+  let total=1;
+  for(const dir of [1,-1]){
+    let i=c.i+step[0]*dir, j=c.j+step[1]*dir, run=0;
+    while(true){
+      const t=at(i,j);
+      if(isGround(t)) break;                 // landed
+      if(!t || !isRiftish(t)) return Infinity;
+      if(++run>4) return Infinity;
+      total++; i+=step[0]*dir; j+=step[1]*dir;
+    }
+  }
+  return total;
+}
+function bestSpanAxis(cells,W,H,c){
+  const at=(i,j)=>(i<0||i>=W||j<0||j>=H)?null:cells[j*W+i];
+  // a candidate axis only counts as a crossing if the rift continues beside it
+  const crosses = axis => {
+    const perp = axis==="x" ? ["Y+","Y-"] : ["X+","X-"];
+    for(const e of perp){
+      const nb=NEIGH.find(n=>n.edge===e);
+      const t=at(c.i+nb.di, c.j+nb.dj);
+      if(t && FAM(t.kind)===FAM(c.kind) && !isGround(t)) return true;
+    }
+    return false;
+  };
+  let cx=spanCost(cells,W,H,c,"x"), cy=spanCost(cells,W,H,c,"y");
+  if(!crosses("x")) cx=Infinity;
+  if(!crosses("y")) cy=Infinity;
+  if(cx===Infinity && cy===Infinity) return null;
+  return cx<=cy ? "x" : "y";
+}
+
+// Guarantee a LEGAL crossing wherever a rift separates two regions.
+// Enforcement demotes illegal causeways, which is correct but leaves the map
+// cut; the old repair only re-flooded and hoped. This builds a crossing that
+// satisfies the edge contract by construction: perpendicular to the rift, a
+// straight run, landing on ground at both ends with the blocking walls opened.
+function ensureCrossings(cells,W,H){
+  const at=(i,j)=>(i<0||i>=W||j<0||j>=H)?null:cells[j*W+i];
+  const isDeck = t => t && (t.kind==="bridge"||t.kind==="water_bridge");
+  const isRift = t => t && (t.kind==="pit"||t.kind==="water");
+  const walkable = t => isGround(t) || isDeck(t);
+
+  const components = () => {
+    const comp=new Int32Array(W*H).fill(-1); let n=0;
+    for(const c of cells){
+      const id=c.j*W+c.i;
+      if(comp[id]>=0 || !walkable(c)) continue;
+      const st=[c]; comp[id]=n;
+      while(st.length){
+        const t=st.pop();
+        for(const nb of NEIGH){
+          const u=at(t.i+nb.di,t.j+nb.dj);
+          if(!u||!walkable(u)) continue;
+          if(t.walls.has(nb.edge)||u.walls.has(OPP[nb.edge])) continue;
+          if((t.level||0)!==(u.level||0) && t.kind!=="stairs" && u.kind!=="stairs") continue;
+          const id2=u.j*W+u.i;
+          if(comp[id2]<0){ comp[id2]=n; st.push(u); }
+        }
+      }
+      n++;
+    }
+    return {comp,n};
+  };
+
+  let built=0;
+  for(let pass=0; pass<8; pass++){
+    const {comp,n}=components();
+    if(n<=1) break;
+    let made=false;
+    for(const c of cells){
+      if(!isRift(c)) continue;
+      const axis = bestSpanAxis(cells,W,H,c);
+      if(!axis) continue;
+      const step = axis==="x" ? [1,0] : [0,1];
+      const run=[c]; const ends=[]; let ok=true;
+      for(const dir of [1,-1]){
+        let i=c.i, j=c.j, guard=0;
+        while(true){
+          i+=step[0]*dir; j+=step[1]*dir;
+          const t=at(i,j);
+          if(!t){ ok=false; break; }
+          if(isGround(t)){ ends.push({t, edge: axis==="x" ? (dir>0?"X+":"X-")
+                                                          : (dir>0?"Y-":"Y+")}); break; }
+          if(!(isRift(t)||isDeck(t)) || FAM(t.kind)!==FAM(c.kind)){ ok=false; break; }
+          if(++guard>4){ ok=false; break; }
+          run.push(t);
+        }
+        if(!ok) break;
+      }
+      if(!ok || ends.length<2) continue;
+      const a=comp[ends[0].t.j*W+ends[0].t.i], b=comp[ends[1].t.j*W+ends[1].t.i];
+      if(a===b || a<0 || b<0) continue;                 // already joined
+      for(const t of run){
+        t.kind = FAM(t.kind)==="pit" ? "bridge" : "water_bridge";
+        t.spanAxis = axis;
+      }
+      for(const e of ends){
+        if(e.t.walls.has(OPP[e.edge])){ e.t.walls.delete(OPP[e.edge]); resync(e.t); }
+      }
+      built++; made=true; break;
+    }
+    if(!made) break;
+  }
+  return built;
+}
+
+// A chasm tile only draws a rim where it meets solid ground. Without this, two
+// adjacent pit tiles each drew their own rim on the shared edge -- two walls
+// back to back through the middle of the rift -- so a continuous chasm rendered
+// as a row of separate square holes.
+const RIM_SHAPES={ "":[], "_e":["Y+"], "_c":["Y+","X+"], "_o":["Y+","Y-"],
+                   "_d":["Y+","X+","X-"], "_x":["Y+","X+","Y-","X-"] };
+const RIM_BY_KEY={};
+for(const [suf,edges] of Object.entries(RIM_SHAPES))
+  for(const rot of [0,90,180,270]){
+    const st=(rot/90)%4;
+    const key=edges.map(e=>ORDER[(ORDER.indexOf(e)+st)%4]).sort().join(",");
+    if(!(key in RIM_BY_KEY)) RIM_BY_KEY[key]={suf,rot};
+  }
+function rimArt(cells,W,H,c,base){
+  const solid=[];
+  for(const nb of NEIGH){
+    const ni=c.i+nb.di, nj=c.j+nb.dj;
+    const t=(ni<0||ni>=W||nj<0||nj>=H)?null:cells[nj*W+ni];
+    // pit+bridge are one family, water+water_bridge another: a causeway must not
+    // wall itself off from the chasm it spans
+    const fam = k => k==="bridge" ? "pit" : k==="water_bridge" ? "water" : k;
+    const sameKind = t && fam(t.kind)===fam(c.kind);
+    if(!sameKind) solid.push(nb.edge);        // rim only against non-rift
+  }
+  const v=RIM_BY_KEY[solid.sort().join(",")] || {suf:"_x",rot:0};
+  return {name:base+v.suf, rot:v.rot};
+}
+
+// ---------------------------------------------------------------------------
+// LAYOUT: rooms and doors, not WFC.
+//
+// WFC was the wrong tool for this job and the maps showed it. Its constraints
+// are per-edge and one tile wide, so it can only guarantee LOCAL agreement --
+// it has no way to express "this room is 4x3" or "this chasm crosses the map".
+// What it produced was a field of wall stubs: dead ends, pockets, and chasms
+// one tile long. Global structure has to be authored globally.
+//
+// So: BSP-partition the whole grid into rectangular rooms that TILE the map
+// (no leftover rock, so every tile is reachable floor), put walls only on room
+// perimeters, and cut a doorway between every pair of adjacent rooms. Minimum
+// room dimension is 2 so no tile ever needs 3 walls -- which also means no tile
+// is ever a cul-de-sac.
+// ---------------------------------------------------------------------------
+function genLayout(W,H){
+  const cells=[];
+  for(let j=0;j<H;j++) for(let i=0;i<W;i++)
+    cells.push({i,j,walls:new Set(),level:0,kind:"",upper:null,name:"floor",rot:0});
+  const at=(i,j)=>cells[j*W+i];
+
+  const rooms=[];
+  (function split(x,y,w,h,d){
+    const canV = w>=5, canH = h>=5;
+    if(d>=3 || (!canV&&!canH) || (d>=2 && rnd()<0.35)){ rooms.push({x,y,w,h}); return; }
+    const vertical = canV && (!canH || rnd()<0.5);
+    if(vertical){ const cut=2+((rnd()*(w-3))|0);
+      split(x,y,cut,h,d+1); split(x+cut,y,w-cut,h,d+1); }
+    else { const cut=2+((rnd()*(h-3))|0);
+      split(x,y,w,cut,d+1); split(x,y+cut,w,h-cut,d+1); }
+  })(0,0,W,H,0);
+
+  // walls on every room perimeter (j increases toward -Y, so j=y is the Y+ edge)
+  for(const r of rooms){
+    r.id = rooms.indexOf(r);
+    for(let j=r.y;j<r.y+r.h;j++) for(let i=r.x;i<r.x+r.w;i++){
+      const c=at(i,j); c.room=r.id;
+      if(i===r.x)         c.walls.add("X-");
+      if(i===r.x+r.w-1)   c.walls.add("X+");
+      if(j===r.y)         c.walls.add("Y+");
+      if(j===r.y+r.h-1)   c.walls.add("Y-");
+    }
+  }
+
+  // one doorway per adjacent room pair -- loops are fine, they kill dead ends
+  const pairs=new Map();
+  for(const c of cells) for(const nb of NEIGH){
+    const ni=c.i+nb.di, nj=c.j+nb.dj;
+    if(ni<0||ni>=W||nj<0||nj>=H) continue;
+    const t=at(ni,nj);
+    if(t.room===c.room) continue;
+    const key = Math.min(c.room,t.room)+":"+Math.max(c.room,t.room);
+    if(!pairs.has(key)) pairs.set(key,[]);
+    pairs.get(key).push([c,t,nb.edge]);
+  }
+  let doors=0;
+  for(const list of pairs.values()){
+    const n = 1 + (list.length>=6 ? 1 : 0);          // wide walls get two openings
+    for(let k=0;k<n;k++){
+      const [a,b,edge]=list[(rnd()*list.length)|0];
+      a.walls.delete(edge); b.walls.delete(OPP[edge]); doors++;
+      // Dress the opening as masonry: an arch, or a door that can be shut. This
+      // used to require `a.walls.size===0`, because the only opening art was a
+      // lone arch with nothing either side -- so a doorway in a room CORNER, or
+      // in a one-tile-wide room (both walls survive), had to stay a bare gap,
+      // which is most of the doorways a room carver produces. The flanking
+      // variants (arch_l/_r/_wall/_end/_nook_*) cover every wall set that can
+      // survive here, so the only remaining condition is that this tile is not
+      // already something else. See openingArt() for the wall-set -> art map.
+      if(!a.kind && rnd()<0.7){
+        a.kind = rnd()<0.45 ? "door" : "arch";
+        a.doorEdge = edge;
+        a.open = a.kind==="arch";
+      }
+    }
+  }
+  for(const c of cells) resync(c);
+  return {cells, rooms, doors};
+}
+
+// A rift that crosses the ENTIRE map, with a wander so it is not a ruled line.
+// This is the thing WFC could not do: it is a global feature by construction.
+function addRift(cells,W,H,kind,width){
+  const horiz = rnd()<0.5;
+  const span = horiz ? W : H;
+  const cross = horiz ? H : W;
+  let t = 2 + ((rnd()*(cross-4))|0);
+  const touched=[];
+  for(let u=0;u<span;u++){
+    if(rnd()<0.30){
+      // carve the corner tile too, or the step is diagonal and the rift breaks
+      // into squares that only touch at a point
+      const prev=t;
+      t = Math.max(1, Math.min(cross-2, t + (rnd()<0.5?-1:1)));
+      if(t!==prev){
+        const c0 = horiz ? cells[prev*W+u] : cells[u*W+prev];
+        if(c0){ c0.kind=kind; c0.walls=new Set(); c0.riftHoriz=horiz; touched.push(c0); }
+      }
+    }
+    t = Math.max(1, Math.min(cross-2, t));
+    for(let k=0;k<width;k++){
+      const tt=Math.min(cross-2, t+k);
+      const c = horiz ? cells[tt*W+u] : cells[u*W+tt];
+      if(!c) continue;
+      c.kind=kind; c.walls=new Set(); c.riftHoriz=horiz; touched.push(c);
+    }
+  }
+  // Crossings: without them the rift cuts the dungeon in half. Convert a whole
+  // COLUMN of the rift at one position, so the causeway actually spans it.
+  const crossings = 1 + ((rnd()*2)|0);
+  const used=new Set();
+  for(let k=0;k<crossings;k++){
+    let u, guard=0;
+    do { u = 1 + ((rnd()*(span-2))|0); } while(used.has(u) && guard++<20);
+    used.add(u);
+    for(const c of touched){
+      if((horiz ? c.i : c.j) !== u) continue;
+      c.kind = kind==="pit" ? "bridge" : "water_bridge";
+      c.spanAxis = horiz ? "y" : "x";
+    }
+  }
+  return touched.length;
+}
+
+// Openings are dressed while the rooms are carved, but the rift is gouged
+// AFTERWARDS and can turn the square beyond a doorway into a chasm -- and a
+// doorway on the outer wall has nothing beyond it at all. Either way the frame
+// has no floor behind it and you see the void straight through the jamb, which
+// reads as a black diamond at the foot of the wall. A causeway still counts as
+// somewhere to go; open water and open chasm do not. Strip the dressing back to
+// plain masonry rather than trying to patch the art -- a doorway that leads
+// nowhere is a map bug, not a rendering one.
+function undressStrandedOpenings(cells,W,H){
+  const at=(i,j)=>(i<0||i>=W||j<0||j>=H)?null:cells[j*W+i];
+  let n=0;
+  for(const c of cells){
+    if(c.kind!=="arch" && c.kind!=="door") continue;
+    const dir=NEIGH.find(d=>d.edge===c.doorEdge);
+    if(!dir) continue;
+    const t=at(c.i+dir.di, c.j+dir.dj);
+    if(!t || t.kind==="pit" || t.kind==="water"){
+      delete c.kind; delete c.doorEdge; delete c.open; n++;
+    }
+  }
+  return n;
+}
+
+// ---- Wave Function Collapse ----------------------------------------------
+// Contradictions are normal in WFC; a failed attempt costs almost nothing, so
+// retry generously rather than surfacing a dead map to the user.
+function wfc(W,H,tries=400){
+  for(let attempt=0;attempt<tries;attempt++){
+    const full=(1<<NV)-1, dom=new Array(W*H).fill(full);
+    const idx=(i,j)=>j*W+i;
+    for(let i=0;i<W;i++) for(let j=0;j<H;j++){
+      let m=dom[idx(i,j)];
+      for(const nb of NEIGH){
+        const ni=i+nb.di, nj=j+nb.dj;
+        if(ni>=0&&ni<W&&nj>=0&&nj<H) continue;
+        for(let v=0;v<NV;v++) if(!VARIANTS[v].walls.has(nb.edge)) m&=~(1<<v);
+      }
+      dom[idx(i,j)]=m;
+    }
+    const pc=m=>{let c=0;while(m){m&=m-1;c++;}return c;};
+    const propagate=stack=>{
+      while(stack.length){
+        const [i,j]=stack.pop();
+        for(const nb of NEIGH){
+          const ni=i+nb.di, nj=j+nb.dj;
+          if(ni<0||ni>=W||nj<0||nj>=H) continue;
+          let solid=false, open=false;
+          for(let v=0;v<NV;v++) if(dom[idx(i,j)]&(1<<v))
+            (VARIANTS[v].walls.has(nb.edge)?solid=true:open=true);
+          let m=dom[idx(ni,nj)]; const before=m;
+          for(let v=0;v<NV;v++) if(m&(1<<v)){
+            const s=VARIANTS[v].walls.has(OPP[nb.edge]);
+            if((s&&!solid)||(!s&&!open)) m&=~(1<<v);
+          }
+          if(m!==before){ if(!m) return false; dom[idx(ni,nj)]=m; stack.push([ni,nj]); }
+        }
+      }
+      return true;
+    };
+    if(!propagate(Array.from({length:W*H},(_,n)=>[n%W,(n/W)|0]))) continue;
+    let ok=true;
+    while(true){
+      let best=-1,bestC=1e9;
+      for(let n=0;n<W*H;n++){ const c=pc(dom[n]); if(c>1&&c<bestC){bestC=c;best=n;} }
+      if(best<0) break;
+      const opts=[]; for(let v=0;v<NV;v++) if(dom[best]&(1<<v)) opts.push(v);
+      let tot=0; for(const v of opts) tot+=VARIANTS[v].w;
+      let r=rnd()*tot, pick=opts[0];
+      for(const v of opts){ r-=VARIANTS[v].w; if(r<=0){pick=v;break;} }
+      dom[best]=1<<pick;
+      if(!propagate([[best%W,(best/W)|0]])){ ok=false; break; }
+    }
+    if(!ok) continue;
+    const cells=[];
+    for(let j=0;j<H;j++) for(let i=0;i<W;i++){
+      const m=dom[idx(i,j)]; let v=0;
+      for(let k=0;k<NV;k++) if(m&(1<<k)){v=k;break;}
+      // clone `walls`: spreading shares the Set with the global VARIANTS entry,
+      // and connectRegions() deletes from it -- which silently destroyed the
+      // tile catalogue after a few regenerations.
+      cells.push({...VARIANTS[v], i, j, walls:new Set(VARIANTS[v].walls)});
+    }
+    return cells;
+  }
+  return null;
+}
+
+// WFC happily seals off regions -- a valid tiling is not a connected dungeon.
+// Knock down interior walls until every tile is reachable. Removing edge E from
+// A and OPP(E) from B keeps the socket contract (both sides become open), and
+// every wall-subset except "all four" exists as a variant, so the replacement
+// tile always exists.
+const BY_KEY = {};
+for (const v of VARIANTS) BY_KEY[v.key] = v;
+
+// Give every tile at least two exits. WFC can still produce a cul-de-sac even at
+// a low weight, and the measured rate was 9-12 per 81-tile map.
+function openDegree(cells,W,H,c){
+  let open=0;
+  for(const nb of NEIGH){
+    const ni=c.i+nb.di, nj=c.j+nb.dj;
+    if(ni<0||ni>=W||nj<0||nj>=H) continue;
+    const t=cells[nj*W+ni];
+    if(!c.walls.has(nb.edge) && !t.walls.has(OPP[nb.edge])) open++;
+  }
+  return open;
+}
+
+// A stair only needs the walls ALONG its axis removed -- the two it climbs
+// between. Wiping the whole set deleted the room wall the stair was cut into,
+// which is why sections of wall went missing with torches left on nothing.
+function openForStair(t, dir){
+  t.walls = new Set([...t.walls].filter(e => e!==dir && e!==OPP[dir]));
+}
+
+function resync(t){
+  // Only wall-derived art. A tile with a kind (pit/water/stairs/...) chooses its
+  // art from the kind, so rewriting its name here churns a field nobody reads --
+  // and made rotation look non-idempotent when auditing it.
+  if(t.kind) return;
+  const v=BY_KEY[[...t.walls].sort().join(",")];
+  if(v){ t.name=v.name; t.rot=v.rot; t.key=v.key; }
+}
+function removeDeadEnds(cells,W,H){
+  let opened=0;
+  for(let pass=0; pass<4; pass++){
+    let changed=false;
+    for(const c of cells){
+      if(openDegree(cells,W,H,c)>=2) continue;
+      // knock out the wall that opens onto the neighbour with the most exits
+      let best=null, bestDeg=-1;
+      for(const nb of NEIGH){
+        const ni=c.i+nb.di, nj=c.j+nb.dj;
+        if(ni<0||ni>=W||nj<0||nj>=H) continue;
+        const t=cells[nj*W+ni];
+        if(!c.walls.has(nb.edge) && !t.walls.has(OPP[nb.edge])) continue;
+        const d=openDegree(cells,W,H,t);
+        if(d>bestDeg){ bestDeg=d; best={nb,t}; }
+      }
+      if(!best) continue;
+      c.walls.delete(best.nb.edge); best.t.walls.delete(OPP[best.nb.edge]);
+      resync(c); resync(best.t);
+      opened++; changed=true;
+    }
+    if(!changed) break;
+  }
+  return opened;
+}
+
+function connectRegions(cells, W, H){
+  const at=(i,j)=>cells[j*W+i];
+  const comp=new Int32Array(W*H).fill(-1);
+  let nc=0;
+  for(let s=0;s<W*H;s++){
+    if(comp[s]>=0) continue;
+    const st=[s]; comp[s]=nc;
+    while(st.length){
+      const n=st.pop(), c=cells[n];
+      for(const nb of NEIGH){
+        const ni=c.i+nb.di, nj=c.j+nb.dj;
+        if(ni<0||ni>=W||nj<0||nj>=H) continue;
+        if(c.walls.has(nb.edge)||at(ni,nj).walls.has(OPP[nb.edge])) continue;
+        const m=nj*W+ni;
+        if(comp[m]<0){ comp[m]=nc; st.push(m); }
+      }
+    }
+    nc++;
+  }
+  let removed=0, guard=0;
+  while(nc>1 && guard++<500){
+    let done=false;
+    for(let n=0;n<W*H && !done;n++){
+      const c=cells[n];
+      for(const nb of NEIGH){
+        const ni=c.i+nb.di, nj=c.j+nb.dj;
+        if(ni<0||ni>=W||nj<0||nj>=H) continue;      // never breach the outer wall
+        const m=nj*W+ni;
+        if(comp[m]===comp[n]) continue;
+        const a=cells[n], b=cells[m];
+        a.walls.delete(nb.edge); b.walls.delete(OPP[nb.edge]);
+        for(const t of [a,b]){
+          const v=BY_KEY[[...t.walls].sort().join(",")];
+          t.name=v.name; t.rot=v.rot; t.key=v.key;
+        }
+        const from=comp[m], to=comp[n];
+        for(let k=0;k<W*H;k++) if(comp[k]===from) comp[k]=to;
+        removed++; nc--; done=true; break;
+      }
+    }
+    if(!done) break;
+  }
+  return removed;
+}
+
+const load=src=>new Promise((ok,no)=>{const im=new Image();
+  im.onload=()=>ok(im); im.onerror=()=>no(new Error("failed: "+src)); im.src=src;});
+const DIRS=["east","south-east","south","south-west","west","north-west","north","north-east"];
+// ---- elevation (must match build_tiles.py) --------------------------------
+const STEP=1.8, PITZ=3.4;   // MUST match build_tiles.py STEP/PIT
+// A tile is (wall-set, level, kind). kind: ""|"stairs"|"pit"|"bridge".
+// Level 1 tiles are the same wall-set at a raised base; stairs join 0 and 1.
+function tileArt(t){
+  if(t.kind==="pit")    return rimArt(RIFT_CELLS,RIFT_W,RIFT_H,t,"pit");
+  if(t.kind==="water")  return rimArt(RIFT_CELLS,RIFT_W,RIFT_H,t,"water");
+  if(t.kind==="water_bridge") return bridgeArt(RIFT_CELLS,RIFT_W,RIFT_H,t,"water_bridge");
+  if(t.kind==="bridge") return bridgeArt(RIFT_CELLS,RIFT_W,RIFT_H,t,"bridge");
+  if(t.kind==="stairs")
+    return {name:t.walls.size?"stairs_wall":"stairs", rot:ROT_FOR_EDGE[t.dir]};
+  if(t.kind==="over_stairs")
+    return {name:t.walls.size?"over_stairs_wall":"over_stairs", rot:ROT_FOR_EDGE[t.dir]};
+  if(t.kind==="arch"||t.kind==="door") return openingArt(t);
+  return {name:t.name+(t.level?"_up":""), rot:t.rot};
+}
+// which rotation sends a Y+ feature to each edge
+const ROT_FOR_EDGE={};
+for(const r of [0,90,180,270]) ROT_FOR_EDGE[ORDER[((ORDER.indexOf("Y+")+(r/90))%4)]]=r;
+
+// An opening plus whatever wall survived on the same tile.
+//
+// The models are authored with the opening on Y+ and the flanking walls named
+// from THAT frame: `_l` is X+, `_r` is X-, `_end` is the far edge Y-. Rotation
+// carries the opening and its walls together, so to pick art we ask the inverse
+// question -- with the opening rotated onto this tile's doorEdge, which edge is
+// the model's X+ now? -- and read the tile's real wall set through that map.
+//
+// Both chiralities are separate models on purpose: mirroring the render would
+// mirror the masonry bond and the lighting with it.
+const OPENING_SUFFIX={ "":"", "opp":"_end", "l":"_l", "r":"_r",
+                       "l,r":"_wall", "l,opp":"_nook_l", "opp,r":"_nook_r" };
+function openingArt(t){
+  const rot=ROT_FOR_EDGE[t.doorEdge], s=rot/90;
+  const at=e=>ORDER[(ORDER.indexOf(e)+s)%4];       // model frame -> world edge
+  const role={ [at("X+")]:"l", [at("X-")]:"r", [at("Y-")]:"opp" };
+  const key=[...t.walls].map(e=>role[e]).filter(Boolean).sort().join(",");
+  // A closed door shows its leaf; an open one is just the arch it was cut into.
+  const base=(t.kind==="door" && !t.open) ? "door" : "arch";
+  const suffix=OPENING_SUFFIX[key];
+  // Three surviving walls has no model and no way to occur (a cell carries at
+  // most three walls, and the doorway consumed one of them) -- but if the carver
+  // ever changes, a bare opening is a better failure than a missing image.
+  return {name:base+(suffix||""), rot};
+}
+
+const FURNITURE=["barrel","crate","chest","table"];
+// Footprint in SQUARES, from the models in build_props.py. A table is 1.3 world
+// units long, so blocking a single 1.0 square left its ends poking into walkable
+// ground -- which is what "walking over props" actually was.
+const FURN_FOOT={ barrel:[1,1], crate:[1,1], chest:[1,1], table:[2,1] };
+const PROP_NAMES=["torch_Y+","torch_X+","torch_Y-","torch_X-"].concat(FURNITURE);
+const PROP_RES=768;                  // build_props.py RES
+const WALK_FRAMES=6;                 // build_wizard.py FRAMES
+const STRIDE_WORLD=0.9;              // world units per full step -- ties the
+                                     // cycle to distance travelled so he does
+                                     // not skate or moonwalk
+const OVER_Z=2.8;                    // build_tiles.py OVER_Z (upper floor height)
+let propMeta=null; const propImg={};
+let RIFT_CELLS=null, RIFT_W=0, RIFT_H=0;   // rimArt needs neighbour context
+const status=document.getElementById("status");
+document.getElementById("ver").textContent=VERSION;
+
+// Switching sets reloads the page rather than re-fetching in place: every tile
+// image, its size, and the composite that was built from them all change at
+// once, and a reload is the honest way to rebuild that -- this is a testbed, and
+// the set is chosen once per session, not per frame.
+(function(){
+  const sel=document.getElementById("tileset");
+  sel.innerHTML=TILESETS.map(t=>"<option"+(t===TILESET?" selected":"")+">"+t+"</option>").join("");
+  sel.onchange=()=>{ localStorage.setItem("iso.tileset",sel.value);
+                     location.search="?set="+encodeURIComponent(sel.value); };
+})();
+
+(async function main(){
+  const imgs={}, wiz={};
+  try{
+    const uniq=[...new Set(VARIANTS.map(v=>v.name+"_r"+v.rot)
+      .concat(VARIANTS.map(v=>v.name+"_up_r"+v.rot))
+      .concat(Object.keys({"":0,"_e":0,"_c":0,"_o":0,"_d":0,"_x":0})
+        .flatMap(suf=>[0,90,180,270].flatMap(r=>["pit"+suf+"_r"+r,"water"+suf+"_r"+r])))
+      .concat([0,1,2,3].flatMap(b=>[0,90,180,270]
+        .flatMap(r=>["bridge_s"+b+"_r"+r,"water_bridge_s"+b+"_r"+r])))
+      .concat([0,90,180,270].flatMap(r=>["bridge_flank_r"+r,"water_flank_r"+r]))
+      .concat([0,90,180,270].map(r=>"over_walk_n_r"+r))
+      .concat([0,90,180,270].map(r=>"debug_edges_r"+r))
+      // NB: no bare "water_bridge_r<rot>" here -- that name is from a superseded
+      // scheme, is not in build_tiles.py's TILES, and only ever loaded because a
+      // stale file happened to still be sitting in out/. A freshly baked set
+      // does not have it, and one missing image aborts the whole loader.
+      .concat([0,90,180,270].flatMap(r=>["stairs_r"+r,"stairs_wall_r"+r,"over_stairs_wall_r"+r,
+                                          "over_floor_r"+r,"over_walk_r"+r,"over_stairs_r"+r]))
+      // Openings, derived from the SAME suffix table openingArt picks with -- a
+      // hand-kept second list is how the loader and the art chooser drift apart,
+      // and one missing image aborts the whole loader (see the note above).
+      .concat([...new Set(Object.values(OPENING_SUFFIX))].flatMap(suf=>
+        [0,90,180,270].flatMap(r=>["arch"+suf+"_r"+r,"door"+suf+"_r"+r]))))];
+    // A PACKED set (pack_tiles.py) stores each pass cropped to its alpha box and
+    // records the offset from the tile's anchor in pack.json -- 13x smaller than
+    // the raw bake, because a floor tile only fills 20% of its canvas, height is
+    // one channel not four, and normals go to half resolution (they are sampled
+    // LINEAR and supersampled, so the grain was being averaged away anyway).
+    // The anchor stays exact because it is STORED rather than assumed. Falls
+    // back to the raw PNGs for a set that has not been packed.
+    let pack=null;
+    try{ const r=await fetch(TSET+"packed/pack.json"); if(r.ok) pack=await r.json(); }catch(e){}
+    const dir = pack ? TSET+"packed/" : TSET, ext = pack ? ".webp" : ".png";
+    // A re-pack rewrites the same filenames, so without this the browser serves
+    // the previous bake and the new art appears to have changed nothing.
+    const bust = pack && pack.built ? "?v="+pack.built : "";
+    status.textContent="loading "+(uniq.length*3)+(pack?" packed":" raw")+" tile images…";
+    await Promise.all(uniq.map(async n=>{
+      imgs[n]=[await load(dir+n+ext+bust), await load(dir+n+"_NRM"+ext+bust),
+               await load(dir+n+"_H"+ext+bust)];
+      const t = pack && pack.tiles[n], im = imgs[n][0];
+      // box = [dx, dy, w, h] from the tile's anchor. Unpacked images are simply
+      // centred, which is the same statement with the offset computed instead of
+      // read -- so one draw path serves both.
+      imgs[n].box = t ? t.a : [-im.width/2, -im.height/2, im.width, im.height];
+      const b=imgs[n].box;
+      MAXR = Math.max(MAXR, 2*Math.max(Math.abs(b[0]), Math.abs(b[1]), b[0]+b[2], b[1]+b[3]));
+    }));
+    // The wizard is a 3D model rendered from the SAME camera as the tiles, so he
+    // ships with the same three buffers they do. No alpha-bbox cropping and no
+    // billboard normal: the image centre is his feet by construction, and his
+    // per-pixel normal and height come from real geometry.
+    // 8 directions x WALK_FRAMES of a walk cycle, three buffers each
+    await Promise.all(DIRS.map(async d=>{
+      wiz[d]=[];
+      for(let f=0; f<WALK_FRAMES; f++){
+        const base="out/wizard3d/wizard_"+d+"_f"+f;
+        wiz[d].push({ a:await load(base+".png"),
+                      n:await load(base+"_NRM.png"),
+                      h:await load(base+"_H.png") });
+      }
+    }));
+    propMeta = await (await fetch("out/props/props.json")).json();
+    await Promise.all(PROP_NAMES.map(async p=>{
+      propImg[p]={ a:await load("out/props/"+p+".png"),
+                   n:await load("out/props/"+p+"_NRM.png"),
+                   h:await load("out/props/"+p+"_H.png") };
+    }));
+  }catch(e){ status.innerHTML="<b>"+e.message+"</b><br>serve over http, not file://"; return; }
+
+  const W=9, H=9;                       // tiles (9x9 = 36x36 squares)
+  const SW=W*CELLS, SH=H*CELLS;         // squares
+  const glc=document.getElementById("gl");
+  const gl=glc.getContext("webgl",{alpha:false});
+  if(!gl){ status.textContent="no WebGL"; return; }
+
+  let cells, sq, CW, CH, OX, OY, texA, texN, texH, texS=null;
+
+  const VS=`attribute vec2 p;
+    void main(){ gl_Position=vec4(p,0.0,1.0); }`;
+
+  // One fullscreen pass: light the room, and composite the sprite with a REAL
+  // depth test derived from the height buffer -- no painter order anywhere.
+  const FS=`precision highp float;
+    uniform sampler2D uAlb,uNrm,uHgt,uSpr,uSprNrm,uSprHgt;
+    uniform sampler2D uAlb1,uNrm1,uHgt1;   // UPPER LAYER
+    uniform sampler2D uMove; uniform vec2 uMoveSize; uniform float uMoveOn;
+    uniform float uHasUpper;
+    uniform vec2 uRes,uOrigin,uPan,uVP;
+    uniform float uZoom;
+    uniform float uPPU,uAmb,uMode,uHoff,uHrange,uCam,uShadow;
+    uniform float uPixel,uLevels,uDither,uBands,uLightDither,uHeroZ;
+    uniform float uTime,uWater;
+
+    // ---- PS1 output stage ---------------------------------------------------
+    // Ordered dithering, done the way the hardware effectively did it: quantise
+    // to a low bit depth, but offset each pixel by a 4x4 Bayer threshold first so
+    // the error is spread as a stable pattern instead of flat banding.
+    float bayer2(vec2 a){ a=floor(a); return fract(a.x/2.0 + a.y*a.y*0.75); }
+    float bayer4(vec2 a){ return bayer2(0.5*a)*0.25 + bayer2(a); }
+
+    vec3 post(vec3 c){
+      if(uLevels<1.5) return c;
+      float d = uDither*(bayer4(gl_FragCoord.xy) - 0.5) + 0.5;
+      return floor(c*uLevels + d)/uLevels;
+    }
+    uniform vec3 uLp[8],uLc[8];
+    uniform float uLr[8];
+    uniform float uNL;            // how many of the 8 slots are live
+    uniform vec4 uSprRect;        // x,y,w,h in canvas px
+
+    const float COS30=0.8660254, SIN30=0.5, COS45=0.7071068;
+
+    // ---- water ---------------------------------------------------------------
+    // WATER IS FOUND IN THE HEIGHT BUFFER, not in a mask pass. The baked water
+    // plane is the only UP-FACING surface anywhere in the tile set that sits at a
+    // negative height: a chasm's sides are vertical (normal.z ~ 0), stair treads
+    // and floors are all >= 0, and a pit bed is far below at -3.4. So "flat, and
+    // at WATER_Z" identifies exactly the water pixels, with no extra texture, no
+    // extra memory, and nothing for the compositor to keep in sync.
+    // WATER_Z MUST MATCH build_tiles.py -- it is a shared constant, not a guess.
+    const float WATER_Z = -0.42;
+    // Direction from a surface toward the fixed 2:1 iso camera. Same basis
+    // depthAt() uses: depth falls off along +(x-y) and +z, so that IS the eye.
+    const vec3 EYE = vec3(0.6123724,-0.6123724,0.5);
+
+    // Three crossing wave trains. The normal is the ANALYTIC derivative of the
+    // height field rather than a sampled bump map, so it is exact at any zoom,
+    // costs no texture memory, and is continuous across tile joins -- the ripple
+    // flows over a whole pond instead of restarting every 640px.
+    const vec2 WD0=vec2( 0.9391, 0.3437), WD1=vec2(-0.4161, 0.9093), WD2=vec2( 0.7071,-0.7071);
+    const vec3 WFRQ=vec3(5.1,7.7,12.3), WAMP=vec3(0.030,0.018,0.008), WSPD=vec3(1.9,2.6,3.4);
+
+    float waterHeight(vec2 wp, float t){
+      return WAMP.x*sin(dot(wp,WD0)*WFRQ.x - t*WSPD.x)
+           + WAMP.y*sin(dot(wp,WD1)*WFRQ.y - t*WSPD.y)
+           + WAMP.z*sin(dot(wp,WD2)*WFRQ.z - t*WSPD.z);
+    }
+    vec3 waterNormal(vec2 wp, float t, float amp){
+      vec2 g = WD0*(WAMP.x*WFRQ.x*cos(dot(wp,WD0)*WFRQ.x - t*WSPD.x))
+             + WD1*(WAMP.y*WFRQ.y*cos(dot(wp,WD1)*WFRQ.y - t*WSPD.y))
+             + WD2*(WAMP.z*WFRQ.z*cos(dot(wp,WD2)*WFRQ.z - t*WSPD.z));
+      return normalize(vec3(-g*amp, 1.0));
+    }
+
+    // Invert the iso projection for a surface of known HEIGHT at pixel P.
+    // Identical for tiles and for the character -- that is the whole point of
+    // storing height: the character is just another surface.
+    float xMinusY(vec2 P, float h){
+      return (P.y - uOrigin.y + h*COS30*uPPU)/(SIN30*COS45*uPPU);
+    }
+    float depthAt(vec2 P, float h){
+      return uCam - (COS30*COS45*xMinusY(P,h) + SIN30*h);
+    }
+    vec2 worldAt(vec2 P, float h){
+      float sum=(P.x-uOrigin.x)/(COS45*uPPU);
+      float dif=xMinusY(P,h);
+      return vec2((sum+dif)*0.5,(sum-dif)*0.5);
+    }
+
+    // Cast shadows by marching the HEIGHT FIELD toward the light. At each step the
+    // ray has a known world position and height; project it back to a pixel and
+    // read the surface height there. If the surface is above the ray, something
+    // is between this point and the light. Works because every screen pixel
+    // carries a height -- the same buffer that gives us the depth test.
+    float occluded(vec2 wp, float h, vec3 L, float distToLight){
+      if(uShadow<=0.0) return 0.0;
+      const int N=28;
+      float maxT=min(distToLight, 14.0);
+      float dt=maxT/float(N);
+      // jitter the phase per pixel: a fixed step lands on the same heights along
+      // a shadow boundary and produces scalloped arcs, which read far worse than
+      // the fine noise you get from breaking the pattern up
+      float jit=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);
+      for(int i=1;i<=N;i++){
+        float t=dt*(float(i)+jit)+0.30;         // start offset: avoids self-acne
+        if(t>maxT) break;
+        vec2 p=wp+L.xy*t;
+        float rh=h+L.z*t;
+        vec2 sp=vec2(uOrigin.x+(p.x+p.y)*COS45*uPPU,
+                     uOrigin.y+(p.x-p.y)*SIN30*COS45*uPPU - rh*COS30*uPPU);
+        vec2 uv=sp/uRes;
+        if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) continue;
+        if(texture2D(uAlb,uv).a>0.03){
+          if(texture2D(uHgt,uv).r*uHrange-uHoff > rh+0.14) return 1.0;
+        }
+        if(uHasUpper>0.5 && texture2D(uAlb1,uv).a>0.03){
+          if(texture2D(uHgt1,uv).r*uHrange-uHoff > rh+0.14) return 1.0;
+        }
+        // the character casts too: his height map is not in the scene buffer
+        if(uSprRect.z>0.0){
+          vec2 su=(sp-uSprRect.xy)/uSprRect.zw;
+          if(su.x>=0.0&&su.x<=1.0&&su.y>=0.0&&su.y<=1.0){
+            if(texture2D(uSpr,su).a>0.5 && texture2D(uSprHgt,su).r*uHrange-uHoff > rh+0.14)
+              return 1.0;
+          }
+        }
+      }
+      return 0.0;
+    }
+
+    // gloss > 0 adds a specular lobe. It is what makes water read as a liquid:
+    // a torch on a matte surface is a soft pool of light, on water it is a
+    // sharp streak that breaks into pieces on the ripples.
+    vec3 shade(vec3 albedo, vec3 n, vec2 wp, float h, float gloss){
+      vec3 acc=vec3(uAmb), spec=vec3(0.0);
+      for(int k=0;k<8;k++){
+        if(float(k)>=uNL) break;
+        vec3 d=vec3(uLp[k].xy-wp, uLp[k].z-h);   // light height is absolute
+        float dist=max(length(d),1e-4);
+        vec3 L=d/dist;
+        float ndl=max(0.0,dot(n,L));
+        float att=1.0/(1.0+(dist/uLr[k])*(dist/uLr[k]));
+        // Only trace a shadow ray if this light could actually matter here.
+        // Before the stone got bump-mapped, flat faces pointing away had ndl==0
+        // and skipped the march for free; bumpy normals made almost every pixel
+        // slightly lit, which put the trace everywhere and cost ~90% of the fps.
+        float vis=1.0;
+        if(ndl*att>0.02) vis=1.0-uShadow*occluded(wp,h,L,dist);
+        ndl*=vis;
+        acc+=uLc[k]*ndl*att;
+        if(gloss>0.0 && ndl>0.0){
+          // Blinn-Phong against the fixed iso eye. Two lobes: a tight glint for
+          // the reflected flame itself, and a wide sheen so the water still
+          // reads as wet away from the highlight.
+          float nh=max(dot(n,normalize(L+EYE)),0.0);
+          spec += uLc[k]*att*vis*gloss*(pow(nh,110.0)*1.5 + pow(nh,14.0)*0.14);
+        }
+      }
+      // Posterise the LIGHT, not the final pixel. Quantising here -- before the
+      // albedo multiply -- terraces the falloff into hard rings while leaving the
+      // texture detail untouched. Quantising after would stair-step the artwork
+      // too and just look like colour-depth loss.
+      if(uBands>0.5){
+        float steps=uBands;
+        // Quantise INTENSITY, not each channel. Per-channel quantisation makes R,
+        // G and B cross their thresholds at different distances from the light,
+        // so every band shifts hue -- warm light banded into green and maroon
+        // rings. Scaling the colour by a quantised luminance keeps the hue and
+        // terraces only the brightness, which is the actual look we want.
+        float lum=dot(acc, vec3(0.2126,0.7152,0.0722));
+        float d=uLightDither>0.0 ? (bayer4(gl_FragCoord.xy)-0.5)*uLightDither/steps : 0.0;
+        float q=floor((lum+d)*steps)/steps;
+        acc*= lum>1e-5 ? q/lum : 0.0;
+      }
+      // Specular is added AFTER the banding: a reflection is light arriving from
+      // one direction, not part of the surface's own shading ramp, and posterising
+      // it just chops the glint into rings.
+      return albedo*acc + spec;
+    }
+
+    void main(){
+      // Only the visible viewport is shaded: pan/zoom happen HERE, not as a CSS
+      // transform on a map-sized canvas. Cost is now independent of map size.
+      vec2 P = (vec2(gl_FragCoord.x, uVP.y - gl_FragCoord.y)*uPixel - uPan)/uZoom;
+      vec2 vUv = P/uRes;
+      if(vUv.x<0.0||vUv.x>1.0||vUv.y<0.0||vUv.y>1.0){
+        gl_FragColor=vec4(0.03,0.03,0.04,1.0); return;
+      }
+      vec4 a = texture2D(uAlb,vUv);
+      float hS = texture2D(uHgt,vUv).r * uHrange - uHoff;      // scene surface height
+      float zScene = a.a<0.03 ? 1e9 : depthAt(P,hS);
+
+      // UPPER LAYER: a second surface at this same pixel. One height buffer can
+      // only remember the nearer of the two, which is exactly why walking under
+      // a bridge was impossible -- the floor above had no way to say "there is
+      // also something below me".
+      vec4 a1 = uHasUpper>0.5 ? texture2D(uAlb1,vUv) : vec4(0.0);
+      float h1 = texture2D(uHgt1,vUv).r * uHrange - uHoff;
+      float z1 = (uHasUpper<0.5 || a1.a<0.03) ? 1e9 : depthAt(P,h1);
+
+      // the character: sampled and depth-tested EXACTLY like the scene
+      vec4 sp=vec4(0.0); vec3 spN=vec3(0.0,0.0,1.0); float hSpr=0.0, zSpr=1e9;
+      if(uSprRect.z>0.0){
+        vec2 su=(P-uSprRect.xy)/uSprRect.zw;
+        if(su.x>=0.0&&su.x<=1.0&&su.y>=0.0&&su.y<=1.0){
+          sp=texture2D(uSpr,su);
+          if(sp.a>0.35){
+            spN=normalize(texture2D(uSprNrm,su).rgb*2.0-1.0);
+            // his model heights are measured from his own feet, so standing on a
+            // raised tile has to add that tile's height or he depth-tests as if
+            // he were still on the ground floor
+            hSpr=texture2D(uSprHgt,su).r*uHrange - uHoff + uHeroZ;
+            zSpr=depthAt(P,hSpr);
+          }
+        }
+      }
+      // nearest of the three surfaces at this pixel wins
+      float zBest = zScene; int which = 0;              // 0 ground, 1 upper, 2 hero
+      if(z1 < zBest){ zBest = z1; which = 1; }
+      if(sp.a>0.35 && zSpr <= zBest+0.02){ zBest = zSpr; which = 2; }
+
+      vec3 col, nrm; float hgt; bool empty=false;
+      if(which==2){ col=sp.rgb;  nrm=spN; hgt=hSpr; }
+      else if(which==1){ col=a1.rgb; nrm=normalize(texture2D(uNrm1,vUv).rgb*2.0-1.0); hgt=h1; }
+      else { col=a.rgb; nrm=normalize(texture2D(uNrm,vUv).rgb*2.0-1.0); hgt=hS;
+             empty = a.a<0.03; }
+
+      // ---- water: replace the baked flat plane with a live surface ----------
+      float gloss=0.0;
+      if(uWater>0.0 && which==0 && !empty && nrm.z>0.9 && abs(hgt-WATER_Z)<0.05){
+        vec2 wp = worldAt(P,hgt);
+        float amp = uWater;
+        nrm = waterNormal(wp,uTime,amp);
+        float wh = waterHeight(wp,uTime);
+        // Wave troughs sit deeper in the tint, crests catch more light. The baked
+        // albedo already carries the basin's AO, so this only modulates it.
+        col *= 0.78 + 0.44*clamp(wh*7.0+0.5,0.0,1.0);
+        // Shoreline. Anything that is not water within a couple of pixels means a
+        // bank, a rim or a causeway pier; foam gathers there and rides the swell.
+        vec2 t=2.5/uRes;
+        float e=0.0;
+        e=max(e,abs(texture2D(uHgt,vUv+vec2(t.x,0.0)).r*uHrange-uHoff-hgt));
+        e=max(e,abs(texture2D(uHgt,vUv-vec2(t.x,0.0)).r*uHrange-uHoff-hgt));
+        e=max(e,abs(texture2D(uHgt,vUv+vec2(0.0,t.y)).r*uHrange-uHoff-hgt));
+        e=max(e,abs(texture2D(uHgt,vUv-vec2(0.0,t.y)).r*uHrange-uHoff-hgt));
+        float foam=smoothstep(0.06,0.34,e)*(0.55+0.45*clamp(wh*9.0+0.5,0.0,1.0));
+        col=mix(col,vec3(0.36,0.44,0.46),foam*0.55);
+        // Schlick fresnel against the fixed eye. Flat water reflects ~5% straight
+        // down the camera; a wave face tipped toward the horizon reflects several
+        // times that, which is what makes a ripple field glitter unevenly.
+        float fres=0.02+0.98*pow(1.0-max(dot(nrm,EYE),0.0),5.0);
+        gloss = uWater*(0.30+3.2*fres);
+      }
+
+      if(uMode>2.5){ gl_FragColor=vec4(vec3(hgt/uHrange+0.5),1.0); return; }
+      if(empty){ gl_FragColor=vec4(0.03,0.03,0.04,1.0); return; }
+      if(uMode>1.5){ gl_FragColor=vec4(nrm*0.5+0.5,1.0); return; }
+      if(uMode>0.5){ gl_FragColor=vec4(post(col),1.0); return; }
+      vec3 lit = shade(col,nrm,worldAt(P,hgt),hgt,gloss);
+      // move range: sample the tiny per-square mask by this pixel's world square
+      if(uMoveOn>0.5 && which!=2){
+        vec2 wp2 = worldAt(P,hgt);
+        vec2 sq = vec2(floor(wp2.x+2.0), floor(2.0-wp2.y));
+        if(sq.x>=0.0 && sq.y>=0.0 && sq.x<uMoveSize.x && sq.y<uMoveSize.y){
+          vec4 mv = texture2D(uMove,(sq+0.5)/uMoveSize);
+          // Tint FLOOR only. Two tests, because either alone lets a wall through:
+          //  - the surface must face up (a wall face does not)
+          //  - and sit at that square's floor height (a wall TOP faces up too,
+          //    but stands 2.4 units above the floor it belongs to)
+          float floorZ = mv.g*uHrange - uHoff;
+          bool isFloor = nrm.z>0.80 && abs(hgt-floorZ)<0.30;
+          if(mv.r>0.5 && isFloor){
+            // grid: brighten the square and draw a border at its edge
+            vec2 f = fract(vec2(wp2.x+2.0, 2.0-wp2.y));
+            float edge = min(min(f.x,1.0-f.x), min(f.y,1.0-f.y));
+            float line = smoothstep(0.06,0.0,edge);
+            lit = mix(lit*vec3(0.62,1.30,0.72), vec3(0.25,1.0,0.42), line*0.55);
+          }
+        }
+      }
+      gl_FragColor=vec4(post(lit),1.0);
+    }`;
+
+  const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+    if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o;};
+  const pr=gl.createProgram();
+  gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS)); gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));
+  gl.linkProgram(pr);
+  if(!gl.getProgramParameter(pr,gl.LINK_STATUS)){ status.textContent="link: "+gl.getProgramInfoLog(pr); return; }
+  gl.useProgram(pr);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  const al=gl.getAttribLocation(pr,"p");
+  gl.enableVertexAttribArray(al); gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
+  const U=n=>gl.getUniformLocation(pr,n);
+
+  function upload(src,unit,existing,nearest){
+    const t=existing||gl.createTexture();
+    // Colour buffers sample NEAREST (crunchy, PS1). Normal and height are DATA --
+    // they stay LINEAR, because point-sampling them makes the depth test and the
+    // lighting jitter at every texel edge.
+    const f = nearest ? gl.NEAREST : gl.LINEAR;
+    gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,f);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,f);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src);
+    return t;
+  }
+
+  // ---- coordinates --------------------------------------------------------
+  // World coords ARE the lattice: cell (0,0) centre is the origin, +X = i, -Y = j.
+  const tileWorld=c=>[c.i*TILE_U, -c.j*TILE_U];
+  // square (X,Y) -> world centre.  X = 4i+k, Y = 4j+m
+  const sqWorld=(X,Y)=>[X-1.5, 1.5-Y];
+  const worldToScreen=(wx,wy)=>[OX+(wx+wy)*COS45*PPU, OY+(wx-wy)*SIN30*COS45*PPU];
+  const screenToWorldFloor=(sx,sy)=>{
+    const sum=(sx-OX)/(COS45*PPU), dif=(sy-OY)/(SIN30*COS45*PPU);
+    return [(sum+dif)/2,(sum-dif)/2];
+  };
+  const worldToSq=(wx,wy)=>[Math.round(wx+1.5), Math.round(1.5-wy)];
+
+  // ---- square-level walkability ------------------------------------------
+  // Movement is per SQUARE (5ft), not per tile. Only a tile boundary can carry a
+  // wall, so crossing inside a tile is always free; crossing between tiles is
+  // blocked if either side owns a wall on that edge.
+  // ---- layered square graph ------------------------------------------------
+  // Square identity is (X, Y, LAYER). Layer 0 is the ground (including plateaus
+  // and stairs, which are still one surface); layer 1 is the overpass deck.
+  // Encoding L*SQ + Y*SW + X keeps every existing layer-0 call site working,
+  // because for L=0 the id is exactly what it was before.
+  function buildSquares(){
+    const at=(i,j)=>cells[j*W+i];
+    sq=new Uint8Array(SW*SH).fill(1);
+    // A bridge tile is mostly hole: only the causeway squares carry floor.
+    const onCauseway=(c,X,Y)=>{
+      const k=(c.spanAxis==="y") ? (X%CELLS) : (Y%CELLS);
+      return k===1||k===2;                     // BRIDGE_W 1.6 -> the middle two
+    };
+    const standable=(X,Y,L)=>{
+      if(X<0||X>=SW||Y<0||Y>=SH) return false;
+      const c=at((X/CELLS)|0,(Y/CELLS)|0);
+      if(!c) return false;
+      if(L===1){
+        if(!c.upper) return false;             // nothing up there to stand on
+        if(c.upper.kind==="over_walk"){
+          const k=(c.upper.spanAxis==="y") ? (X%CELLS) : (Y%CELLS);
+          return k===1||k===2;                 // the deck is only 1.6 units wide
+        }
+        return true;
+      }
+      if(blocked && blocked[Y*SW+X]) return false;
+      if(c.kind==="pit"||c.kind==="water") return false;     // chasm / deep water
+      if(c.kind==="bridge"||c.kind==="water_bridge") return onCauseway(c,X,Y);
+      if(c.kind==="over_stairs"){               // only the middle of the flight
+        const k=(c.dir==="Y+"||c.dir==="Y-") ? (X%CELLS) : (Y%CELLS);
+        return k===1||k===2;
+      }
+      return true;
+    };
+    const passable=(X,Y,L,X2,Y2,L2)=>{
+      if(!standable(X2,Y2,L2)) return false;
+      const i1=(X/CELLS)|0, j1=(Y/CELLS)|0, i2=(X2/CELLS)|0, j2=(Y2/CELLS)|0;
+      const sameTile = i1===i2 && j1===j2;
+      const a=at(i1,j1), b=at(i2,j2);
+      const edge = i2>i1?"X+" : i2<i1?"X-" : j2>j1?"Y-" : "Y+";
+      if(L===L2){
+        if(sameTile) return true;
+        if(L===1) return !!(a.upper && b.upper);   // no walls modelled up top yet
+        if(a.walls.has(edge) || b.walls.has(OPP[edge])) return false;
+        // A doorway is an opening in the middle of the wall, not a missing wall:
+        // DOOR_W is ~1.7 units of a 4-square edge, so only the middle two squares
+        // are passable. Before this you could walk through the whole wall as long
+        // as the tile happened to own a door.
+        const inDoorway = (t,e) => {
+          const k = (e==="Y+"||e==="Y-") ? (X%CELLS) : (Y%CELLS);
+          return k===1 || k===2;
+        };
+        if(a.kind==="door" || a.kind==="arch"){
+          if(a.doorEdge===edge){
+            if(!inDoorway(a,edge)) return false;
+            if(a.kind==="door" && !a.open) return false;
+          }
+        }
+        if(b.kind==="door" || b.kind==="arch"){
+          if(b.doorEdge===OPP[edge]){
+            if(!inDoorway(b,OPP[edge])) return false;
+            if(b.kind==="door" && !b.open) return false;
+          }
+        }
+        // ELEVATION: a change of level is a cliff unless a stair bridges it. The
+        // stair only connects along its own axis -- you cannot walk onto the side
+        // of a staircase.
+        const stair = a.kind==="stairs" ? a : (b.kind==="stairs" ? b : null);
+        if(stair){
+          const axisEdges = (stair.dir==="Y+"||stair.dir==="Y-") ? ["Y+","Y-"] : ["X+","X-"];
+          if(!axisEdges.includes(edge)) return false;
+          const other = stair===a ? b : a;
+          const wantHigh = (stair===a) ? (edge===stair.dir) : (OPP[edge]===stair.dir);
+          return wantHigh ? other.level===1 : other.level===0;
+        }
+        return (a.level||0)===(b.level||0);
+      }
+      // LAYER CHANGE -- only over the top edge of an over_stairs tile.
+      if(sameTile) return false;
+      if(L===0 && L2===1) return a.kind==="over_stairs" && edge===a.dir && !!b.upper;
+      if(L===1 && L2===0) return b.kind==="over_stairs" && OPP[edge]===b.dir && !!a.upper;
+      return false;
+    };
+    return passable;
+  }
+  const SQ=()=>SW*SH;
+  const sqId=(X,Y,L)=>(L||0)*SW*SH + Y*SW + X;
+  const sqX=id=>id%SW, sqY=id=>(((id/SW)|0)%SH), sqL=id=>(id/(SW*SH))|0;
+  let passable;
+
+  // 8-way, so all eight rendered facings actually get used. A diagonal is only
+  // allowed when BOTH orthogonal neighbours are open -- otherwise he'd slip
+  // through the corner where two walls meet.
+  const STEPS8=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  function canStep(X,Y,L,dx,dy,L2){
+    const X2=X+dx, Y2=Y+dy;
+    if(!passable(X,Y,L,X2,Y2,L2)) return false;
+    if(dx!==0&&dy!==0){
+      if(L!==L2) return false;                 // no diagonal while changing layer
+      return passable(X,Y,L,X+dx,Y,L) && passable(X,Y,L,X,Y+dy,L) &&
+             passable(X+dx,Y,L,X2,Y2,L) && passable(X,Y+dy,L,X2,Y2,L);
+    }
+    return true;
+  }
+
+  // One flood from the hero, reused for both "path to X" and "path as close to X
+  // as you can get". Walls, props and chasms are all just unreachable squares,
+  // so clicking any of them lands you at the nearest square that IS reachable
+  // instead of doing nothing -- which is what you want when the wall is drawn
+  // over the floor you were aiming at.
+  function bfsFrom(from){
+    const prev=new Map([[from,null]]), dist=new Map([[from,0]]), q=[from];
+    while(q.length){
+      const n=q.shift();
+      const X=sqX(n), Y=sqY(n), L=sqL(n);
+      for(const [dx,dy] of STEPS8){
+        const layers = (dx!==0&&dy!==0) ? [L] : [L, 1-L];
+        for(const L2 of layers){
+          if(!canStep(X,Y,L,dx,dy,L2)) continue;
+          const m=sqId(X+dx,Y+dy,L2);
+          if(!prev.has(m)){ prev.set(m,n); dist.set(m,dist.get(n)+1); q.push(m); }
+        }
+      }
+    }
+    prev.dist=dist;          // step count, so callers need not re-walk the chain
+    return prev;
+  }
+  function rebuildPath(prev,from,to){
+    if(!prev.has(to)) return [];
+    const out=[]; let n=to;
+    while(n!==null&&n!==from){ out.push(n); n=prev.get(n); }
+    return out.reverse();
+  }
+  function bfsSq(from,to){ return rebuildPath(bfsFrom(from),from,to); }
+
+  // walk to (X,Y) if possible, else to the reachable square closest to it
+  function pathToward(from,X,Y,preferL){
+    const prev=bfsFrom(from);
+    for(const L of [preferL, 1-preferL]){
+      const direct=sqId(X,Y,L);
+      if(prev.has(direct)) return rebuildPath(prev,from,direct);
+    }
+    let best=null, bestD=Infinity;
+    for(const id of prev.keys()){
+      const dx=sqX(id)-X, dy=sqY(id)-Y;
+      const d=dx*dx+dy*dy + (sqL(id)===preferL?0:0.5);
+      if(d<bestD){ bestD=d; best=id; }
+    }
+    return best===null ? [] : rebuildPath(prev,from,best);
+  }
+
+  let hero, path=[], reach=[], torches=[], blocked=null, sqLevel=null;
+  let texA1=null, texN1=null, texH1=null, hasUpper=0;
+
+  // ---- elevation ----------------------------------------------------------
+  // Grown as blobs on top of the finished wall layout rather than solved inside
+  // WFC: the socket rule would have to carry a height as well as open/solid, and
+  // the extra constraint makes contradictions far more likely. Growing after is
+  // simpler and lets stairs be placed where they are actually needed.
+  function addElevation(cells,W,H,rooms){
+    const at=(i,j)=>cells[j*W+i];
+    // Raise a whole ROOM. A blob of random tiles reads as lumpy ground; a room
+    // at height reads as architecture, and its doorways are natural stair sites.
+    const usable = rooms.filter(r=>{
+      for(let j=r.y;j<r.y+r.h;j++) for(let i=r.x;i<r.x+r.w;i++)
+        if(at(i,j).kind) return false;
+      return r.w*r.h>=4 && r.w*r.h<=20;
+    });
+    if(!usable.length) return {raised:0,stairsPlaced:0};
+    const r = usable[(rnd()*usable.length)|0];
+    for(let j=r.y;j<r.y+r.h;j++) for(let i=r.x;i<r.x+r.w;i++) at(i,j).level=1;
+
+    // stairs at a doorway: a low tile outside the room whose shared edge is open
+    let stairsPlaced=0;
+    const sites=[];
+    for(let j=r.y;j<r.y+r.h;j++) for(let i=r.x;i<r.x+r.w;i++){
+      const c=at(i,j);
+      for(const nb of NEIGH){
+        const ni=c.i+nb.di, nj=c.j+nb.dj;
+        if(ni<0||ni>=W||nj<0||nj>=H) continue;
+        const t=at(ni,nj);
+        if(t.level===1||t.kind) continue;
+        if(c.walls.has(nb.edge)||t.walls.has(OPP[nb.edge])) continue;
+        sites.push({low:t, dir:OPP[nb.edge]});
+      }
+    }
+    for(let k=0;k<sites.length && stairsPlaced<2;k++){
+      const pick=sites[(rnd()*sites.length)|0];
+      if(pick.low.kind) continue;
+      pick.low.kind="stairs"; pick.low.dir=pick.dir; openForStair(pick.low,pick.dir);
+      stairsPlaced++;
+    }
+    if(!stairsPlaced) for(let j=r.y;j<r.y+r.h;j++) for(let i=r.x;i<r.x+r.w;i++) at(i,j).level=0;
+    return {raised:stairsPlaced?r.w*r.h:0, stairsPlaced};
+  }
+
+  // ---- upper layer --------------------------------------------------------
+  // A straight overpass carried on pillars, with a staircase at one end. The
+  // ground tiles underneath are untouched -- that is the point, you walk beneath.
+  function addOverpass(cells,W,H){
+    const at=(i,j)=>cells[j*W+i];
+    for(const c of cells){ c.upper=null; }
+    hasUpper=0;
+    const horiz = rnd()<0.5;
+    const len = 3+((rnd()*3)|0);
+    const j0 = 1+((rnd()*(H-2))|0), i0 = 1+((rnd()*(W-len-1))|0);
+    const run=[];
+    for(let k=0;k<len;k++){
+      const c = horiz ? at(i0+k, j0) : at(j0, i0+k);
+      if(!c || c.kind) return;
+      run.push(c);
+    }
+    const foot = horiz ? at(i0-1, j0) : at(j0, i0-1);
+    if(!foot || foot.kind || foot.level) return;
+    run.forEach((c,idx)=>{
+      // pillars only under the first and last tile of the span
+      const ends = (idx===0 || idx===run.length-1);
+      c.upper={ kind: ends ? "over_walk" : "over_walk_n", spanAxis: horiz?"x":"y" };
+    });
+    foot.kind="over_stairs";
+    foot.dir = horiz ? "X+" : "Y-";
+    openForStair(foot,foot.dir);
+    hasUpper=1;
+  }
+
+  // world Z of a square, and whether it can be stood on at all
+  function squareZ(X,Y,L){
+    const c=cells[((Y/CELLS)|0)*W+((X/CELLS)|0)];
+    if(!c) return 0;
+    if(L===1) return OVER_Z;                    // standing on the overpass deck
+    if(c.kind==="over_stairs"){
+      const k=(c.dir==="Y+"||c.dir==="Y-") ? (Y%CELLS) : (X%CELLS);
+      let t=(k+0.5)/CELLS;
+      if(c.dir==="Y+"||c.dir==="X-") t=1-t;
+      return OVER_Z*t;
+    }
+    if(c.kind==="stairs"){
+      // interpolate up the treads so he climbs rather than teleports
+      const k=(c.dir==="Y+"||c.dir==="Y-") ? (Y%CELLS) : (X%CELLS);
+      let t=(k+0.5)/CELLS;
+      if(c.dir==="Y+"||c.dir==="X-") t=1-t;
+      return STEP*t;
+    }
+    return c.level?STEP:0;
+  }
+
+  // Painting is separate from deciding, so a door can be redrawn without
+  // regenerating the map -- and without re-rolling every prop's position.
+  let lastDraws=null, EDGE_DEBUG=false;
+  let _scratch=null;
+  function work_scratch(){
+    if(!_scratch){ _scratch=document.createElement("canvas");
+      _scratch.width=PROP_RES; _scratch.height=PROP_RES; }
+    return _scratch;
+  }
+
+  // ---- prop occlusion -------------------------------------------------------
+  // Tiles are queued at o:0 and their props at o:1, so a plain blit paints a prop
+  // OVER its own tile -- including that tile's NEAR walls (Y-/X+), the ones whose
+  // inner face points away from the camera. That is the whole of "the chest is
+  // sticking out of the wall" and "the torch pokes through it": the masonry that
+  // should hide them was already in the buffer and simply got painted over. The
+  // props were never misplaced -- 675 of them across 40 maps sit on legal squares.
+  //
+  // Everything else in the scene already handles this: tiles occlude each other by
+  // painter order on i+j, and the character sprite is depth-tested per pixel in the
+  // shader. Props had neither. The composite height buffer is the missing
+  // information -- R holds (z+HEIGHT_OFF)/HEIGHT_RANGE, the same encoding the
+  // fragment shader decodes -- so test each prop pixel against it and drop the ones
+  // that lose. This runs once per composite rebuild, not per frame.
+  const _hold={};
+  function _scr(k,w,h){
+    let c=_hold[k];
+    // The FIRST getContext call fixes the attributes for the canvas's lifetime, so
+    // claim willReadFrequently here: these two are read back once per prop, and
+    // without it every read is a GPU->CPU sync stall (and a console warning).
+    if(!c){ c=_hold[k]=document.createElement("canvas");
+            c.getContext("2d",{willReadFrequently:true}); }
+    if(c.width!==w||c.height!==h){ c.width=w; c.height=h; }
+    return c;
+  }
+  function blitProp(xa,xn,xh, alb,nrm,hgt, px,py){
+    const ix=Math.round(px), iy=Math.round(py);
+    const x0=Math.max(0,ix), y0=Math.max(0,iy);
+    const x1=Math.min(CW,ix+PROP_RES), y1=Math.min(CH,iy+PROP_RES);
+    const w=x1-x0, h=y1-y0;
+    if(w<=0||h<=0) return;                       // entirely off the composite
+    const work=_scr("work",w,h), g=work.getContext("2d");
+    g.clearRect(0,0,w,h);
+    g.drawImage(hgt, ix-x0, iy-y0);
+    const src=g.getImageData(0,0,w,h).data;
+    const dst=xh.getImageData(x0,y0,w,h).data;
+    // A prop pixel survives where it is at least as near as what is already there.
+    // Equal heights keep the PROP, because its base sits on the floor it stands on;
+    // two levels of slack so a coplanar base is not eaten by rounding. dst alpha 0
+    // means nothing has been composited there at all, so the prop wins by default.
+    const mask=new ImageData(w,h), md=mask.data;
+    let any=false;
+    for(let i=0;i<md.length;i+=4){
+      if(src[i+3]>0 && (dst[i+3]===0 || src[i]>=dst[i]-2)){
+        md[i]=md[i+1]=md[i+2]=md[i+3]=255; any=true;
+      }
+    }
+    if(!any) return;                             // fully hidden behind masonry
+    const mk=_scr("mask",w,h);
+    mk.getContext("2d").putImageData(mask,0,0);
+    const layer=(ctx,img)=>{
+      g.globalCompositeOperation="source-over";
+      g.clearRect(0,0,w,h);
+      g.drawImage(img, ix-x0, iy-y0);
+      g.globalCompositeOperation="destination-in";
+      g.drawImage(mk,0,0);
+      g.globalCompositeOperation="source-over";
+      ctx.drawImage(work, x0, y0);
+    };
+    layer(xa,alb); layer(xn,nrm); layer(xh,hgt);
+  }
+  // Move range as a tiny SW x SH mask sampled in the shader -- cheaper and
+  // sharper than compositing highlight sprites, and it updates every step.
+  let moveTex=null, moveBuf=null, moveLeft=8;
+  function refreshMoveRange(){
+    const on=document.getElementById("turn").checked;
+    if(!moveBuf || moveBuf.length!==SW*SH*4) moveBuf=new Uint8Array(SW*SH*4);
+    moveBuf.fill(0);
+    if(on && moveLeft>0){
+      const prev=bfsFrom(hero.sq), dist=prev.dist;
+      for(const id of prev.keys()){
+        if(dist.get(id)>moveLeft) continue;
+        const X=sqX(id), Y=sqY(id), L=sqL(id), o=(Y*SW+X)*4;
+        moveBuf[o]=255;                                   // in range
+        // the square's FLOOR height, encoded like the height buffer. The shader
+        // uses it to tint only the floor: sampling by world square alone tinted
+        // the walls too, because a wall's pixels resolve to the square behind it.
+        moveBuf[o+1]=Math.max(0,Math.min(255,Math.round((squareZ(X,Y,L)+4)/8*255)));
+        moveBuf[o+3]=255;
+      }
+    }
+    document.getElementById("mvleft").textContent =
+      document.getElementById("turn").checked ? ("move left: "+moveLeft) : "";
+    if(!moveTex) moveTex=gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0+9); gl.bindTexture(gl.TEXTURE_2D,moveTex);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,SW,SH,0,gl.RGBA,gl.UNSIGNED_BYTE,moveBuf);
+  }
+
+  let propPlan=[];
+  function buildDraws(){
+    torches=[]; blocked=new Uint8Array(SW*SH);
+    const at=(i,j)=>cells[j*W+i];
+    const draws=[];
+    for(const c of cells) draws.push({d:c.i+c.j, o:0, kind:"tile", c});
+    for(const pp of propPlan){
+      if(pp.kind==="torch"){
+        const c=at(pp.i,pp.j); if(!c) continue;
+        const key="torch_"+pp.edge; if(!propImg[key]) continue;
+        const tz=c.level?STEP:0;
+        // A torch hangs on the ROOM side of its wall, and for the two NEAR walls
+        // that side faces away from the camera -- the sconce is behind its own
+        // masonry. The height buffer cannot express that: at a given pixel it
+        // calls the TALLEST surface the nearest, so a sconce mounted above the
+        // height of the wall's visible face wins the test and punches straight
+        // through the bricks. Not fixable by the per-pixel test in blitProp, so
+        // don't draw what is physically hidden. The LIGHT is still pushed below:
+        // the torch goes on burning, it just isn't visible from this side.
+        if(!NEAR_EDGES.has(pp.edge))
+          draws.push({d:c.i+c.j, o:1, kind:"prop", name:key, c, z:tz,
+                      wx:c.i*TILE_U, wy:-c.j*TILE_U});
+        const L=propMeta.props[key].light;
+        torches.push([c.i*TILE_U+L[0], -c.j*TILE_U+L[1], L[2]+tz]);
+      }else{
+        const c=at((pp.X/CELLS)|0,(pp.Y/CELLS)|0); if(!c||c.kind) continue;
+        const tz=c.level?STEP:0;
+        // squares covered by this prop's footprint
+        const span = pp.ax ? 2 : 1;
+        const dx = pp.ax==="x" ? 1 : 0, dy = pp.ax==="y" ? 1 : 0;
+        const cells2=[[pp.X,pp.Y]];
+        if(span>1){
+          const X2=pp.X+dx, Y2=pp.Y+dy;
+          // only extend within the same tile, so a table never straddles a wall
+          if(((X2/CELLS)|0)===c.i && ((Y2/CELLS)|0)===c.j) cells2.push([X2,Y2]);
+        }
+        for(const [bx,by] of cells2) blocked[by*SW+bx]=1;
+        // draw centred over the squares it actually occupies
+        const [ax0,ay0]=sqWorld(cells2[0][0],cells2[0][1]);
+        const [ax1,ay1]=sqWorld(cells2[cells2.length-1][0],cells2[cells2.length-1][1]);
+        draws.push({d:c.i+c.j, o:1, kind:"prop", name:pp.name, c, z:tz,
+                    wx:(ax0+ax1)/2, wy:(ay0+ay1)/2});
+      }
+    }
+    draws.sort((p,q)=> (p.d-q.d) || (p.o-q.o));
+    lastDraws=draws;
+    return draws;
+  }
+
+
+  function rebuildComposite(draws){
+    draws = draws || lastDraws;
+    if(!draws) return;
+    const mk=()=>{const c=document.createElement("canvas");c.width=CW;c.height=CH;return c;};
+    const ca=mk(), cn=mk(), ch=mk();
+    // The height composite is read back per prop by blitProp's occlusion test, so
+    // it is the one of the three that wants a CPU-side backing store. Albedo and
+    // normals are write-only here and keep the default (GPU) path.
+    const xa=ca.getContext("2d"), xn=cn.getContext("2d"),
+          xh=ch.getContext("2d",{willReadFrequently:true});
+    const ca1=mk(), cn1=mk(), ch1=mk();
+    const xa1=ca1.getContext("2d"), xn1=cn1.getContext("2d"), xh1=ch1.getContext("2d");
+    for(const it of draws){
+      if(it.kind==="tile"){
+        const c=it.c;
+        let art=tileArt(c);
+        // edge-colour mode: Y+ red, X+ green, Y- blue, X- yellow. Proves the ART
+        // agrees with the logical edge -- which no data-only audit can.
+        // only swap in the edge-colour tile for PLAIN floors, or the walls
+        // vanish and the map looks broken for an unrelated reason
+        if(EDGE_DEBUG && !c.kind && !c.level && c.walls.size===0)
+          art={name:"debug_edges", rot:0};
+        const key=art.name+"_r"+art.rot, E=imgs[key];
+        // A name the loader never fetched used to surface as "E is not iterable"
+        // from the destructure below -- which says nothing about WHICH tile, and
+        // the loader's name list is hand-kept, so this is the failure mode that
+        // actually happens. Name it.
+        if(!E) throw new Error("no image for tile "+key+" (kind="+(art.kind||art.name)+") — add it to the loader's name list");
+        const [a,n,h]=E;
+        // c.px/c.py are the tile's CENTRE -- the one thing every tile shares.
+        // Each image is placed by its own recorded box, because tiles are
+        // neither one resolution (a raised wall needs a taller canvas than a
+        // floor) nor one footprint once packed. Drawing with an explicit w/h is
+        // also what lets the half-resolution normal map scale back up to cover
+        // exactly the same pixels as its albedo.
+        c.px=OX+c.i*STEP_I[0]+c.j*STEP_J[0];
+        c.py=OY+c.i*STEP_I[1]+c.j*STEP_J[1];
+        const put=(ctx,im,b)=>ctx.drawImage(im, c.px+b[0], c.py+b[1], b[2], b[3]);
+        // CAUSEWAY LANDING -- the black gap either side of a bridge deck.
+        // A causeway tile is baked with basin walls only on the edges BESIDE the
+        // deck; the two edges the deck CROSSES have none, because whether they
+        // need one depends on the neighbour and baking every combination would
+        // need 64 variants. So the wall either side of the deck is a separate
+        // overlay piece (build_tiles.py add_flank), and without it a landing
+        // leaves the drop from floor level to the water/chasm showing through to
+        // the background. Only the two BACK edges need it: at a front edge the
+        // neighbouring floor is drawn later and covers the drop itself.
+        // Drawn UNDER the tile, which is what keeps the water plane hiding the
+        // submerged part of the wall instead of the wall painting over the water.
+        if(c.kind==="bridge"||c.kind==="water_bridge"){
+          const edge = c.spanAxis==="x" ? "X-" : "Y+";
+          const nb = NEIGH.find(o=>o.edge===edge);
+          const ni=c.i+nb.di, nj=c.j+nb.dj;
+          const t = (ni<0||ni>=W||nj<0||nj>=H) ? null : cells[nj*W+ni];
+          if(!t || FAM(t.kind)!==FAM(c.kind)){
+            const F=imgs[(c.kind==="bridge"?"bridge_flank":"water_flank")
+                         +"_r"+(edge==="Y+"?0:270)];
+            put(xa,F[0],F.box); put(xn,F[1],F.box); put(xh,F[2],F.box);
+          }
+        }
+        put(xa,a,E.box); put(xn,n,E.box); put(xh,h,E.box);
+        if(c.upper){
+          const art1 = (c.upper.kind==="over_walk"||c.upper.kind==="over_walk_n")
+            ? {name:c.upper.kind, rot: c.upper.spanAxis==="y"?0:90}
+            : {name:"over_floor", rot:0};
+          const U=imgs[art1.name+"_r"+art1.rot];
+          put(xa1,U[0],U.box); put(xn1,U[1],U.box); put(xh1,U[2],U.box);
+        }
+      }else{
+        const P=propImg[it.name];
+        const [sx,sy]=worldToScreen(it.wx,it.wy);
+        const px=sx-PROP_RES/2, py=sy-PROP_RES/2-(it.z||0)*COS30*PPU;
+        // A prop's _H encodes its model Z measured from ITS OWN base. Drawn on a
+        // raised tile it is lifted on screen, but its height values still claim
+        // ground level -- so the depth test thinks a barrel on a plateau is down
+        // on the floor. Add the tile's elevation into the height pixels.
+        if(it.z){
+          const sc=work_scratch(); const g=sc.getContext("2d");
+          g.clearRect(0,0,PROP_RES,PROP_RES);
+          g.globalCompositeOperation="source-over"; g.drawImage(P.h,0,0);
+          const add=Math.round(it.z/HEIGHT_RANGE*255);
+          g.globalCompositeOperation="lighter";
+          g.fillStyle="rgb("+add+","+add+","+add+")";
+          g.fillRect(0,0,PROP_RES,PROP_RES);
+          g.globalCompositeOperation="destination-in"; g.drawImage(P.h,0,0);
+          g.globalCompositeOperation="source-over";
+          blitProp(xa,xn,xh, P.a,P.n,sc, px,py);   // sc: tile elevation folded in
+          continue;
+        }
+        blitProp(xa,xn,xh, P.a,P.n,P.h, px,py);
+      }
+    }
+    // DEBUG OVERLAY. Colour-codes what each tile thinks it is, which turns
+    // "that bridge looks wrong" into something you can actually read off the
+    // screen: causeway span axis, chasm, water, stairs, doors.
+    if(document.getElementById("dbg").checked){
+      const diamond=(cx,cy,col,scale)=>{
+        const w=TILE_W*0.5*scale, h=TILE_W*0.25*scale;
+        xa.save(); xa.globalAlpha=0.55; xa.fillStyle=col;
+        xa.beginPath(); xa.moveTo(cx,cy-h); xa.lineTo(cx+w,cy); xa.lineTo(cx,cy+h);
+        xa.lineTo(cx-w,cy); xa.closePath(); xa.fill(); xa.restore();
+      };
+      const bar=(cx,cy,axis,col)=>{
+        // draw along the actual world axis so the direction is unambiguous
+        const L=TILE_W*0.42;
+        const d = axis==="x" ? [L*COS45, L*SIN30*COS45] : [-L*COS45, L*SIN30*COS45];
+        xa.save(); xa.globalAlpha=0.95; xa.strokeStyle=col; xa.lineWidth=TILE_W*0.07;
+        xa.beginPath(); xa.moveTo(cx-d[0],cy-d[1]); xa.lineTo(cx+d[0],cy+d[1]);
+        xa.stroke(); xa.restore();
+      };
+      for(const c of cells){
+        const cx=OX+c.i*STEP_I[0]+c.j*STEP_J[0], cy=OY+c.i*STEP_I[1]+c.j*STEP_J[1];
+        if(c.kind==="pit")            diamond(cx,cy,"#ff2b2b",1);
+        else if(c.kind==="water")     diamond(cx,cy,"#2b6bff",1);
+        else if(c.kind==="bridge")    { diamond(cx,cy,"#ffd400",1); bar(cx,cy,c.spanAxis,"#000"); }
+        else if(c.kind==="water_bridge"){ diamond(cx,cy,"#00e0c0",1); bar(cx,cy,c.spanAxis,"#000"); }
+        else if(c.kind==="stairs")    diamond(cx,cy,"#ff8c00",1);
+        else if(c.kind==="over_stairs")diamond(cx,cy,"#ff00d0",1);
+        else if(c.kind==="door")      diamond(cx,cy,"#9d00ff",0.5);
+        else if(c.kind==="arch")      diamond(cx,cy,"#00ff62",0.5);
+        else if(c.level===1)          diamond(cx,cy,"#ffffff",0.7);
+      }
+    }
+    resizeCanvas();
+    texA=upload(ca,0,texA,true); texN=upload(cn,1,texN); texH=upload(ch,2,texH);
+    texA1=upload(ca1,6,texA1,true); texN1=upload(cn1,7,texN1); texH1=upload(ch1,8,texH1);
+  }
+
+
+  // Rotating the camera 90 degrees is the same as rotating the MAP 90 degrees,
+  // and every tile already exists in four rotations -- so this needs no new art
+  // at all. Rotate the data, remap the hero, re-composite.
+  function rotateWorld(){
+    const N=W;                                    // square map, so W===H
+    const rotEdge = e => ORDER[(ORDER.indexOf(e)+1)%4];
+    const out=new Array(N*N);
+    for(const c of cells){
+      const ni=N-1-c.j, nj=c.i;                   // 90 deg clockwise
+      c.i=ni; c.j=nj;
+      c.walls=new Set([...c.walls].map(rotEdge));
+      if(c.dir) c.dir=rotEdge(c.dir);
+      if(c.doorEdge) c.doorEdge=rotEdge(c.doorEdge);
+      if(c.spanAxis) c.spanAxis = c.spanAxis==="x" ? "y" : "x";
+      if(c.upper && c.upper.spanAxis)
+        c.upper.spanAxis = c.upper.spanAxis==="x" ? "y" : "x";
+      if(c.riftHoriz!==undefined) c.riftHoriz=!c.riftHoriz;
+      // RE-DERIVE THE ART. tileArt reads the stored name/rot, so rotating the
+      // wall set without this leaves every wall drawn in its old orientation --
+      // the layout turns and the masonry does not.
+      resync(c);
+      out[nj*N+ni]=c;
+    }
+    cells=out; RIFT_CELLS=cells;
+    buildDraws(); passable=buildSquares();
+    // the hero rides along: square (X,Y) -> (SH-1-Y, X)
+    const X=sqX(hero.sq), Y=sqY(hero.sq), L=sqL(hero.sq);
+    const nX=SH-1-Y, nY=X;
+    hero.sq=sqId(nX,nY,L);
+    const [wx,wy]=sqWorld(nX,nY);
+    hero.wx=wx; hero.wy=wy; hero.z=squareZ(nX,nY,L);
+    path=[];
+    // carry the props round with the world
+    const rotE = e => ORDER[(ORDER.indexOf(e)+1)%4];
+    for(const pp of propPlan){
+      if(pp.kind==="torch"){ const ni=N-1-pp.j, nj=pp.i; pp.i=ni; pp.j=nj; pp.edge=rotE(pp.edge); }
+      else { const nX=SH-1-pp.Y, nY=pp.X; pp.X=nX; pp.Y=nY;
+             if(pp.ax) pp.ax = pp.ax==='x' ? 'y' : 'x'; }
+    }
+    buildDraws();
+    rebuildComposite();
+    refreshMoveRange();
+    flash("view rotated");
+  }
+
+  function build(){
+    // Reseed rather than continue the stream: building twice with the same seed
+    // has to give the same map, however many maps were made in between.
+    reseed(SEED);
+    seedBox.value = SEED;
+    history.replaceState(null,"", "?set="+TILESET+"&seed="+SEED);
+    const layout=genLayout(W,H);
+    cells=layout.cells;
+    RIFT_CELLS=cells; RIFT_W=W; RIFT_H=H;      // rimArt needs neighbour context
+    const opened=layout.doors;
+    // map-spanning features FIRST, so the plateau can avoid them
+    addRift(cells,W,H,"pit", 2+(rnd()<0.35?1:0));   // a real gorge, not a crack
+    if(rnd()<0.65) addRift(cells,W,H,"water", 1+(rnd()<0.5?1:0));
+    normaliseCrossings(cells,W,H); enforceEdges(cells,W,H);
+    ensureCrossings(cells,W,H); enforceEdges(cells,W,H);
+    const stranded=undressStrandedOpenings(cells,W,H);   // AFTER the rift, or it can't see it
+    const elevStats=addElevation(cells,W,H,layout.rooms);
+    passable=buildSquares();
+    window.__elevDebug={ afterGen:{
+      raised:cells.filter(c=>c.level===1).length,
+      stairs:cells.filter(c=>c.kind==="stairs").length }, stats:elevStats, passes:[] };
+
+    // Elevation can strand large parts of the map: a plateau across a corridor
+    // is a cliff, and a stair only helps if it lands somewhere you can already
+    // get to. Flood from the best start and flatten whatever is still cut off,
+    // repeating until nearly everything standable is connected. A dungeon you
+    // cannot walk is worse than a flat one.
+    const at2=(i,j)=>cells[j*W+i];
+    let flood=null;
+    for(let pass=0;pass<8;pass++){
+      // Take the LARGEST component, not the highest-degree square. Picking by
+      // degree once seeded the hero on a 3-tile plateau and called the other 737
+      // squares unreachable -- he was stranded on an island in his own dungeon.
+      const comp=new Int32Array(SW*SH).fill(-1);
+      let best=null, tot=0;
+      for(let Y0=0;Y0<SH;Y0++) for(let X0=0;X0<SW;X0++){
+        if(!passable(X0,Y0,0,X0,Y0,0)) continue;
+        tot++;
+        if(comp[Y0*SW+X0]>=0) continue;
+        const id=Y0*SW+X0, seen=new Set([id]), st=[id];
+        comp[id]=id;
+        while(st.length){
+          const n=st.pop(), X=sqX(n), Y=sqY(n), L=sqL(n);
+          for(const [dx,dy] of STEPS8){
+            if(!canStep(X,Y,L,dx,dy,L)) continue;
+            const m=(Y+dy)*SW+(X+dx);
+            if(comp[m]<0){ comp[m]=id; seen.add(m); st.push(m); }
+          }
+        }
+        if(!best||seen.size>best.seen.size) best={s0:id, seen};
+      }
+      if(!best) break;
+      const seen=best.seen, s0=best.s0;
+      flood={s0,seen,tot};
+      if(seen.size>=tot*0.97) break;
+      let changed=false;
+      // FIRST try to connect the plateau rather than delete it. The old repair
+      // flattened any raised tile outside the main component, which is why maps
+      // kept coming out flat: a big plateau splits the low level, the flood
+      // starts on whichever side is larger, and the whole feature got erased even
+      // though its stairs worked perfectly. Cut a new stair in from the main
+      // component instead, and only flatten if there is nowhere to put one.
+      for(const c of cells){
+        if(c.level!==1||c.kind) continue;
+        const X=c.i*CELLS+1, Y=c.j*CELLS+1;
+        if(seen.has(Y*SW+X)) continue;
+        for(const nb of NEIGH){
+          const ni=c.i+nb.di, nj=c.j+nb.dj;
+          if(ni<0||ni>=W||nj<0||nj>=H) continue;
+          const t=at2(ni,nj);
+          if(!t||t.level!==0||t.kind) continue;
+          const tX=ni*CELLS+1, tY=nj*CELLS+1;
+          if(!seen.has(tY*SW+tX)) continue;      // must join the MAIN component
+          c.walls.delete(nb.edge);
+          t.kind="stairs"; t.dir=OPP[nb.edge]; openForStair(t,t.dir);
+          changed=true;
+          break;
+        }
+        if(changed) break;
+      }
+      if(!changed) for(const c of cells){
+        if(!c.level && c.kind!=="stairs") continue;
+        const X=c.i*CELLS+1, Y=c.j*CELLS+1;
+        if(seen.has(Y*SW+X)) continue;
+        c.level=0; if(c.kind==="stairs") c.kind="";
+        changed=true;
+      }
+      // A pit can sever the dungeon just as a cliff can, and flattening plateaus
+      // never fixes that. Fill any pit that touches a stranded region -- floor is
+      // duller than a chasm, but a chasm you cannot get past is worse.
+      for(const c of cells){
+        if(!["pit","bridge","water","water_bridge"].includes(c.kind)) continue;
+        let touchesOrphan=false, axis=null;
+        for(const nb of NEIGH){
+          const ni=c.i+nb.di, nj=c.j+nb.dj;
+          if(ni<0||ni>=W||nj<0||nj>=H) continue;
+          const X=ni*CELLS+1, Y=nj*CELLS+1;
+          if(passable(X,Y,0,X,Y,0) && !seen.has(Y*SW+X)){
+            touchesOrphan=true; axis = nb.di!==0 ? "x" : "y";
+          }
+        }
+        if(!touchesOrphan) continue;
+        // BRIDGE it rather than fill it. Filling erased every chasm and lake --
+        // they are large enough to strand something almost every time, so the
+        // repair was quietly deleting the features it was meant to preserve.
+        // Span the FULL width of the rift, not one tile. A single bridged tile in
+        // a 2-wide gorge does not reach the far side, so the map stayed cut and
+        // the repair kept chewing until the gorge was one tile wide again.
+        const fam = k => k==="bridge" ? "pit" : k==="water_bridge" ? "water" : k;
+        const myFam = fam(c.kind);
+        if(myFam==="pit" || myFam==="water"){
+          // perpendicular to the rift, always -- using the orphan direction let
+          // two crossings of the same chasm run at right angles to each other
+          const spanAxis = bestSpanAxis(cells,W,H,c) || (c.riftHoriz ? "y" : "x");
+          const step = spanAxis==="x" ? [1,0] : [0,1];
+          for(const dir of [1,-1]){
+            let i=c.i, j=c.j;
+            while(true){
+              const t=at2(i,j);
+              if(!t || fam(t.kind)!==myFam) break;
+              t.kind = myFam==="pit" ? "bridge" : "water_bridge";
+              t.spanAxis = spanAxis;
+              i+=step[0]*dir; j+=step[1]*dir;
+            }
+          }
+        } else { c.kind=""; delete c.spanAxis; }    // already spanned and still cut
+        changed=true;
+        break;   // ONE crossing per pass, then re-flood.
+      }
+      window.__elevDebug.passes.push({pass, seen:seen.size, tot,
+        raisedLeft:cells.filter(c=>c.level===1).length, changed});
+      normaliseCrossings(cells,W,H); enforceEdges(cells,W,H);
+      ensureCrossings(cells,W,H); enforceEdges(cells,W,H);
+      if(!changed) break;
+      passable=buildSquares();
+    }
+    // the contract is only worth having if it is checked
+    const edgeErrors=checkEdges(cells,W,H);
+    if(edgeErrors.length) console.error("EDGE CONTRACT VIOLATED",edgeErrors);
+    window.__edgeErrors=edgeErrors.length;
+
+    const pts=cells.map(c=>[c.i*STEP_I[0]+c.j*STEP_J[0], c.i*STEP_I[1]+c.j*STEP_J[1]]);
+    const minx=Math.min(...pts.map(p=>p[0])), maxx=Math.max(...pts.map(p=>p[0]));
+    const miny=Math.min(...pts.map(p=>p[1])), maxy=Math.max(...pts.map(p=>p[1]));
+    // OX/OY are the CENTRE of the tile at lattice origin, and the padding is the
+    // largest tile in the set -- both so a taller-than-1024 tile has room.
+    CW=(maxx-minx)+MAXR; CH=(maxy-miny)+MAXR; OX=-minx+MAXR/2; OY=-miny+MAXR/2;
+
+    addOverpass(cells,W,H);
+    // ---- decide where props go, then draw tiles and props in ONE painter pass.
+    // A prop must be drawn immediately after its own tile: draw all tiles first
+    // and props after, and a prop on a far tile lands on top of a nearer tile.
+    // Prop placement is DATA (which tile, which edge, which square), decided
+    // once. The draw list is derived from it. That way rotating the view can
+    // rotate the props with the world instead of re-rolling them somewhere else.
+    propPlan=[];
+    for(const c of cells){
+      for(const e of c.walls){
+        if(rnd()>0.30) continue;
+        if(!propImg["torch_"+e]) continue;
+        propPlan.push({kind:"torch", i:c.i, j:c.j, edge:e});
+      }
+      if(rnd()<0.34 && !c.kind){
+        // Walls are WALL_T thick and sit INSIDE the tile, so the outer square row
+        // on a walled edge is partly masonry -- a chest placed there ends up half
+        // buried in the wall. Keep furniture off those rows.
+        // (m=0 is the Y+ edge, because j increases toward -Y.)
+        const k0 = c.walls.has("X-") ? 1 : 0, k1 = c.walls.has("X+") ? CELLS-2 : CELLS-1;
+        const m0 = c.walls.has("Y+") ? 1 : 0, m1 = c.walls.has("Y-") ? CELLS-2 : CELLS-1;
+        if(k1>=k0 && m1>=m0){
+          const nm=FURNITURE[(rnd()*FURNITURE.length)|0];
+          const wide = FURN_FOOT[nm][0]>1;
+          const kMax = wide ? k1-1 : k1;                 // a 2-square prop needs room
+          if(kMax>=k0){
+            const k=k0+((rnd()*(kMax-k0+1))|0), m=m0+((rnd()*(m1-m0+1))|0);
+            propPlan.push({kind:"furn", X:c.i*CELLS+k, Y:c.j*CELLS+m, name:nm,
+                           ax: wide ? "x" : null});
+          }
+        }
+      }
+    }
+    const draws=buildDraws();
+    draws.sort((p,q)=> (p.d-q.d) || (p.o-q.o));
+    lastDraws=draws;
+    rebuildComposite(draws);
+
+    gl.uniform1i(U("uAlb"),0); gl.uniform1i(U("uNrm"),1);
+    gl.uniform1i(U("uHgt"),2); gl.uniform1i(U("uSpr"),3);
+    gl.uniform1i(U("uSprNrm"),4); gl.uniform1i(U("uSprHgt"),5);
+    gl.uniform1i(U("uAlb1"),6); gl.uniform1i(U("uNrm1"),7); gl.uniform1i(U("uHgt1"),8);
+    gl.uniform2f(U("uRes"),CW,CH); gl.uniform2f(U("uOrigin"),OX,OY);
+    gl.uniform1f(U("uPPU"),PPU); gl.uniform1f(U("uHoff"),HEIGHT_OFF); gl.uniform1f(U("uHrange"),HEIGHT_RANGE);
+    gl.uniform1f(U("uCam"),CAM_DIST);
+
+    // start on the most-connected square
+    // start in the largest connected component, decided by the repair pass above
+    const start = flood ? flood.s0 : 0;
+    const [wx,wy]=sqWorld(sqX(start),sqY(start));
+    hero={sq:start, wx, wy, z:squareZ(sqX(start),sqY(start),sqL(start)), dir:"south"};
+    path=[];
+    const seen=new Set([start]), st=[start];
+    while(st.length){
+      const n=st.pop(), X=sqX(n), Y=sqY(n), L=sqL(n);
+      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        for(const L2 of [L,1-L]){              // include the climb to layer 1
+          if(!passable(X,Y,L,X+dx,Y+dy,L2)) continue;
+          const m=sqId(X+dx,Y+dy,L2);
+          if(!seen.has(m)){ seen.add(m); st.push(m); }
+        }
+      }
+    }
+    reach=[...seen];
+    const nUp=cells.filter(c=>c.level===1).length,
+          nSt=cells.filter(c=>c.kind==="stairs").length,
+          nPit=cells.filter(c=>c.kind==="pit").length,
+          nBr=cells.filter(c=>c.kind==="bridge").length;
+    status.innerHTML="WFC <b>"+W+"x"+H+"</b> tiles · reachable <b>"+seen.size+"</b>/"+
+      ((flood&&flood.tot)||(SW*SH))+" standable"+
+      "<br>elevation: raised <b>"+nUp+"</b> · stairs <b>"+nSt+"</b> · pit <b>"+nPit+
+      "</b> · bridge <b>"+nBr+"</b> · water <b>"+cells.filter(c=>c.kind==="water"||c.kind==="water_bridge").length+"</b>";
+    return true;
+  }
+
+  // ---- sprite -------------------------------------------------------------
+  let lastDir=null, texSN=null, texSH=null;
+  const SPR_RES = 384;                // build_wizard.py RES; rendered at the tiles' PPU
+  function spriteRect(){
+    // image centre == his feet, and the render used the same PPU, so this is 1:1.
+    // Standing on a raised tile lifts him up-screen by his world Z, exactly the
+    // way the projection lifts a wall of that height.
+    const [sx,sy]=worldToScreen(hero.wx,hero.wy);
+    return [sx-SPR_RES/2, sy-SPR_RES/2 - (hero.z||0)*COS30*PPU, SPR_RES, SPR_RES];
+  }
+  let lastFrame=-1;
+  function syncSprite(){
+    // Frame is driven by DISTANCE WALKED, not by a timer: tie it to the clock
+    // and he slides whenever speed and cycle rate disagree.
+    const f = path.length || hero.moving
+      ? (Math.floor((hero.dist||0)/STRIDE_WORLD*WALK_FRAMES) % WALK_FRAMES)
+      : 0;
+    if(hero.dir===lastDir && f===lastFrame) return;
+    const s=wiz[hero.dir][f];
+    texS=upload(s.a,3,texS,true); texSN=upload(s.n,4,texSN); texSH=upload(s.h,5,texSH);
+    lastDir=hero.dir; lastFrame=f;
+  }
+
+  function stepHero(dt){
+    hero.moving=false;
+    if(!path.length){
+      if(!document.getElementById("wander").checked) return;
+      const t=reach[(Math.random()*reach.length)|0];
+      if(t!==hero.sq) path=bfsSq(hero.sq,t);
+      if(!path.length) return;
+    }
+    const X=sqX(path[0]), Y=sqY(path[0]), L=sqL(path[0]);
+    const [tx,ty]=sqWorld(X,Y);
+    const tz=squareZ(X,Y,L);
+    const dx=tx-hero.wx, dy=ty-hero.wy, d=Math.hypot(dx,dy), spd=3.2*dt;
+    hero.z += (tz-(hero.z||0))*Math.min(1,dt*8);     // ease up the treads
+    if(d<=spd){ hero.wx=tx; hero.wy=ty; hero.z=tz; hero.sq=path.shift(); }
+    else{
+      hero.wx+=dx/d*spd; hero.wy+=dy/d*spd;
+      hero.dist=(hero.dist||0)+spd; hero.moving=true;
+      const [ax,ay]=worldToScreen(0,0), [bx,by]=worldToScreen(dx,dy);
+      const a=Math.atan2(by-ay,bx-ax);
+      hero.dir=DIRS[((Math.round(a/(Math.PI/4))%8)+8)%8];
+    }
+  }
+
+  const amb=document.getElementById("amb"), rng=document.getElementById("rng"),
+        mode=document.getElementById("mode"), zoom=document.getElementById("zoom"),
+        shd=document.getElementById("shd"), pix=document.getElementById("pix"),
+        bits=document.getElementById("bits"), dith=document.getElementById("dith"),
+        bands=document.getElementById("bands"), bdith=document.getElementById("bdith"),
+        ss=document.getElementById("ss"), water=document.getElementById("water"),
+        seedBox=document.getElementById("seed");
+  let mouse=[6,-6], frozen=false, clock=0;
+
+  function drawGL(){
+    syncSprite();
+    gl.uniform1f(U("uAmb"),amb.value/100);
+    gl.uniform1f(U("uShadow"),shd.value/100);
+    gl.uniform1f(U("uWater"),water.value/100);
+    gl.uniform1f(U("uTime"),clock);
+    gl.uniform1f(U("uMode"),parseFloat(mode.value));
+    // Slot 0 is his staff gem (not his chest -- a light at his own position blows
+    // the model flat and hides the normals). Slot 1 is the mouse. The rest are
+    // wall torches, sorted by distance to him: there are only 8 slots and, under
+    // inverse-square falloff, the far ones contribute almost nothing anyway.
+    const lights=[
+      {p:[hero.wx+0.45,hero.wy+0.45,1.5+(hero.z||0)], c:[1.25,0.85,0.48], r:rng.value/10},
+      {p:[mouse[0],mouse[1],3.0],         c:[0.35,0.55,1.15], r:9.0}
+    ];
+    torches.map(t=>({t,d:(t[0]-hero.wx)*(t[0]-hero.wx)+(t[1]-hero.wy)*(t[1]-hero.wy)}))
+           .sort((a,b)=>a.d-b.d).slice(0,6)
+           .forEach(({t})=>lights.push({p:t, c:[1.5,0.82,0.34], r:8.0}));
+    const NL=Math.min(8,lights.length);
+    for(let k=0;k<NL;k++){
+      gl.uniform3fv(U("uLp["+k+"]"),lights[k].p);
+      gl.uniform3fv(U("uLc["+k+"]"),lights[k].c);
+      gl.uniform1f(U("uLr["+k+"]"),lights[k].r);
+    }
+    gl.uniform1f(U("uNL"),NL);
+    gl.uniform4fv(U("uSprRect"),spriteRect());
+    gl.uniform1f(U("uHeroZ"),hero.z||0);
+    gl.uniform1f(U("uHasUpper"),hasUpper);
+    gl.uniform1i(U("uMove"),9);
+    gl.uniform2f(U("uMoveSize"),SW,SH);
+    gl.uniform1f(U("uMoveOn"),document.getElementById("turn").checked?1:0);
+    gl.uniform2f(U("uPan"),panX,panY);
+    gl.uniform1f(U("uZoom"),zoom.value/100);
+    gl.uniform2f(U("uVP"),glc.width,glc.height);
+    gl.uniform1f(U("uPixel"),Math.max(1,parseInt(pix.value,10))/Math.max(1,parseInt(ss.value,10)));
+    gl.uniform1f(U("uLevels"),Math.pow(2,parseInt(bits.value,10))-1.0);
+    gl.uniform1f(U("uDither"),dith.value/100);
+    gl.uniform1f(U("uBands"),parseFloat(bands.value));
+    gl.uniform1f(U("uLightDither"),bdith.value/100);
+    gl.viewport(0,0,glc.width,glc.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  }
+  function resizeCanvas(){
+    // pixel size k  -> render at 1/k and upscale NEAREST (the PS1 chunk)
+    // anti-alias  s -> render at xS and downscale LINEAR (supersampling)
+    // The map textures are non-power-of-two, so WebGL1 cannot mipmap them; with
+    // high-frequency bump normals that means sparkle. Supersampling is the fix
+    // available to us, and it also smooths the shadow jitter and dither stipple.
+    const k=Math.max(1,parseInt(pix.value,10));
+    const s=Math.max(1,parseInt(ss.value,10));
+    glc.width=Math.ceil(innerWidth/k*s); glc.height=Math.ceil(innerHeight/k*s);
+    glc.style.width=innerWidth+"px"; glc.style.height=innerHeight+"px";
+    glc.style.imageRendering = s>1 ? "auto" : "pixelated";
+  }
+
+  // ---- view ---------------------------------------------------------------
+  let panX=0,panY=0;
+  const fitZoom=()=>Math.min(innerWidth/CW, innerHeight/CH)*0.97;
+  function centreView(){ const z=zoom.value/100; panX=(innerWidth-CW*z)/2; panY=(innerHeight-CH*z)/2; }
+  function fit(){ /* pan/zoom are shader uniforms now; the next frame picks them up */ }
+  addEventListener("wheel",e=>{
+    e.preventDefault();
+    const z0=zoom.value/100, cx=(e.clientX-panX)/z0, cy=(e.clientY-panY)/z0;
+    const z1=Math.min(2.0,Math.max(0.04,z0*(e.deltaY<0?1.12:1/1.12)));
+    zoom.value=Math.round(z1*100); panX=e.clientX-cx*z1; panY=e.clientY-cy*z1; fit();
+  },{passive:false});
+  let drag=null,downAt=null;
+  addEventListener("mousedown",e=>{ if(e.target.closest("#hud")) return;
+    drag=[e.clientX-panX,e.clientY-panY]; downAt=[e.clientX,e.clientY]; });
+  addEventListener("mousemove",e=>{
+    if(drag){ panX=e.clientX-drag[0]; panY=e.clientY-drag[1]; fit(); return; }
+    if(frozen) return;
+    const z=zoom.value/100;
+    mouse=screenToWorldFloor((e.clientX-panX)/z,(e.clientY-panY)/z);
+  });
+  addEventListener("mouseup",e=>{
+    const moved=downAt&&Math.hypot(e.clientX-downAt[0],e.clientY-downAt[1]);
+    if(downAt&&moved<5&&!e.target.closest("#hud")){
+      const z=zoom.value/100;
+      // Pick the square whose ANCHOR is nearest the click, rather than inverse-
+      // projecting the clicked pixel onto the floor plane. A wall drawn over the
+      // floor behind it made those squares impossible to click at all -- the
+      // pixel belonged to the wall, so it mapped to a square in front of it.
+      const cx=(e.clientX-panX)/z, cy=(e.clientY-panY)/z;
+      let X=-1, Y=-1, bestD=Infinity;
+      for(let sy2=0; sy2<SH; sy2++) for(let sx2=0; sx2<SW; sx2++){
+        const [wx2,wy2]=sqWorld(sx2,sy2);
+        const [px,py]=worldToScreen(wx2,wy2);
+        const zz=squareZ(sx2,sy2,0)*COS30*PPU;
+        const d=(px-cx)*(px-cx)+(py-zz-cy)*(py-zz-cy);
+        if(d<bestD){ bestD=d; X=sx2; Y=sy2; }
+      }
+      // clicking a door works it rather than walking to it
+      const dt = (X>=0&&X<SW&&Y>=0&&Y<SH) ? cells[((Y/CELLS)|0)*W+((X/CELLS)|0)] : null;
+      if(dt && dt.kind==="door"){
+        dt.open=!dt.open;
+        passable=buildSquares();
+        rebuildComposite();
+        flash(dt.open?"door opened":"door shut");
+        drag=null; downAt=null; return;
+      }
+      if(X>=0&&X<SW&&Y>=0&&Y<SH){
+        // A click is ambiguous when two floors overlap on screen: try the layer
+        // he is standing on first, then the other one.
+        const hereL=sqL(hero.sq);
+        let p=pathToward(hero.sq,X,Y,hereL);
+        if(document.getElementById("turn").checked && p.length>moveLeft)
+          p=p.slice(0,moveLeft);          // spend only what is left this turn
+        if(p.length){
+          const end=p[p.length-1];
+          path=p;
+          flash(sqX(end)===X && sqY(end)===Y ? "" : "as close as I can get");
+        } else flash("nowhere to go");
+      } else flash("outside the map");
+    }
+    drag=null; downAt=null;
+  });
+  let flashT=null;
+  function flash(m){ const el=document.getElementById("msg"); el.textContent=m;
+    clearTimeout(flashT); if(m) flashT=setTimeout(()=>el.textContent="",1800); }
+  addEventListener("keydown",e=>{
+    const k=e.key.toLowerCase(), s=e.shiftKey?240:80;
+    if(k==="f"){ frozen=!frozen; flash(frozen?"light frozen":""); return; }
+    if(k==="q"||k==="e"){ const n=(k==="q")?3:1;
+      for(let t=0;t<n;t++) rotateWorld(); e.preventDefault(); return; }
+    if(k==="arrowleft"||k==="a") panX+=s; else if(k==="arrowright"||k==="d") panX-=s;
+    else if(k==="arrowup"||k==="w") panY+=s; else if(k==="arrowdown"||k==="s") panY-=s;
+    else if(k==="0"){ zoom.value=Math.round(fitZoom()*100); centreView(); }
+    else return;
+    e.preventDefault(); fit();
+  });
+  zoom.addEventListener("input",fit);
+  pix.addEventListener("input",()=>{ resizeCanvas(); fit(); });
+  ss.addEventListener("input",()=>{ resizeCanvas(); fit(); });
+  addEventListener("resize",()=>{ resizeCanvas(); fit(); });
+  function endTurn(){ moveLeft=parseInt(document.getElementById("mv").value,10);
+                      refreshMoveRange(); flash("new turn"); }
+  document.getElementById("endturn").onclick=endTurn;
+  document.getElementById("turn").addEventListener("change",refreshMoveRange);
+  document.getElementById("mv").addEventListener("change",endTurn);
+  document.getElementById("mv").addEventListener("input",refreshMoveRange);
+  document.getElementById("dbg").addEventListener("change",()=>rebuildComposite());
+  document.getElementById("dbgE").addEventListener("change",e=>{ EDGE_DEBUG=e.target.checked; rebuildComposite(); });
+  const refit=()=>{ zoom.value=Math.round(fitZoom()*100); centreView(); fit(); refreshMoveRange(); };
+  // regenerate = a NEW seed; typing a seed and pressing enter = that exact map
+  document.getElementById("regen").onclick=()=>{ SEED=(Math.random()*1e9)|0; if(build()) refit(); };
+  seedBox.onchange=()=>{ const v=parseInt(seedBox.value,10); if(!isNaN(v)){ SEED=v; if(build()) refit(); } };
+
+  // How many pixels of the sprite actually survive the depth test: render the
+  // frame with and without the sprite and diff. This is the only honest way to
+  // tell "correctly occluded" apart from "never drawn".
+  function spriteVisiblePixels(){
+    const [rx,ry,rw,rh]=spriteRect();
+    const z=zoom.value/100;
+    // pan/zoom are CSS px but readPixels wants BACKING-STORE px, and with
+    // supersampling those differ by ss/pix. Mixing them made this read the wrong
+    // region and report 0 visible pixels for a sprite that was drawing fine.
+    const k=Math.max(1,parseInt(ss.value,10))/Math.max(1,parseInt(pix.value,10));
+    const x0=Math.max(0,Math.floor((rx*z+panX)*k)), y0=Math.max(0,Math.floor((ry*z+panY)*k));
+    const w=Math.min(glc.width-x0,Math.ceil(rw*z*k)), h=Math.min(glc.height-y0,Math.ceil(rh*z*k));
+    if(w<=0||h<=0) return {visible:0,area:0,note:"sprite off-screen"};
+    const grab=()=>{ const b=new Uint8Array(w*h*4);
+      gl.readPixels(x0,glc.height-y0-h,w,h,gl.RGBA,gl.UNSIGNED_BYTE,b); return b; };
+    drawGL(); const A=grab();
+    gl.uniform4fv(U("uSprRect"),[0,0,0,0]); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    const B=grab();
+    let diff=0;
+    for(let k=0;k<A.length;k+=4)
+      if(Math.abs(A[k]-B[k])+Math.abs(A[k+1]-B[k+1])+Math.abs(A[k+2]-B[k+2])>8) diff++;
+    drawGL();
+    return {visible:diff, area:w*h, pct:+(100*diff/(w*h)).toFixed(1)};
+  }
+
+  window.__engine={hero:()=>hero,cells:()=>cells,path:()=>path,reach:()=>reach,
+    worldToScreen,sqWorld,bfsSq,SW,SH,spriteVisiblePixels,spriteRect,
+    standable:(X,Y,L)=>passable(X,Y,L||0,X,Y,L||0),
+    propPlan:()=>propPlan, draws:()=>lastDraws,
+    pathToward,
+    sqId:(X,Y,L)=>(L||0)*SW*SH+Y*SW+X,
+    goto:s=>{const p=bfsSq(hero.sq,s); if(p.length) path=p; return p;},
+    view:(z,px,py)=>{zoom.value=Math.round(z*100);panX=px;panY=py;fit();}};
+
+  if(!build()) return;
+  zoom.value=Math.round(fitZoom()*100); centreView(); fit();
+
+  endTurn();                      // start the first turn with a full move budget
+  let last=performance.now(), fps=0, acc=0, frames=0;
+  const fpsEl=document.getElementById("fps");
+  (function loop(t){
+    const dt=Math.min(0.05,(t-last)/1000); last=t;
+    acc+=dt; frames++;
+    if(acc>0.5){ fps=Math.round(frames/acc); fpsEl.textContent=fps+" fps"; acc=0; frames=0; }
+    clock+=dt;
+    stepHero(dt); drawGL();
+    requestAnimationFrame(loop);
+  })(last);
+})();
+</script>
