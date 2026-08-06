@@ -1546,11 +1546,18 @@ document.getElementById("ver").textContent=VERSION;
       for (const b of ACTMAN.bodies)
         for (const act of Object.keys(ACTMAN.actions)) await loadAction(b, act);
     })();
-    propMeta = await (await fetch("out/props/props.json")).json();
+    // A SET'S PROPS ARE DRESSED LIKE ITS GROUND. build_props.py bakes a copy per
+    // theme now, because one shared set meant a highland-green pine standing on
+    // a desert and on cold scree. Falls back to the shared directory, which is
+    // what the dungeons use -- a barrel is a barrel in a castle or a cave.
+    const propDir = await fetch("out/props/"+TILESET+"/props.json", {method:"HEAD"})
+      .then(r=>r.ok ? "out/props/"+TILESET+"/" : "out/props/")
+      .catch(()=>"out/props/");
+    propMeta = await (await fetch(propDir+"props.json")).json();
     await Promise.all(PROP_NAMES.map(async p=>{
-      propImg[p]={ a:await load("out/props/"+p+".png"),
-                   n:await load("out/props/"+p+"_NRM.png"),
-                   h:await load("out/props/"+p+"_H.png") };
+      propImg[p]={ a:await load(propDir+p+".png"),
+                   n:await load(propDir+p+"_NRM.png"),
+                   h:await load(propDir+p+"_H.png") };
     }));
   }catch(e){ status.innerHTML="<b>"+e.message+"</b><br>serve over http, not file://"; return; }
 

@@ -202,10 +202,50 @@ def blob(name, cx, cy, cz, rx, ry, rz, mat, seed, rough=0.26, rings=9, segs=12,
 # be geometry: the height buffer wants to know a tree is there, and a token walking
 # behind one should be hidden by it.
 
+# THE PROPS FOLLOW THE GROUND THEY STAND ON. These were four constants, so every
+# theme got the same green pine and the same warm brown rock -- a spruce on a
+# desert and a spruce on cold scree, both the colour of a highland meadow. A prop
+# is dressed by its set for the same reason a tile is.
+#
+# Taken from build_tiles.py's own theme table rather than a second copy here: one
+# palette per set, defined once, or the tiles and the things standing on them
+# drift apart.
+import importlib.util as _ilu
+_bt_spec = _ilu.spec_from_file_location(
+    "bt_pal", os.path.join(os.path.dirname(os.path.abspath(__file__)), "build_tiles.py"))
+_bt = _ilu.module_from_spec(_bt_spec)
+_bt_spec.loader.exec_module(_bt)
+
+PROP_THEME = "grass10A"
+
+
+def _pal():
+    t = _bt.THEMES.get(PROP_THEME, {})
+    return t
+
+
+def _pick(key, fallback):
+    v = _pal().get(key)
+    return tuple(v) if v else fallback
+
+
 BARK = (0.16, 0.105, 0.065)
 LEAF = (0.115, 0.225, 0.065)
 LEAF2 = (0.155, 0.275, 0.075)
 STONE = (0.30, 0.20, 0.125)
+
+
+def use_theme(name):
+    """Re-point the four prop colours at a theme's palette."""
+    global PROP_THEME, BARK, LEAF, LEAF2, STONE
+    PROP_THEME = name
+    _bt.THEME = name
+    STONE = _pick("rock", STONE)
+    LEAF = _pick("stone", LEAF)          # the set's ground green IS its foliage
+    LEAF2 = _pick("blade", LEAF2)        # the lighter grass, for low cover
+    mud = _pick("mud", None)
+    if mud:
+        BARK = tuple(c * 0.55 for c in mud)   # trunks: the worn-earth hue, darker
 
 
 def prop_tree():
@@ -229,7 +269,12 @@ def prop_pine():
     """A conifer: bare lower trunk and four stacked skirts. Tall and narrow, so it
     reads as a different tree at a glance rather than a recoloured one."""
     bark = mkmat("bark", BARK, 0.92, mottle=0.30, poster=POSTER)
-    needle = mkmat("needle", (0.075, 0.17, 0.065), 0.95, mottle=0.30, poster=POSTER)
+    # A DARKER SHADE OF THE SET'S OWN FOLIAGE, not a fixed green. Hardcoded here,
+    # a spruce stayed highland-green on a desert and on cold scree while the rock
+    # around it changed -- which reads worse than no theming at all, because the
+    # eye sees one thing that did not get the memo.
+    needle = mkmat("needle", tuple(c * 0.62 for c in LEAF), 0.95,
+                   mottle=0.30, poster=POSTER)
     tube("pine_trunk", 0.0, 0.95, 0.10, 0.055, 7, bark)
     z, r = 0.52, 0.62
     for k in range(4):
@@ -602,6 +647,17 @@ def main():
     argv = sys.argv
     args = argv[argv.index("--") + 1:] if "--" in argv else []
     outdir = os.path.abspath(args[0]) if args else os.path.abspath("out/props")
+    # --theme dresses the props in that set's palette and drops them in their own
+    # directory, so every theme keeps its own copy and the runtime picks the one
+    # matching its tiles.
+    if "--theme" in args:
+        t = args[args.index("--theme") + 1]
+        if t not in _bt.THEMES:
+            raise SystemExit("unknown theme %r -- have %s"
+                             % (t, ", ".join(sorted(_bt.THEMES))))
+        use_theme(t)
+        outdir = os.path.join(outdir, t)
+        os.makedirs(outdir, exist_ok=True)
     os.makedirs(outdir, exist_ok=True)
 
     for ob in list(bpy.data.objects):
