@@ -63,6 +63,7 @@ import math
 import os
 import random
 import sys
+import zlib
 from mathutils import Vector
 
 # ---------------------------------------------------------------- parameters
@@ -75,6 +76,7 @@ TILE_W_PX = 640.0               # tile diamond width -- defines the lattice
 PPU = TILE_W_PX / (SIZE * math.sqrt(2.0))   # pixels per blender unit (invariant)
 RES = 1024                      # canvas floor; res_for_scene() grows it per tile
 BLEED_PX = 1.0                  # floor plane overshoot per side, kills seam pinpricks
+                                # (per-theme override: THEMES[x]["bleed"]) -- see _bh
 
 GROUT, RISE = 0.09, 0.07        # flagstone joint width / relief height
 WALL_H, WALL_T = 2.4, 0.35
@@ -163,9 +165,21 @@ THEMES = {
     # becomes a river, `_up` becomes high ground, and the WFC generator, the edge
     # contract and the demo need no changes at all to use it.
     "grass10A": dict(kit="outdoor", label="Highland Meadow",
-                     stone=(0.26, 0.34, 0.15),  # turf -- the tile's ground surface
-                     mortar=(0.25, 0.19, 0.12), # the soil under it, seen at breaks
-                     rock=(0.42, 0.41, 0.38),   # cliff face and boulders
+                     stone=(0.105, 0.215, 0.065),  # sward -- the tile's ground surface
+                     mortar=(0.115, 0.075, 0.045),  # subsoil, where the ground is cut
+                     mud=(0.28, 0.19, 0.10),     # a worn track, a wallow
+                     rock=(0.30, 0.20, 0.125),   # WARM brown, not grey limestone. Kept
+                                                 # dark: baked albedo is what the
+                                                 # runtime torches multiply, so a light
+                                                 # rock has nowhere to go when it is lit
+                     blade=(0.17, 0.36, 0.09),   # the lighter grass that catches the eye
+                     moss=(0.20, 0.38, 0.09),    # low cover, and what caps a boulder
+                     flower=(0.72, 0.70, 0.44),
+                     water=(0.075, 0.235, 0.275),
+                     posterize=7,               # flat value steps, no gradients
+                     pixel=4,                   # render at 1/4 and nearest-upscale
+                     bleed=7,                   # 2 render px of overshoot: enough to
+                                                # bury the AO-bright rim (see _bh)
                      grime=0.55, wear=0.65, damp=0.5),
 }
 
@@ -188,52 +202,76 @@ THEMES = {
 # ---------------------------------------------------------------------------
 
 def outdoor_tiles(sid):
-    """The highland/meadow vocabulary, named for the zone that owns it."""
+    """The highland vocabulary, named for the zone that owns it.
+
+    BANDS AND TRANSITIONS, NOT ONE-OFF PIECES. Cliff, shore and sea cliff are the
+    same problem three times -- ground at one height meeting ground at another -- so
+    they are one parameterised family with the band pair as its argument. That is
+    what makes the corner and ramp variants free, and it is why a third band later
+    costs a table entry rather than a rewrite.
+
+    Every piece presents a SOCKET on each of its four edges, and the solver may abut
+    two tiles only where the facing sockets agree:
+
+        G0 / G1   walkable ground, low band / high band
+        W         open water
+        P0        a track crossing this edge (always at the exact midpoint)
+        X01       a 0-to-1 level change crossing this edge   (cliff)
+        Xw0       a water-to-0 level change crossing          (shore)
+        Xw1       a water-to-1 level change crossing          (sea cliff)
+
+    Straight, inside corner and outside corner each present their transition socket
+    on exactly TWO edges, which is what lets them chain into a closed loop around a
+    plateau or an island. The ramp presents the same sockets as a straight scarp, so
+    a way up can go anywhere a cliff runs with no adjacency rule of its own."""
     T = {}
 
     def add(piece, serial, **spec):
         T["%s-%s-%04d" % (sid, piece, serial)] = spec
 
-    # open ground, and the same ground one step up
-    add("turf", 100, edges=[], base=0.0)
-    add("turf", 110, edges=[], base=STEP)
-    # scarps: a cliff edge. Same four sockets the solver needs from any barrier.
-    add("scarp", 210, edges=["Y+"], base=0.0)
-    add("scarp", 211, edges=["Y+", "X+"], base=0.0)
-    add("scarp", 212, edges=["Y+", "Y-"], base=0.0)
-    add("scarp", 213, edges=["Y+", "X+", "X-"], base=0.0)
-    add("scarp", 220, edges=["Y+"], base=STEP)
-    add("scarp", 221, edges=["Y+", "X+"], base=STEP)
-    add("scarp", 222, edges=["Y+", "Y-"], base=STEP)
-    add("scarp", 223, edges=["Y+", "X+", "X-"], base=STEP)
-    # a gully: the chasm vocabulary, with every rim combination
-    for n, rims in enumerate([[], ["Y+"], ["Y+", "X+"], ["Y+", "Y-"],
-                              ["Y+", "X+", "X-"], ["Y+", "X+", "Y-", "X-"]]):
-        add("gully", 300 + n * 2, edges=[], base=0.0, kind="pit", rims=rims)
-    # a brook: same shapes, water in them
-    for n, rims in enumerate([[], ["Y+"], ["Y+", "X+"], ["Y+", "Y-"],
-                              ["Y+", "X+", "X-"], ["Y+", "X+", "Y-", "X-"]]):
-        add("brook", 400 + n * 2, edges=[], base=0.0, kind="water", rims=rims)
-    # crossings: stepping stones over the brook, a fallen log over the gully
-    for n, rims in enumerate([[], ["X+"], ["X-"], ["X+", "X-"]]):
-        add("ford", 420 + n * 2, edges=[], base=0.0, kind="water_bridge", rims=rims)
-        add("log", 320 + n * 2, edges=[], base=0.0, kind="bridge", rims=rims)
-    add("ford", 440, edges=[], base=0.0, kind="water_flank")
-    add("log", 340, edges=[], base=0.0, kind="bridge_flank")
-    # a worn path up the scarp
-    add("path", 500, edges=[], base=0.0, kind="stairs")
-    add("path", 510, edges=["X+", "X-"], base=0.0, kind="stairs")
-    # a gate through a scarp, and the same gap without one
-    add("gate", 600, edges=[], base=0.0, kind="door")
-    add("gap", 610, edges=[], base=0.0, kind="arch")
-    add("gate", 601, edges=["X+"], base=0.0, kind="door")
-    add("gap", 611, edges=["X+"], base=0.0, kind="arch")
-    add("gate", 602, edges=["X-"], base=0.0, kind="door")
-    add("gap", 612, edges=["X-"], base=0.0, kind="arch")
-    add("gate", 603, edges=["X+", "X-"], base=0.0, kind="door")
-    add("gap", 613, edges=["X+", "X-"], base=0.0, kind="arch")
-    return T
+    # ---- open ground. Four cuts of the same meadow rather than one tile repeated:
+    # the field is seeded from the NAME, so these differ from each other and each is
+    # still identical to itself at every rotation.
+    for n in range(4):
+        add("turf", 100 + n, terrain="flat", band=0)
+    # Four cuts of high ground as well as low. A plateau is usually several tiles
+    # across, so two variants read as a chequerboard at exactly the size the eye
+    # notices.
+    for n in range(4):
+        add("turf", 110 + n, terrain="flat", band=1)
+    # ---- open water. Rippled bed under a flat surface plane.
+    add("mere", 180, terrain="flat", band=-1, ripple=0.05, water=True)
+    add("mere", 181, terrain="flat", band=-1, ripple=0.05, water=True)
 
+    # ---- the transition family, once per band pair
+    for piece, lo, hi, base_n, water in (("scarp", 0, 1, 200, False),
+                                         ("strand", -1, 0, 300, True),
+                                         ("bluff", -1, 1, 400, True)):
+        common = dict(terrain="step", lo=lo, hi=hi, water=water)
+        add(piece, base_n, high=["Y+"], **common)                   # straight
+        add(piece, base_n + 10, high=["Y+", "X+"], join="max", **common)   # inside
+        add(piece, base_n + 20, high=["Y+", "X+"], join="min", **common)   # outside
+    # a way up, and a place to wade. Same sockets as the straight piece above it, so
+    # either can stand anywhere the other can.
+    add("ramp", 230, terrain="step", lo=0, hi=1, high=["Y+"], channel=0.38)
+    add("shoal", 330, terrain="step", lo=-1, hi=0, high=["Y+"], channel=0.42,
+        water=True)
+
+    # ---- tracks. Five junctions out of one function; see _arms.
+    add("track", 500, terrain="track", arms=["Y+", "Y-"])            # straight
+    add("track", 510, terrain="track", arms=["Y+", "X+"])            # bend
+    add("track", 520, terrain="track", arms=["Y+", "Y-", "X+"])      # tee
+    add("track", 530, terrain="track", arms=["Y+", "Y-", "X+", "X-"])  # crossroads
+    add("track", 540, terrain="track", arms=["Y+"])                  # dead end
+    add("track", 550, terrain="track", arms=["Y+", "Y-"], high=["Y+"],
+        lo=0, hi=1)                                                  # climbing
+    add("ford", 560, terrain="track", arms=["Y+", "Y-"], high=["Y+"],
+        lo=-1, hi=0, water=True)                                     # through water
+
+    # ---- wet ground
+    add("mire", 600, terrain="mire")
+    add("mire", 601, terrain="mire")
+    return T
 
 # Sets that own a bespoke vocabulary register a BUILDER here; anything absent falls
 # back to the shared dungeon table, which is how `stone` and `sandstone` keep the
@@ -269,6 +307,23 @@ SPECK_AMT = 0.16                       # mineral glint
 
 def theme():
     return THEMES[THEME]
+
+
+def _bh():
+    """Half-width of the ground mesh, in world units, including the overshoot.
+
+    THE OVERSHOOT IS NOT COSMETIC. Ambient occlusion has nothing to occlude it at
+    the boundary of a mesh, so the outermost ring of every tile bakes BRIGHTER than
+    its interior -- measured at luma 147 against 101 -- and posterising snaps that
+    into a band of its own. Abutted on the lattice that is a pale line around every
+    tile, which is exactly the seam grid you see across a finished map.
+
+    The fix is geometric, not cosmetic: overshoot far enough that the bright ring
+    lands OUTSIDE the lattice cell, where the neighbouring tile paints over it.
+    A pixel set needs more overshoot than a smooth one, because its outermost
+    RENDERED pixel is `pixel` output pixels wide -- one px of bleed does not cover
+    a four-px rim."""
+    return HALF * (TILE_W_PX + 2.0 * theme().get("bleed", BLEED_PX)) / TILE_W_PX
 
 
 def kit():
@@ -1140,164 +1195,1214 @@ def add_water(m_stone, walkway=False, span_axis='y', rims=None):
             box("wspan", 0.0, 0.0, -0.14, SIZE, BRIDGE_W, 0.14, m_stone, bevel=(0.03, 2))
 
 
-def add_turf(base=0.0):
-    """Open ground: undulating turf, soil showing through at the breaks, scattered
-    stones and grass clumps.
+# --------------------------------------------------------------- terrain kit
+#
+# NATURAL GROUND IS ONE SURFACE, NOT A KIT OF PARTS.
+#
+# The first outdoor pass built a cliff the way the dungeon builds a wall: a run of
+# boxes standing on flat ground. It read as masonry painted green, because that is
+# what it was. Nothing here uses box(). A tile is a single displaced mesh -- the
+# cliff is a STEEP PART OF THE GROUND, the path is a WORN PART OF THE GROUND, and
+# the material is chosen per-vertex from the shape itself, so there is no edge
+# anywhere for two materials to meet along.
+#
+# TILING WITHOUT A FLAT RIM.
+# Tiles are rendered apart and abutted on an exact lattice, so the height along a
+# seam has to agree with a neighbour that was rendered an hour earlier. The old
+# answer was to pin the border flat, which buys the seam at the cost of a visible
+# ruler-straight line around every tile. Instead every field here is PERIODIC over
+# the tile (value noise on a lattice that wraps), and near the border each tile
+# falls back to a SHARED field with a fixed seed:
+#
+#     border  ->  everyone samples the same wrapping field  ->  seams match exactly
+#     middle  ->  the tile's own seed                       ->  no two tiles alike
+#
+# so the ground undulates straight through a seam and the tiles still stack.
 
-    THE BORDER RING IS PINNED TO `base`, whatever the relief does inside. Tiles are
-    rendered independently and abutted on an exact lattice, so a displaced vertex on
-    the seam is a crack or a step in the finished map -- the same invariant the
-    flagstone floor keeps by being flat, just stated explicitly because here the
-    surface genuinely moves. The displacement is faded out over the outermost cells
-    so the pinned ring doesn't read as a rim either.
+TERRAIN_N = 132          # grid samples across a tile; ~5 world-units wide, so a
+                         # cell is ~4px on the baked diamond -- fine enough that
+                         # the silhouette of a scarp is a curve, not a staircase
+SEAM_SEED = 90210        # the field EVERY tile shares within SEAM_BAND of its edge
+SEAM_BAND = 0.30         # how far in (in tile widths) the shared field reaches
+RELIEF = 0.21            # meadow undulation, world units peak to trough
+SCARP_W = 0.155          # scarp run-out as a fraction of the tile: STEP over this
+                         # is the face angle. Narrower reads as a wall, wider as a
+                         # hill; this is the value that still says "you can't walk up"
+PATH_W = 0.17            # half-width of a worn track, in tile widths
+MEADOW_RELIEF = 0.03     # how far a nominally FLAT tile may move. Not zero --
+                         # a dead plane reads as a table -- but far below
+                         # RELIEF, which domed every open tile into a cushion
+BED_Z = -0.95            # the bottom under open water
+WATER_LEVEL = -0.20      # the surface itself, just below the ground band, so a
+                         # shore shelves THROUGH it rather than stopping at it
+PATH_CUT = 0.10          # how far a track sits below the turf it wore through
 
-    Seeded per tile KIND rather than per rotation, like the flagstones: a tile and
-    its own r90 must be the same patch of ground seen from another side."""
-    m_grass = mkmat("grass", theme()["stone"], 0.92, vary=0.42)
-    m_soil = mkmat("soil", theme()["mortar"], 0.95, vary=0.30)
-    m_rock = mkmat("rock", theme().get("rock", (0.42, 0.41, 0.38)), 0.88, vary=0.38)
 
-    rng = random.Random(SEED + 4243 + int(base * 97))
-    bh = HALF * (TILE_W_PX + 2.0 * BLEED_PX) / TILE_W_PX
+def _hash2(ix, iy, seed):
+    n = (ix * 374761393 + iy * 668265263 + seed * 1013904223) & 0xFFFFFFFF
+    n = ((n ^ (n >> 13)) * 1274126177) & 0xFFFFFFFF
+    return ((n ^ (n >> 16)) & 0xFFFFFF) / float(0xFFFFFF)
 
-    # Soil bed: a zero-thickness plane under the turf, so any gap shows earth rather
-    # than the void. It sits BELOW the deepest the turf can dip -- at the same height
-    # the two planes interleave, and the ground came out half brown because the soil
-    # won wherever the relief went negative.
-    bed = base - TURF_RELIEF - 0.02
-    new_obj("soil_bed",
-            [(-bh, -bh, bed), (bh, -bh, bed), (bh, bh, bed), (-bh, bh, bed)],
-            [(0, 1, 2, 3)], m_soil)
 
-    # Two octaves of value noise, sampled on a lattice big enough that the tile is
-    # a small window onto it -- so the ground reads as part of a wider landscape
-    # rather than as a self-contained lump repeated across the map.
-    def noise(x, y):
-        n = 0.0
-        for freq, amp in ((0.9, 1.0), (2.3, 0.45)):
-            n += amp * (math.sin(x * freq * 1.7 + 2.1) * math.cos(y * freq * 1.3 - 0.7)
-                        + 0.6 * math.sin((x + y) * freq * 0.9 + 1.3))
-        return n / 2.4
+def _sstep(t):
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
-    N = TURF_GRID
-    verts = []
+
+def _vnoise(x, y, period, seed):
+    """Value noise, PERIODIC over `period` lattice cells in both axes.
+
+    Periodicity is the whole reason this exists rather than a sin/cos hash: it is
+    what lets a tile's field wrap, which is what lets two tiles share a seam."""
+    ix, iy = math.floor(x), math.floor(y)
+    fx, fy = x - ix, y - iy
+    u, v = _sstep(fx), _sstep(fy)
+    ix, iy = int(ix), int(iy)
+    p = period
+    a = _hash2(ix % p, iy % p, seed)
+    b = _hash2((ix + 1) % p, iy % p, seed)
+    c = _hash2(ix % p, (iy + 1) % p, seed)
+    d = _hash2((ix + 1) % p, (iy + 1) % p, seed)
+    ab = a + (b - a) * u
+    cd = c + (d - c) * u
+    return ab + (cd - ab) * v
+
+
+def _fbm(u, v, seed, octaves=4, freq=2):
+    """Fractal noise over the unit tile, wrapping at u=1 and v=1. Returns 0..1."""
+    n, amp, tot, f = 0.0, 1.0, 0.0, freq
+    for k in range(octaves):
+        n += amp * _vnoise(u * f, v * f, f, seed + k * 7919)
+        tot += amp
+        amp *= 0.5
+        f *= 2
+    return n / tot
+
+
+def _fbm1(t, seed, octaves=3, freq=3):
+    """The same, along one axis -- for a line that has to meander across a seam."""
+    n, amp, tot, f = 0.0, 1.0, 0.0, freq
+    for k in range(octaves):
+        n += amp * _vnoise(t * f, 0.5, f, seed + k * 6151)
+        tot += amp
+        amp *= 0.5
+        f *= 2
+    return n / tot
+
+
+def _interior(u, v):
+    """0 on the tile border, 1 once SEAM_BAND inside it."""
+    uu, vv = u % 1.0, v % 1.0
+    return _sstep(min(uu, 1.0 - uu, vv, 1.0 - vv) / SEAM_BAND)
+
+
+def _ground(u, v, seed, octaves=5):
+    """Undulation in -1..1: shared field at the border, own field in the middle."""
+    a = _fbm(u, v, SEAM_SEED, 4)
+    b = _fbm(u, v, seed, octaves)
+    w = _interior(u, v)
+    return (a + (b - a) * w - 0.5) * 2.0
+
+
+def _scarp(u, v, seed, sides, join="max"):
+    """Height 0..1 of ground rising toward each edge in `sides`.
+
+    The break line MEANDERS: its position along the edge is periodic noise of the
+    along-edge coordinate only, so the neighbouring tile computes the same curve at
+    the shared corner and the cliff runs on unbroken across the map.
+
+    JOIN is what gives the corner pieces, and it is the thing `sides` alone could
+    never express. With two adjacent edges high:
+
+        max   the two high half-planes UNION, so the low ground is a notch bitten
+              out of one corner -- an INSIDE corner, the one you stand in
+        min   they INTERSECT, so the high ground is a nub filling one corner --
+              an OUTSIDE corner, the one you walk around
+
+    Both are needed and neither is the other rotated.
+
+    A single smoothstep gives a poured-concrete ramp: right height, no rock. A face
+    reads as stone because it fails in LAYERS -- shelves where a soft bed weathered
+    back, gullies where water found a line down, and a run-out that is near-vertical
+    in one place and a talus slope ten feet along."""
+    vals = []
+    for e in sides:
+        t = {"Y+": v, "Y-": 1.0 - v, "X+": u, "X-": 1.0 - u}[e]
+        a = {"Y+": u, "Y-": 1.0 - u, "X+": v, "X-": 1.0 - v}[e]
+        line, w = _scarp_line(a, seed)
+        p = _sstep((t - line) / w + 0.5)
+        steep = 4.0 * p * (1.0 - p)               # 0 at crest and toe, 1 mid-face
+        # bedding planes: shelves across the face, out of phase along the edge
+        p += 0.075 * steep * math.sin(p * math.pi * 5.5
+                                      + 7.0 * _fbm1(a, seed + 97, 2, 4))
+        # gullies: channels down the fall line, so the face is fluted not flat
+        p += 0.115 * steep * (_fbm(a, t * 0.55, seed + 613, 3, 7) - 0.5) * 2.0
+        vals.append(max(0.0, min(1.12, p)))
+    if not vals:
+        return 0.0
+    return max(vals) if join == "max" else min(vals)
+
+
+def _ramp(u, v, seed, side):
+    """A walkable slope: the ground climbs across the WHOLE tile, so there is no
+    face to scramble. A scarp is the wall; this is the way round it.
+
+    Eased at both ends, not linear. A straight ramp meeting flat ground matches in
+    height but not in GRADIENT, and that leaves a crease along the seam that reads
+    as a step even though the heights agree to the millimetre."""
+    t = {"Y+": v, "Y-": 1.0 - v, "X+": u, "X-": 1.0 - u}[side]
+    a = {"Y+": u, "Y-": 1.0 - u, "X+": v, "X-": 1.0 - v}[side]
+    s = _sstep(t)
+    return s + 0.06 * s * (1.0 - s) * (_fbm1(a, seed + 41, 2, 3) - 0.5) * 2.0
+
+
+def _arms(u, v, seed, arms, half_w):
+    """Mask 0..1 for a track that leaves the tile through each edge in `arms`.
+
+    THE WANDER GOES TO ZERO AT THE EDGE. A path has to meet whatever tile the solver
+    puts next to it, so every arm crosses its edge at exactly the midpoint and does
+    all its wandering in between. That one constraint is what makes straight, bend,
+    tee, cross and dead-end all connect to each other in any combination, with no
+    per-pair rule anywhere.
+
+    Distance to a SEGMENT from the tile centre to an edge midpoint, unioned over the
+    arms -- so the junction shapes are not five separate pieces of code. Two opposite
+    arms is a straight, two adjacent is a bend, three is a tee, four is a crossroads,
+    one is a dead end, and the rounded patch in the middle is both the junction and
+    the terminus."""
+    d0 = math.hypot(u - 0.5, v - 0.5)
+    best = _sstep(1.0 - d0 / (half_w * 1.2))
+    for e in arms:
+        if e in ("Y+", "Y-"):
+            alo = (v - 0.5) if e == "Y+" else (0.5 - v)
+            lat = u
+        else:
+            alo = (u - 0.5) if e == "X+" else (0.5 - u)
+            lat = v
+        if alo < 0.0:
+            continue
+        t = min(1.0, alo / 0.5)
+        phase = 0.0 if e in ("Y+", "X+") else 0.5
+        c = 0.5 + 0.16 * math.sin(math.pi * t) * (
+            _fbm1(t * 0.5 + phase, seed + 71, 2, 3) - 0.5) * 2.0
+        best = max(best, _sstep(1.0 - abs(lat - c) / half_w))
+    return best
+
+
+# --- fields ---------------------------------------------------------------
+# A field answers (height, mud weight) for a point in the unit tile. Everything
+# else -- slope, rock, surfacing, scatter, crags -- is DERIVED from the surface it
+# returns, so a new piece is a new field and nothing else.
+#
+# ELEVATION IS A BAND, AND A TRANSITION IS A PAIR OF THEM.
+# Cliff, shore and sea-cliff are the same problem three times: ground at one height
+# meeting ground at another. Writing them as one parameterised family rather than
+# three hand-built pieces is what makes the corner and ramp variants free -- there
+# is exactly one place that knows how a level change is shaped, and every family
+# inherits any fix to it.
+
+def field_flat(seed, z=0.0, ripple=0.0):
+    """Open ground at one band. FLAT -- not domed.
+
+    It used to carry the same relief every other piece does, and on a tile with
+    nothing else in it that reads as a cushion: the middle sits proud of all four
+    edges, so a field of them looks like a quilt. Flat ground should be flat; the
+    interest comes from the surfacing, not the silhouette."""
+    r = ripple or MEADOW_RELIEF
+
+    def f(u, v):
+        return z + r * _ground(u, v, seed), 0.0
+    return f
+
+
+def field_step(seed, sides, z_lo=0.0, z_hi=None, join="max", ramp=None,
+               channel=0.0):
+    """Ground climbing from `z_lo` to `z_hi` toward `sides`.
+
+    This one function is the cliff, the shore and the sea cliff -- only the two
+    band heights differ, and the surfacing follows from the slope and the water
+    line rather than from which piece it is.
+
+    `ramp` replaces the face with a walkable slope. `channel` cuts a walkable
+    ramp through a face that otherwise stands: the banks either side keep the same
+    profile, so a ramp tile presents exactly the sockets a straight scarp does and
+    the solver can drop a way up anywhere a cliff runs."""
+    z_hi = STEP if z_hi is None else z_hi
+    span = z_hi - z_lo
+
+    def f(u, v):
+        if ramp:
+            s = _ramp(u, v, seed, ramp)
+            steep = 0.0
+        else:
+            s = _scarp(u, v, seed, sides, join)
+            steep = 4.0 * s * (1.0 - s)
+            if channel > 0.0:
+                cut = _arms(u, v, seed, [sides[0], _opposite(sides[0])], channel)
+                r = _ramp(u, v, seed, sides[0])
+                s = s + (r - s) * cut
+                steep *= 1.0 - cut
+        z = z_lo + span * s + RELIEF * _ground(u, v, seed) * (1.0 - 0.8 * steep)
+        return z, 0.0
+    return f
+
+
+def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None):
+    """A worn track: turf scraped off, ground packed down, a rut down the crown.
+
+    `arms` is the junction vocabulary. `sides`/`ramp` let the same track climb --
+    where a path meets a scarp it CUTS one, because people walk the shallowest line
+    they can find and wear it deeper, so the face gives way to an even slope exactly
+    where the mud is and closes back up either side."""
+    z_hi = STEP if z_hi is None else z_hi
+
+    def f(u, v):
+        mud = _arms(u, v, seed, arms, PATH_W)
+        mud *= 0.74 + 0.52 * _fbm(u, v, seed + 88, 3, 6)     # frayed verge
+        mud = max(0.0, min(1.0, mud))
+        z = MEADOW_RELIEF * _ground(u, v, seed) * (1.0 - 0.6 * mud) + z_lo
+        z -= PATH_CUT * mud
+        if ramp:
+            z += (z_hi - z_lo) * _ramp(u, v, seed, ramp)
+        elif sides:
+            s = _scarp(u, v, seed, sides, join)
+            r = _ramp(u, v, seed, sides[0])
+            z += (z_hi - z_lo) * (s + (r - s) * mud)
+        return z, mud
+    return f
+
+
+def field_mire(seed):
+    """Churned wet ground -- a hollow that holds water, hoof-poached at the rim."""
+    def f(u, v):
+        b = _fbm(u, v, seed + 404, 3, 2)
+        mud = _sstep((b - 0.34) / 0.34)
+        z = MEADOW_RELIEF * _ground(u, v, seed) * (1.0 - 0.7 * mud) - 0.12 * mud
+        z -= 0.035 * mud * (_fbm(u, v, seed + 909, 2, 9) - 0.5) * 2.0   # poaching
+        return z, mud
+    return f
+
+
+def _opposite(e):
+    return {"Y+": "Y-", "Y-": "Y+", "X+": "X-", "X-": "X+"}[e]
+
+
+def _band_z(b):
+    """World height of an elevation band. -1 is the bed under the water, not the
+    water surface -- the surface is a separate plane at WATER_LEVEL, so a shore can
+    shelve gently through it instead of stopping dead at it."""
+    return {-1: BED_Z, 0: 0.0, 1: STEP}[b]
+
+
+FIELDS = {
+    "flat": lambda sp, sd: field_flat(sd, _band_z(sp.get("band", 0)),
+                                      sp.get("ripple", 0.0)),
+    "step": lambda sp, sd: field_step(sd, sp.get("high", []),
+                                      _band_z(sp.get("lo", 0)),
+                                      _band_z(sp.get("hi", 1)),
+                                      sp.get("join", "max"),
+                                      sp.get("ramp"), sp.get("channel", 0.0)),
+    "track": lambda sp, sd: field_track(sd, sp.get("arms", ["Y+", "Y-"]),
+                                        sp.get("high", ()),
+                                        _band_z(sp.get("lo", 0)),
+                                        _band_z(sp.get("hi", 1)),
+                                        sp.get("join", "max"), sp.get("ramp")),
+    "mire": lambda sp, sd: field_mire(sd),
+}
+
+
+def terrain_surface(field, base=0.0, name="ground", water=False):
+    """Build the tile's ground as one smooth-shaded mesh, and paint it from its own
+    shape: steep is rock, worn is mud, low and flat is wet, the rest is turf.
+
+    Returns a sampler the scatter uses so a boulder sits ON the ground rather than
+    at a height somebody had to guess."""
+    N = TERRAIN_N
+    bh = _bh()
+    zs, muds, verts = [], [], []
     for iy in range(N + 1):
         for ix in range(N + 1):
             x = -bh + 2.0 * bh * ix / N
             y = -bh + 2.0 * bh * iy / N
-            # falloff: 0 on the border ring, 1 two cells in
-            fx = min(ix, N - ix) / 2.0
-            fy = min(iy, N - iy) / 2.0
-            fall = max(0.0, min(1.0, min(fx, fy)))
-            verts.append((x, y, base + TURF_RELIEF * noise(x, y) * fall))
+            z, mud = field((x + HALF) / SIZE, (y + HALF) / SIZE)
+            zs.append(base + z)
+            muds.append(mud)
+            verts.append((x, y, base + z))
+
+    d = 2.0 * bh / N
+    cols = []
+    for iy in range(N + 1):
+        for ix in range(N + 1):
+            i = iy * (N + 1) + ix
+            xa = zs[i - 1] if ix > 0 else zs[i]
+            xb = zs[i + 1] if ix < N else zs[i]
+            ya = zs[i - (N + 1)] if iy > 0 else zs[i]
+            yb = zs[i + (N + 1)] if iy < N else zs[i]
+            slope = math.hypot((xb - xa) / (2 * d), (yb - ya) / (2 * d))
+            # Rock is a SLOPE THRESHOLD, not a region: grass holds on anything it
+            # can root in and gives up where it can't, which is exactly why a real
+            # scarp has green fingers running down its gentler ribs.
+            rock = _sstep((slope - 0.75) / 1.35)
+            mud = muds[i]
+            z = zs[i]
+            if water:
+                # SHINGLE AND SHALLOWS COME FROM THE WATER LINE, not from which piece
+                # this is. A band either side of WATER_LEVEL is beach; anything below
+                # it is submerged and reads dark. So a shore, a wade and the foot of
+                # a sea cliff all surface themselves, and so will anything added
+                # later that happens to cross the same height.
+                mud = max(mud, _sstep(1.0 - abs(z - WATER_LEVEL) / 0.34))
+                wet = _sstep((WATER_LEVEL + 0.04 - z) / 0.18)
+            else:
+                wet = mud * _sstep((0.06 - (z - base)) / 0.14)
+            cols.append((rock, mud * (1.0 - rock * 0.7), wet, 1.0))
+
     faces = []
     for iy in range(N):
         for ix in range(N):
             a = iy * (N + 1) + ix
             faces.append((a, a + 1, a + N + 2, a + N + 1))
-    new_obj("turf", verts, faces, m_grass)
 
-    def ground_z(x, y):
-        fall = 1.0 if (abs(x) < bh * 0.7 and abs(y) < bh * 0.7) else 0.4
-        return base + TURF_RELIEF * noise(x, y) * fall
+    ob = new_obj(name, verts, faces, terrain_material())
+    me = ob.data
+    att = me.color_attributes.new(name="wt", type='FLOAT_COLOR', domain='POINT')
+    for i, c in enumerate(cols):
+        att.data[i].color = c
+    for p in me.polygons:
+        p.use_smooth = True
 
-    # Scatter. Kept inside 0.82 of the half-width: a clump that overhangs the
-    # lattice cell would paint over whatever the neighbour turns out to be, and the
-    # neighbour might be a cliff face rather than more grass.
-    lim = HALF * 0.82
-    for n in range(TUFTS):
-        x, y = rng.uniform(-lim, lim), rng.uniform(-lim, lim)
-        s = rng.uniform(0.13, 0.30)
-        box("tuft%d" % n, x, y, ground_z(x, y) - 0.02, s, s * rng.uniform(0.7, 1.3),
-            rng.uniform(0.05, 0.16), m_grass, rotz=rng.uniform(0, math.pi),
-            bevel=(0.012, 1))
-    for n in range(rng.randint(2, 5)):
-        x, y = rng.uniform(-lim, lim), rng.uniform(-lim, lim)
-        s = rng.uniform(0.18, 0.42)
-        box("stone%d" % n, x, y, ground_z(x, y) - s * 0.35, s, s * rng.uniform(0.7, 1.2),
-            s * rng.uniform(0.5, 0.9), m_rock, rotz=rng.uniform(0, math.pi),
-            bevel=(0.03, 2))
+    # Skirt: the ground is a SURFACE, so anywhere the map ends or steps down you
+    # would otherwise see through it to the void. It hangs just below the LOWEST
+    # point of this tile -- deep enough that a neighbour one step down still covers
+    # it, shallow enough that it is not the biggest object in the frame, which a
+    # full-depth version very much was.
+    sv, sf = [], []
+    drop = min(zs) - 0.45
+    ring = ([(iy * (N + 1)) for iy in range(N + 1)]                      # X-
+            + [(N * (N + 1) + ix) for ix in range(N + 1)]                # Y+
+            + [(iy * (N + 1) + N) for iy in range(N, -1, -1)]            # X+
+            + [ix for ix in range(N, -1, -1)])                           # Y-
+    for i in ring:
+        x, y, z = verts[i]
+        sv.append((x, y, z))
+        sv.append((x, y, drop))
+    for k in range(len(ring) - 1):
+        a = k * 2
+        sf.append((a, a + 1, a + 3, a + 2))
+    new_obj(name + "_skirt", sv, sf, plant_material(
+        "subsoil", theme()["mortar"], spread=0.30, rough=0.96))
+
+    def sample(x, y):
+        """(z, rock, mud) at a world point, from the same grid the mesh uses."""
+        fx = (x + bh) / (2.0 * bh) * N
+        fy = (y + bh) / (2.0 * bh) * N
+        ix = max(0, min(N, int(round(fx))))
+        iy = max(0, min(N, int(round(fy))))
+        i = iy * (N + 1) + ix
+        return zs[i], cols[i][0], cols[i][1]
+
+    return sample
 
 
-def add_cliff(edge, seed=11, base=0.0, others=()):
-    """A cliff face where the dungeon kit puts a coursed wall.
+# --- scatter ----------------------------------------------------------------
 
-    Same contract as add_wall, and deliberately so: the outer face is flush with the
-    tile boundary (neighbours never double up), the run is shortened by wall_limits
-    so a Y edge owns its corners and an X edge butts against it, and a recessed
-    backing slab stops daylight showing between the chunks. Only the masonry is
-    replaced -- courses and running bond give way to vertical strata of irregular
-    depth, which is what separates rock from brickwork at this camera."""
-    m_rock = mkmat("rock", theme().get("rock", (0.42, 0.41, 0.38)), 0.9, vary=0.40)
-    m_soil = mkmat("soil", theme()["mortar"], 0.95, vary=0.30)
+def _lump(name, cx, cy, cz, r, mat, seed, squash=0.6, rough=0.30, rings=9, segs=12):
+    """A rounded, irregular mass -- boulder, clod, tussock base.
 
-    rng = random.Random(seed * 7 + 3)
-    axis = 'x' if edge in ('Y+', 'Y-') else 'y'
-    sign = 1.0 if edge in ('Y+', 'X+') else -1.0
-    off = sign * (HALF - WALL_T / 2.0)
-    lo, hi = wall_limits(edge, others)
+    A sphere pushed around by noise, smooth shaded. This is the replacement for
+    box(): nothing in a landscape has a machined edge, and a bevelled cube still
+    reads as a cube at 64 pixels."""
+    verts, faces = [], []
+    for i in range(rings + 1):
+        th = math.pi * i / rings
+        for j in range(segs):
+            ph = 2.0 * math.pi * j / segs
+            dx = math.sin(th) * math.cos(ph)
+            dy = math.sin(th) * math.sin(ph)
+            dz = math.cos(th)
+            n = (_vnoise(dx * 2.0 + 4.0, dy * 2.0 + 4.0, 64, seed)
+                 + _vnoise(dz * 2.3 + 4.0, dx * 1.7 + 4.0, 64, seed + 17)) * 0.5
+            k = r * (1.0 + rough * (n - 0.5) * 2.0)
+            verts.append((cx + dx * k, cy + dy * k, cz + dz * k * squash))
+    for i in range(rings):
+        for j in range(segs):
+            a = i * segs + j
+            b = i * segs + (j + 1) % segs
+            faces.append((a, b, b + segs, a + segs))
+    ob = new_obj(name, verts, faces, mat)
+    for p in ob.data.polygons:
+        p.use_smooth = True
+    return ob
 
-    def slab(name, ctr, length, z0, depth, height, mat, rot=0.0):
-        if axis == 'x':
-            box(name, ctr, off, z0, length, depth, height, mat, rotz=rot,
-                bevel=(0.02, 2))
-        else:
-            box(name, off, ctr, z0, depth, length, height, mat, rotz=rot,
-                bevel=(0.02, 2))
 
-    # Backing slab, in ROCK not soil: it is the mass of the cliff seen between the
-    # crags, not a different material behind them. In soil it read as a flat brown
-    # board propped up behind the stone. Deep enough that a recessed layer never
-    # reveals its edge.
-    span = (hi - lo) - 2.0 * SLAB_INSET
-    slab("cliffback_" + edge, (lo + hi) / 2.0, span, base, WALL_T * 1.15,
-         WALL_H - JOINT, m_rock)
+def _scarp_line(a, seed, freq_scale=1.0):
+    """Where the break runs, and how far it takes to run out, at along-edge `a`.
 
-    # Strata. The first version stacked three big blocks per column and read as grey
-    # brickwork, because that is what a short stack of same-sized boxes IS. Rock
-    # reads as rock through three things instead:
-    #   BATTER      the face leans back as it rises, so it is not a plane
-    #   FRACTURE    columns start at different heights and do not line up
-    #   RECESSION   each layer sits at its own depth, some proud, some cut back
-    # Layers are thin and numerous, so the silhouette is ragged at tile scale rather
-    # than a row of kerbstones.
+    Factored out of _scarp because the ROCK has to stand on the same line the
+    ground breaks along -- if the crags are placed from their own noise they sit
+    in front of the slope or behind it, and the two never look like one landform."""
+    line = (0.52
+            + 0.115 * (_fbm1(a, seed + 31, 2, 2) - 0.5) * 2.0
+            + 0.045 * (_fbm1(a, seed + 57, 2, 5) - 0.5) * 2.0)
+    w = SCARP_W * (0.60 + 1.30 * _fbm1(a, seed + 83, 2, 3))
+    return line, w
+
+
+def _poly_rock(name, cx, cy, z0, rx, ry, h, mat, seed, sides=8, rings=3,
+               jag=0.34, lean=(0.0, 0.0), taper=0.82, crest=0.30, rotz=0.0,
+               zmax=None):
+    """One fractured block: an irregular prism with a broken top.
+
+    THIS IS WHY THE FIRST TWO PASSES FAILED. A cliff is not a smooth surface and it
+    is not a stack of cubes -- it is rock that has PARTED along planes, so what the
+    eye reads is flat facets meeting at hard angles, with deep shadowed cracks
+    between the columns and a top edge that is broken rather than level. A height
+    field cannot make any of that (it has one z per point, so no undercut and no
+    crack), and box() cannot either (six faces, all square, all parallel).
+
+    An n-gon prism with a jittered radius per ring gives the facets and the vertical
+    fluting; a per-vertex broken top gives the crest; leaning the top off the base
+    gives the overhang. Flat-shaded on purpose: smoothing rock is what turned the
+    last pass into poured concrete.
+
+    `zmax` CLAMPS the whole block. Nothing on a tile may stand above the walkable
+    surface it belongs to: the runtime reads one height per pixel, so a crag poking
+    over the crest tells it the plateau is taller than it is and everything standing
+    up there sorts behind rock that is actually below it. The crest breaks DOWNWARD
+    for the same reason -- chips come off the top, they do not grow out of it."""
+    verts, faces = [], []
+    rng = random.Random(seed)
+    ang = [2.0 * math.pi * i / sides + rng.uniform(-0.18, 0.18) for i in range(sides)]
+    rad = [1.0 + jag * (rng.random() - 0.5) * 2.0 for _ in range(sides)]
+    for k in range(rings + 1):
+        t = k / float(rings)
+        sc = 1.0 + (taper - 1.0) * t
+        # each bed sits at its own slightly different girth: that step in the
+        # silhouette is the bedding plane you see banding a real face
+        bed = 1.0 + 0.13 * (rng.random() - 0.5) * 2.0
+        for i in range(sides):
+            r = rad[i] * sc * bed
+            z = z0 + h * t
+            if k == rings:
+                z -= h * crest * rng.random()              # broken crest, DOWN only
+            if zmax is not None and z > zmax:
+                z = zmax
+            verts.append((cx + lean[0] * t + math.cos(ang[i] + rotz) * rx * r,
+                          cy + lean[1] * t + math.sin(ang[i] + rotz) * ry * r,
+                          z))
+    for k in range(rings):
+        for i in range(sides):
+            a = k * sides + i
+            b = k * sides + (i + 1) % sides
+            faces.append((a, b, b + sides, a + sides))
+    top = rings * sides
+    faces.append(tuple(range(top, top + sides)))
+    faces.append(tuple(reversed(range(sides))))
+    ob = new_obj(name, verts, faces, mat)
+    for p in ob.data.polygons:
+        p.use_smooth = False
+    return ob
+
+
+def add_crags(seed, sample, cap, base=0.0):
+    """Rock on the face, placed from the SURFACE rather than from a cliff line.
+
+    The first version walked the analytic break line and stood a row of columns on
+    it. That works for a straight scarp and for nothing else: an inside corner has
+    two lines meeting, an outside corner has one wrapping round, a ramp has a gap in
+    the middle, and a sea cliff starts underwater. Each would have needed its own
+    placement rule, and every one of those rules would have been a restatement of
+    the same fact -- rock goes where the ground is steep.
+
+    So ask the ground. The surface sampler already returns the slope-derived rock
+    weight per point, so walking a jittered grid and building where that weight is
+    high covers every shape in the set, including ones not written yet.
+
+    Nothing may rise above `cap`: the runtime reads ONE height per pixel, so a crag
+    poking over the crest tells it the plateau is taller than it is, and everything
+    standing up there sorts behind rock that is really below it."""
+    m_rock = rock_material()
+    rng = random.Random(seed * 61 + 17)
+    lim = HALF * 0.99
+    step = 0.34
     n = 0
-    u = lo
-    while u < hi - 1e-6:
-        w = min(rng.uniform(0.34, 0.72), hi - u)
-        ctr = u + w / 2.0
-        top = WALL_H * rng.uniform(0.80, 1.06)
-        layers = rng.randint(5, 8)
-        z = base - rng.uniform(0.0, 0.12)          # fracture: uneven footing
-        for k in range(layers):
-            hgt = (top / layers) * rng.uniform(0.65, 1.45)
-            # batter: pull the layer back from the face as it climbs, plus its own
-            # recession, and let the occasional bed jut out as an overhang
-            climb = (z - base) / max(WALL_H, 1e-6)
-            inset = WALL_T * (0.30 * climb + rng.uniform(-0.12, 0.34))
-            if rng.random() < 0.16:
-                inset -= WALL_T * rng.uniform(0.25, 0.55)     # overhanging bed
-            depth = WALL_T * rng.uniform(0.75, 1.25)
-            if axis == 'x':
-                box("crag_%s_%d" % (edge, n), ctr, off - sign * inset, z,
-                    w * rng.uniform(0.86, 1.04), depth, hgt, m_rock,
-                    rotz=rng.uniform(-0.09, 0.09), bevel=(0.035, 2))
-            else:
-                box("crag_%s_%d" % (edge, n), off - sign * inset, ctr, z,
-                    depth, w * rng.uniform(0.86, 1.04), hgt, m_rock,
-                    rotz=rng.uniform(-0.09, 0.09), bevel=(0.035, 2))
-            z += hgt
-            n += 1
-        u += w
+    y = -lim
+    while y <= lim:
+        x = -lim
+        while x <= lim:
+            px = x + rng.uniform(-0.13, 0.13)
+            py = y + rng.uniform(-0.13, 0.13)
+            if abs(px) > lim or abs(py) > lim:
+                x += step
+                continue
+            z, rock, mud = sample(px, py)
+            if rock > 0.42 and rng.random() < 0.88:
+                r = rng.uniform(0.20, 0.40)
+                h = rng.uniform(0.45, 1.05)
+                _poly_rock("crag%d" % n, px, py, z - h * rng.uniform(0.45, 0.8),
+                           r, r * rng.uniform(0.7, 1.4), h, m_rock, seed * 977 + n,
+                           sides=rng.randint(6, 8), rings=rng.randint(1, 2),
+                           jag=rng.uniform(0.14, 0.30),
+                           taper=rng.uniform(0.84, 1.02),
+                           crest=0.35, rotz=rng.uniform(0.0, 1.2), zmax=cap)
+                n += 1
+            elif 0.14 < rock <= 0.42 and rng.random() < 0.30:
+                # SCREE. Angular, because it broke off the face above and has not
+                # travelled far enough to round off. Rounded boulders belong out in
+                # the field, not at the foot of a cliff.
+                s = rng.uniform(0.045, 0.15)
+                _poly_rock("scree%d" % n, px, py, z - s * 0.5, s,
+                           s * rng.uniform(0.6, 1.5), s * rng.uniform(0.8, 1.9),
+                           m_rock, seed * 31 + n, sides=rng.randint(5, 7), rings=1,
+                           jag=0.30, taper=rng.uniform(0.6, 1.0), crest=0.25,
+                           rotz=rng.uniform(0, 3.14), zmax=cap)
+                n += 1
+            x += step
+        y += step
+    return n
 
-    # Scree at the foot: the debris that makes a cliff look eroded rather than
-    # extruded, and it hides the join between the face and the ground. Flatter and
-    # more numerous than the first pass, which read as a line of dropped dice.
-    for k in range(rng.randint(7, 12)):
-        s = rng.uniform(0.10, 0.26)
-        slab("scree_%s_%d" % (edge, k), rng.uniform(lo + s, hi - s), s,
-             base - 0.03, WALL_T * rng.uniform(1.2, 2.4), s * rng.uniform(0.30, 0.62),
-             m_rock, rot=rng.uniform(0, 1.2))
+
+def water_material():
+    """Flat water. Opaque on purpose.
+
+    A transparent surface would need the bed rendered through it, which costs
+    nothing in Cycles and everything downstream: the height pass would report the
+    BED where the runtime needs the SURFACE, so a token standing in the shallows
+    would sink to the bottom of the lake. Opaque teal with banded highlights is also
+    what the references draw, so the cheap answer and the right-looking one agree."""
+    m = bpy.data.materials.get("water")
+    if m:
+        return m
+    t = theme()
+    c = t.get("water", (0.09, 0.26, 0.30))
+    m = bpy.data.materials.new("water")
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    b.inputs["Roughness"].default_value = 0.35
+
+    swell = _noise_node(nt, 3.0, 3.0, 0.5).outputs["Fac"]
+    ripple = _noise_node(nt, 13.0, 5.0, 0.7).outputs["Fac"]
+    col = _mix(nt, tuple(x * 0.72 for x in c), tuple(min(1.0, x * 1.5) for x in c),
+               _band(nt, swell, 0.0, 1.0, 0.42, 0.60))
+    col = _mix(nt, col, tuple(min(1.0, x * 2.1) for x in c),
+               _band(nt, ripple, 0.0, 0.55, 0.50, 0.64))
+    # glints: the bright dashes on the surface in every one of the references
+    col = _mix(nt, col, (0.62, 0.78, 0.80), _dots(nt, 22.0, 0.12, 0.10))
+    steps = t.get("posterize")
+    if steps:
+        col = _posterize(nt, col, steps)
+    nt.links.new(col, b.inputs["Base Color"])
+    return m
+
+
+def add_water_plane(z=None):
+    """The water: a VOLUME, not a plane.
+
+    A bare quad at the water line left the surface hovering over the bed with a
+    daylight gap between the two -- the tile read as a blue sheet floating above a
+    brown box. Water has to fill the tile the way the ground does, so this is a top
+    face plus four sides running down past the bottom of the terrain skirt.
+
+    The sides are held a hair INSIDE the lattice cell so that wherever the ground
+    also reaches the boundary -- the grass half of a shore, say -- the terrain skirt
+    covers them instead of the two fighting over the same plane."""
+    z = WATER_LEVEL if z is None else z
+    bh = _bh()
+    top = [(-bh, -bh, z), (bh, -bh, z), (bh, bh, z), (-bh, bh, z)]
+    new_obj("water", top, [(0, 1, 2, 3)], water_material())
+
+    ih = bh * 0.998
+    floor = BED_Z - 0.5
+    ring = [(-ih, -ih), (ih, -ih), (ih, ih), (-ih, ih), (-ih, -ih)]
+    verts, faces = [], []
+    for x, y in ring:
+        verts.append((x, y, z))
+        verts.append((x, y, floor))
+    for k in range(len(ring) - 1):
+        a = k * 2
+        faces.append((a, a + 1, a + 3, a + 2))
+    new_obj("water_side", verts, faces, water_deep_material())
+
+
+def water_deep_material():
+    """The water seen edge-on. Darker than the surface and flat -- what you get
+    looking into a body of water is not what you get looking across it."""
+    m = bpy.data.materials.get("water_deep")
+    if m:
+        return m
+    t = theme()
+    c = t.get("water", (0.075, 0.235, 0.275))
+    m = bpy.data.materials.new("water_deep")
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    b.inputs["Roughness"].default_value = 0.6
+    col = _mix(nt, tuple(x * 0.30 for x in c), tuple(x * 0.62 for x in c),
+               _band(nt, _noise_node(nt, 5.0, 3.0, 0.5).outputs["Fac"],
+                     0.0, 1.0, 0.42, 0.60))
+    steps = t.get("posterize")
+    if steps:
+        col = _posterize(nt, col, steps)
+    nt.links.new(col, b.inputs["Base Color"])
+    return m
+
+
+def terrain_scatter(sample, base, seed):
+    """What has real VOLUME sits on the ground as geometry; everything else is in
+    the texture.
+
+    Grass used to be modelled -- thousands of tapered ribbons. It looked right in
+    isolation and was wrong for this pipeline: the bake writes ONE height per pixel,
+    so a blade standing 20cm proud tells the runtime the ground is 20cm higher than
+    it is, and every token, prop and shadow standing in that grass sorts against the
+    tips instead of the soil. Flat ground with grass IN THE ALBEDO composites
+    correctly and costs nothing. Only things a character would actually walk around
+    -- boulders, scree, the crag face -- are still geometry."""
+    rng = random.Random(seed * 31 + 5)
+    m_rock = rock_material()
+    lim = HALF * 0.98
+
+    # Field stones: rounded, because out in the grass they have been there long
+    # enough to be. The angular rubble belongs at the foot of the face -- add_crags.
+    for n in range(rng.randint(7, 13)):
+        x, y = rng.uniform(-lim, lim), rng.uniform(-lim, lim)
+        z, rock, mud = sample(x, y)
+        if rock > 0.35 or rng.random() < 0.35:
+            continue
+        r = rng.uniform(0.09, 0.26)
+        _lump("stone%d" % n, x, y, z - r * rng.uniform(0.35, 0.65), r, m_rock,
+              seed * 13 + n, squash=rng.uniform(0.35, 0.70),
+              rough=rng.uniform(0.24, 0.40))
+
+
+# --- material ---------------------------------------------------------------
+
+def _objcoord(nt):
+    """One Object-space texture coordinate node per material, shared."""
+    for n in nt.nodes:
+        if n.type == 'TEX_COORD':
+            return n.outputs["Object"]
+    return nt.nodes.new("ShaderNodeTexCoord").outputs["Object"]
+
+
+def _noise_node(nt, scale, detail=6.0, rough=0.55):
+    """Noise in OBJECT space.
+
+    A procedural texture with nothing wired to its Vector input falls back to
+    GENERATED coordinates, which are the object's own bounding box normalised to
+    0..1. That is invisible while every tile is the same shape and catastrophic the
+    moment they are not: a plateau tile whose mesh sits at z=1.8 and a flat one at
+    z=0 get completely different mappings, so the same material paints them at
+    different scales and different offsets. That is exactly what made the raised
+    tiles read as washed-out grey squares next to green ones, and what made the
+    water and the shores look like they came from different sets.
+
+    Object space is the tile's own frame, identical for every piece in the set, so
+    the material means the same thing everywhere."""
+    n = nt.nodes.new("ShaderNodeTexNoise")
+    n.inputs["Scale"].default_value = scale
+    n.inputs["Detail"].default_value = detail
+    n.inputs["Roughness"].default_value = rough
+    nt.links.new(_objcoord(nt), n.inputs["Vector"])
+    return n
+
+
+def _mix(nt, a, b, fac, blend='MIX'):
+    m = nt.nodes.new("ShaderNodeMixRGB")
+    m.blend_type = blend
+    if hasattr(fac, "default_value") or hasattr(fac, "links"):
+        nt.links.new(fac, m.inputs["Fac"])
+    else:
+        m.inputs["Fac"].default_value = fac
+    for slot, val in (("Color1", a), ("Color2", b)):
+        if isinstance(val, tuple):
+            m.inputs[slot].default_value = (val[0], val[1], val[2], 1.0)
+        else:
+            nt.links.new(val, m.inputs[slot])
+    return m.outputs["Color"]
+
+
+def plant_material(name, rgb, spread=0.34, rough=0.72):
+    """A plain mottled colour. Used for the subsoil skirt; kept general because it
+    is the cheapest way to give a surface variation without the stone-aging passes
+    in mkmat, which are wrong on anything that is not dungeon masonry."""
+    m = bpy.data.materials.get("plant_" + name)
+    if m:
+        return m
+    m = bpy.data.materials.new("plant_" + name)
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    b.inputs["Roughness"].default_value = rough
+    dark = tuple(c * (1.0 - spread) for c in rgb)
+    light = tuple(min(1.0, c * (1.0 + spread)) for c in rgb)
+    col = _mix(nt, dark, light, _noise_node(nt, 24.0, 5.0, 0.6).outputs["Fac"])
+    nt.links.new(col, b.inputs["Base Color"])
+    return m
+
+
+def _cut(nt, sock, at, invert=False):
+    """Hard threshold: 1 on one side of `at`, 0 on the other."""
+    r = nt.nodes.new("ShaderNodeValToRGB")
+    r.color_ramp.interpolation = 'CONSTANT'
+    r.color_ramp.elements[0].position = 0.0
+    r.color_ramp.elements[1].position = at
+    a = (1.0, 1.0, 1.0, 1.0) if invert else (0.0, 0.0, 0.0, 1.0)
+    b = (0.0, 0.0, 0.0, 1.0) if invert else (1.0, 1.0, 1.0, 1.0)
+    r.color_ramp.elements[0].color = a
+    r.color_ramp.elements[1].color = b
+    nt.links.new(sock, r.inputs["Fac"])
+    return r.outputs["Color"]
+
+
+def _cracks(nt, scale, width, randomness=1.0):
+    """Dark lines along the boundaries between Voronoi cells.
+
+    This is the single node that separates the painted look in the references from
+    the photoreal one. Rock in all three of them is read as FLAT FACETS SEPARATED BY
+    DARK LINES -- not as a noise field. Voronoi's distance-to-edge output is exactly
+    that: near zero on a cell boundary, larger inside, so thresholding it gives a
+    crack network that follows real cell shapes instead of a scribble."""
+    v = nt.nodes.new("ShaderNodeTexVoronoi")
+    v.feature = 'DISTANCE_TO_EDGE'
+    v.inputs["Scale"].default_value = scale
+    v.inputs["Randomness"].default_value = randomness
+    nt.links.new(_objcoord(nt), v.inputs["Vector"])   # see _noise_node
+    return _band(nt, v.outputs["Distance"], 1.0, 0.0, 0.0, width)
+
+
+def _facets(nt, scale, randomness=1.0):
+    """A random value per Voronoi cell -- one flat shade per block of stone."""
+    v = nt.nodes.new("ShaderNodeTexVoronoi")
+    v.feature = 'F1'
+    v.inputs["Scale"].default_value = scale
+    v.inputs["Randomness"].default_value = randomness
+    nt.links.new(_objcoord(nt), v.inputs["Vector"])   # see _noise_node
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    nt.links.new(v.outputs["Color"], sep.inputs["Color"])
+    return sep.outputs[0]
+
+
+def _dots(nt, scale, radius, keep):
+    """Scattered round dots -- wildflowers, without modelling one.
+
+    The first attempt thresholded a narrow band of smooth noise, which does not give
+    dots: a level set of a continuous field is a CONTOUR, so the ground came out
+    covered in confetti squiggles. Voronoi has actual cell centres, so `distance <
+    radius` really is a disc, and a second threshold on the cell's own random value
+    keeps only some of the cells -- otherwise every cell has a flower and a meadow
+    turns into polka dots."""
+    v = nt.nodes.new("ShaderNodeTexVoronoi")
+    v.feature = 'F1'
+    v.inputs["Scale"].default_value = scale
+    nt.links.new(_objcoord(nt), v.inputs["Vector"])   # see _noise_node
+    disc = _cut(nt, v.outputs["Distance"], radius, invert=True)
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    nt.links.new(v.outputs["Color"], sep.inputs["Color"])
+    some = _cut(nt, sep.outputs[0], 1.0 - keep, invert=False)
+    m = nt.nodes.new("ShaderNodeMixRGB")
+    m.blend_type = 'MULTIPLY'
+    m.inputs["Fac"].default_value = 1.0
+    nt.links.new(disc, m.inputs["Color1"])
+    nt.links.new(some, m.inputs["Color2"])
+    return m.outputs["Color"]
+
+
+def _edge_fade(nt, inner=0.72):
+    """1 in the middle of the tile, falling to 0 at its border.
+
+    Used to switch AMBIENT OCCLUSION off near the edges. AO has nothing to occlude
+    it at the boundary of a mesh, so the outer ring of every tile bakes brighter
+    than its interior; posterising snaps that into a band of its own, and abutted
+    on the lattice it draws a pale line around every tile -- the seam grid over a
+    finished map. Overshooting the mesh helps but cannot fix it, because the bright
+    ring then lands inside the NEIGHBOUR and whichever tile is painted second wins.
+
+    Fading the term instead fixes it at the source: the edge of a tile is not really
+    open sky, it is the middle of a continuous landscape, and AO there is a lie the
+    renderer tells because it cannot see the next tile."""
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(tc.outputs["Object"], sep.inputs["Vector"])
+    ax = nt.nodes.new("ShaderNodeMath"); ax.operation = 'ABSOLUTE'
+    nt.links.new(sep.outputs["X"], ax.inputs[0])
+    ay = nt.nodes.new("ShaderNodeMath"); ay.operation = 'ABSOLUTE'
+    nt.links.new(sep.outputs["Y"], ay.inputs[0])
+    mx = nt.nodes.new("ShaderNodeMath"); mx.operation = 'MAXIMUM'
+    nt.links.new(ax.outputs[0], mx.inputs[0])
+    nt.links.new(ay.outputs[0], mx.inputs[1])
+    r = nt.nodes.new("ShaderNodeMapRange")
+    r.inputs["From Min"].default_value = HALF * inner
+    r.inputs["From Max"].default_value = HALF
+    r.inputs["To Min"].default_value = 1.0
+    r.inputs["To Max"].default_value = 0.0
+    nt.links.new(mx.outputs[0], r.inputs["Value"])
+    return r.outputs["Result"]
+
+
+def _flatness(nt, lo=0.55, hi=0.92):
+    """1 where a surface faces up, 0 where it stands vertical.
+
+    The shading normal's Z IS the cosine of the slope, so this is the whole trick
+    behind a moss/snow/scree layer: mask a material by which way the surface points
+    and it lands only where that material could physically stay. Doing it in the
+    SHADER rather than per-vertex on the CPU means it also works on geometry that
+    carries no vertex weights -- the crags, the scree, the boulders -- which is why
+    the rock face can grow moss on its ledges and nothing on its walls."""
+    geo = nt.nodes.new("ShaderNodeNewGeometry")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(geo.outputs["Normal"], sep.inputs["Vector"])
+    r = nt.nodes.new("ShaderNodeMapRange")
+    r.inputs["From Min"].default_value = lo
+    r.inputs["From Max"].default_value = hi
+    nt.links.new(sep.outputs["Z"], r.inputs["Value"])
+    return r.outputs["Result"]
+
+
+def _mul(nt, a, b):
+    m = nt.nodes.new("ShaderNodeMath")
+    m.operation = 'MULTIPLY'
+    nt.links.new(a, m.inputs[0])
+    nt.links.new(b, m.inputs[1])
+    return m.outputs[0]
+
+
+def _max(nt, a, b):
+    m = nt.nodes.new("ShaderNodeMath")
+    m.operation = 'MAXIMUM'
+    nt.links.new(a, m.inputs[0])
+    nt.links.new(b, m.inputs[1])
+    return m.outputs[0]
+
+
+def _posterize(nt, col, steps):
+    """Snap a colour to `steps` levels per channel.
+
+    Pixel art does not have gradients -- it has a small number of flat values with
+    hard boundaries between them, and that quantisation is most of what the eye
+    reads as "pixel art" before it ever notices the resolution. A 3D render is all
+    gradient by default (ambient occlusion alone puts a smooth ramp into every
+    corner), so the bands have to be put back deliberately."""
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    sep.mode = 'HSV'
+    nt.links.new(col, sep.inputs["Color"])
+    comb = nt.nodes.new("ShaderNodeCombineColor")
+    comb.mode = 'HSV'
+    nt.links.new(sep.outputs[0], comb.inputs[0])       # hue, untouched
+    nt.links.new(sep.outputs[1], comb.inputs[1])       # saturation, untouched
+    # Quantise to band CENTRES, not to multiples of the step: a plain snap rounds
+    # everything below half a step down to zero, so the darkest band becomes pure
+    # black and every shadowed area -- mud, a wallow, the foot of a scarp -- goes to
+    # a hole. floor(v*n)+0.5 over n keeps the lowest band at half a step instead.
+    mul = nt.nodes.new("ShaderNodeMath"); mul.operation = 'MULTIPLY'
+    mul.inputs[1].default_value = float(steps)
+    nt.links.new(sep.outputs[2], mul.inputs[0])
+    flr = nt.nodes.new("ShaderNodeMath"); flr.operation = 'FLOOR'
+    nt.links.new(mul.outputs[0], flr.inputs[0])
+    add = nt.nodes.new("ShaderNodeMath"); add.operation = 'ADD'
+    add.inputs[1].default_value = 0.5
+    nt.links.new(flr.outputs[0], add.inputs[0])
+    div = nt.nodes.new("ShaderNodeMath"); div.operation = 'DIVIDE'
+    div.inputs[1].default_value = float(steps)
+    nt.links.new(add.outputs[0], div.inputs[0])
+    nt.links.new(div.outputs[0], comb.inputs[2])       # value, banded
+    return comb.outputs["Color"]
+
+
+def _band(nt, sock, lo, hi, f0=None, f1=None):
+    """Remap a noise into lo..hi, optionally stretching f0..f1 to fill it first.
+
+    Noise runs 0..1 but it is NOT uniform -- Perlin clusters hard around 0.5, so a
+    plain 0..1 mix factor sits near a half-and-half blend of the two colours almost
+    everywhere. That averages instead of choosing, and it is why two separate
+    passes of this material came back flat: first uniformly grey, then a flat green
+    with the grass layers invisible even though the node graph was wired correctly.
+
+    Passing f0/f1 clamps and stretches the part of the distribution the noise
+    actually occupies (roughly 0.35..0.65), which is what turns a mix factor into
+    a decision. Leave them off for a genuine wash."""
+    r = nt.nodes.new("ShaderNodeMapRange")
+    if f0 is not None:
+        r.inputs["From Min"].default_value = f0
+        r.inputs["From Max"].default_value = f1
+    r.inputs["To Min"].default_value = lo
+    r.inputs["To Max"].default_value = hi
+    nt.links.new(sock, r.inputs["Value"])
+    return r.outputs["Result"]
+
+
+def rock_material():
+    """Bare rock: crags, scree, boulders.
+
+    NOT mkmat. That one ages dungeon stone -- it lightens convex edges (a boot has
+    knocked the corner off this block) and adds a mineral speck. On a fractured
+    crag every facet is a convex edge, so the wear pass fired everywhere at once
+    and the whole face came back pale and hazy with what looked like snow on it.
+    Rock wants the opposite: dark, warm, and built out of FLAT FACETS SEPARATED BY
+    DARK CRACKS. That is what the painted references are made of -- not a noise
+    field, which is what a fine bedding texture gives and which reads as stacked
+    pancakes at tile scale. See _cracks and _facets."""
+    m = bpy.data.materials.get("rock")
+    if m:
+        return m
+    t = theme()
+    r = t.get("rock", (0.30, 0.29, 0.27))
+    g = t["stone"]
+    m = bpy.data.materials.new("rock")
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    b.inputs["Roughness"].default_value = 0.92
+
+    # FACETS AND CRACKS, not a noise field. Two scales of Voronoi: big cells are the
+    # blocks the rock has parted into, small ones are the fractures across a single
+    # block face. Each cell takes its own flat shade and the boundaries between them
+    # go dark, which is what the painted references are actually made of.
+    blocks = _facets(nt, 3.4)
+    chips = _facets(nt, 8.0)
+    crack_a = _cracks(nt, 3.4, 0.075)
+    crack_b = _cracks(nt, 8.0, 0.030)
+    patch = _noise_node(nt, 2.2, 3.0, 0.5).outputs["Fac"]
+    grain = _noise_node(nt, 40.0, 6.0, 0.66).outputs["Fac"]
+    # a little bedding still, squashed flat so it bands with height on a face
+    strat = _noise_node(nt, 9.0, 3.0, 0.55)
+    mp = nt.nodes.new("ShaderNodeMapping")
+    mp.inputs["Scale"].default_value = (0.18, 0.18, 2.4)
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    nt.links.new(tc.outputs["Object"], mp.inputs["Vector"])
+    nt.links.new(mp.outputs["Vector"], strat.inputs["Vector"])
+
+    col = _mix(nt, tuple(c * 0.55 for c in r), tuple(min(1.0, c * 1.62) for c in r),
+               _band(nt, blocks, 0.0, 1.0))
+    col = _mix(nt, col, tuple(min(1.0, c * 1.25) for c in r),
+               _band(nt, chips, 0.0, 0.55))
+    col = _mix(nt, col, (r[0] * 1.35, r[1] * 1.0, r[2] * 0.62),
+               _band(nt, patch, 0.0, 0.45))                     # iron staining
+    col = _mix(nt, col, tuple(c * 0.80 for c in r),
+               _band(nt, strat.outputs["Fac"], 0.0, 0.45, 0.40, 0.60))
+    col = _mix(nt, col, tuple(c * 0.55 for c in r), _band(nt, grain, 0.0, 0.18))
+    # A rock's upward faces are the bright ones in every one of the references --
+    # the lit lip along the top of a scarp is most of what makes it read as a drop.
+    col = _mix(nt, col, tuple(min(1.0, c * 1.75) for c in r),
+               _band(nt, _flatness(nt, 0.55, 0.95), 0.0, 0.55))
+    col = _mix(nt, col, tuple(c * 0.42 for c in r), crack_b)    # fractures
+    col = _mix(nt, col, tuple(c * 0.16 for c in r), crack_a)    # block boundaries
+    col = _mix(nt, col, (g[0] * 0.95, g[1] * 0.90, g[2] * 0.75),
+               _band(nt, patch, 0.0, 0.22))                     # lichen, sparingly
+
+    # LEDGE PLANTING. Anything that grows on a cliff grows on the bits of it that
+    # face up: a bed that weathered back, the top of a fallen block, the crest. The
+    # flatness mask finds those without anybody having to model or mark them, and
+    # the noise keeps it patchy so it reads as colonised rather than painted.
+    ledge = _mul(nt, _flatness(nt, 0.42, 0.86),
+                 _band(nt, _noise_node(nt, 4.0, 4.0, 0.6).outputs["Fac"],
+                       0.0, 1.0, 0.40, 0.60))
+    moss = t.get("moss", (0.26, 0.47, 0.10))
+    col = _mix(nt, col, moss, ledge)
+    col = _mix(nt, col, tuple(c * 0.62 for c in moss),
+               _mul(nt, ledge, _band(nt, grain, 0.0, 0.7)))
+    col = _mix(nt, col, tuple(min(1.0, c * 1.35) for c in moss),
+               _mul(nt, ledge, _band(nt, chips, 0.0, 0.5)))
+
+    # The crack between two columns is a deep narrow gap, and AO is the only thing
+    # in a light-free bake that knows it is deep. Run it hard.
+    ao = nt.nodes.new("ShaderNodeAmbientOcclusion")
+    ao.inputs["Distance"].default_value = 0.9
+    inv = nt.nodes.new("ShaderNodeInvert")
+    nt.links.new(ao.outputs["AO"], inv.inputs["Color"])
+    col = _mix(nt, col, (0.09, 0.09, 0.08), _band(nt, inv.outputs["Color"], 0.0, 1.0),
+               blend='MULTIPLY')
+    steps = t.get("posterize")
+    if steps:
+        col = _posterize(nt, col, steps)
+    nt.links.new(col, b.inputs["Base Color"])
+
+    bmp = nt.nodes.new("ShaderNodeBump")
+    bmp.inputs["Strength"].default_value = 0.6
+    bmp.inputs["Distance"].default_value = 0.05
+    nt.links.new(_mix(nt, _mix(nt, grain, strat.outputs["Fac"], 0.45),
+                      crack_a, 0.5), bmp.inputs["Height"])
+    nt.links.new(bmp.outputs["Normal"], b.inputs["Normal"])
+    return m
+
+
+def terrain_material():
+    """ONE material for the whole landscape, mixed by the weights the surface
+    computed for itself.
+
+    Three materials on three objects would put a hard boundary wherever they meet,
+    and that boundary is exactly the thing that made the first pass read as green
+    paint on grey blocks. Here sward, mud and rock are a gradient in a single
+    shader, so the transition is as soft as the slope that drives it.
+
+    Everything is mixed DARK. The bake carries no key light -- the runtime torches
+    multiply against this -- so a surface that is already bright has nowhere to go
+    when it is lit, and a rock face at 0.55 albedo reads as poured concrete under
+    every light in the game."""
+    m = bpy.data.materials.get("terrain")
+    if m:
+        return m
+    t = theme()
+    m = bpy.data.materials.new("terrain")
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+
+    att = nt.nodes.new("ShaderNodeAttribute")
+    att.attribute_name = "wt"
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    nt.links.new(att.outputs["Color"], sep.inputs["Color"])
+    w_rock, w_mud, w_wet = sep.outputs[0], sep.outputs[1], sep.outputs[2]
+
+    patch = _noise_node(nt, 1.6, 3.0, 0.50).outputs["Fac"]    # region drift
+    clump = _noise_node(nt, 9.0, 6.0, 0.60).outputs["Fac"]    # clump scale
+    grain = _noise_node(nt, 22.0, 5.0, 0.62).outputs["Fac"]   # surface grain
+
+    def shades(rgb, dark, light):
+        return (tuple(c * dark for c in rgb), tuple(min(1.0, c * light) for c in rgb))
+
+    # GRASS IS TEXTURE, NOT GEOMETRY (see terrain_scatter) -- and it is FLAT.
+    #
+    # ALL OF IT HAS TO BE ALBEDO. The bake is lit by a uniform white world with no
+    # key (add_lighting), so a normal that tilts receives exactly the same light as
+    # one that does not -- bump contributes NOTHING to this image. It still matters,
+    # because it is what the _NRM pass exports for the runtime torches to catch, but
+    # anything that has to read in the baked tile must be a colour difference.
+    #
+    # An earlier pass covered the ground in fine crossed blade-streaks. It was more
+    # faithful to a photograph and less faithful to the brief: the references are
+    # BROAD FLAT FIELDS OF COLOUR with a few sparse marks on them, and continuous
+    # fine texture is what stops a tile reading that way -- it turns a green field
+    # into green fur and it fights every prop standing on it. So: two or three
+    # tones of green over large areas, and marks you can count.
+    broad = _noise_node(nt, 2.4, 2.0, 0.45).outputs["Fac"]     # which green, roughly
+    drift = _noise_node(nt, 5.5, 3.0, 0.55).outputs["Fac"]     # softer second tone
+
+    g = t["stone"]
+    blade = t.get("blade", tuple(min(1.0, c * 1.35) for c in g))
+    sward = _mix(nt, g, blade, _band(nt, broad, 0.0, 1.0, 0.42, 0.60))
+    sward = _mix(nt, sward, tuple(c * 0.70 for c in g),
+                 _band(nt, drift, 0.0, 0.85, 0.44, 0.62))
+    # sun-bleached, drier ground: a whole region, not a speckle
+    sward = _mix(nt, sward, (g[0] * 1.8, g[1] * 1.30, g[2] * 0.80),
+                 _band(nt, patch, 0.0, 0.40, 0.46, 0.62))
+    # moss in the hollows -- again a region, with a soft edge
+    sward = _mix(nt, sward, t.get("moss", (0.26, 0.47, 0.10)),
+                 _band(nt, _noise_node(nt, 4.2, 3.0, 0.5).outputs["Fac"],
+                       0.0, 1.0, 0.54, 0.66))
+    # DAPPLING. Mid-frequency mottle, added back after the flat pass read as too
+    # bare. It is safe here in a way it was not before posterising: quantised to
+    # seven value bands and dropped to a quarter resolution, fine noise stops being
+    # fuzz and becomes flat irregular patches -- which is what hand-drawn grass in
+    # the references actually is. Two scales so the patches nest.
+    sward = _mix(nt, sward, tuple(min(1.0, c * 1.30) for c in blade),
+                 _band(nt, _noise_node(nt, 11.0, 5.0, 0.60).outputs["Fac"],
+                       0.0, 0.85, 0.42, 0.62))
+    sward = _mix(nt, sward, tuple(c * 0.74 for c in g),
+                 _band(nt, _noise_node(nt, 19.0, 6.0, 0.65).outputs["Fac"],
+                       0.0, 0.75, 0.44, 0.64))
+    sward = _mix(nt, sward, tuple(min(1.0, c * 1.5) for c in blade),
+                 _band(nt, _noise_node(nt, 34.0, 4.0, 0.55).outputs["Fac"],
+                       0.0, 0.45, 0.48, 0.66))
+    # TUFT MARKS. The little scattered dashes that say "grass" in every one of the
+    # references -- countable, and reading against the field they sit in.
+    sward = _mix(nt, sward, tuple(c * 0.55 for c in g), _dots(nt, 16.0, 0.20, 0.42))
+    sward = _mix(nt, sward, tuple(min(1.0, c * 1.55) for c in blade),
+                 _dots(nt, 21.0, 0.16, 0.34))
+    sward = _mix(nt, sward, tuple(c * 0.66 for c in g), _dots(nt, 29.0, 0.13, 0.26))
+    # Flowers are RARE. At any density you can read as a pattern they stop being
+    # flowers and become confetti -- the references have a handful per screen, not
+    # per tile.
+    for rgb, sc, rad, keep in (((0.60, 0.50, 0.13), 26.0, 0.09, 0.06),
+                               ((0.34, 0.23, 0.48), 21.0, 0.08, 0.045),
+                               ((0.66, 0.66, 0.57), 32.0, 0.07, 0.035)):
+        sward = _mix(nt, sward, rgb, _dots(nt, sc, rad, keep))
+
+    d = t.get("mud", t["mortar"])
+    lo, hi = shades(d, 0.55, 1.60)
+    mud = _mix(nt, lo, hi, _band(nt, clump, 0.0, 1.0, 0.40, 0.62))
+    mud = _mix(nt, mud, (d[0] * 1.45, d[1] * 1.15, d[2] * 0.85),
+               _band(nt, patch, 0.0, 0.55))                     # dried, dusty patches
+    mud = _mix(nt, mud, tuple(c * 0.55 for c in d), _band(nt, grain, 0.0, 0.50))
+
+    # Rock showing through the ground is the SAME rock the crags are made of, so it
+    # is built the same way: flat facets, dark cracks between them.
+    r = t.get("rock", (0.30, 0.20, 0.125))
+    lo, hi = shades(r, 0.62, 1.42)
+    rock = _mix(nt, lo, hi, _band(nt, _facets(nt, 7.0), 0.0, 1.0))
+    rock = _mix(nt, rock, (r[0] * 1.30, r[1] * 1.0, r[2] * 0.65),
+                _band(nt, patch, 0.0, 0.45))                      # iron staining
+    rock = _mix(nt, rock, tuple(c * 0.50 for c in r), _band(nt, grain, 0.0, 0.30))
+    rock = _mix(nt, rock, tuple(c * 0.22 for c in r), _cracks(nt, 18.0, 0.035))
+    rock = _mix(nt, rock, tuple(c * 0.15 for c in r), _cracks(nt, 7.0, 0.05))
+    # lichen: the green that lives on every real rock face, mottled not painted
+    rock = _mix(nt, rock, (g[0] * 0.90, g[1] * 0.85, g[2] * 0.70),
+                _band(nt, clump, 0.0, 0.45))
+
+    col = _mix(nt, sward, mud, w_mud)
+    # Rock where the surface is steep, whichever of the two ways says so: the vertex
+    # weight measures the slope of the underlying FIELD, the flatness mask measures
+    # the shaded normal, and the second one catches detail the grid was too coarse
+    # to resolve -- the lip of a gully, the side of a boulder-sized bulge.
+    col = _mix(nt, col, rock, _max(nt, w_rock, _flatness(nt, 0.86, 0.55)))
+    # Wet earth goes DARK BROWN, not dark grey. Mixing toward a neutral turned the
+    # wallow into asphalt -- water saturates a colour, it does not desaturate it.
+    col = _mix(nt, col, (0.075, 0.050, 0.028), _band(nt, w_wet, 0.0, 0.82))
+
+    # Ambient occlusion TINTS as well as darkens: the shade in a hollow is cool, the
+    # dirt that collects there is not, and the bake has no key light to tell them
+    # apart. This is what puts a dark line at the toe of a scarp and in every rut.
+    ao = nt.nodes.new("ShaderNodeAmbientOcclusion")
+    ao.inputs["Distance"].default_value = 1.1
+    inv = nt.nodes.new("ShaderNodeInvert")
+    nt.links.new(ao.outputs["AO"], inv.inputs["Color"])
+    # faded to nothing at the tile border -- see _edge_fade
+    col = _mix(nt, col, (0.16, 0.17, 0.12),
+               _mul(nt, _band(nt, inv.outputs["Color"], 0.0, 0.9), _edge_fade(nt)),
+               blend='MULTIPLY')
+
+    steps = theme().get("posterize")
+    if steps:
+        col = _posterize(nt, col, steps)
+    nt.links.new(col, b.inputs["Base Color"])
+    b.inputs["Roughness"].default_value = 0.95
+
+    bmp = nt.nodes.new("ShaderNodeBump")
+    bmp.inputs["Strength"].default_value = 0.9
+    bmp.inputs["Distance"].default_value = 0.07
+    # The bump does not show in THIS image (uniform world, no key light) -- it is
+    # exported by the _NRM pass for the runtime torches to catch, so it stays fine
+    # even though the albedo above deliberately went flat.
+    h = _mix(nt, grain, clump, 0.45)
+    h = _mix(nt, h, _noise_node(nt, 48.0, 5.0, 0.7).outputs["Fac"], 0.4)
+    nt.links.new(h, bmp.inputs["Height"])
+    nt.links.new(bmp.outputs["Normal"], b.inputs["Normal"])
+    return m
+
+
+def add_terrain(name, spec, rot):
+    """Outdoor tile: build the ground, then let it decide what stands on it.
+
+    Seeded from the tile NAME and not the rotation, so `x_r90` is the same corner of
+    the world as `x_r0` -- the same rule the flagstone floor keeps, and the reason a
+    set does not look like four unrelated sets shuffled together."""
+    seed = SEED * 977 + (zlib.crc32(name.encode()) % 99991)
+    sp = dict(spec)
+    for key in ("high", "arms"):
+        if sp.get(key):
+            sp[key] = rotate_edges(sp[key], rot)
+    if sp.get("ramp"):
+        sp["ramp"] = rotate_edges([sp["ramp"]], rot)[0]
+    f = FIELDS[spec["terrain"]](sp, seed)
+    sample = terrain_surface(f, name=name, water=bool(sp.get("water")))
+    # Crags only where a level actually changes. `cap` is the top band: nothing on
+    # the tile may stand above the walkable surface it belongs to.
+    if spec["terrain"] in ("step", "track") and (sp.get("high") or sp.get("ramp")):
+        add_crags(seed, sample, _band_z(sp.get("hi", 1)) - 0.06)
+    terrain_scatter(sample, 0.0, seed)
+    if sp.get("water"):
+        add_water_plane()
 
 
 def add_floor(m_stone, m_mortar, base=0.0):
@@ -1305,7 +2410,9 @@ def add_floor(m_stone, m_mortar, base=0.0):
     # at every call site so pits, water, stairs and the elevation vocabulary keep
     # working unchanged for both kits.
     if kit() == "outdoor":
-        return add_turf(base=base)
+        seed = SEED * 977 + int(base * 131)
+        return terrain_scatter(terrain_surface(field_meadow(seed), base=base),
+                               base, seed)
     """Mortar bed is a ZERO-THICKNESS plane: it has no side faces, so no join can
     ever show a curb. It overshoots the lattice cell by BLEED_PX so neighbouring
     tiles overlap fractionally -- measured, this takes the worst interior seam
@@ -1507,9 +2614,10 @@ def add_wall(edge, m_stone, m_mortar, seed=11, base=0.0, others=()):
     two abutting tiles never double-wall: whichever tile owns the wall draws it,
     the neighbour draws none. A recessed backing slab stops daylight showing
     between blocks (verified: zero enclosed transparent pixels in the render)."""
-    # Outdoor kit: a cliff face, built to the same edge/ownership contract.
-    if kit() == "outdoor":
-        return add_cliff(edge, seed=seed, base=base, others=others)
+    # NOTE: the outdoor kit has no branch here on purpose. A cliff is not a wall
+    # standing on flat ground -- it is the ground itself getting steep -- so an
+    # outdoor tile never reaches this function: it is built from a terrain FIELD
+    # (see add_terrain) and carries no `edges` at all.
     rng = random.Random(seed)
     axis = 'x' if edge in ('Y+', 'Y-') else 'y'
     sign = 1.0 if edge in ('Y+', 'X+') else -1.0
@@ -1719,8 +2827,67 @@ def height_material():
 # ---------------------------------------------------------------- render
 
 def render_to(path):
-    scene().render.filepath = path
+    """Render the current scene to `path`, at PIXEL SIZE if the theme asks for it.
+
+    A pixel-art set is not a smooth render with a filter over it -- it is genuinely
+    fewer pixels. So the frame is rendered at 1/N resolution and blown back up with
+    NEAREST NEIGHBOUR, which is what puts a hard staircase on every edge and keeps
+    the lattice invariant intact: the file that lands on disk is still exactly the
+    size the runtime expects, and TILE_W_PX still measures what it always did.
+
+    The upscale runs on the render result via numpy (bundled with Blender) rather
+    than an image editor, because it has to happen for all three passes -- albedo,
+    normals and height -- or they would disagree about where an edge is."""
+    sc = scene()
+    pix = theme().get("pixel", 1)
+    if pix <= 1:
+        sc.render.filepath = path
+        bpy.ops.render.render(write_still=True)
+        return
+    import numpy as np
+    full_x, full_y = sc.render.resolution_x, sc.render.resolution_y
+    # A tile must divide evenly or the diamond stops landing on the lattice.
+    assert full_x % pix == 0 and full_y % pix == 0, "resolution must divide by pixel"
+    sc.render.resolution_x, sc.render.resolution_y = full_x // pix, full_y // pix
+    sc.render.filter_size = 0.6          # near-box filter: no cross-pixel smear
+    small_path = path + ".small.png"
+    sc.render.filepath = small_path
     bpy.ops.render.render(write_still=True)
+    sc.render.resolution_x, sc.render.resolution_y = full_x, full_y
+
+    # Via the FILE, not via 'Render Result' -- that datablock does not hand out its
+    # pixels (foreach_get comes back empty), which is a much-hit trap.
+    src = bpy.data.images.load(small_path)
+    w, h = src.size
+    buf = np.empty(w * h * 4, dtype=np.float32)
+    src.pixels.foreach_get(buf)
+    px = buf.reshape(h, w, 4)
+    # HARD SILHOUETTE. A pixel the geometry only partly covers gets its colour
+    # divided by that coverage on the way to straight alpha, which amplifies
+    # whatever sampling noise was in it -- so the outermost ring of every tile came
+    # out measurably brighter than its interior (luma 147 against 101), posterising
+    # snapped that into a band of its own, and abutting them drew a pale line around
+    # every tile. It is not ambient occlusion: fading AO at the border changed
+    # nothing, which is what ruled it out.
+    #
+    # Thresholding coverage removes the fringe rather than moving it, and a hard
+    # silhouette is what this set wants regardless -- there is no such thing as a
+    # half-covered pixel in pixel art.
+    px[:, :, 3] = (px[:, :, 3] > 0.5).astype(np.float32)
+    big = np.repeat(np.repeat(px, pix, axis=0), pix, axis=1)
+    out = bpy.data.images.new("upscaled", width=w * pix, height=h * pix, alpha=True,
+                              float_buffer=True)
+    # Same colour space in and out, so the round trip is the identity and the
+    # nearest-neighbour repeat is the only thing that happened to the image. That
+    # matters most for _NRM and _H, which carry an encoding rather than a picture.
+    out.colorspace_settings.name = src.colorspace_settings.name
+    out.pixels.foreach_set(big.reshape(-1))
+    out.file_format = 'PNG'
+    out.filepath_raw = path
+    out.save()
+    bpy.data.images.remove(out)
+    bpy.data.images.remove(src)
+    os.remove(small_path)
 
 
 def render_pair(outdir, stem):
@@ -1772,6 +2939,19 @@ def build_and_render(name, spec, rot, outdir):
     # other's end faces, which is the black-notch fault the corner convention
     # exists to prevent.
     occupied = []
+
+    # A terrain tile answers for its whole footprint -- ground, elevation change,
+    # surfacing and scatter all come out of one field -- so it takes the dispatch
+    # before anything that would try to lay a floor or stand a wall on it.
+    if spec.get("terrain"):
+        add_terrain(name, spec, rot)
+        res = res_for_scene()
+        add_camera(res)
+        add_lighting()
+        configure_render(res)
+        stem = "%s_r%d" % (name, rot)
+        render_pair(outdir, stem)
+        return stem
 
     if kind == "pit":
         add_pit(m_stone, m_mortar, rims=rotate_edges(spec.get("rims", []), rot))
@@ -1844,6 +3024,17 @@ def tile_role(name, spec):
     should carry an explicit `role` in its spec, which wins."""
     if "role" in spec:
         return spec["role"]
+    terrain = spec.get("terrain")
+    if terrain:
+        if terrain == "flat":
+            return {-1: "liquid", 0: "ground", 1: "high_ground"}[spec.get("band", 0)]
+        if terrain == "mire":
+            return "ground"
+        if terrain == "track":
+            return "track_slope" if spec.get("high") else "track"
+        if spec.get("channel"):
+            return "slope"
+        return "transition"
     kind = spec.get("kind")
     base = spec.get("base", 0.0)
     if kind in ("arch", "door"):
@@ -1881,6 +3072,90 @@ def tile_role(name, spec):
     return "ground" if base == 0.0 else "high_ground"
 
 
+EDGE_ORDER = ["Y+", "X+", "Y-", "X-"]
+
+
+def tile_sockets(spec):
+    """What each of the four edges PRESENTS to its neighbour.
+
+    This is the whole adjacency contract, and it is derived rather than declared for
+    the same reason `role` is: the spec already says what the piece is, and a hand-
+    written socket table is a second copy of that fact waiting to disagree with the
+    first. The solver may abut two tiles only where the facing sockets are equal.
+
+        G0 / G1   walkable ground, low band / high band
+        W         open water
+        P0        a track crosses here -- always at the exact edge midpoint, which
+                  is why any junction connects to any other (see _arms)
+        X<lo><hi> a level change crosses here, named by the bands it joins
+
+    A transition piece presents its X socket on exactly TWO edges and a flat band on
+    the other two, which is what lets straight / inside corner / outside corner chain
+    into a closed loop around a plateau or an island. The ramp is deliberately given
+    the SAME sockets as the straight scarp it replaces, so a way up needs no
+    adjacency rule of its own -- it can stand anywhere a cliff runs."""
+    kind = spec.get("terrain")
+    if not kind:
+        return None
+
+    def band(b):
+        return {-1: "W", 0: "G0", 1: "G1"}[b]
+
+    if kind == "flat":
+        return {e: band(spec.get("band", 0)) for e in EDGE_ORDER}
+
+    if kind == "mire":
+        return {e: "G0" for e in EDGE_ORDER}
+
+    lo, hi = spec.get("lo", 0), spec.get("hi", 1)
+    cross = "X%s%s" % ("w" if lo == -1 else lo, hi)
+
+    if kind == "track":
+        # A track sits ON a band, so its edges are that band's socket with a P
+        # marker where an arm leaves. A climbing track also carries the level change.
+        high = spec.get("high", [])
+        out = {}
+        for e in EDGE_ORDER:
+            if high:
+                if e in high:
+                    out[e] = band(hi)
+                elif _opposite(e) in high:
+                    out[e] = band(lo)
+                else:
+                    out[e] = cross
+            else:
+                out[e] = band(lo)
+            if e in spec.get("arms", []):
+                out[e] = out[e] + "+P"
+        return out
+
+    # kind == "step": the transition family
+    high = spec.get("high", [])
+    join = spec.get("join", "max")
+    out = {}
+    if len(high) == 1:
+        h = high[0]
+        for e in EDGE_ORDER:
+            if e == h:
+                out[e] = band(hi)
+            elif e == _opposite(h):
+                out[e] = band(lo)
+            else:
+                out[e] = cross
+    else:
+        # Two adjacent edges. Under `max` the high ground unions and fills both of
+        # them (inside corner); under `min` it intersects to a nub and neither edge
+        # is fully high (outside corner). The two other edges carry the crossing in
+        # the first case and the flat low band in the second -- which is exactly the
+        # asymmetry that makes them different tiles rather than rotations.
+        for e in EDGE_ORDER:
+            if join == "max":
+                out[e] = band(hi) if e in high else cross
+            else:
+                out[e] = cross if e in high else band(lo)
+    return out
+
+
 def write_manifest(outdir):
     """Emit tiles.json: the set's own description of itself.
 
@@ -1891,6 +3166,13 @@ def write_manifest(outdir):
     sockets and rotations -- without the runtime knowing anything about it."""
     man = {"set": THEME, "label": theme().get("label", THEME), "kit": kit(),
            "tileW": TILE_W_PX, "rotations": ROTATIONS, "tiles": {}}
+    # The runtime has to know a set is pixel art: it decides texture filtering and
+    # whether the packer may use a lossy codec, and neither is guessable from the
+    # images.
+    if theme().get("pixel"):
+        man["pixel"] = theme()["pixel"]
+    if theme().get("posterize"):
+        man["posterize"] = theme()["posterize"]
     # Two facts role alone cannot carry, both of which the runtime has to know:
     #   FAMILY  a span over water is not interchangeable with one over a chasm, and
     #           the rim pieces have to match the hazard they surround
@@ -1909,6 +3191,15 @@ def write_manifest(outdir):
             ent["family"] = FAMILY[kind]
         if kind == "door":
             ent["closed"] = True
+        sock = tile_sockets(spec)
+        if sock:
+            # Rotations are emitted too. The solver should never have to know that
+            # r90 means "shift the socket list by one" -- that is a fact about how
+            # this baker names files, not about the tileset.
+            ent["sockets"] = {str(r): {e: sock[EDGE_ORDER[
+                (EDGE_ORDER.index(e) - (r // 90)) % 4]] for e in EDGE_ORDER}
+                for r in ROTATIONS}
+            ent["band"] = spec.get("band", spec.get("lo", 0))
         man["tiles"][name] = ent
     path = os.path.join(outdir, "tiles.json")
     with open(path, "w") as f:
@@ -1932,6 +3223,13 @@ def main():
     manifest_only = "--manifest-only" in args
     if manifest_only:
         args = [a for a in args if a != "--manifest-only"]
+    # Benching a look costs one rotation, not four. Nothing about a tile's
+    # appearance is decided by which way up it was rendered.
+    rots = ROTATIONS
+    if "--rot" in args:
+        k = args.index("--rot")
+        rots = [int(x) for x in args[k + 1].split(",")]
+        args = args[:k] + args[k + 2:]
     root = os.path.abspath(args[0]) if args else os.path.abspath("out")
     # Each theme owns a directory. Baking a new set never costs us an old one.
     outdir = os.path.join(root, THEME)
@@ -1948,7 +3246,7 @@ def main():
         if name not in T:
             print("SKIP unknown tile", name)
             continue
-        for rot in ROTATIONS:
+        for rot in rots:
             print("RENDERED", build_and_render(name, T[name], rot, outdir))
     write_manifest(outdir)
     print("TILE SET:", " ".join(sorted(T)))

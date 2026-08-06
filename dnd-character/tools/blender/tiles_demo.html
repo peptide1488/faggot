@@ -26,7 +26,8 @@
       <option value="2">normals</option>
       <option value="3">height / Z buffer</option></select></label>
   <label>tile set <select id="tileset"></select></label>
-  <label>ambient <input id="amb" type="range" min="0" max="60" value="18"></label>
+  <label><input id="daylight" type="checkbox"> daylight (outdoor)</label>
+  <label>ambient <input id="amb" type="range" min="0" max="100" value="18"></label>
   <label>torch <input id="rng" type="range" min="20" max="400" value="150"></label>
   <label>shadows <input id="shd" type="range" min="0" max="100" value="80"></label>
   <label>water <input id="water" type="range" min="0" max="100" value="60"></label>
@@ -64,7 +65,7 @@ const VERSION = "0.51.0";
 // so a set is a path, not a rebuild: geometry, lattice and lighting are shared
 // and only the albedo changes. Props and the wizard are theme-independent and
 // stay at out/ -- a barrel is a barrel in a castle or a cave.
-const TILESETS = ["sandstone","stone"];
+const TILESETS = ["sandstone","stone","grass10A"];
 let TILESET = new URLSearchParams(location.search).get("set")
            || localStorage.getItem("iso.tileset") || TILESETS[0];
 if(!TILESETS.includes(TILESET)) TILESET = TILESETS[0];
@@ -197,6 +198,107 @@ for (const [name, edges] of Object.entries(BASE))
       VARIANTS.push({name,rot,key,walls:new Set(walls),w:WEIGHT[name]});
   }
 NV = VARIANTS.length;
+// ---- SOCKET SETS -----------------------------------------------------------
+// The dungeon vocabulary is described by WALLS: a tile lists the edges it blocks,
+// and two tiles may abut when both sides agree about whether there is masonry
+// between them. That works because a dungeon has exactly one thing happening at
+// an edge.
+//
+// An outdoor set has several. grass10A's edges carry an ELEVATION BAND, a water
+// line and a track, in combinations -- "grass at the high band with a path
+// crossing" is a different socket from "grass at the high band", and neither is
+// expressible as a set of blocked edges. So a set may instead ship a SOCKET per
+// edge per rotation in its manifest, and adjacency becomes string equality:
+//
+//     A may sit left of B  <=>  A.sockets["X+"] === B.sockets["X-"]
+//
+// That is strictly more general than the wall rule (a wall set could be written
+// as sockets), but the dungeon sets are baked and packed under the old contract,
+// so both live here and the manifest decides which one a set uses.
+let MAN = null, SOCKET_SET = false;
+const SVAR = [];                       // {name, rot, sock, w}
+const ROLE_W = { ground:10, high_ground:5, liquid:6, track:3, transition:2,
+                 slope:1.2, track_slope:0.8 };
+
+function buildSocketVariants(man){
+  SVAR.length = 0;
+  for(const [name,t] of Object.entries(man.tiles)){
+    if(!t.sockets) continue;
+    for(const rot of [0,90,180,270]){
+      const sock = t.sockets[rot];
+      if(!sock) continue;
+      SVAR.push({name, rot, sock, role:t.role, band:t.band|0,
+                 w:(ROLE_W[t.role]||1)});
+    }
+  }
+  return SVAR.length;
+}
+
+// Same shape as wfc() below -- lowest-entropy cell, weighted pick, propagate,
+// retry on contradiction -- but the compatibility test is socket equality and the
+// domain is a plain array of sets rather than a bitmask, because a socket set has
+// more than 32 variants (28 tiles x 4 rotations = 112).
+function socketWfc(W,H,tries=60){
+  const N=SVAR.length, idx=(i,j)=>j*W+i;
+  // Precompute compatibility once: OK[e][a] is the set of b that may sit across
+  // edge e from a. Recomputing this inside propagate was the whole cost.
+  const OK={};
+  for(const nb of NEIGH){
+    const tab=new Array(N);
+    for(let a=0;a<N;a++){
+      const want=SVAR[a].sock[nb.edge], list=[];
+      for(let b=0;b<N;b++) if(SVAR[b].sock[OPP[nb.edge]]===want) list.push(b);
+      tab[a]=list;
+    }
+    OK[nb.edge]=tab;
+  }
+  for(let attempt=0;attempt<tries;attempt++){
+    const dom=new Array(W*H);
+    for(let n=0;n<W*H;n++){ dom[n]=new Set(); for(let v=0;v<N;v++) dom[n].add(v); }
+    const propagate=stack=>{
+      while(stack.length){
+        const [i,j]=stack.pop();
+        for(const nb of NEIGH){
+          const ni=i+nb.di, nj=j+nb.dj;
+          if(ni<0||ni>=W||nj<0||nj>=H) continue;
+          const allow=new Set();
+          for(const a of dom[idx(i,j)]) for(const b of OK[nb.edge][a]) allow.add(b);
+          const cur=dom[idx(ni,nj)]; let changed=false;
+          for(const b of cur) if(!allow.has(b)){ cur.delete(b); changed=true; }
+          if(changed){ if(!cur.size) return false; stack.push([ni,nj]); }
+        }
+      }
+      return true;
+    };
+    if(!propagate(Array.from({length:W*H},(_,n)=>[n%W,(n/W)|0]))) continue;
+    let ok=true;
+    while(true){
+      let best=-1,bestC=1e9;
+      for(let n=0;n<W*H;n++){ const c=dom[n].size; if(c>1&&c<bestC){bestC=c;best=n;} }
+      if(best<0) break;
+      const opts=[...dom[best]];
+      let tot=0; for(const v of opts) tot+=SVAR[v].w;
+      let r=rnd()*tot, pick=opts[0];
+      for(const v of opts){ r-=SVAR[v].w; if(r<=0){pick=v;break;} }
+      dom[best]=new Set([pick]);
+      if(!propagate([[best%W,(best/W)|0]])){ ok=false; break; }
+    }
+    if(!ok) continue;
+    const cells=[];
+    for(let j=0;j<H;j++) for(let i=0;i<W;i++){
+      const v=SVAR[[...dom[idx(i,j)]][0]];
+      // `walls` stays an empty Set so every consumer written for the dungeon
+      // (buildSquares, buildDraws, the debug overlay) keeps working unchanged --
+      // an outdoor tile blocks nothing at its edges, which is the truth.
+      cells.push({i, j, name:v.name, rot:v.rot, role:v.role, socket:true,
+                  walls:new Set(), level:v.band===1?1:0,
+                  noStand:v.role==="liquid", upper:null, kind:""});
+    }
+    return cells;
+  }
+  return null;
+}
+
 const NEIGH = [ {di:1,dj:0,edge:"X+"}, {di:-1,dj:0,edge:"X-"},
                 {di:0,dj:1,edge:"Y-"}, {di:0,dj:-1,edge:"Y+"} ];
 
@@ -770,6 +872,12 @@ function openForStair(t, dir){
 }
 
 function resync(t){
+  // A SOCKET TILE HAS NO WALLS, and this function derives art FROM walls -- so
+  // for one of those it looked up the empty wall set, found the dungeon's plain
+  // floor, and renamed the tile to it. Every grass tile in the map turned into
+  // `floor` the first time the view was rotated, and the whole map went blank.
+  // Its art is already chosen; rotating the world just turns it.
+  if(t.socket) return;
   // Only wall-derived art. A tile with a kind (pit/water/stairs/...) chooses its
   // art from the kind, so rewriting its name here churns a field nobody reads --
   // and made rotation look non-idempotent when auditing it.
@@ -856,6 +964,9 @@ const STEP=1.8, PITZ=3.4;   // MUST match build_tiles.py STEP/PIT
 // A tile is (wall-set, level, kind). kind: ""|"stairs"|"pit"|"bridge".
 // Level 1 tiles are the same wall-set at a raised base; stairs join 0 and 1.
 function tileArt(t){
+  // A socket tile names its own art: the manifest picked the piece and the
+  // rotation, so there is nothing left to resolve.
+  if(t.socket) return {name:t.name, rot:t.rot};
   if(t.kind==="pit")    return rimArt(RIFT_CELLS,RIFT_W,RIFT_H,t,"pit");
   if(t.kind==="water")  return rimArt(RIFT_CELLS,RIFT_W,RIFT_H,t,"water");
   if(t.kind==="water_bridge") return bridgeArt(RIFT_CELLS,RIFT_W,RIFT_H,t,"water_bridge");
@@ -927,8 +1038,23 @@ document.getElementById("ver").textContent=VERSION;
 
 (async function main(){
   const imgs={}, wiz={};
+  // The manifest is fetched BEFORE anything is loaded, because it decides WHAT to
+  // load. A set that ships sockets is driven entirely by it; a set without one is
+  // a dungeon set and keeps the wall contract.
   try{
-    const uniq=[...new Set(VARIANTS.map(v=>v.name+"_r"+v.rot)
+    const r=await fetch(TSET+"tiles.json");
+    if(r.ok){
+      MAN=await r.json();
+      SOCKET_SET=Object.values(MAN.tiles).some(t=>t.sockets);
+      if(SOCKET_SET) buildSocketVariants(MAN);
+    }
+  }catch(e){}
+  try{
+    // A SOCKET SET names its own pieces: the manifest is the list, so there is no
+    // hand-kept catalogue here to drift out of step with the bake. That drift is a
+    // real failure mode and not a theoretical one -- a single missing image aborts
+    // the whole loader, and this list has already gone stale twice.
+    const dungeonNames=[...new Set(VARIANTS.map(v=>v.name+"_r"+v.rot)
       .concat(VARIANTS.map(v=>v.name+"_up_r"+v.rot))
       .concat(Object.keys({"":0,"_e":0,"_c":0,"_o":0,"_d":0,"_x":0})
         .flatMap(suf=>[0,90,180,270].flatMap(r=>["pit"+suf+"_r"+r,"water"+suf+"_r"+r])))
@@ -948,6 +1074,8 @@ document.getElementById("ver").textContent=VERSION;
       // and one missing image aborts the whole loader (see the note above).
       .concat([...new Set(Object.values(OPENING_SUFFIX))].flatMap(suf=>
         [0,90,180,270].flatMap(r=>["arch"+suf+"_r"+r,"door"+suf+"_r"+r]))))];
+    const uniq = SOCKET_SET ? [...new Set(SVAR.map(v=>v.name+"_r"+v.rot))]
+                            : dungeonNames;
     // A PACKED set (pack_tiles.py) stores each pass cropped to its alpha box and
     // records the offset from the tile's anchor in pack.json -- 13x smaller than
     // the raw bake, because a floor tile only fills 20% of its canvas, height is
@@ -1328,6 +1456,32 @@ document.getElementById("ver").textContent=VERSION;
   // and stairs, which are still one surface); layer 1 is the overpass deck.
   // Encoding L*SQ + Y*SW + X keeps every existing layer-0 call site working,
   // because for L=0 the id is exactly what it was before.
+  // The largest connected component of standable squares, and a square inside it
+  // to start the hero on. The dungeon path gets this out of its stranding-repair
+  // loop; a landscape needs it on its own, because "where can he stand" is still
+  // the question the move range and the click-to-walk both ask.
+  function floodFrom(){
+    const comp=new Int32Array(SW*SH).fill(-1);
+    let best=null, tot=0;
+    for(let Y0=0;Y0<SH;Y0++) for(let X0=0;X0<SW;X0++){
+      if(!passable(X0,Y0,0,X0,Y0,0)) continue;
+      tot++;
+      if(comp[Y0*SW+X0]>=0) continue;
+      const id=Y0*SW+X0, seen=new Set([id]), st=[id];
+      comp[id]=id;
+      while(st.length){
+        const n=st.pop(), X=sqX(n), Y=sqY(n), L=sqL(n);
+        for(const [dx,dy] of STEPS8){
+          if(!canStep(X,Y,L,dx,dy,L)) continue;
+          const m=(Y+dy)*SW+(X+dx);
+          if(comp[m]<0){ comp[m]=id; seen.add(m); st.push(m); }
+        }
+      }
+      if(!best||seen.size>best.seen.size) best={s0:id, seen};
+    }
+    return best ? {s0:best.s0, seen:best.seen, tot} : null;
+  }
+
   function buildSquares(){
     const at=(i,j)=>cells[j*W+i];
     sq=new Uint8Array(SW*SH).fill(1);
@@ -1349,6 +1503,7 @@ document.getElementById("ver").textContent=VERSION;
         return true;
       }
       if(blocked && blocked[Y*SW+X]) return false;
+      if(c.noStand) return false;                  // open water on a socket set
       if(c.kind==="pit"||c.kind==="water") return false;     // chasm / deep water
       if(c.kind==="bridge"||c.kind==="water_bridge") return onCauseway(c,X,Y);
       if(c.kind==="over_stairs"){               // only the middle of the flight
@@ -1365,6 +1520,15 @@ document.getElementById("ver").textContent=VERSION;
       const edge = i2>i1?"X+" : i2<i1?"X-" : j2>j1?"Y-" : "Y+";
       if(L===L2){
         if(sameTile) return true;
+        // A cliff is not a wall, so `walls` cannot stop anyone climbing it. On a
+        // socket set the band difference IS the obstacle, and the only tiles that
+        // may bridge one are the ones built to be walked up.
+        if(a.socket){
+          if(a.level!==b.level &&
+             a.role!=="slope" && b.role!=="slope" &&
+             a.role!=="track_slope" && b.role!=="track_slope") return false;
+          return true;
+        }
         if(L===1) return !!(a.upper && b.upper);   // no walls modelled up top yet
         if(a.walls.has(edge) || b.walls.has(OPP[edge])) return false;
         // A doorway is an opening in the middle of the wall, not a missing wall:
@@ -1869,8 +2033,10 @@ document.getElementById("ver").textContent=VERSION;
       if(c.riftHoriz!==undefined) c.riftHoriz=!c.riftHoriz;
       // RE-DERIVE THE ART. tileArt reads the stored name/rot, so rotating the
       // wall set without this leaves every wall drawn in its old orientation --
-      // the layout turns and the masonry does not.
-      resync(c);
+      // the layout turns and the masonry does not. A socket tile instead turns
+      // the art it already has: the manifest baked all four rotations, so the
+      // same piece one quarter-turn on is simply the next file along.
+      if(c.socket) c.rot=(c.rot+90)%360; else resync(c);
       out[nj*N+ni]=c;
     }
     cells=out; RIFT_CELLS=cells;
@@ -1901,6 +2067,20 @@ document.getElementById("ver").textContent=VERSION;
     reseed(SEED);
     seedBox.value = SEED;
     history.replaceState(null,"", "?set="+TILESET+"&seed="+SEED);
+    if(SOCKET_SET){
+      // An outdoor set is a LANDSCAPE, not a dungeon: no rooms to carve, no doors
+      // to dress, no rift to gouge and no elevation pass, because every one of
+      // those is already a tile in the vocabulary. The solver output is the map.
+      const out=socketWfc(W,H);
+      if(!out){ status.textContent="socket WFC found no tiling"; return; }
+      cells=out; RIFT_CELLS=cells; RIFT_W=W; RIFT_H=H;
+      passable=buildSquares();
+      window.__elevDebug={afterGen:{raised:cells.filter(c=>c.level===1).length,
+                                    stairs:0}, stats:null, passes:[]};
+      // A landscape has no plateau-stranding repair to run, so it hands the
+      // shared tail a flood computed straight from the finished map.
+      return finishBuild(floodFrom(0));
+    }
     const layout=genLayout(W,H);
     cells=layout.cells;
     RIFT_CELLS=cells; RIFT_W=W; RIFT_H=H;      // rimArt needs neighbour context
@@ -2036,6 +2216,23 @@ document.getElementById("ver").textContent=VERSION;
     if(edgeErrors.length) console.error("EDGE CONTRACT VIOLATED",edgeErrors);
     window.__edgeErrors=edgeErrors.length;
 
+    addOverpass(cells,W,H);
+    // ---- decide where props go, then draw tiles and props in ONE painter pass.
+    // A prop must be drawn immediately after its own tile: draw all tiles first
+    // and props after, and a prop on a far tile lands on top of a nearer tile.
+    return finishBuild(flood);
+  }
+
+  // Everything from prop placement onward is the same for a dungeon and a
+  // landscape, so it is one function rather than two copies that drift.
+  function finishBuild(flood){
+    // COMPOSITE EXTENT. This lives here and not in the dungeon branch because it
+    // is a fact about the LATTICE -- where the tiles land on screen and how much
+    // padding the largest one needs -- and both kinds of map have a lattice. It
+    // used to sit just above the dungeon's call to this function, which meant the
+    // landscape path reached the compositor with CW and CH still undefined: the
+    // canvases came out 0x0 and the map rendered as a black screen with a
+    // perfectly correct tile layout behind it.
     const pts=cells.map(c=>[c.i*STEP_I[0]+c.j*STEP_J[0], c.i*STEP_I[1]+c.j*STEP_J[1]]);
     const minx=Math.min(...pts.map(p=>p[0])), maxx=Math.max(...pts.map(p=>p[0]));
     const miny=Math.min(...pts.map(p=>p[1])), maxy=Math.max(...pts.map(p=>p[1]));
@@ -2043,15 +2240,15 @@ document.getElementById("ver").textContent=VERSION;
     // largest tile in the set -- both so a taller-than-1024 tile has room.
     CW=(maxx-minx)+MAXR; CH=(maxy-miny)+MAXR; OX=-minx+MAXR/2; OY=-miny+MAXR/2;
 
-    addOverpass(cells,W,H);
-    // ---- decide where props go, then draw tiles and props in ONE painter pass.
-    // A prop must be drawn immediately after its own tile: draw all tiles first
-    // and props after, and a prop on a far tile lands on top of a nearer tile.
     // Prop placement is DATA (which tile, which edge, which square), decided
     // once. The draw list is derived from it. That way rotating the view can
     // rotate the props with the world instead of re-rolling them somewhere else.
     propPlan=[];
-    for(const c of cells){
+    // Dungeon furniture on a landscape: a barrel in a meadow is wrong before it is
+    // buggy, and outdoor scatter (trees, shrubs, boulders) is its own prop set that
+    // does not exist yet. Torches are skipped for free -- they mount on walls, and
+    // an outdoor tile has none.
+    for(const c of (SOCKET_SET ? [] : cells)){
       for(const e of c.walls){
         if(rnd()>0.30) continue;
         if(!propImg["torch_"+e]) continue;
@@ -2080,6 +2277,11 @@ document.getElementById("ver").textContent=VERSION;
     draws.sort((p,q)=> (p.d-q.d) || (p.o-q.o));
     lastDraws=draws;
     rebuildComposite(draws);
+    // A black canvas has three possible causes -- no draws, a composite that came
+    // out zero-sized, or one too big for the GPU -- and they are indistinguishable
+    // from the outside. Publish the three numbers rather than guess between them.
+    window.__drawDebug={draws:draws.length, CW, CH, MAXR,
+                        missing:draws.filter(d=>!d.img).length};
 
     gl.uniform1i(U("uAlb"),0); gl.uniform1i(U("uNrm"),1);
     gl.uniform1i(U("uHgt"),2); gl.uniform1i(U("uSpr"),3);
@@ -2170,7 +2372,26 @@ document.getElementById("ver").textContent=VERSION;
         bits=document.getElementById("bits"), dith=document.getElementById("dith"),
         bands=document.getElementById("bands"), bdith=document.getElementById("bdith"),
         ss=document.getElementById("ss"), water=document.getElementById("water"),
+        daylight=document.getElementById("daylight"),
         seedBox=document.getElementById("seed");
+  // DAYLIGHT. The lighting model here is a dungeon's: near-black ambient plus a
+  // handful of point lights, which is exactly wrong outdoors -- a meadow at noon
+  // has one enormous light source and no torches at all. This is not a new shader
+  // pass, it is a preset: ambient to full, torches off. It works because the bake
+  // carries its own shading in the albedo (see build_tiles.py's add_lighting), so
+  // a flat-lit outdoor tile is not flat-looking, it is just not lit twice.
+  // Defaults ON for a socket set, which is what an outdoor set is, and OFF for a
+  // dungeon -- so neither kind of map opens looking wrong.
+  const NIGHT={amb:18, rng:150, shd:80};
+  function applyDaylight(on){
+    if(on){ amb.value=100; rng.value=rng.min; shd.value=45; }
+    else  { amb.value=NIGHT.amb; rng.value=NIGHT.rng; shd.value=NIGHT.shd; }
+    for(const el of [amb,rng,shd]) el.dispatchEvent(new Event("input",{bubbles:true}));
+  }
+  daylight.checked = SOCKET_SET;
+  daylight.onchange = () => { applyDaylight(daylight.checked);
+                              flash(daylight.checked?"daylight":"torchlight"); };
+  applyDaylight(daylight.checked);
   let mouse=[6,-6], frozen=false, clock=0;
 
   function drawGL(){

@@ -76,9 +76,19 @@ def pack_one(job):
     cx, cy = W / 2.0, H / 2.0
     x0, y0, _, _ = box
 
-    # ---- albedo: lossy is fine, alpha stays lossless in WebP either way
+    # ---- albedo: lossy is fine for a smoothly-shaded set, and WRONG for a pixel
+    # one. A posterised, nearest-upscaled tile is all hard edges and flat fields,
+    # which is the worst case for a DCT codec: it rings along every boundary and
+    # smears the flats, so the art arrives visibly blurred no matter what the
+    # sampler does. Lossless costs little here because flat banded colour is
+    # exactly what a lossless codec is good at.
     a = alb.crop(box)
-    a.save(os.path.join(out, stem + ".webp"), "WEBP", quality=albedo_q, method=method)
+    if albedo_q >= 100:
+        a.save(os.path.join(out, stem + ".webp"), "WEBP", lossless=True,
+               quality=100, method=method)
+    else:
+        a.save(os.path.join(out, stem + ".webp"), "WEBP", quality=albedo_q,
+               method=method)
 
     # EVERY PASS KEEPS ITS ALPHA. Cropping to the bounding box does not make the
     # image solid: a tile is a diamond, so the corners of its own box are still
