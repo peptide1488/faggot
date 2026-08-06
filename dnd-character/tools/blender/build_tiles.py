@@ -3350,6 +3350,16 @@ def write_manifest(outdir):
                 for r in ROTATIONS}
             ent["band"] = spec.get("band", spec.get("lo", 0))
         man["tiles"][name] = ent
+    # WHERE THIS SET'S WATER SURFACE SITS. There are two of them and always have
+    # been: a dungeon's flooded basin at WATER_Z, and a landscape's mere at
+    # WATER_LEVEL, which has to sit just under the ground band so a shore can
+    # shelve through it. The runtime finds water by looking for flat, up-facing
+    # pixels AT THAT HEIGHT -- it is how water is identified at all, with no mask
+    # pass -- so a shader holding one constant silently stops recognising the
+    # other set's water: no ripple, no foam, no fresnel, just the baked plane.
+    # That is exactly what happened to the outdoor sets. Ship the number.
+    socketed = any("sockets" in e for e in man["tiles"].values())
+    man["water_z"] = WATER_LEVEL if socketed else WATER_Z
     path = os.path.join(outdir, "tiles.json")
     with open(path, "w") as f:
         json.dump(man, f, indent=1, sort_keys=True)

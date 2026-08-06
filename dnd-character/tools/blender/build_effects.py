@@ -183,6 +183,16 @@ def fx_frost(t):
 FX = {"fireball": fx_fireball, "bolt": fx_bolt, "heal": fx_heal, "frost": fx_frost}
 
 
+# A BLAST NEEDS MORE CANVAS THAN A FIGURE. The camera frames RES/PPU world units,
+# so at the actors' 384 a fireball's outer shell ran straight off the top of the
+# frame -- the baked PNG had alpha 255 along its top edge, and the explosion
+# looked like it was being cut off before it could finish expanding. PPU is
+# untouched, so the art is the same size in the world; there is simply more room
+# around it. The runtime reads `res` from effects.json rather than assuming the
+# actors' number, which is why this can differ at all.
+RES = 640
+
+
 def main():
     argv = sys.argv
     args = argv[argv.index("--") + 1:] if "--" in argv else []
@@ -190,6 +200,7 @@ def main():
     only = args[args.index("--only") + 1] if "--only" in args else None
     os.makedirs(outdir, exist_ok=True)
 
+    bw.RES = RES
     bw.add_camera()
     bw.add_lighting()
     bw.configure_render()

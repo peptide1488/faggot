@@ -1170,8 +1170,13 @@ const ACT_FPS=12;                    // one-shot actions run on the clock; only
 // is interpolated from these rather than typed twice: a mismatch between the
 // atlas the JS packs and the loop bound the GLSL unrolls is a silent wrong
 // picture, not an error.
-const SPR_RES=384;                   // build_actors.py RES; the tiles' own PPU
-const ATL_COLS=8, ATL_ROWS=1, NSPR=ATL_COLS*ATL_ROWS;
+// A SPRITE'S RESOLUTION IS ITS OWN. Actors bake at 384; an effect needs more
+// canvas at the same world scale, because a blast expands past a figure's frame.
+// So the atlas CELL is the largest of them and each sprite occupies the top-left
+// res x res of its cell. The manifests carry the numbers and nothing here
+// assumes they agree.
+const CELL_RES=640;
+const ATL_COLS=4, ATL_ROWS=2, NSPR=ATL_COLS*ATL_ROWS;
 const NCAST=2;                       // of those, how many may cast a shadow
 // What each effect is FOR, at runtime. The bake knows the shapes; this knows
 // where a cast lands and what colour it throws on the walls -- an emissive
@@ -1183,6 +1188,24 @@ const FXDEF={
   frost:   { light:[0.70,1.1,2.0],  r:5.0, z:0.0 }
 };
 const OVER_Z=2.8;                    // build_tiles.py OVER_Z (upper floor height)
+// Where this set's water surface sits, from its manifest. -0.42 is the dungeon
+// value and the fallback for a set baked before the manifest carried it.
+let WATER_SURFACE = -0.42;
+// Sprite resolutions, from actors.json / effects.json. The defaults match the
+// bakes that existed when this was written; the manifest wins.
+let ACT_RES = 384, FX_RES = 512;
+// What the debug overlays paint with. Kept next to each other because they are
+// one vocabulary: a role is what a tile IS, a socket is what an edge PROMISES.
+const ROLE_COLOUR={ ground:"#3ad24a", high_ground:"#eaeaea", transition:"#ff8c00",
+                    slope:"#ffd400", track:"#c07a3a", track_slope:"#e0a050",
+                    liquid:"#2b6bff", wallow:"#00e0c0" };
+// G0/G1 ground low/high, W water, X.. a level change crossing this edge,
+// +P a track crossing it. Related sockets share a hue on purpose: a wrong
+// tiling usually shows up as one wedge in the wrong FAMILY, not a wrong shade.
+const SOCK_COLOUR={ "G0":"#3ad24a", "G0+P":"#8fe08f", "G1":"#eaeaea", "G1+P":"#c8c8c8",
+                    "W":"#2b6bff", "W+P":"#6ba0ff", "X01":"#ff8c00",
+                    "Xw0":"#00e0c0", "Xw1":"#00a0b0" };
+const DIR_COLOUR={ "Y+":"#ff2b2b", "X+":"#3ad24a", "Y-":"#2b6bff", "X-":"#ffd400" };
 let propMeta=null; const propImg={};
 let RIFT_CELLS=null, RIFT_W=0, RIFT_H=0;   // rimArt needs neighbour context
 const status=document.getElementById("status");
@@ -1209,6 +1232,7 @@ document.getElementById("ver").textContent=VERSION;
     if(r.ok){
       MAN=await r.json();
       SOCKET_SET=Object.values(MAN.tiles).some(t=>t.sockets);
+      if(typeof MAN.water_z==="number") WATER_SURFACE=MAN.water_z;
       if(SOCKET_SET) buildSocketVariants(MAN);
     }
   }catch(e){}
@@ -1225,7 +1249,6 @@ document.getElementById("ver").textContent=VERSION;
         .flatMap(r=>["bridge_s"+b+"_r"+r,"water_bridge_s"+b+"_r"+r])))
       .concat([0,90,180,270].flatMap(r=>["bridge_flank_r"+r,"water_flank_r"+r]))
       .concat([0,90,180,270].map(r=>"over_walk_n_r"+r))
-      .concat([0,90,180,270].map(r=>"debug_edges_r"+r))
       // NB: no bare "water_bridge_r<rot>" here -- that name is from a superseded
       // scheme, is not in build_tiles.py's TILES, and only ever loaded because a
       // stale file happened to still be sitting in out/. A freshly baked set
@@ -1274,6 +1297,11 @@ document.getElementById("ver").textContent=VERSION;
     // path that could not swing a sword.
     ACTMAN = await (await fetch("out/actors/actors.json")).json();
     FXMAN  = await (await fetch("out/effects/effects.json")).json();
+    if(ACTMAN.res) ACT_RES=ACTMAN.res;
+    if(FXMAN.res)  FX_RES=FXMAN.res;
+    if(Math.max(ACT_RES,FX_RES)>CELL_RES)
+      throw new Error("sprite res "+Math.max(ACT_RES,FX_RES)+" exceeds the atlas "+
+                      "cell ("+CELL_RES+") — raise CELL_RES");
     status.textContent="loading actors…";
     await Promise.all(ACTMAN.bodies.map(b=>loadAction(b,"walk")));
     await Promise.all(Object.keys(FXMAN.effects).map(loadEffect));
@@ -1297,6 +1325,11 @@ document.getElementById("ver").textContent=VERSION;
   // How far up you can step. About a third of a level: enough for a bank or the lip
   // of a ford, nowhere near enough for a scarp.
   const CLIMB = 0.62;
+  // How steep the ground under a square may be and still hold a person, as a
+  // gradient (rise per world unit). 1.0 is 45 degrees. build_tiles.py starts
+  // turning grass to rock at 0.75 and is fully rock by ~2.1, so this sits just
+  // inside the band where there is still turf to stand on.
+  const STAND_SLOPE = 0.95;
 
   const VS=`attribute vec2 p;
     void main(){ gl_Position=vec4(p,0.0,1.0); }`;
@@ -1385,8 +1418,14 @@ document.getElementById("ver").textContent=VERSION;
     // and floors are all >= 0, and a pit bed is far below at -3.4. So "flat, and
     // at WATER_Z" identifies exactly the water pixels, with no extra texture, no
     // extra memory, and nothing for the compositor to keep in sync.
-    // WATER_Z MUST MATCH build_tiles.py -- it is a shared constant, not a guess.
-    const float WATER_Z = -0.42;
+    // THE SET SAYS WHERE ITS WATER IS. There are two surfaces in build_tiles.py
+    // and always have been -- a dungeon's flooded basin at WATER_Z, a landscape's
+    // mere at WATER_LEVEL, which sits just under the ground band so a shore can
+    // shelve through it. This was a const holding the dungeon's number, so on an
+    // outdoor set the test below never matched and the whole live-water branch
+    // never ran: no ripple, no foam, no fresnel, just the flat baked plane. It
+    // comes from the manifest now, because it is a fact about the set.
+    uniform float uWaterZ;
     // Direction from a surface toward the fixed 2:1 iso camera. Same basis
     // depthAt() uses: depth falls off along +(x-y) and +z, so that IS the eye.
     const vec3 EYE = vec3(0.6123724,-0.6123724,0.5);
@@ -1623,7 +1662,7 @@ document.getElementById("ver").textContent=VERSION;
 
       // ---- water: replace the baked flat plane with a live surface ----------
       float gloss=0.0;
-      if(uWater>0.0 && which==0 && !empty && nrm.z>0.9 && abs(hgt-WATER_Z)<0.05){
+      if(uWater>0.0 && which==0 && !empty && nrm.z>0.9 && abs(hgt-uWaterZ)<0.05){
         vec2 wp = worldAt(P,hgt);
         float amp = uWater;
         nrm = waterNormal(wp,uTime,amp);
@@ -1777,6 +1816,17 @@ document.getElementById("ver").textContent=VERSION;
       if(blocked && blocked[Y*SW+X]) return false;
       if(c.noStand) return false;                  // open water on a socket set
       if(c.kind==="pit"||c.kind==="water") return false;     // chasm / deep water
+      // YOU CANNOT STAND ON A ROCK FACE. The rise between two square CENTRES is
+      // not enough on its own: a scarp spread over three or more squares clears
+      // the climb limit at every single step while the ground it crosses is
+      // near-vertical, so a fifth of the standable squares on a map sat on a
+      // cliff and the pathfinder walked actors straight up it.
+      //
+      // The threshold is the one build_tiles.py already surfaces with -- rock is
+      // where grass cannot root, `rock = _sstep((slope - 0.75)/1.35)` -- so what
+      // you may stand on is what was painted as ground. Deciding it twice, by two
+      // different rules, is how the picture and the movement stopped agreeing.
+      if(c.socket && sqZ && slopeUnder(X,Y) > STAND_SLOPE) return false;
       if(c.kind==="bridge"||c.kind==="water_bridge") return onCauseway(c,X,Y);
       if(c.kind==="over_stairs"){               // only the middle of the flight
         const k=(c.dir==="Y+"||c.dir==="Y-") ? (X%CELLS) : (Y%CELLS);
@@ -2026,6 +2076,16 @@ document.getElementById("ver").textContent=VERSION;
     }
   }
 
+  // Gradient of the composited surface under a square. Sampled from the height
+  // buffer rather than the tile's band, for the same reason squareZ is: a tile
+  // does not have one height, and the buffer is what was actually drawn.
+  function slopeUnder(X,Y){
+    const [wx,wy]=sqWorld(X,Y), d=0.5;
+    const zx=(heightAt(wx+d,wy)-heightAt(wx-d,wy))/(2*d);
+    const zy=(heightAt(wx,wy+d)-heightAt(wx,wy-d))/(2*d);
+    return Math.hypot(zx,zy);
+  }
+
   function squareZ(X,Y,L){
     const c=cells[((Y/CELLS)|0)*W+((X/CELLS)|0)];
     if(!c) return 0;
@@ -2224,12 +2284,6 @@ document.getElementById("ver").textContent=VERSION;
       if(it.kind==="tile"){
         const c=it.c;
         let art=tileArt(c);
-        // edge-colour mode: Y+ red, X+ green, Y- blue, X- yellow. Proves the ART
-        // agrees with the logical edge -- which no data-only audit can.
-        // only swap in the edge-colour tile for PLAIN floors, or the walls
-        // vanish and the map looks broken for an unrelated reason
-        if(EDGE_DEBUG && !c.kind && !c.level && c.walls.size===0)
-          art={name:"debug_edges", rot:0};
         const key=art.name+"_r"+art.rot, E=imgs[key];
         // A name the loader never fetched used to surface as "E is not iterable"
         // from the destructure below -- which says nothing about WHICH tile, and
@@ -2328,7 +2382,50 @@ document.getElementById("ver").textContent=VERSION;
         else if(c.kind==="over_stairs")diamond(cx,cy,"#ff00d0",1);
         else if(c.kind==="door")      diamond(cx,cy,"#9d00ff",0.5);
         else if(c.kind==="arch")      diamond(cx,cy,"#00ff62",0.5);
+        // A SOCKET SET HAS NO `kind`. Its pieces are told apart by ROLE, so
+        // without these the checkbox matched nothing on an outdoor map and
+        // read as a debug tool that does not work -- which is worse than not
+        // having one, because it is the tool you reach for to find out why a
+        // map looks wrong.
+        else if(ROLE_COLOUR[c.role]) diamond(cx,cy,ROLE_COLOUR[c.role],1);
         else if(c.level===1)          diamond(cx,cy,"#ffffff",0.7);
+      }
+    }
+    // EDGE / SOCKET OVERLAY. What each edge of each tile promises, drawn as a
+    // wedge per edge in the colour of its socket. This used to swap in a baked
+    // `debug_edges` tile, which only exists for the dungeon sets: on a socket
+    // set it threw "no image for tile debug_edges_r0" and took the ROLE overlay
+    // down with it, because both checkboxes run the same re-composite. Drawing
+    // it here needs no art, works on every set, and -- the actual point -- shows
+    // the socket vocabulary itself, so "which edges may meet" is something you
+    // can read off the map instead of inferring from a tiling that went wrong.
+    if(EDGE_DEBUG){
+      const wedge=(cx,cy,edge,col,label)=>{
+        // the diamond's four quadrant triangles, one per world edge
+        const w=TILE_W*0.5, h=TILE_W*0.25;
+        const P={ "X+":[[w,0],[0,h]], "Y-":[[0,h],[-w,0]],
+                  "X-":[[-w,0],[0,-h]], "Y+":[[0,-h],[w,0]] }[edge];
+        xa.save(); xa.globalAlpha=0.7; xa.fillStyle=col;
+        xa.beginPath(); xa.moveTo(cx,cy);
+        xa.lineTo(cx+P[0][0]*0.82, cy+P[0][1]*0.82);
+        xa.lineTo(cx+P[1][0]*0.82, cy+P[1][1]*0.82);
+        xa.closePath(); xa.fill();
+        if(label){
+          const mx=cx+(P[0][0]+P[1][0])*0.30, my=cy+(P[0][1]+P[1][1])*0.30;
+          xa.globalAlpha=1; xa.fillStyle="#000";
+          xa.font="bold "+Math.round(TILE_W*0.075)+"px monospace";
+          xa.textAlign="center"; xa.textBaseline="middle";
+          xa.fillText(label,mx,my);
+        }
+        xa.restore();
+      };
+      for(const c of cells){
+        const cx=OX+c.i*STEP_I[0]+c.j*STEP_J[0], cy=OY+c.i*STEP_I[1]+c.j*STEP_J[1];
+        const sock = SOCKET_SET && MAN.tiles[c.name] &&
+                     MAN.tiles[c.name].sockets[String(c.rot||0)];
+        for(const e of ORDER)
+          wedge(cx,cy,e, sock ? (SOCK_COLOUR[sock[e]]||"#ff00ff") : DIR_COLOUR[e],
+                sock ? sock[e] : e);
       }
     }
     resizeCanvas();
@@ -2695,7 +2792,7 @@ document.getElementById("ver").textContent=VERSION;
   // Cells are uploaded with texSubImage2D when an actor changes frame, never
   // per frame wholesale: the atlas is 4.7 MB per buffer and re-uploading three
   // of those at 60fps is not a thing a browser will do.
-  const ATL_W=ATL_COLS*SPR_RES, ATL_H=ATL_ROWS*SPR_RES;
+  const ATL_W=ATL_COLS*CELL_RES, ATL_H=ATL_ROWS*CELL_RES;
   const atlasTex=[], atlasHeld=new Array(NSPR).fill(null);
   for(let u=0;u<3;u++){
     const t=gl.createTexture();
@@ -2713,7 +2810,7 @@ document.getElementById("ver").textContent=VERSION;
   }
   function blit(i,tri){
     if(atlasHeld[i]===tri) return;
-    const x=(i%ATL_COLS)*SPR_RES, y=((i/ATL_COLS)|0)*SPR_RES, src=[tri.a,tri.n,tri.h];
+    const x=(i%ATL_COLS)*CELL_RES, y=((i/ATL_COLS)|0)*CELL_RES, src=[tri.a,tri.n,tri.h];
     for(let u=0;u<3;u++){
       gl.activeTexture(gl.TEXTURE0+3+u); gl.bindTexture(gl.TEXTURE_2D,atlasTex[u]);
       gl.texSubImage2D(gl.TEXTURE_2D,0,x,y,gl.RGBA,gl.UNSIGNED_BYTE,src[u]);
@@ -2734,7 +2831,7 @@ document.getElementById("ver").textContent=VERSION;
     // image centre == the model's feet, and the render used the same PPU, so
     // this is 1:1. Standing on a raised tile lifts it up-screen by its world Z,
     // exactly the way the projection lifts a wall of that height.
-    const [sx,sy]=worldToScreen(o.wx,o.wy), w=SPR_RES*(o.k||1);
+    const [sx,sy]=worldToScreen(o.wx,o.wy), w=(o.res||ACT_RES)*(o.k||1);
     return [sx-w/2, sy-w/2 - (o.z||0)*COS30*PPU, w, w];
   }
   const spRect=new Float32Array(NSPR*4), spAtlas=new Float32Array(NSPR*4),
@@ -2748,7 +2845,7 @@ document.getElementById("ver").textContent=VERSION;
     const solid=[];
     for(const a of actors){
       const t=actorFrame(a);
-      if(t) solid.push({t, wx:a.wx, wy:a.wy, z:a.z||0,
+      if(t) solid.push({t, wx:a.wx, wy:a.wy, z:a.z||0, res:ACT_RES,
                         d:(a.wx-hero.wx)**2+(a.wy-hero.wy)**2});
     }
     solid.sort((p,q)=>p.d-q.d);                    // the hero is his own zero
@@ -2756,7 +2853,7 @@ document.getElementById("ver").textContent=VERSION;
     for(const e of fx){
       const set=FXIMG[e.name]; if(!set) continue;
       emit.push({t:set[Math.min(e.frame|0,set.length-1)], wx:e.wx, wy:e.wy, z:e.z,
-                 k:e.k, rot:e.rot, add:fxBurn(e)});
+                 k:e.k, rot:e.rot, add:fxBurn(e), res:FX_RES});
     }
     const list=solid.slice(0,NSPR-Math.min(emit.length,2)).concat(emit).slice(0,NSPR);
     for(let i=0;i<list.length;i++){
@@ -2764,8 +2861,11 @@ document.getElementById("ver").textContent=VERSION;
       blit(i,o.t);
       const [rx,ry,rw,rh]=spriteRect(o);
       spRect.set([rx,ry,rw,rh], i*4);
-      spAtlas.set([(i%ATL_COLS)/ATL_COLS, ((i/ATL_COLS)|0)/ATL_ROWS,
-                   1/ATL_COLS, 1/ATL_ROWS], i*4);
+      // The sub-rect is the sprite's OWN size inside its cell, not the whole
+      // cell: a 384 actor in a 512 cell would otherwise sample 128 px of
+      // whatever image sits next to it.
+      spAtlas.set([(i%ATL_COLS)*CELL_RES/ATL_W, ((i/ATL_COLS)|0)*CELL_RES/ATL_H,
+                   (o.res||ACT_RES)/ATL_W, (o.res||ACT_RES)/ATL_H], i*4);
       // meta.zw is the sample rotation with the rect's oversize folded in, so a
       // bolt baked along +X can be pointed anywhere without its corners clipping.
       const c=Math.cos(o.rot||0)*(o.k||1), s=Math.sin(o.rot||0)*(o.k||1);
@@ -2926,8 +3026,8 @@ document.getElementById("ver").textContent=VERSION;
       if(a.dead) continue;
       const [sx,sy]=worldToScreen(a.wx,a.wy);
       const y=sy-(a.z||0)*COS30*PPU;
-      const dx=cx-sx, dy=cy-(y-SPR_RES*0.22);       // aim at the chest, not the feet
-      if(Math.abs(dx)>SPR_RES*0.22 || Math.abs(dy)>SPR_RES*0.30) continue;
+      const dx=cx-sx, dy=cy-(y-ACT_RES*0.22);       // aim at the chest, not the feet
+      if(Math.abs(dx)>ACT_RES*0.22 || Math.abs(dy)>ACT_RES*0.30) continue;
       const d=dx*dx+dy*dy;
       if(d<bestD){ bestD=d; best=a; }
     }
@@ -3035,6 +3135,7 @@ document.getElementById("ver").textContent=VERSION;
     }
     gl.uniform1f(U("uShadow"),shd.value/100);
     gl.uniform1f(U("uWater"),water.value/100);
+    gl.uniform1f(U("uWaterZ"),WATER_SURFACE);
     gl.uniform1f(U("uTime"),clock);
     gl.uniform1f(U("uMode"),parseFloat(mode.value));
     // Slot 0 is his staff gem (not his chest -- a light at his own position blows
@@ -3250,7 +3351,11 @@ document.getElementById("ver").textContent=VERSION;
     worldToScreen,sqWorld,bfsSq,SW,SH,spriteVisiblePixels,spriteRect,
     standable:(X,Y,L)=>passable(X,Y,L||0,X,Y,L||0),
     propPlan:()=>propPlan, draws:()=>lastDraws,
-    pathToward,
+    pathToward, squareZ, heightAt,
+    // Slope under a square, from the composited height buffer -- the same buffer
+    // walkability reads. "Can you stand here" and "is this a rock face" are
+    // different questions and this is the second one.
+    slopeAt:slopeUnder,
     sqId:(X,Y,L)=>(L||0)*SW*SH+Y*SW+X,
     goto:s=>{const p=bfsSq(hero.sq,s); if(p.length) hero.path=p; return p;},
     view:(z,px,py)=>{zoom.value=Math.round(z*100);panX=px;panY=py;fit();},
