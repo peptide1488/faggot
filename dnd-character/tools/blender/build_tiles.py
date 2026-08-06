@@ -177,9 +177,8 @@ THEMES = {
                      flower=(0.72, 0.70, 0.44),
                      water=(0.075, 0.235, 0.275),
                      posterize=7,               # flat value steps, no gradients
-                     pixel=4,                   # render at 1/4 and nearest-upscale
-                     bleed=7,                   # 2 render px of overshoot: enough to
-                                                # bury the AO-bright rim (see _bh)
+                     pixel=2,                   # render at 1/2 and nearest-upscale
+                     bleed=7,                   # overshoot, in output pixels (see _bh)
                      grime=0.55, wear=0.65, damp=0.5),
 }
 
@@ -1792,13 +1791,19 @@ def add_crags(seed, sample, cap, base=0.0):
 
 
 def water_material():
-    """Flat water. Opaque on purpose.
+    """Water you can see into.
 
-    A transparent surface would need the bed rendered through it, which costs
-    nothing in Cycles and everything downstream: the height pass would report the
-    BED where the runtime needs the SURFACE, so a token standing in the shallows
-    would sink to the bottom of the lake. Opaque teal with banded highlights is also
-    what the references draw, so the cheap answer and the right-looking one agree."""
+    I argued against this on the grounds that the height pass would report the BED
+    where the runtime needs the SURFACE, sinking anything standing in the shallows.
+    That was wrong, and worth writing down: render_pair SWAPS every material out for
+    height_material before the _H pass, so what the albedo does with transparency
+    has no bearing on it at all. The depth buffer sees the water plane as a solid
+    surface either way.
+
+    So the bed shows through, which is most of what makes shallow water read as
+    SHALLOW: the shelving beach and the stones on it stay visible, dimmed and tinted,
+    instead of being replaced by a flat sheet of blue at the exact line where the
+    ground crosses the water level."""
     m = bpy.data.materials.get("water")
     if m:
         return m
@@ -1822,6 +1827,11 @@ def water_material():
     if steps:
         col = _posterize(nt, col, steps)
     nt.links.new(col, b.inputs["Base Color"])
+    # Not a constant: water thins out at the edge of a body and thickens over the
+    # deep, so the transparency follows the same ripple that colours it. Flat alpha
+    # reads as coloured glass laid on the ground.
+    b.inputs["Alpha"].default_value = 1.0
+    nt.links.new(_band(nt, ripple, 0.42, 0.72, 0.44, 0.62), b.inputs["Alpha"])
     return m
 
 
@@ -1878,6 +1888,7 @@ def water_deep_material():
     if steps:
         col = _posterize(nt, col, steps)
     nt.links.new(col, b.inputs["Base Color"])
+    b.inputs["Alpha"].default_value = 0.88   # seen edge-on, water is nearly opaque
     return m
 
 
@@ -2220,8 +2231,11 @@ def subsoil_material():
     csep = nt.nodes.new("ShaderNodeSeparateColor")
     nt.links.new(att.outputs["Color"], csep.inputs["Color"])
     lip = nt.nodes.new("ShaderNodeMapRange")
-    lip.inputs["From Min"].default_value = 0.34
-    lip.inputs["From Max"].default_value = 0.02
+    # A THIN band. At a third of the face it stopped reading as the turf edge and
+    # started reading as grass extruded downward -- which is exactly what a bank
+    # next to water looked like: a green wall.
+    lip.inputs["From Min"].default_value = 0.11
+    lip.inputs["From Max"].default_value = 0.01
     nt.links.new(csep.outputs[0], lip.inputs["Value"])
     col = _mix(nt, col, (g[0] * 0.85, g[1] * 0.70, g[2] * 0.60), lip.outputs["Result"])
 
