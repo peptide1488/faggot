@@ -83,38 +83,47 @@ def rises(sock):
     return sock.split(">")[1] if ">" in sock else None
 
 
+def band_at(sock, edge, other):
+    """Which band this socket puts at the corner where `edge` meets `other`.
+
+    A crossing names the end of its own edge that is high, so the corner sitting
+    at that end is the high band and the far one is the low band. A flat socket is
+    the same band all the way along.
+    """
+    lo, hi = min(BANDS[base(sock)]), max(BANDS[base(sock)])
+    d = rises(sock)
+    if d is None:
+        return lo                      # flat: lo == hi
+    return hi if d == other else lo
+
+
 def compatible(a, b, ea="X+", eb="Y+"):
     """Could one tile present these two sockets on these two adjacent edges?
 
-    Two tests, and the second only exists because orienting the crossings
-    multiplied the vocabulary and the band test alone started reporting 68
-    missing corners, most of which no tile could ever have:
+    ONE rule, and it replaced three weaker ones that between them still let 8
+    impossible corners through -- each of which reads as a tile somebody should
+    go and model.
 
-      BANDS    some height has to be common to both, or the tile would be at two
-               heights at once with nothing declared between them.
-      AXIS     a crossing names which END of ITS OWN edge is the high one, so an
-               edge running in Y can only rise toward Y+ or Y-. `X01>Y+` on a Y
-               edge is not a piece nobody has built, it is a sentence that does
-               not parse -- and listing it as missing sends somebody off to model
-               a tile that cannot exist.
+      AXIS      a crossing names which end of ITS OWN edge is high, so an edge
+                running in Y can only rise toward Y+ or Y-. `X01>Y+` on a Y edge
+                is not unbuilt, it is a sentence that does not parse.
+      CORNER    the two edges MEET, and the corner they share is one piece of
+                ground at one height. So each socket's band at that corner has to
+                be the same band. `X01>Y+` on X+ says its Y+ end is high ground;
+                `Xw0>X+` on Y+ says its X+ end is the low band -- and those are
+                the same corner, so no tile can present both, however much the
+                shape sounds like something a landscape ought to have.
+
+    This subsumes the band-overlap test that came before it: two sockets with no
+    band in common cannot agree about the corner either.
     """
-    if not (BANDS.get(base(a), set()) & BANDS.get(base(b), set())):
-        return False
     for sock, edge in ((a, ea), (b, eb)):
         d = rises(sock)
         if d is not None and AXIS[d] == AXIS[edge]:
             return False
-    # TWO CROSSINGS MEETING MUST POINT AT THE SAME CORNER. A level change on each
-    # of two adjacent edges means one high region, and the pair only describes a
-    # region if both arrows agree where it is: toward the corner they share
-    # (an outside corner, the nub you walk around) or toward the opposite one
-    # (an inside corner, the notch you stand in). Anything else says the ground
-    # is high in two places that do not touch, which is two landforms, not one --
-    # and it was 22 entries on a list of tiles to go and model.
-    da, db = rises(a), rises(b)
-    if da and db:
-        return (da == eb and db == ea) or (da == OPP[eb] and db == OPP[ea])
-    return True
+    if base(a) not in BANDS or base(b) not in BANDS:
+        return False
+    return band_at(a, ea, eb) == band_at(b, eb, ea)
 
 
 def load(setdir):
@@ -268,6 +277,22 @@ def main():
             else:
                 note = "%s meeting %s" % (MEANING.get(a, a), MEANING.get(b, b))
             w("| `%s` | `%s` | %s |" % (a, b, note))
+    if any(rises(a) and rises(b) and base(a) != base(b) for a, b in ranked):
+        w("")
+        w("**Why the level-change corners are hard, from an attempt that failed.** "
+          "A piece is only interchangeable with the family it abuts if its "
+          "cross-section along that edge IS that family's -- a strand's beach on "
+          "the `Xw0` edge, a bluff's cliff on the `Xw1` one. The headland manages "
+          "both because the cliff's progress is CONSTANT along each of its "
+          "crossing edges (0 on the shore edge, 1 on the cliff edge), so the "
+          "composition collapses exactly to one family or the other. A piece "
+          "whose two crossings sit on edges where that progress VARIES cannot do "
+          "this: a `cove` built that way -- water in a corner, beach one side, "
+          "sea cliff the other -- closed these last two corners and then "
+          "disagreed with every bluff by 0.394 units, sixteen texels, along the "
+          "seam they share. Closing them needs a construction where each "
+          "crossing edge still sees a constant cliff progress, not another "
+          "blend.")
     w("")
 
     # ---- spans -------------------------------------------------------------

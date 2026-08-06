@@ -1738,9 +1738,20 @@ def terrain_surface(field, base=0.0, name="ground", water=False):
         x, y, z = verts[i]
         sv.append((x, y, z))
         sv.append((x, y, drop))
-        # depth below the turf line, 0 at the top of the cut and 1 at the bottom
-        scols.append((0.0, 0.0, 0.0, 1.0))
-        scols.append((1.0, 1.0, 1.0, 1.0))
+        # R: depth below the turf line, 0 at the top of the cut and 1 at the
+        # bottom. G: WHAT THE GROUND DIRECTLY ABOVE THIS POINT IS MADE OF.
+        #
+        # The skirt is the surface you actually see wherever a tile's ground ends
+        # higher than what is drawn in front of it, and it was one flat brown
+        # wash whatever it was cutting through -- so a sea cliff came out as a
+        # proper crag face on one side and a smooth brown slab on the next, which
+        # is the thing that made every drop read as cardboard. Rock does not stop
+        # being rock because you are looking at the side of it. Carrying the
+        # ground's own rock weight down the cut costs one channel and means the
+        # skirt is made of whatever the ground above it is made of.
+        rock = cols[i][0]
+        scols.append((0.0, rock, 0.0, 1.0))
+        scols.append((1.0, rock, 0.0, 1.0))
     for k in range(len(ring) - 1):
         a = k * 2
         sf.append((a, a + 1, a + 3, a + 2))
@@ -2390,6 +2401,14 @@ def subsoil_material():
     lip.inputs["From Max"].default_value = 0.01
     nt.links.new(csep.outputs[0], lip.inputs["Value"])
     col = _mix(nt, col, (g[0] * 0.85, g[1] * 0.70, g[2] * 0.60), lip.outputs["Result"])
+    # ROCK CARRIES ON DOWN THE CUT. G of the same attribute is the ground's rock
+    # weight at the top of this cut, so a face under a crag is stone and a face
+    # under a meadow is earth, decided by the same slope threshold that decided
+    # the ground above it -- not by which piece this is.
+    rocky = _mix(nt, tuple(c * 0.72 for c in r), tuple(min(1.0, c * 1.12) for c in r),
+                 _band(nt, strat.outputs["Fac"], 0.0, 1.0, 0.38, 0.62))
+    rocky = _mix(nt, rocky, tuple(c * 0.45 for c in r), _band(nt, grain, 0.0, 0.30))
+    col = _mix(nt, col, rocky, _band(nt, csep.outputs[1], 0.0, 1.0, 0.30, 0.72))
 
     steps = t.get("posterize")
     if steps:
@@ -2657,10 +2676,21 @@ def add_terrain(name, spec, rot):
     sp = rotate_spec(spec, rot)
     f = FIELDS[spec["terrain"]](sp, seed)
     sample = terrain_surface(f, name=name, water=bool(sp.get("water")))
-    # Crags only where a level actually changes. `cap` is the top band: nothing on
+    # Crags wherever a level actually changes. `cap` is the top band: nothing on
     # the tile may stand above the walkable surface it belongs to.
-    if spec["terrain"] in ("step", "track") and (sp.get("high") or sp.get("ramp")):
-        add_crags(seed, sample, _band_z(sp.get("hi", 1)) - 0.06)
+    #
+    # NAMED BY WHAT THEY DO, not by which terrain function drew them. This was a
+    # list of two terrain kinds, so the headland -- which is a level change with a
+    # cliff in it, that being the entire point of it -- baked with no rock on its
+    # face at all. It would have come out as exactly the smooth wall it was added
+    # to get rid of. add_crags asks the ground where it is steep and does not care
+    # which function made it, so the gate is "does this piece change level", and
+    # the top band of anything carrying a cliff is band 1.
+    climbs = spec["terrain"] == "headland" or (
+        spec["terrain"] in ("step", "track") and (sp.get("high") or sp.get("ramp")))
+    if climbs:
+        top = 1 if spec["terrain"] == "headland" else sp.get("hi", 1)
+        add_crags(seed, sample, _band_z(top) - 0.06)
     terrain_scatter(sample, 0.0, seed)
     if sp.get("water"):
         add_water_plane(floor=getattr(sample, "floor", None))
@@ -2928,25 +2958,40 @@ def add_wall(edge, m_stone, m_mortar, seed=11, base=0.0, others=()):
     return n
 
 
-# EVERY SPEC KEY THAT NAMES AN EDGE. Rotating a tile has to turn its geometry with
-# its sockets, and the geometry is built from these -- so a key missing from this
-# list means the piece is baked in its r0 orientation while tile_sockets reports
-# the rotated contract. That is not subtle: the headland pieces disagreed with
-# their neighbours by a full STEP at three rotations out of four, because `shore`
-# and `cliff` were new keys and this list was hand-kept in two files.
-EDGE_LIST_KEYS = ("high", "arms")        # lists of edges
-EDGE_ONE_KEYS = ("ramp", "shore", "cliff")   # a single edge
+# ROTATING A TILE HAS TO TURN EVERY EDGE IT NAMES, and which keys those are is
+# decided by looking at the VALUES, not by a list somebody maintains. The list
+# version was wrong twice in one sitting -- `shore` and `cliff` were missed when
+# the headland arrived, and a later piece's `shores` was missed the same way --
+# each time baking three rotations out of four in the r0 orientation while
+# tile_sockets reported the rotated contract. Every symptom was a full STEP of
+# disagreement at a seam, and none of it was visible in a single tile's render.
+# A key is an edge key if it holds an edge, and that cannot be forgotten.
+#
+# `rims` is excluded because the dungeon call sites rotate it themselves, from
+# the UNROTATED spec, and rotating it here as well would turn it twice.
+EDGE_SET = ("Y+", "X+", "Y-", "X-")
+NOT_EDGE_KEYS = ("rims",)
+
+
+def _is_edge(v):
+    return isinstance(v, str) and v in EDGE_SET
+
+
+def _is_edge_list(v):
+    return (isinstance(v, (list, tuple)) and len(v) > 0
+            and all(_is_edge(e) for e in v))
 
 
 def rotate_spec(spec, rot):
     """A tile's spec as it stands at `rot`, with every edge it names turned."""
     sp = dict(spec)
-    for key in EDGE_LIST_KEYS:
-        if sp.get(key):
-            sp[key] = rotate_edges(sp[key], rot)
-    for key in EDGE_ONE_KEYS:
-        if sp.get(key):
-            sp[key] = rotate_edges([sp[key]], rot)[0]
+    for key, val in spec.items():
+        if key in NOT_EDGE_KEYS:
+            continue
+        if _is_edge(val):
+            sp[key] = rotate_edges([val], rot)[0]
+        elif _is_edge_list(val):
+            sp[key] = rotate_edges(list(val), rot)
     return sp
 
 

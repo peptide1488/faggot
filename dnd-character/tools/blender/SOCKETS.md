@@ -90,33 +90,29 @@ Two edges that MEET. A cell whose X+ neighbour demands `a` and whose Y+ neighbou
 | `W+P` | — | — | — | — | 2 | 1 | — | — | — | — | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
 | `X01>X+` | 3 | 1 | 3 | 1 | — | — | — | — | — | 2 | — | — | 1 | — | — | — | — | 1 |
 | `X01>X-` | 3 | 1 | 3 | 1 | — | — | — | — | 2 | — | — | — | — | 1 | — | — | 1 | — |
-| `X01>Y+` | 3 | 1 | 3 | 1 | — | — | 2 | — | — | — | **·** | 1 | — | — | 1 | — | — | — |
-| `X01>Y-` | 3 | 1 | 3 | 1 | — | — | — | 2 | — | — | 1 | **·** | — | — | — | 1 | — | — |
+| `X01>Y+` | 3 | 1 | 3 | 1 | — | — | 2 | — | — | — | — | 1 | — | — | 1 | — | — | — |
+| `X01>Y-` | 3 | 1 | 3 | 1 | — | — | — | 2 | — | — | 1 | — | — | — | — | 1 | — | — |
 | `Xw0>X+` | 3 | 1 | — | — | 4 | 1 | — | — | 1 | — | — | — | — | 2 | — | — | — | — |
 | `Xw0>X-` | 3 | 1 | — | — | 4 | 1 | — | — | — | 1 | — | — | 2 | — | — | — | — | — |
-| `Xw0>Y+` | 3 | 1 | — | — | 4 | 1 | **·** | 1 | — | — | 2 | — | — | — | **·** | — | — | — |
-| `Xw0>Y-` | 3 | 1 | — | — | 4 | 1 | 1 | **·** | — | — | — | 2 | — | — | — | **·** | — | — |
+| `Xw0>Y+` | 3 | 1 | — | — | 4 | 1 | — | 1 | — | — | 2 | — | — | — | — | — | — | — |
+| `Xw0>Y-` | 3 | 1 | — | — | 4 | 1 | 1 | — | — | — | — | 2 | — | — | — | **·** | — | — |
 | `Xw1>X+` | — | — | 2 | 1 | 3 | 1 | — | — | — | 1 | — | — | — | — | — | — | — | 2 |
 | `Xw1>X-` | — | — | 2 | 1 | 3 | 1 | — | — | 1 | — | — | — | — | — | — | — | 2 | — |
-| `Xw1>Y+` | — | — | 2 | 1 | 3 | 1 | 1 | — | — | — | **·** | — | — | — | 2 | — | — | — |
+| `Xw1>Y+` | — | — | 2 | 1 | 3 | 1 | 1 | — | — | — | — | — | — | — | 2 | — | — | — |
 | `Xw1>Y-` | — | — | 2 | 1 | 3 | 1 | — | 1 | — | — | — | **·** | — | — | — | 2 | — | — |
 
 `—` = the band contract forbids it: no single tile is at both those heights without a level change declared between them. That blank is the design working. `·` = the contract allows it and **no piece exists** — a shape this set cannot make.
 
 ### Missing corners — shapes the set cannot make
 
-8 of 78 socket pairs are allowed by the band contract but have no piece.
+2 of 48 socket pairs are allowed by the band contract but have no piece.
 
 | first edge | next edge | the shape that is missing |
 |---|---|---|
-| `X01>Y+` | `Xw0>X+` | two DIFFERENT level changes meeting — X01>Y+ against Xw0>X+, which is a cliff running down into a shore |
-| `X01>Y-` | `Xw0>X-` | two DIFFERENT level changes meeting — X01>Y- against Xw0>X-, which is a cliff running down into a shore |
-| `Xw0>Y+` | `X01>X+` | two DIFFERENT level changes meeting — Xw0>Y+ against X01>X+, which is a cliff running down into a shore |
-| `Xw0>Y-` | `X01>X-` | two DIFFERENT level changes meeting — Xw0>Y- against X01>X-, which is a cliff running down into a shore |
-| `Xw0>Y+` | `Xw1>X+` | two DIFFERENT level changes meeting — Xw0>Y+ against Xw1>X+, which is a cliff running down into a shore |
 | `Xw0>Y-` | `Xw1>X-` | two DIFFERENT level changes meeting — Xw0>Y- against Xw1>X-, which is a cliff running down into a shore |
-| `Xw1>Y+` | `Xw0>X+` | two DIFFERENT level changes meeting — Xw1>Y+ against Xw0>X+, which is a cliff running down into a shore |
 | `Xw1>Y-` | `Xw0>X-` | two DIFFERENT level changes meeting — Xw1>Y- against Xw0>X-, which is a cliff running down into a shore |
+
+**Why the level-change corners are hard, from an attempt that failed.** A piece is only interchangeable with the family it abuts if its cross-section along that edge IS that family's -- a strand's beach on the `Xw0` edge, a bluff's cliff on the `Xw1` one. The headland manages both because the cliff's progress is CONSTANT along each of its crossing edges (0 on the shore edge, 1 on the cliff edge), so the composition collapses exactly to one family or the other. A piece whose two crossings sit on edges where that progress VARIES cannot do this: a `cove` built that way -- water in a corner, beach one side, sea cliff the other -- closed these last two corners and then disagreed with every bluff by 0.394 units, sixteen texels, along the seam they share. Closing them needs a construction where each crossing edge still sees a constant cliff progress, not another blend.
 
 ## Spans
 
@@ -125,65 +121,47 @@ Two edges that FACE each other. This is what a piece crossed by something has to
 | | `G0` | `G0+P` | `G1` | `G1+P` | `W` | `W+P` | `X01>X+` | `X01>X-` | `X01>Y+` | `X01>Y-` | `Xw0>X+` | `Xw0>X-` | `Xw0>Y+` | `Xw0>Y-` | `Xw1>X+` | `Xw1>X-` | `Xw1>Y+` | `Xw1>Y-` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `G0` | 8 | 3 | 2 | — | 2 | — | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | — | — | — | — |
-| `G0+P` | 3 | 3 | — | 1 | — | 1 | **·** | **·** | — | — | **·** | **·** | — | — | — | — | — | — |
+| `G0+P` | 3 | 3 | — | 1 | — | 1 | — | **·** | — | — | **·** | — | — | — | — | — | — | — |
 | `G1` | 2 | — | 6 | 3 | 1 | — | 1 | 1 | 1 | 1 | — | — | — | — | 1 | 1 | 1 | 1 |
-| `G1+P` | — | 1 | 3 | 3 | — | 1 | **·** | **·** | — | — | — | — | — | — | **·** | **·** | — | — |
+| `G1+P` | — | 1 | 3 | 3 | — | 1 | **·** | — | — | — | — | — | — | — | **·** | — | — | — |
 | `W` | 2 | — | 1 | — | 3 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
-| `W+P` | — | 1 | — | 1 | 1 | 1 | — | — | — | — | **·** | **·** | — | — | **·** | **·** | — | — |
+| `W+P` | — | 1 | — | 1 | 1 | 1 | — | — | — | — | — | **·** | — | — | — | **·** | — | — |
 | `X01>X+` | 1 | — | 1 | — | 1 | — | 3 | — | — | — | — | — | — | — | — | — | — | — |
 | `X01>X-` | 1 | — | 1 | — | 1 | — | — | 3 | — | — | — | — | — | — | — | — | — | — |
-| `X01>Y+` | 1 | **·** | 1 | **·** | 1 | — | **·** | — | 3 | — | **·** | — | — | — | **·** | — | — | — |
-| `X01>Y-` | 1 | **·** | 1 | **·** | 1 | — | — | **·** | — | 3 | — | **·** | — | — | — | **·** | — | — |
+| `X01>Y+` | 1 | — | 1 | **·** | 1 | — | **·** | — | 3 | — | — | — | — | — | **·** | — | — | — |
+| `X01>Y-` | 1 | **·** | 1 | — | 1 | — | — | **·** | — | 3 | **·** | — | — | — | — | — | — | — |
 | `Xw0>X+` | 1 | — | — | — | 1 | — | — | — | — | — | 3 | — | — | — | 1 | — | — | — |
 | `Xw0>X-` | 1 | — | — | — | 1 | — | — | — | — | — | — | 3 | — | — | — | 1 | — | — |
-| `Xw0>Y+` | 1 | **·** | — | — | 1 | **·** | **·** | — | — | — | **·** | — | 3 | — | **·** | — | 1 | — |
-| `Xw0>Y-` | 1 | **·** | — | — | 1 | **·** | — | **·** | — | — | — | **·** | — | 3 | — | **·** | — | 1 |
+| `Xw0>Y+` | 1 | **·** | — | — | 1 | — | — | **·** | — | — | **·** | — | 3 | — | — | — | 1 | — |
+| `Xw0>Y-` | 1 | — | — | — | 1 | **·** | — | — | — | — | — | **·** | — | 3 | — | **·** | — | 1 |
 | `Xw1>X+` | — | — | 1 | — | 1 | — | — | — | — | — | 1 | — | — | — | 2 | — | — | — |
 | `Xw1>X-` | — | — | 1 | — | 1 | — | — | — | — | — | — | 1 | — | — | — | 2 | — | — |
-| `Xw1>Y+` | — | — | 1 | **·** | 1 | **·** | **·** | — | — | — | **·** | — | 1 | — | **·** | — | 2 | — |
-| `Xw1>Y-` | — | — | 1 | **·** | 1 | **·** | — | **·** | — | — | — | **·** | — | 1 | — | **·** | — | 2 |
+| `Xw1>Y+` | — | — | 1 | **·** | 1 | — | **·** | — | — | — | — | — | 1 | — | **·** | — | 2 | — |
+| `Xw1>Y-` | — | — | 1 | — | 1 | **·** | — | — | — | — | — | **·** | — | 1 | — | **·** | — | 2 |
 
 Missing spans — a piece cannot carry these two facing each other:
 
-- `G0+P` <-> `X01>X+`
 - `G0+P` <-> `X01>X-`
-- `G0+P` <-> `X01>Y+`
 - `G0+P` <-> `X01>Y-`
 - `G0+P` <-> `Xw0>X+`
-- `G0+P` <-> `Xw0>X-`
 - `G0+P` <-> `Xw0>Y+`
-- `G0+P` <-> `Xw0>Y-`
 - `G1+P` <-> `X01>X+`
-- `G1+P` <-> `X01>X-`
 - `G1+P` <-> `X01>Y+`
-- `G1+P` <-> `X01>Y-`
 - `G1+P` <-> `Xw1>X+`
-- `G1+P` <-> `Xw1>X-`
 - `G1+P` <-> `Xw1>Y+`
-- `G1+P` <-> `Xw1>Y-`
-- `W+P` <-> `Xw0>X+`
 - `W+P` <-> `Xw0>X-`
-- `W+P` <-> `Xw0>Y+`
 - `W+P` <-> `Xw0>Y-`
-- `W+P` <-> `Xw1>X+`
 - `W+P` <-> `Xw1>X-`
-- `W+P` <-> `Xw1>Y+`
 - `W+P` <-> `Xw1>Y-`
 - `X01>X+` <-> `X01>Y+`
-- `X01>X+` <-> `Xw0>Y+`
 - `X01>X+` <-> `Xw1>Y+`
 - `X01>X-` <-> `X01>Y-`
-- `X01>X-` <-> `Xw0>Y-`
-- `X01>X-` <-> `Xw1>Y-`
-- `X01>Y+` <-> `Xw0>X+`
+- `X01>X-` <-> `Xw0>Y+`
 - `X01>Y+` <-> `Xw1>X+`
-- `X01>Y-` <-> `Xw0>X-`
-- `X01>Y-` <-> `Xw1>X-`
+- `X01>Y-` <-> `Xw0>X+`
 - `Xw0>X+` <-> `Xw0>Y+`
-- `Xw0>X+` <-> `Xw1>Y+`
 - `Xw0>X-` <-> `Xw0>Y-`
 - `Xw0>X-` <-> `Xw1>Y-`
-- `Xw0>Y+` <-> `Xw1>X+`
 - `Xw0>Y-` <-> `Xw1>X-`
 - `Xw1>X+` <-> `Xw1>Y+`
 - `Xw1>X-` <-> `Xw1>Y-`

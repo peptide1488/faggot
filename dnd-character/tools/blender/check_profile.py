@@ -90,12 +90,21 @@ def report(name, lo, hi):
             ok += abs(zf(t + 0.5) - zf(t - 0.5)) <= 0.95
         stand = (100 * ok // tot) if tot else 0
 
-    if stand is None:
-        shape, note = "%4s" % "-", "a cliff, as intended"
+    # INTENT vs OUTCOME, kept apart. `wet` above says this pair was ASKED to
+    # shelve, by having a run or a curve a cliff would not have. Reporting a bare
+    # "-" for everything else could not tell "no beach intended" from "the beach
+    # failed to form", so a new wet family that quietly came out vertical would
+    # have read exactly like the sea cliff that is supposed to be.
+    if not wet and lo == -1:
+        shape = "%4s" % "n/a"
+        note = "wet, and asked to stay a cliff (run x1.0) -- a sea cliff"
+    elif not wet:
+        shape = "%4s" % "n/a"
+        note = "dry: a cliff, as intended"
     elif stand >= 95:
-        shape, note = "%3d%%" % stand, "a beach you can walk down"
+        shape, note = "%3d%%" % stand, "asked to shelve, and does"
     else:
-        shape, note = "%3d%%" % stand, "MEANT TO BE A BEACH AND IS NOT"
+        shape, note = "%3d%%" % stand, "ASKED TO SHELVE AND DOES NOT" 
     print("%-9s %+5.2f -> %+5.2f  run x%.1f shelf %.1f | steepest %6.2f  "
           "dry %5.2f  ledge %4.2f  standable %s  %s"
           % (name, bt._band_z(lo), bt._band_z(hi), run, shelf,
@@ -111,8 +120,13 @@ def main():
           % (bt.THEME, bt.WATER_LEVEL, bt.BED_Z, bt.STEP, bt.SCARP_W))
     print("tile is %.0f world units across; 1.00 gradient is 45 degrees\n"
           % bt.SIZE)
-    for name, lo, hi in (("scarp", 0, 1), ("strand", -1, 0), ("bluff", -1, 1)):
-        report(name, lo, hi)
+    # DRIVEN BY THE SHELF TABLE, not by a list written out here. A band pair that
+    # someone adds to build_tiles.py is a new cross-section, and a checker that
+    # has to be told about it separately is one that silently stops covering the
+    # newest thing in the set -- which is always the thing most likely to be wrong.
+    NAMES = {(0, 1): "scarp", (-1, 0): "strand", (-1, 1): "bluff"}
+    for (lo, hi) in sorted(bt.SHELF):
+        report(NAMES.get((lo, hi), "band %+d%+d" % (lo, hi)), lo, hi)
     print()
     print("A cliff SHOULD be a cliff. It is the shore that has to be gentle above")
     print("the water line, because that is the only part of it anyone stands on.")

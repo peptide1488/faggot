@@ -2423,9 +2423,16 @@ document.getElementById("ver").textContent=VERSION;
         const cx=OX+c.i*STEP_I[0]+c.j*STEP_J[0], cy=OY+c.i*STEP_I[1]+c.j*STEP_J[1];
         const sock = SOCKET_SET && MAN.tiles[c.name] &&
                      MAN.tiles[c.name].sockets[String(c.rot||0)];
-        for(const e of ORDER)
-          wedge(cx,cy,e, sock ? (SOCK_COLOUR[sock[e]]||"#ff00ff") : DIR_COLOUR[e],
-                sock ? sock[e] : e);
+        for(const e of ORDER){
+          // A crossing carries the world edge it rises toward -- X01>Y+ -- so the
+          // colour keys off the FAMILY and the arrow is drawn into the label. A
+          // straight table lookup fell through to the unknown-socket magenta for
+          // every crossing on the map the moment they were oriented.
+          const v = sock ? sock[e] : null;
+          const fam = v ? v.split(">")[0] : null;
+          wedge(cx,cy,e, v ? (SOCK_COLOUR[fam]||"#ff00ff") : DIR_COLOUR[e],
+                v ? v.replace(">","→") : e);
+        }
       }
     }
     resizeCanvas();
@@ -3205,24 +3212,37 @@ document.getElementById("ver").textContent=VERSION;
   }
 
   // ---- view ---------------------------------------------------------------
+  // PAN IS IN DEVICE PIXELS, and has to be. The shader computes
+  //   P = (gl_FragCoord.xy*uPixel - uPan)/uZoom
+  // and gl_FragCoord is in BACKING pixels, which resizeCanvas sets to
+  // CSS*dpr/pix*ss -- so gl_FragCoord*uPixel is exactly CSS*dpr, and uPan is
+  // compared against a device-pixel coordinate. Every assignment below used to
+  // come from a CSS one (e.clientX, innerWidth), so at any display scale other
+  // than 100% the map was offset by the scale factor and a drag ran slower than
+  // the cursor. It never showed up here because the demo was developed at 100%
+  // and screenshot at exactly 1 or 2.
   let panX=0,panY=0;
-  const fitZoom=()=>Math.min(innerWidth/CW, innerHeight/CH)*0.97;
-  function centreView(){ const z=zoom.value/100; panX=(innerWidth-CW*z)/2; panY=(innerHeight-CH*z)/2; }
+  const DPR=()=>Math.max(1, Math.min(3, window.devicePixelRatio||1));
+  const cssX=e=>e.clientX*DPR(), cssY=e=>e.clientY*DPR();
+  const viewW=()=>innerWidth*DPR(), viewH=()=>innerHeight*DPR();
+  const fitZoom=()=>Math.min(viewW()/CW, viewH()/CH)*0.97;
+  function centreView(){ const z=zoom.value/100;
+    panX=(viewW()-CW*z)/2; panY=(viewH()-CH*z)/2; }
   function fit(){ /* pan/zoom are shader uniforms now; the next frame picks them up */ }
   addEventListener("wheel",e=>{
     e.preventDefault();
-    const z0=zoom.value/100, cx=(e.clientX-panX)/z0, cy=(e.clientY-panY)/z0;
+    const z0=zoom.value/100, cx=(cssX(e)-panX)/z0, cy=(cssY(e)-panY)/z0;
     const z1=Math.min(2.0,Math.max(0.04,z0*(e.deltaY<0?1.12:1/1.12)));
-    zoom.value=Math.round(z1*100); panX=e.clientX-cx*z1; panY=e.clientY-cy*z1; fit();
+    zoom.value=Math.round(z1*100); panX=cssX(e)-cx*z1; panY=cssY(e)-cy*z1; fit();
   },{passive:false});
   let drag=null,downAt=null;
   addEventListener("mousedown",e=>{ if(e.target.closest("#hud")) return;
-    drag=[e.clientX-panX,e.clientY-panY]; downAt=[e.clientX,e.clientY]; });
+    drag=[cssX(e)-panX,cssY(e)-panY]; downAt=[e.clientX,e.clientY]; });
   addEventListener("mousemove",e=>{
-    if(drag){ panX=e.clientX-drag[0]; panY=e.clientY-drag[1]; fit(); return; }
+    if(drag){ panX=cssX(e)-drag[0]; panY=cssY(e)-drag[1]; fit(); return; }
     if(frozen) return;
     const z=zoom.value/100;
-    mouse=screenToWorldFloor((e.clientX-panX)/z,(e.clientY-panY)/z);
+    mouse=screenToWorldFloor((cssX(e)-panX)/z,(cssY(e)-panY)/z);
   });
   addEventListener("mouseup",e=>{
     const moved=downAt&&Math.hypot(e.clientX-downAt[0],e.clientY-downAt[1]);
@@ -3232,7 +3252,7 @@ document.getElementById("ver").textContent=VERSION;
       // projecting the clicked pixel onto the floor plane. A wall drawn over the
       // floor behind it made those squares impossible to click at all -- the
       // pixel belonged to the wall, so it mapped to a square in front of it.
-      const cx=(e.clientX-panX)/z, cy=(e.clientY-panY)/z;
+      const cx=(cssX(e)-panX)/z, cy=(cssY(e)-panY)/z;
       let X=-1, Y=-1, bestD=Infinity;
       for(let sy2=0; sy2<SH; sy2++) for(let sx2=0; sx2<SW; sx2++){
         const [wx2,wy2]=sqWorld(sx2,sy2);
@@ -3289,7 +3309,7 @@ document.getElementById("ver").textContent=VERSION;
   function flash(m){ const el=document.getElementById("msg"); el.textContent=m;
     clearTimeout(flashT); if(m) flashT=setTimeout(()=>el.textContent="",1800); }
   addEventListener("keydown",e=>{
-    const k=e.key.toLowerCase(), s=e.shiftKey?240:80;
+    const k=e.key.toLowerCase(), s=(e.shiftKey?240:80)*DPR();
     if(k==="f"){ frozen=!frozen; flash(frozen?"light frozen":""); return; }
     if(k==="q"||k==="e"){ const n=(k==="q")?3:1;
       for(let t=0;t<n;t++) rotateWorld(); e.preventDefault(); return; }
@@ -3324,9 +3344,9 @@ document.getElementById("ver").textContent=VERSION;
     const a=who||hero;
     const [rx,ry,rw,rh]=spriteRect(a);
     const z=zoom.value/100;
-    // pan/zoom are CSS px but readPixels wants BACKING-STORE px, and with
-    // supersampling those differ by ss/pix. Mixing them made this read the wrong
-    // region and report 0 visible pixels for a sprite that was drawing fine.
+    // pan/zoom are DEVICE px (see the note where panX is declared) and readPixels
+    // wants BACKING-STORE px; those differ by ss/pix. Mixing them made this read
+    // the wrong region and report 0 visible pixels for a sprite drawing fine.
     const k=Math.max(1,parseInt(ss.value,10))/Math.max(1,parseInt(pix.value,10));
     const x0=Math.max(0,Math.floor((rx*z+panX)*k)), y0=Math.max(0,Math.floor((ry*z+panY)*k));
     const w=Math.min(glc.width-x0,Math.ceil(rw*z*k)), h=Math.min(glc.height-y0,Math.ceil(rh*z*k));

@@ -55,8 +55,19 @@ blender -b -P build_effects.py -- out/effects               # 4 spell effects
 python pack_tiles.py out/grass10A --albedo-q 100            # lossless: pixel sets need it
 ```
 
-Useful flags: `--rot 0` (bench one rotation), `--manifest-only`, `--only <name>`,
-`--action <name>`.
+Useful flags: `--rot 0` (bench one rotation), `--manifest-only`, `--action <name>`.
+
+**To bake a subset, name the tiles POSITIONALLY** — there is no `--only`:
+
+```sh
+blender -b -P build_tiles.py -- out --theme grass10A grass10A-headland-0450
+```
+
+An unrecognised word is read as a tile name, so `--only headland` prints
+`SKIP unknown tile --only` / `SKIP unknown tile headland`, renders nothing, and
+still says `DONE`. That is worth knowing: it cost two bakes that appeared to
+succeed and changed no art, and led to a real fix being called ineffective
+because the image compared against it had never been re-rendered.
 
 **After any tile re-bake: delete `out/<set>/packed/` and re-pack.** A stale pack
 serves the previous vocabulary and 404s the new one.
