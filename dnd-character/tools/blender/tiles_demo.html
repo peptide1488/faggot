@@ -1112,8 +1112,11 @@ const FURNITURE=["barrel","crate","chest","table"];
 // Footprint in SQUARES, from the models in build_props.py. A table is 1.3 world
 // units long, so blocking a single 1.0 square left its ends poking into walkable
 // ground -- which is what "walking over props" actually was.
-const FURN_FOOT={ barrel:[1,1], crate:[1,1], chest:[1,1], table:[2,1] };
-const PROP_NAMES=["torch_Y+","torch_X+","torch_Y-","torch_X-"].concat(FURNITURE);
+const FURN_FOOT={ barrel:[1,1], crate:[1,1], chest:[1,1], table:[2,1],
+                  tree:[1,1], pine:[1,1], shrub:[1,1], boulder:[1,1], stump:[1,1] };
+const OUTDOOR_PROPS=["tree","pine","shrub","boulder","stump"];
+const PROP_NAMES=["torch_Y+","torch_X+","torch_Y-","torch_X-"]
+  .concat(FURNITURE).concat(OUTDOOR_PROPS);
 const PROP_RES=768;                  // build_props.py RES
 const WALK_FRAMES=6;                 // build_wizard.py FRAMES
 const STRIDE_WORLD=0.9;              // world units per full step -- ties the
@@ -1230,6 +1233,7 @@ document.getElementById("ver").textContent=VERSION;
   if(!gl){ status.textContent="no WebGL"; return; }
 
   let cells, sq, CW, CH, OX, OY, texA, texN, texH, texS=null;
+  let hgtCtx=null;                    // the composited height buffer, for heightAt
 
   const VS=`attribute vec2 p;
     void main(){ gl_Position=vec4(p,0.0,1.0); }`;
@@ -1831,9 +1835,35 @@ document.getElementById("ver").textContent=VERSION;
   }
 
   // world Z of a square, and whether it can be stood on at all
+  // Read the height buffer the tiles were baked with, by inverting the iso
+  // projection the way the shader does. Two iterations: where a surface lands on
+  // screen depends on how high it is, so the first guess is wrong by exactly the
+  // amount it is trying to measure, and the second lands.
+  function heightAt(wx,wy){
+    if(!hgtCtx) return 0;
+    let h=0;
+    for(let it=0; it<3; it++){
+      const sx=Math.round(OX+(wx+wy)*COS45*PPU);
+      const sy=Math.round(OY+(wx-wy)*SIN30*COS45*PPU - h*COS30*PPU);
+      if(sx<0||sy<0||sx>=CW||sy>=CH) return h;
+      const d=hgtCtx.getImageData(sx,sy,1,1).data;
+      if(d[3]===0) return h;
+      const h2=d[0]/255*HEIGHT_RANGE-HEIGHT_OFF;
+      if(Math.abs(h2-h)<0.01){ h=h2; break; }
+      h=h2;
+    }
+    return h;
+  }
+
   function squareZ(X,Y,L){
     const c=cells[((Y/CELLS)|0)*W+((X/CELLS)|0)];
     if(!c) return 0;
+    // A SOCKET TILE HAS NO SINGLE HEIGHT. Its band says which level it belongs to,
+    // but a ramp climbs a whole STEP across itself and a shore shelves into water,
+    // so standing the hero at band*STEP buried him in one and floated him over the
+    // other. The height pass already knows the answer for every pixel of the map;
+    // ask it rather than keeping a second, coarser model of the same thing.
+    if(c.socket){ const [wx,wy]=sqWorld(X,Y); return heightAt(wx,wy); }
     if(L===1) return OVER_Z;                    // standing on the overpass deck
     if(c.kind==="over_stairs"){
       const k=(c.dir==="Y+"||c.dir==="Y-") ? (Y%CELLS) : (X%CELLS);
@@ -2013,6 +2043,7 @@ document.getElementById("ver").textContent=VERSION;
     // normals are write-only here and keep the default (GPU) path.
     const xa=ca.getContext("2d"), xn=cn.getContext("2d"),
           xh=ch.getContext("2d",{willReadFrequently:true});
+    hgtCtx=xh;
     const ca1=mk(), cn1=mk(), ch1=mk();
     const xa1=ca1.getContext("2d"), xn1=cn1.getContext("2d"), xh1=ch1.getContext("2d");
     for(const it of draws){
@@ -2366,6 +2397,31 @@ document.getElementById("ver").textContent=VERSION;
     // buggy, and outdoor scatter (trees, shrubs, boulders) is its own prop set that
     // does not exist yet. Torches are skipped for free -- they mount on walls, and
     // an outdoor tile has none.
+    if(SOCKET_SET){
+      // What grows where, by ROLE. Trees stay off the tracks -- a path with a tree
+      // in it is not a path -- and off the transitions, where the ground is too
+      // steep to root in and a trunk would hang off a cliff. Boulders are allowed
+      // anywhere walkable, because a boulder does not care.
+      const PLANT={ ground:[["tree",0.10],["pine",0.08],["shrub",0.16],
+                            ["boulder",0.06],["stump",0.03]],
+                    high_ground:[["pine",0.13],["tree",0.06],["shrub",0.14],
+                                 ["boulder",0.08]],
+                    wallow:[["shrub",0.10],["stump",0.05]] };
+      for(const c of cells){
+        const table=PLANT[c.role];
+        if(!table) continue;
+        for(const [name,p] of table){
+          if(rnd()>p) continue;
+          if(!propImg[name]) continue;
+          // Keep off the outermost square ring: a prop is drawn from its own centre
+          // and a canopy hanging over the tile edge lands on whatever the neighbour
+          // turns out to be, which may be a cliff face or open water.
+          const k=1+((rnd()*(CELLS-2))|0), m=1+((rnd()*(CELLS-2))|0);
+          propPlan.push({kind:"furn", X:c.i*CELLS+k, Y:c.j*CELLS+m, name, ax:null});
+          break;                       // one thing per tile; a copse is not a hedge
+        }
+      }
+    }
     for(const c of (SOCKET_SET ? [] : cells)){
       for(const e of c.walls){
         if(rnd()>0.30) continue;

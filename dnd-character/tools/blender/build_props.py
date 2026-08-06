@@ -20,6 +20,7 @@ world units, which is 216px above the anchor at this PPU.
 """
 
 import bpy
+import random
 import math
 import os
 import sys
@@ -27,6 +28,14 @@ from mathutils import Vector
 
 TILE_W_PX, SIZE = 640.0, 4.0
 PPU = TILE_W_PX / (SIZE * math.sqrt(2.0))
+# A prop standing on a grass10A tile has to be made of the same stuff the tile is:
+# quantised colour and honest low resolution. Anything smoothly shaded reads as
+# pasted on top of the map rather than standing in it. Both are declared here rather
+# than guessed per prop, and both are OFF for the dungeon props, which were baked
+# smooth and are still packed that way.
+PIXEL = 2          # render at 1/PIXEL and nearest-upscale (see render_triple)
+POSTER = 7         # value bands, quantised in HSV (see mkmat)
+
 RES = 768       # a torch on a FAR wall (Y+/X-) sits ~309px above the anchor:
                 # 1.82 units out along the wall normal plus 2.4 units of height.
                 # At 512 those two variants were clipped at the top edge, which
@@ -45,12 +54,66 @@ def scene():
     return bpy.context.scene
 
 
-def mkmat(name, rgb, rough=0.85, emit=0.0):
-    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+def mkmat(name, rgb, rough=0.85, emit=0.0, mottle=0.0, poster=0):
+    """Flat colour, optionally broken up and banded.
+
+    `mottle` adds noise variation -- a tree canopy at one flat green is a balloon,
+    and the thing that makes it read as leaves is patchiness at about the scale of a
+    branch. `poster` quantises VALUE in HSV afterwards, which is what keeps a prop
+    in the same visual language as a posterised tile; quantising R, G and B
+    separately would shift the hue every time two channels rounded opposite ways."""
+    m = bpy.data.materials.get(name)
+    if m:
+        return m
+    m = bpy.data.materials.new(name)
     m.use_nodes = True
-    b = m.node_tree.nodes["Principled BSDF"]
-    b.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
     b.inputs["Roughness"].default_value = rough
+    col = None
+    if mottle > 0.0:
+        n = nt.nodes.new("ShaderNodeTexNoise")
+        n.inputs["Scale"].default_value = 9.0
+        n.inputs["Detail"].default_value = 5.0
+        r = nt.nodes.new("ShaderNodeMapRange")
+        r.inputs["From Min"].default_value = 0.40
+        r.inputs["From Max"].default_value = 0.62
+        nt.links.new(n.outputs["Fac"], r.inputs["Value"])
+        mix = nt.nodes.new("ShaderNodeMixRGB")
+        dark = tuple(c * (1.0 - mottle) for c in rgb)
+        light = tuple(min(1.0, c * (1.0 + mottle)) for c in rgb)
+        mix.inputs["Color1"].default_value = (dark[0], dark[1], dark[2], 1.0)
+        mix.inputs["Color2"].default_value = (light[0], light[1], light[2], 1.0)
+        nt.links.new(r.outputs["Result"], mix.inputs["Fac"])
+        col = mix.outputs["Color"]
+    if poster:
+        src = col
+        if src is None:
+            rgbn = nt.nodes.new("ShaderNodeRGB")
+            rgbn.outputs[0].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+            src = rgbn.outputs[0]
+        sep = nt.nodes.new("ShaderNodeSeparateColor"); sep.mode = 'HSV'
+        nt.links.new(src, sep.inputs["Color"])
+        comb = nt.nodes.new("ShaderNodeCombineColor"); comb.mode = 'HSV'
+        nt.links.new(sep.outputs[0], comb.inputs[0])
+        nt.links.new(sep.outputs[1], comb.inputs[1])
+        mul = nt.nodes.new("ShaderNodeMath"); mul.operation = 'MULTIPLY'
+        mul.inputs[1].default_value = float(poster)
+        nt.links.new(sep.outputs[2], mul.inputs[0])
+        flr = nt.nodes.new("ShaderNodeMath"); flr.operation = 'FLOOR'
+        nt.links.new(mul.outputs[0], flr.inputs[0])
+        add = nt.nodes.new("ShaderNodeMath"); add.operation = 'ADD'
+        add.inputs[1].default_value = 0.5
+        nt.links.new(flr.outputs[0], add.inputs[0])
+        div = nt.nodes.new("ShaderNodeMath"); div.operation = 'DIVIDE'
+        div.inputs[1].default_value = float(poster)
+        nt.links.new(add.outputs[0], div.inputs[0])
+        nt.links.new(div.outputs[0], comb.inputs[2])
+        col = comb.outputs["Color"]
+    if col is not None:
+        nt.links.new(col, b.inputs["Base Color"])
+    else:
+        b.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
     if emit > 0.0:
         b.inputs["Emission Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
         b.inputs["Emission Strength"].default_value = emit
@@ -97,6 +160,111 @@ def clear():
     for ob in list(bpy.data.objects):
         if ob.type == 'MESH':
             bpy.data.objects.remove(ob, do_unlink=True)
+
+
+def blob(name, cx, cy, cz, rx, ry, rz, mat, seed, rough=0.26, rings=9, segs=12,
+         smooth=True):
+    """A rounded irregular mass: canopy, bush, boulder.
+
+    Nothing outdoors has a machined edge, and a bevelled cube still reads as a cube
+    at sixty pixels. A sphere pushed around by noise costs the same and reads as
+    something that grew."""
+    rnd = random.Random(seed)
+    tab = [rnd.uniform(-1.0, 1.0) for _ in range(64)]
+
+    def wob(a, b, c):
+        i = (int(abs(a) * 7 + abs(b) * 13 + abs(c) * 23)) % 64
+        j = (i * 7 + 3) % 64
+        return (tab[i] + tab[j]) * 0.5
+
+    verts, faces = [], []
+    for i in range(rings + 1):
+        th = math.pi * i / rings
+        for k in range(segs):
+            ph = 2.0 * math.pi * k / segs
+            dx = math.sin(th) * math.cos(ph)
+            dy = math.sin(th) * math.sin(ph)
+            dz = math.cos(th)
+            f = 1.0 + rough * wob(dx * 3.0, dy * 3.0, dz * 3.0)
+            verts.append((cx + dx * rx * f, cy + dy * ry * f, cz + dz * rz * f))
+    for i in range(rings):
+        for k in range(segs):
+            a = i * segs + k
+            b = i * segs + (k + 1) % segs
+            faces.append((a, b, b + segs, a + segs))
+    ob = new_obj(name, verts, faces, mat)
+    for p in ob.data.polygons:
+        p.use_smooth = smooth
+    return ob
+
+
+# ---- outdoor props. Real volume, so unlike grass they occlude correctly and can
+# be geometry: the height buffer wants to know a tree is there, and a token walking
+# behind one should be hidden by it.
+
+BARK = (0.16, 0.105, 0.065)
+LEAF = (0.115, 0.225, 0.065)
+LEAF2 = (0.155, 0.275, 0.075)
+STONE = (0.30, 0.20, 0.125)
+
+
+def prop_tree():
+    """A broadleaf: leaning trunk, two boughs, three canopy masses.
+
+    Three masses rather than one sphere, because a single blob is a lollipop. They
+    overlap on purpose -- the silhouette wants to be one shape with dents in it, not
+    three balls in a bag."""
+    bark = mkmat("bark", BARK, 0.92, mottle=0.30, poster=POSTER)
+    leaf = mkmat("leaf", LEAF, 0.95, mottle=0.34, poster=POSTER)
+    tube("trunk", 0.0, 1.05, 0.115, 0.075, 7, bark)
+    tube("bough_a", 0.72, 1.18, 0.05, 0.03, 5, bark, cx=0.10, cy=0.06)
+    tube("bough_b", 0.66, 1.10, 0.045, 0.03, 5, bark, cx=-0.09, cy=-0.05)
+    blob("canopy_a", 0.0, 0.0, 1.44, 0.52, 0.50, 0.40, leaf, 11, rough=0.30)
+    blob("canopy_b", 0.26, 0.16, 1.24, 0.34, 0.33, 0.27, leaf, 12, rough=0.32)
+    blob("canopy_c", -0.24, -0.13, 1.28, 0.31, 0.30, 0.25, leaf, 13, rough=0.32)
+    return {"foot": 1.0}
+
+
+def prop_pine():
+    """A conifer: bare lower trunk and four stacked skirts. Tall and narrow, so it
+    reads as a different tree at a glance rather than a recoloured one."""
+    bark = mkmat("bark", BARK, 0.92, mottle=0.30, poster=POSTER)
+    needle = mkmat("needle", (0.075, 0.17, 0.065), 0.95, mottle=0.30, poster=POSTER)
+    tube("pine_trunk", 0.0, 0.95, 0.10, 0.055, 7, bark)
+    z, r = 0.52, 0.62
+    for k in range(4):
+        tube("skirt%d" % k, z, z + 0.52, r, 0.03, 9, needle)
+        z += 0.36
+        r *= 0.74
+    return {"foot": 1.0}
+
+
+def prop_shrub():
+    """Low scrub -- three small masses, none of them tall enough to hide anything.
+    The map needs something between bare ground and a whole tree."""
+    leaf = mkmat("shrub", LEAF2, 0.95, mottle=0.36, poster=POSTER)
+    blob("shrub_a", 0.0, 0.0, 0.20, 0.30, 0.28, 0.20, leaf, 21, rough=0.34)
+    blob("shrub_b", 0.20, 0.12, 0.15, 0.20, 0.19, 0.14, leaf, 22, rough=0.36)
+    blob("shrub_c", -0.17, -0.10, 0.14, 0.17, 0.17, 0.13, leaf, 23, rough=0.36)
+    return {"foot": 1.0}
+
+
+def prop_boulder():
+    """A standing stone big enough to walk around, in the same rock the crags use --
+    faceted rather than smoothed, because rock parts along planes."""
+    rock = mkmat("boulder_rock", STONE, 0.90, mottle=0.30, poster=POSTER)
+    blob("boulder", 0.0, 0.0, 0.24, 0.42, 0.36, 0.30, rock, 31, rough=0.34,
+         rings=7, segs=9, smooth=False)
+    blob("boulder_b", 0.26, -0.18, 0.10, 0.17, 0.15, 0.12, rock, 32, rough=0.38,
+         rings=6, segs=8, smooth=False)
+    return {"foot": 1.0}
+
+
+def prop_stump():
+    """A cut stump. Cheap, and it says someone has been here."""
+    bark = mkmat("bark", BARK, 0.92, mottle=0.30, poster=POSTER)
+    tube("stump", 0.0, 0.30, 0.20, 0.17, 8, bark)
+    return {"foot": 1.0}
 
 
 # ---------------------------------------------------------------- the props
@@ -182,6 +350,11 @@ PROPS = {
     "crate": prop_crate,
     "chest": prop_chest,
     "table": prop_table,
+    "tree": prop_tree,
+    "pine": prop_pine,
+    "shrub": prop_shrub,
+    "boulder": prop_boulder,
+    "stump": prop_stump,
 }
 TORCH_FACES = ["Y+", "X+", "Y-", "X-"]
 
@@ -267,10 +440,55 @@ def height_material():
     return m
 
 
+def _render_to(path):
+    """Render at PIXEL SIZE if the prop set asks for it.
+
+    Same rule the tiles follow (build_tiles.render_to): a pixel-art prop is not a
+    smooth render with a filter over it, it is genuinely fewer pixels, blown back up
+    with nearest neighbour. It runs on all three passes or the albedo, normals and
+    height disagree about where the silhouette is -- and the silhouette is what the
+    depth test uses to decide whether a token is behind this tree.
+
+    Coverage is thresholded for the same reason as the tiles: a partly covered edge
+    pixel has its colour divided by that coverage on the way to straight alpha,
+    which amplifies sampling noise into a bright fringe."""
+    sc = scene()
+    if PIXEL <= 1:
+        sc.render.filepath = path
+        bpy.ops.render.render(write_still=True)
+        return
+    import numpy as np
+    fx, fy = sc.render.resolution_x, sc.render.resolution_y
+    assert fx % PIXEL == 0 and fy % PIXEL == 0, "resolution must divide by PIXEL"
+    sc.render.resolution_x, sc.render.resolution_y = fx // PIXEL, fy // PIXEL
+    sc.render.filter_size = 0.6
+    small = path + ".small.png"
+    sc.render.filepath = small
+    bpy.ops.render.render(write_still=True)
+    sc.render.resolution_x, sc.render.resolution_y = fx, fy
+
+    src = bpy.data.images.load(small)          # via the FILE: 'Render Result'
+    w, h = src.size                            # does not hand out its pixels
+    buf = np.empty(w * h * 4, dtype=np.float32)
+    src.pixels.foreach_get(buf)
+    px = buf.reshape(h, w, 4)
+    px[:, :, 3] = (px[:, :, 3] > 0.5).astype(np.float32)
+    big = np.repeat(np.repeat(px, PIXEL, axis=0), PIXEL, axis=1)
+    out = bpy.data.images.new("up", width=w * PIXEL, height=h * PIXEL, alpha=True,
+                              float_buffer=True)
+    out.colorspace_settings.name = src.colorspace_settings.name
+    out.pixels.foreach_set(big.reshape(-1))
+    out.file_format = 'PNG'
+    out.filepath_raw = path
+    out.save()
+    bpy.data.images.remove(out)
+    bpy.data.images.remove(src)
+    os.remove(small)
+
+
 def render_triple(outdir, stem):
     sc = scene()
-    sc.render.filepath = os.path.join(outdir, stem + ".png")
-    bpy.ops.render.render(write_still=True)
+    _render_to(os.path.join(outdir, stem + ".png"))
     saved = {ob.name: (ob.data.materials[0] if ob.data.materials else None)
              for ob in bpy.data.objects if ob.type == 'MESH'}
 
@@ -285,11 +503,9 @@ def render_triple(outdir, stem):
     sc.cycles.use_denoising = False
     sc.cycles.samples = 12
     swap(normal_material())
-    sc.render.filepath = os.path.join(outdir, stem + "_NRM.png")
-    bpy.ops.render.render(write_still=True)
+    _render_to(os.path.join(outdir, stem + "_NRM.png"))
     swap(height_material())
-    sc.render.filepath = os.path.join(outdir, stem + "_H.png")
-    bpy.ops.render.render(write_still=True)
+    _render_to(os.path.join(outdir, stem + "_H.png"))
 
     for ob in bpy.data.objects:
         if ob.type == 'MESH':
