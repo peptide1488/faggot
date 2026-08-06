@@ -125,7 +125,11 @@ T('rotating a tile turns its sockets rather than inventing them',
   }));
 
 // ---- the invariant ----------------------------------------------------------
-const W = 9, H = 9;
+// THE SIZE THE APP SHIPS. MAP_MIX is fractions of the board, and the seeded
+// river and road are one tile wide whatever the board is -- so the same
+// constants behave differently at 9x9 and 12x12, and a suite that tests the size
+// nobody runs will pass while the game rejects half its maps.
+const W = 12, H = 12;
 let solved = 0, mismatches = [];
 // The two promises the seeding makes, checked on the SOLVED map rather than on
 // the seed -- seeding only asks for tiles of a role along a line; whether they

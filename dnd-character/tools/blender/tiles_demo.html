@@ -3208,6 +3208,13 @@ document.getElementById("ver").textContent=VERSION;
       buildSquareHeights();
       passable=buildSquares();
       flood=floodFrom();
+      // AND LET THE FULL-RESOLUTION HEIGHT BUFFER GO. It exists to fill sqZ and
+      // sqSlope -- one float per SQUARE, 48x48 of them, nine kilobytes -- and
+      // after that nothing reads it: squareZ and slopeUnder use the arrays, and
+      // the shader has its own copy on the GPU. Retaining the ImageData was 147MB
+      // of a 12x12 map's ~1GB, held for a lookup table that had already been
+      // built. A re-composite makes it again if it is ever needed.
+      hgtData=null;
     }
     gl.uniform1i(U("uAlb"),0); gl.uniform1i(U("uNrm"),1);
     gl.uniform1i(U("uHgt"),2); gl.uniform1i(U("uSpr"),3);
