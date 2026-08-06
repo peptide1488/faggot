@@ -1234,6 +1234,10 @@ document.getElementById("ver").textContent=VERSION;
 
   let cells, sq, CW, CH, OX, OY, texA, texN, texH, texS=null;
   let hgtCtx=null;                    // the composited height buffer, for heightAt
+  let sqZ=null;                       // per-square ground height, from that buffer
+  // How far up you can step. About a third of a level: enough for a bank or the lip
+  // of a ford, nowhere near enough for a scarp.
+  const CLIMB = 0.62;
 
   const VS=`attribute vec2 p;
     void main(){ gl_Position=vec4(p,0.0,1.0); }`;
@@ -1642,14 +1646,21 @@ document.getElementById("ver").textContent=VERSION;
       const edge = i2>i1?"X+" : i2<i1?"X-" : j2>j1?"Y-" : "Y+";
       if(L===L2){
         if(sameTile) return true;
-        // A cliff is not a wall, so `walls` cannot stop anyone climbing it. On a
-        // socket set the band difference IS the obstacle, and the only tiles that
-        // may bridge one are the ones built to be walked up.
+        // A cliff is not a wall, so `walls` cannot stop anyone climbing it. What
+        // stops him is the RISE between the two squares -- read off the height
+        // buffer, which is the same surface the renderer drew.
+        //
+        // This used to compare the two tiles' BANDS, allowing a difference only
+        // across a tile whose role was a ramp. That was wrong in both directions
+        // and was the pathing bug. A scarp tile's band is its LOW side, so its high
+        // half -- ordinary walkable grass, level with the plateau beside it -- was
+        // ruled impassable, and a plateau could only be entered through an actual
+        // ramp tile. Meanwhile the far end of a ramp counted as flat, because both
+        // tiles shared a band whatever the ground was doing in between. A tile does
+        // not have one height; asking it for one was the mistake.
         if(a.socket){
-          if(a.level!==b.level &&
-             a.role!=="slope" && b.role!=="slope" &&
-             a.role!=="track_slope" && b.role!=="track_slope") return false;
-          return true;
+          if(!sqZ) return true;                 // before the composite exists
+          return Math.abs(sqZ[Y2*SW+X2]-sqZ[Y*SW+X]) <= CLIMB;
         }
         if(L===1) return !!(a.upper && b.upper);   // no walls modelled up top yet
         if(a.walls.has(edge) || b.walls.has(OPP[edge])) return false;
@@ -1855,6 +1866,17 @@ document.getElementById("ver").textContent=VERSION;
     return h;
   }
 
+  // Sample the height buffer once per square, after the composite exists. 1296
+  // reads for a 9x9 map, against one per passability test if this were lazy -- and
+  // passability is asked tens of thousands of times by the flood alone.
+  function buildSquareHeights(){
+    sqZ=new Float32Array(SW*SH);
+    for(let Y=0;Y<SH;Y++) for(let X=0;X<SW;X++){
+      const [wx,wy]=sqWorld(X,Y);
+      sqZ[Y*SW+X]=heightAt(wx,wy);
+    }
+  }
+
   function squareZ(X,Y,L){
     const c=cells[((Y/CELLS)|0)*W+((X/CELLS)|0)];
     if(!c) return 0;
@@ -1863,7 +1885,10 @@ document.getElementById("ver").textContent=VERSION;
     // so standing the hero at band*STEP buried him in one and floated him over the
     // other. The height pass already knows the answer for every pixel of the map;
     // ask it rather than keeping a second, coarser model of the same thing.
-    if(c.socket){ const [wx,wy]=sqWorld(X,Y); return heightAt(wx,wy); }
+    if(c.socket){
+      if(sqZ) return sqZ[Y*SW+X];
+      const [wx,wy]=sqWorld(X,Y); return heightAt(wx,wy);
+    }
     if(L===1) return OVER_Z;                    // standing on the overpass deck
     if(c.kind==="over_stairs"){
       const k=(c.dir==="Y+"||c.dir==="Y-") ? (Y%CELLS) : (X%CELLS);
@@ -2223,12 +2248,14 @@ document.getElementById("ver").textContent=VERSION;
       const out=socketWfc(W,H);
       if(!out){ status.textContent="socket WFC found no tiling"; return; }
       cells=out; RIFT_CELLS=cells; RIFT_W=W; RIFT_H=H;
+      sqZ=null;                       // heights belong to the map about to be built
       passable=buildSquares();
       window.__elevDebug={afterGen:{raised:cells.filter(c=>c.level===1).length,
                                     stairs:0}, stats:null, passes:[]};
-      // A landscape has no plateau-stranding repair to run, so it hands the
-      // shared tail a flood computed straight from the finished map.
-      return finishBuild(floodFrom(0));
+      // The flood is computed INSIDE finishBuild for a landscape: what is reachable
+      // depends on the height buffer, and that does not exist until the composite
+      // has been drawn.
+      return finishBuild(null);
     }
     const layout=genLayout(W,H);
     cells=layout.cells;
@@ -2457,6 +2484,11 @@ document.getElementById("ver").textContent=VERSION;
     window.__drawDebug={draws:draws.length, CW, CH, MAXR,
                         missing:draws.filter(d=>!d.img).length};
 
+    if(SOCKET_SET){
+      buildSquareHeights();
+      passable=buildSquares();
+      flood=floodFrom();
+    }
     gl.uniform1i(U("uAlb"),0); gl.uniform1i(U("uNrm"),1);
     gl.uniform1i(U("uHgt"),2); gl.uniform1i(U("uSpr"),3);
     gl.uniform1i(U("uSprNrm"),4); gl.uniform1i(U("uSprHgt"),5);
