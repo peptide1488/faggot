@@ -36,13 +36,21 @@ python serve.py                     # NOT python -m http.server
 # then http://localhost:8777/tiles_demo.html?set=grass10A
 ```
 
-**Use serve.py.** `python -m http.server` sends no cache headers, so the browser
-serves a stale `tiles_demo.html`, `tiles.json` or `actors.json` and the newest
-work appears not to have happened -- that cost three separate bugs in one
-session. It is also HTTP/1.0 (no keep-alive, a new TCP connection per file, and
-a set is ~1400 files) and binds IPv4 only, which on Windows means every request
-waits for `localhost`'s IPv6 attempt to fail first: **2048ms per fetch, measured,
-against 4ms dual-stack.** serve.py fixes all three.
+**Use serve.py** — for ONE reason: `python -m http.server` sends no cache
+headers, so the browser serves a stale `tiles_demo.html`, `tiles.json` or
+`actors.json` and the newest work appears not to have happened. That cost three
+separate bugs in one session. It is not faster in any way that matters: measured
+head to head, 20 requests each, **http.server 3.0ms and serve.py 2.3ms**.
+
+An earlier version of serve.py itself was **2048ms per request** because it bound
+IPv4-only (so every request waited for `localhost`'s IPv6 attempt to time out)
+and spoke HTTP/1.0 (a new TCP connection for each of ~1400 files). I measured
+that, diagnosed it correctly, and then wrote it up as a fault in `http.server` --
+the thing that had been there all along -- rather than in the file I had written
+twenty minutes earlier. It went into a commit message and into this handoff as
+fact. **`python check_serve.py` is the one command that would have disproved it**,
+and it now exists: it fails if a request is slow or if the page comes back
+cacheable.
 
 `?set=` `&seed=` `&goblins=N` `&who=rogue` all work and are kept in the URL, so a
 link reproduces the scene.
@@ -63,6 +71,7 @@ if the lighting looks wrong after a refresh, toggle daylight to reset it.
 | `blender -b -P check_profile.py -- --theme grass10A` | what SHAPE each level change is: its gradient, and for one asked to shelve, how much of its dry ledge an actor could stand on |
 | `python socket_spec.py out/grass10A -o SOCKETS.md` | rewrites the edge/connection spec from the manifest: every socket, every piece, and which corners no tile can make |
 | `__engine.bench(30)` in the page | ms per frame, synced with a readback. The honest answer; see the note under Bake about why counting frames is not |
+| `python check_serve.py` | that the dev server is up, quick, and sending no-store. A page is ~1400 files, so 200ms per request is five minutes of loading and looks exactly like a hang |
 
 These exist because **every bug worth the name here was a claim that nothing
 checked**: a comment describing what the code did not do, a shore that agreed

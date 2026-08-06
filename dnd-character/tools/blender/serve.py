@@ -2,13 +2,25 @@
 
     python serve.py [port]
 
-python -m http.server sends no cache headers, so Chrome applies its own heuristic
-and will happily hand back a tiles_demo.html or an actors.json from ten minutes
-ago. That cost real time three separate ways in one session: a fix that "did not
-work" because the page was stale, a roster of twenty-one bodies that kept coming
-back as two, and a ?who= that would not take. The images are content-addressed by
-name and re-baked rarely, so they may cache; the code and the manifests may not.
+WHY THIS EXISTS: `python -m http.server` sends no cache headers, so Chrome
+applies its own heuristic and hands back a tiles_demo.html or an actors.json from
+ten minutes ago. That cost three separate bugs in one session -- a fix that "did
+not work" because the page was stale, a roster of twenty-one bodies that kept
+coming back as two, and a ?who= that would not take. The images are content-
+addressed and re-baked rarely, so they may cache; the code and the manifests may
+not.
+
+WHAT IT IS NOT: faster than http.server in any way that matters. Measured head to
+head on this machine, 20 requests each: http.server 3.0ms, this 2.3ms. An earlier
+version of THIS FILE was 2048ms because it bound IPv4-only (so every request
+waited for localhost's IPv6 attempt to time out) and spoke HTTP/1.0 (a new TCP
+connection per file). I measured that, diagnosed it correctly, and then wrote it
+up as a fault in http.server -- the thing that had been there all along -- rather
+than in the file I had written twenty minutes earlier. It went into a commit
+message and the handoff as fact. The comparison that disproves it is one command,
+and check_serve.py now runs it.
 """
+
 import socket
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
