@@ -180,6 +180,35 @@ THEMES = {
                      pixel=2,                   # render at 1/2 and nearest-upscale
                      bleed=7,                   # overshoot, in output pixels (see _bh)
                      grime=0.55, wear=0.65, damp=0.5),
+
+    # THE SAME VOCABULARY, DIFFERENT GROUND. Every socket set shares one tile
+    # table, one edge contract, one generator -- a theme is a palette and nothing
+    # else, which is the whole reason adding one costs a bake rather than a
+    # design. The dungeons stay on the wall contract deliberately: an indoor map
+    # needs rooms, doors and walls, and none of those exist out here.
+    "dust10A": dict(kit="outdoor", label="Dust Flats",
+                    stone=(0.46, 0.36, 0.20),   # dry grass over sand
+                    mortar=(0.34, 0.25, 0.15),  # the cut is sand, not loam
+                    mud=(0.40, 0.31, 0.19),
+                    rock=(0.44, 0.32, 0.20),    # ochre sandstone
+                    blade=(0.56, 0.46, 0.24),
+                    moss=(0.34, 0.34, 0.16),
+                    flower=(0.74, 0.62, 0.30),
+                    water=(0.12, 0.26, 0.30),
+                    posterize=7, pixel=2, bleed=7,
+                    grime=0.7, wear=0.85, damp=0.25),
+
+    "scree10A": dict(kit="outdoor", label="Cold Scree",
+                     stone=(0.30, 0.34, 0.30),  # thin alpine turf
+                     mortar=(0.22, 0.22, 0.24),
+                     mud=(0.26, 0.24, 0.22),
+                     rock=(0.34, 0.34, 0.37),   # grey stone, the cold set
+                     blade=(0.38, 0.44, 0.36),
+                     moss=(0.26, 0.34, 0.26),
+                     flower=(0.70, 0.72, 0.76),
+                     water=(0.10, 0.20, 0.26),
+                     posterize=7, pixel=2, bleed=7,
+                     grime=0.4, wear=0.5, damp=0.7),
 }
 
 
@@ -242,10 +271,17 @@ def outdoor_tiles(sid):
     add("mere", 180, terrain="flat", band=-1, ripple=0.05, water=True)
     add("mere", 181, terrain="flat", band=-1, ripple=0.05, water=True)
 
+    # Two cuts of the top band. A peak is small by design -- it is the third
+    # level, not a second plateau -- so two variants is enough to stop it reading
+    # as one repeated tile.
+    for n in range(2):
+        add("crest", 120 + n, terrain="flat", band=2)
+
     # ---- the transition family, once per band pair
     for piece, lo, hi, base_n, water in (("scarp", 0, 1, 200, False),
                                          ("strand", -1, 0, 300, True),
-                                         ("bluff", -1, 1, 400, True)):
+                                         ("bluff", -1, 1, 400, True),
+                                         ("crag", 1, 2, 700, False)):
         common = dict(terrain="step", lo=lo, hi=hi, water=water)
         add(piece, base_n, high=["Y+"], **common)                   # straight
         add(piece, base_n + 10, high=["Y+", "X+"], join="max", **common)   # inside
@@ -255,6 +291,10 @@ def outdoor_tiles(sid):
     add("ramp", 230, terrain="step", lo=0, hi=1, high=["Y+"], channel=0.38)
     add("shoal", 330, terrain="step", lo=-1, hi=0, high=["Y+"], channel=0.42,
         water=True)
+    # A WAY UP TO THE TOP, for the same reason the lower ramp exists: a level you
+    # cannot climb is scenery. Same sockets as the straight crag it replaces, so
+    # the solver can drop it anywhere that cliff runs.
+    add("ramp", 730, terrain="step", lo=1, hi=2, high=["Y+"], channel=0.38)
 
     # ---- tracks. Five junctions out of one function; see _arms.
     add("track", 500, terrain="track", arms=["Y+", "Y-"])            # straight
@@ -309,7 +349,11 @@ def outdoor_tiles(sid):
 # back to the shared dungeon table, which is how `stone` and `sandstone` keep the
 # names they were already baked and packed under. Built on demand rather than at
 # import: these tables are written in terms of STEP, which is defined further down.
-SET_TILE_BUILDERS = {"grass10A": outdoor_tiles}
+# Every outdoor theme shares the one table: same pieces, same sockets, same
+# generator, different ground.
+SET_TILE_BUILDERS = {"grass10A": outdoor_tiles,
+                     "dust10A": outdoor_tiles,
+                     "scree10A": outdoor_tiles}
 _set_tiles = {}
 THEME = "sandstone"                    # overridden by --theme on the CLI
 
@@ -1373,6 +1417,7 @@ SHELF = {
     (0, 1): (1.0, 1.0),      # scarp: a cliff, steep and straight
     (-1, 0): (2.5, 2.5),     # strand/shoal/ford: a beach, wide and shelving
     (-1, 1): (1.0, 1.0),     # bluff: a sea cliff, still a cliff
+    (1, 2): (1.0, 1.0),      # crag: the upper cliff, same shape as the lower one
 }
 
 
@@ -1638,7 +1683,11 @@ def _band_z(b):
     """World height of an elevation band. -1 is the bed under the water, not the
     water surface -- the surface is a separate plane at WATER_LEVEL, so a shore can
     shelve gently through it instead of stopping dead at it."""
-    return {-1: BED_Z, 0: 0.0, 1: STEP}[b]
+    # A THIRD LEVEL. Bands are evenly spaced, so band 2 is two steps up and a
+    # cliff from 1 to 2 is the same shape as one from 0 to 1 -- which is the
+    # point: the transition family is parameterised by its band pair, so a new
+    # level costs table entries and not geometry.
+    return {-1: BED_Z, 0: 0.0, 1: STEP, 2: 2.0 * STEP}[b]
 
 
 FIELDS = {
@@ -3355,7 +3404,8 @@ def tile_role(name, spec):
     terrain = spec.get("terrain")
     if terrain:
         if terrain == "flat":
-            return {-1: "liquid", 0: "ground", 1: "high_ground"}[spec.get("band", 0)]
+            return {-1: "liquid", 0: "ground", 1: "high_ground",
+                    2: "peak"}[spec.get("band", 0)]
         if terrain == "mire":
             # Its own role, not plain ground. A wallow is walkable and so shares
             # ground's sockets, but the generator has to be able to want FEWER of
@@ -3431,7 +3481,7 @@ def tile_sockets(spec):
         return None
 
     def band(b):
-        return {-1: "W", 0: "G0", 1: "G1"}[b]
+        return {-1: "W", 0: "G0", 1: "G1", 2: "G2"}[b]
 
     if kind == "flat":
         return {e: band(spec.get("band", 0)) for e in EDGE_ORDER}
@@ -3462,7 +3512,7 @@ def tile_sockets(spec):
         return out
 
     lo, hi = spec.get("lo", 0), spec.get("hi", 1)
-    cross = "X%s%s" % ("w" if lo == -1 else lo, hi)
+    cross = "X%s%s" % ("w" if lo == -1 else lo, hi)      # X01, X12, Xw0, Xw1
 
     def crossing(toward):
         """The crossing socket, SAYING WHICH END OF THE EDGE IS THE HIGH ONE.

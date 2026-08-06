@@ -42,7 +42,10 @@ MEANING = {
     "G0+P": "ground low, with a track crossing this edge",
     "G1+P": "ground high, with a track crossing this edge",
     "W+P": "water, with a track crossing this edge (a ford)",
+    "G2": "ground, top band",
+    "G2+P": "ground top, with a track crossing this edge",
     "X01": "a level change crosses this edge (low <-> high)",
+    "X12": "a level change crosses this edge (high <-> top)",
     "Xw0": "a level change crosses this edge (water <-> low)",
     "Xw1": "a level change crosses this edge (water <-> high)",
 }
@@ -60,8 +63,9 @@ MEANING = {
 BANDS = {
     "G0": {0}, "G0+P": {0},
     "G1": {1}, "G1+P": {1},
+    "G2": {2}, "G2+P": {2},
     "W": {-1}, "W+P": {-1},
-    "X01": {0, 1}, "Xw0": {-1, 0}, "Xw1": {-1, 1},
+    "X01": {0, 1}, "Xw0": {-1, 0}, "Xw1": {-1, 1}, "X12": {1, 2},
 }
 
 
@@ -121,8 +125,14 @@ def compatible(a, b, ea="X+", eb="Y+"):
         d = rises(sock)
         if d is not None and AXIS[d] == AXIS[edge]:
             return False
-    if base(a) not in BANDS or base(b) not in BANDS:
-        return False
+    for sock in (a, b):
+        if base(sock) not in BANDS:
+            # A socket this table has never heard of would otherwise be
+            # "incompatible with everything", so every corner using it reads as
+            # forbidden and no gap involving it is ever reported. That is the
+            # tool lying quietly, which is worse than it failing.
+            raise SystemExit("socket_spec does not know the socket %r -- add it to "
+                             "BANDS and MEANING, or the report is fiction" % sock)
     return band_at(a, ea, eb) == band_at(b, eb, ea)
 
 

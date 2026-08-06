@@ -88,7 +88,7 @@ const VERSION = "0.52.0";
 // so a set is a path, not a rebuild: geometry, lattice and lighting are shared
 // and only the albedo changes. Props and the wizard are theme-independent and
 // stay at out/ -- a barrel is a barrel in a castle or a cave.
-const TILESETS = ["sandstone","stone","grass10A"];
+const TILESETS = ["sandstone","stone","grass10A","dust10A","scree10A"];
 let TILESET = new URLSearchParams(location.search).get("set")
            || localStorage.getItem("iso.tileset") || TILESETS[0];
 if(!TILESETS.includes(TILESET)) TILESET = TILESETS[0];
@@ -260,8 +260,11 @@ const SVAR = [];                       // {name, rot, sock, w}
 // solver returns a flat green field every time. Transitions have to be affordable
 // enough to buy the ring; it is open ground being MUCH cheaper that keeps the map
 // calm, not the features being expensive.
-const ROLE_W = { ground:18, high_ground:9, liquid:3.4, track:3.0, transition:4.5,
-                 slope:5.0, track_slope:3.4, wallow:1.4 };
+// A PEAK IS RARE ON PURPOSE. It is the third level, not a second plateau: one
+// outcrop that overlooks the map is a feature, and a board half of which is at
+// the top band is just a smaller map with a moat round it.
+const ROLE_W = { ground:18, high_ground:9, peak:2.2, liquid:3.4, track:3.0,
+                 transition:4.5, slope:5.0, track_slope:3.4, wallow:1.4 };
 // ...and weights alone are not enough, and cannot be made enough.
 //
 // A weight says how often a tile is picked LOCALLY; it cannot say "roughly a third
@@ -290,7 +293,7 @@ const ROLE_W = { ground:18, high_ground:9, liquid:3.4, track:3.0, transition:4.5
 // Point seeds: features that want to EXIST somewhere, with no shape to them.
 // Water is not one of these any more -- seeding it as loose cells is what made
 // ponds spatter across the map. It gets a path instead, below.
-const MAP_SEEDS = { slope:[2,4], high_ground:[1,2] };
+const MAP_SEEDS = { slope:[2,4], high_ground:[1,2], peak:[0,1] };
 
 // What a finished tiling has to look like to be accepted, as fractions of the
 // board. LAND IS EVERYTHING THAT IS NOT WATER -- a transition tile is walkable
@@ -314,7 +317,7 @@ const MAP_MIX = { land:[0.62, 1.0], high:[0.04, 0.46],
                   // floor under everything the map is busy edge to edge and reads
                   // as texture rather than terrain: nowhere for the eye, or a
                   // fight, to rest.
-                  open:[0.10, 1.0] };
+                  open:[0.10, 1.0], peakMax:0.14 };
 
 // A RIVER AND A ROAD ARE PATHS, NOT QUANTITIES. Weighting water up gives you more
 // water everywhere; it cannot give you one river. Weighting was tried three times
@@ -422,7 +425,7 @@ function roadCrosses(dom, W, H){
 function socketWfc(W,H,tries=300){
   const N=SVAR.length, idx=(i,j)=>j*W+i;
   let accepted=null;
-  const rej={land:0, ways:0, low:0, flat:0, river:0, road:0, nocross:0, busy:0};
+  const rej={land:0, ways:0, low:0, flat:0, river:0, road:0, nocross:0, busy:0, peaky:0};
   // Precompute compatibility once: OK[e][a] is the set of b that may sit across
   // edge e from a. Recomputing this inside propagate was the whole cost.
   const OK={};
@@ -521,11 +524,12 @@ function socketWfc(W,H,tries=300){
     // ---- acceptance. Only the last few attempts are allowed to settle for
     // anything, so a stubborn set still returns a map rather than nothing.
     if(attempt < tries-8){
-      let land=0, high=0, water=0, low=0, ways=0, open=0;
+      let land=0, high=0, water=0, low=0, ways=0, open=0, peak=0;
       for(let n=0;n<W*H;n++){
         const r=SVAR[[...dom[n]][0]].role;
         if(r!=="liquid") land++;
-        if(r==="high_ground") high++;
+        if(r==="high_ground"||r==="peak") high++;
+        if(r==="peak") peak++;
         if(r==="liquid") water++;
         if(r==="ground"||r==="track"||r==="wallow") low++;
         if(r==="slope"||r==="track_slope") ways++;
@@ -555,6 +559,8 @@ function socketWfc(W,H,tries=300){
       // worth asking.
       if(!roadCrosses(dom, W, H)){ rej.nocross++; continue; }
       if(!inRange(open, MAP_MIX.open)){ rej.busy++; continue; }
+      // The top band is an outcrop, not a second storey over the whole map.
+      if(peak > T*MAP_MIX.peakMax){ rej.peaky++; continue; }
       accepted = {attempt, land, high, water, ways};
     }
     // Publish which attempt was taken and why: "the map is flat" and "the map was
