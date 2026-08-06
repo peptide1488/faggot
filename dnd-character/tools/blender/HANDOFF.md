@@ -12,8 +12,19 @@ normals, `_H` height); `tiles_demo.html` composites them in WebGL and lights the
 runtime. The height pass is the load-bearing one — it is the depth buffer, so
 **anything that changes what a pixel's height means changes what occludes what.**
 
-Three sets exist: `stone` and `sandstone` (dungeon, wall-based) and `grass10A`
-(outdoor, socket-based, pixel art).
+Five sets: `stone` and `sandstone` (dungeon, wall contract) and three outdoor
+socket sets -- `grass10A`, `dust10A`, `scree10A` -- which share ONE tile table,
+one edge contract and one generator. An outdoor theme is a palette and nothing
+else, which is why adding one costs a bake rather than a design.
+
+The dungeons stay on the wall contract deliberately: an indoor map needs rooms,
+doors and walls, and none of those exist in the socket vocabulary. "Unify" cannot
+mean converting them without throwing the dungeon away.
+
+**Three elevation bands** outdoors: 0 ground, 1 high ground, 2 peak, plus -1 for
+the bed under water. The transition family is parameterised by its band pair, so
+the cliff from 1 to 2 is the same shape as the one from 0 to 1 and a new level
+costs table entries rather than geometry.
 
 ---
 
@@ -21,9 +32,20 @@ Three sets exist: `stone` and `sandstone` (dungeon, wall-based) and `grass10A`
 
 ```sh
 cd dnd-character/tools/blender
-python -m http.server 8777
+python serve.py                     # NOT python -m http.server
 # then http://localhost:8777/tiles_demo.html?set=grass10A
 ```
+
+**Use serve.py.** `python -m http.server` sends no cache headers, so the browser
+serves a stale `tiles_demo.html`, `tiles.json` or `actors.json` and the newest
+work appears not to have happened -- that cost three separate bugs in one
+session. It is also HTTP/1.0 (no keep-alive, a new TCP connection per file, and
+a set is ~1400 files) and binds IPv4 only, which on Windows means every request
+waits for `localhost`'s IPv6 attempt to fail first: **2048ms per fetch, measured,
+against 4ms dual-stack.** serve.py fixes all three.
+
+`?set=` `&seed=` `&goblins=N` `&who=rogue` all work and are kept in the URL, so a
+link reproduces the scene.
 
 Pick the set from the dropdown. **Daylight is a checkbox** — on by default for
 outdoor sets, off for dungeons. Chrome restores slider positions across reloads, so
@@ -186,6 +208,20 @@ which looks exactly like an effect that never rendered.
 
 ---
 
+## The map is composed, not just tiled
+
+A river snakes across every map and at least one road crosses it, both SEEDED
+before the solve -- see the long note in `socketWfc`. Weights cannot do this and
+three rounds of trying proved it: a weight says how MUCH, never where or what
+shape. Four things had to be right and each was wrong first (diagonal path steps,
+seeding order, what counts as "water", and the two paths running parallel); the
+commit for it spells them out.
+
+Actors: 21 bodies -- twelve classes and nine monsters -- as `?who=` and a picker,
+with monsters drawn from the manifest's own list. `build_actors.py` is a table of
+proportions, palette and kit; `legs` (robe vs trousers) is the single biggest
+difference in it, because at a hundred pixels the silhouette is the performance.
+
 ## Also open
 
 - **Two corners, and only two.** `SOCKETS.md` is generated and says which: a beach
@@ -201,6 +237,16 @@ which looks exactly like an effect that never rendered.
   never said which end was high). On a live map the only exposed skirt is at the
   map's outer boundary, which is what it is for.
 - **The mire** is a basin with a pond; fine, but only two variants.
+- **A bridge needs a socket that does not exist.** A tile with water on two edges
+  and road on the other two is a saddle -- its road edges must be ground to meet a
+  track and its water edges must be bed to meet a mere, and one height field
+  cannot be both. Built anyway it was out by 0.95 (exactly BED_Z) against every
+  track. What would work is a `W+B` socket -- water with a deck carried over it --
+  on the span and two bank approaches. Three pieces and one socket. SOCKETS.md
+  has the detail.
+- **Crossings OVER things are a family the vocabulary does not model at all.**
+  The cove, the beach-meets-sea-cliff corners and the bridge are all the same
+  gap, not three separate failures.
 - **Goblin ears read as horns from the front** views; they work from the obliques.
 - The dungeon sets still use the wall contract. Both contracts coexist deliberately —
   the manifest decides which a set uses — so nothing needs migrating.
