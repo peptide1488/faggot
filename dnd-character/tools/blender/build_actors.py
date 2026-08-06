@@ -106,9 +106,17 @@ def act_hit(t):
     """A flinch, not a stagger: back and down, then most of the way home. Three
     frames, because the runtime interrupts whatever else he was doing to play it
     and a long recoil would eat the turn it belongs to."""
+    # Amplitudes are LARGE. At three frames and ~100 pixels tall a subtle recoil is
+    # no recoil at all -- the first version moved so little that the three frames
+    # were indistinguishable side by side. It has to overshoot to register.
+    # The flinch lives in PITCH and BOB -- doubling over and dropping -- not in
+    # `lean`, `reach` or `arm`. Those three also position the weapon, so cranking
+    # them to make the recoil visible threw the cleaver off to one side: the body
+    # lurched one way and the thing it was holding lurched further. Big numbers on
+    # the axes that only move the body; small ones on the axes the hand rides.
     k = math.sin(math.pi * min(1.0, t * 1.15))
-    return dict(swing=0.0, bob=-0.04 * k, lean=-0.13 * k, pitch=-0.16 * k,
-                drop=0.03 * k, arm=-0.5 * k, reach=-0.12 * k, twist=0.16 * k)
+    return dict(swing=0.10 * k, bob=-1.0 * k, lean=-0.09 * k, pitch=-0.62 * k,
+                drop=0.06 * k, arm=-0.55 * k, reach=-0.07 * k, twist=0.42 * k)
 
 
 def act_death(t):
@@ -221,13 +229,21 @@ def build(body, action, t):
              cx=lean + p["arm"] * b["stride"] * 0.5 + p["reach"], cy=-b["shoulder"]),
     ]
 
-    wx = lean + p["reach"] + b["waist"] * 1.2
+    # BOTH WEAPONS HANG OFF THE HAND. The staff had the same fault the cleaver did
+    # -- placed at a fixed offset from the torso, so it stood apart from the figure
+    # with daylight between them and did not move when he swung. One rule for both:
+    # start from where the arm actually is.
+    hand_x = lean + p["reach"] + p["arm"] * b["stride"] * 0.5
     if b["weapon"] == "staff":
+        # It plants and pivots rather than floating along with him, so the walk
+        # swing is damped -- but the ATTACK reach carries it, which is the whole
+        # gesture: he thrusts the staff, he does not wave from the elbow.
+        sx = lean + p["reach"] * 1.6 + b["waist"] * 0.55 - sw * 0.5
+        sy = b["shoulder"] * 1.05
         parts += [
-            tube("staff", z(0.0), z(h * 0.91), 0.028, 0.024, 6, WOOD,
-                 cx=wx - sw * 0.6, cy=b["shoulder"] * 1.2),
+            tube("staff", z(0.0), z(h * 0.91), 0.028, 0.024, 6, WOOD, cx=sx, cy=sy),
             tube("gem", z(h * 0.91), z(h * 0.99), 0.055, 0.02, 6, METAL,
-                 cx=wx - sw * 0.6, cy=b["shoulder"] * 1.2),
+                 cx=sx, cy=sy),
         ]
     elif b["weapon"] == "cleaver":
         # ANCHORED TO THE HAND, not to the body's centre. The first version put the
@@ -236,7 +252,6 @@ def build(body, action, t):
         # own position, and `twist` carries it around him, which at this size reads
         # better than an elbow ever could.
         tw = p["twist"]
-        hand_x = lean + p["reach"] + p["arm"] * b["stride"] * 0.5
         hand_y = -b["shoulder"]
         bx = hand_x + math.cos(tw) * h * 0.075
         by = hand_y - math.sin(tw) * h * 0.075
