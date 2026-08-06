@@ -1596,14 +1596,27 @@ def terrain_surface(field, base=0.0, name="ground", water=False):
             + [(N * (N + 1) + ix) for ix in range(N + 1)]                # Y+
             + [(iy * (N + 1) + N) for iy in range(N, -1, -1)]            # X+
             + [ix for ix in range(N, -1, -1)])                           # Y-
+    scols = []
     for i in ring:
         x, y, z = verts[i]
         sv.append((x, y, z))
         sv.append((x, y, drop))
+        # depth below the turf line, 0 at the top of the cut and 1 at the bottom
+        scols.append((0.0, 0.0, 0.0, 1.0))
+        scols.append((1.0, 1.0, 1.0, 1.0))
     for k in range(len(ring) - 1):
         a = k * 2
         sf.append((a, a + 1, a + 3, a + 2))
-    new_obj(name + "_skirt", sv, sf, subsoil_material())
+    sk = new_obj(name + "_skirt", sv, sf, subsoil_material())
+    # THE HUMUS LIP HAS TO BE RELATIVE. It used to be a band in absolute height,
+    # which is right for a tile whose ground sits at zero and completely wrong for
+    # one a level up: a raised tile's cut runs from z=1.8 down, far above the band,
+    # so the whole face clamped to the lip colour and the plateau came out with
+    # blank green sides. Storing depth-below-the-turf per vertex says the same
+    # thing in a way that does not care how high the tile is.
+    att = sk.data.color_attributes.new(name="cut", type='FLOAT_COLOR', domain='POINT')
+    for i, c in enumerate(scols):
+        att.data[i].color = c
 
     def sample(x, y):
         """(z, rock, mud) at a world point, from the same grid the mesh uses."""
@@ -2200,15 +2213,16 @@ def subsoil_material():
     # stones caught in the bank
     col = _mix(nt, col, tuple(min(1.0, c * 1.15) for c in r), _dots(nt, 20.0, 0.16, 0.28))
     col = _mix(nt, col, tuple(c * 0.55 for c in r), _dots(nt, 31.0, 0.13, 0.22))
-    # the dark humus lip immediately under the turf: a band in the tile's own
-    # height, so it tracks the top of the cut however deep the cut happens to be
-    tc = nt.nodes.new("ShaderNodeTexCoord")
-    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
-    nt.links.new(tc.outputs["Object"], sep.inputs["Vector"])
+    # the dark humus lip immediately under the turf, from the `cut` attribute:
+    # 0 at the top of the face, 1 at the bottom, whatever height the tile sits at
+    att = nt.nodes.new("ShaderNodeAttribute")
+    att.attribute_name = "cut"
+    csep = nt.nodes.new("ShaderNodeSeparateColor")
+    nt.links.new(att.outputs["Color"], csep.inputs["Color"])
     lip = nt.nodes.new("ShaderNodeMapRange")
-    lip.inputs["From Min"].default_value = -0.30
-    lip.inputs["From Max"].default_value = -0.02
-    nt.links.new(sep.outputs["Z"], lip.inputs["Value"])
+    lip.inputs["From Min"].default_value = 0.34
+    lip.inputs["From Max"].default_value = 0.02
+    nt.links.new(csep.outputs[0], lip.inputs["Value"])
     col = _mix(nt, col, (g[0] * 0.85, g[1] * 0.70, g[2] * 0.60), lip.outputs["Result"])
 
     steps = t.get("posterize")

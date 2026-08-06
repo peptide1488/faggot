@@ -28,6 +28,8 @@
   <label>tile set <select id="tileset"></select></label>
   <label><input id="daylight" type="checkbox"> daylight (outdoor)</label>
   <label>ambient <input id="amb" type="range" min="0" max="100" value="18"></label>
+  <label>sun <input id="sun" type="range" min="0" max="150" value="0"></label>
+  <label>sun angle <input id="sunang" type="range" min="0" max="360" value="215"></label>
   <label>torch <input id="rng" type="range" min="20" max="400" value="150"></label>
   <label>shadows <input id="shd" type="range" min="0" max="100" value="80"></label>
   <label>water <input id="water" type="range" min="0" max="100" value="60"></label>
@@ -1242,6 +1244,7 @@ document.getElementById("ver").textContent=VERSION;
     uniform vec2 uRes,uOrigin,uPan,uVP;
     uniform float uZoom;
     uniform float uPPU,uAmb,uMode,uHoff,uHrange,uCam,uShadow;
+    uniform vec3 uSunDir, uSunCol;
     uniform float uPixel,uLevels,uDither,uBands,uLightDither,uHeroZ;
     uniform float uTime,uWater;
 
@@ -1357,6 +1360,23 @@ document.getElementById("ver").textContent=VERSION;
     // sharp streak that breaks into pieces on the ripples.
     vec3 shade(vec3 albedo, vec3 n, vec2 wp, float h, float gloss){
       vec3 acc=vec3(uAmb), spec=vec3(0.0);
+      // THE SUN. A directional light, which is a different thing from a brighter
+      // ambient: ambient lifts everything equally and flattens the map, while a
+      // sun has a direction, so a slope facing it reads bright and the far side of
+      // every crag goes into shade. That is what gives an outdoor scene its relief.
+      // It casts too -- the same height-field march the torches use, but with the
+      // ray never running out of light, because the sun is not at a position.
+      if(uSunCol.r+uSunCol.g+uSunCol.b > 0.001){
+        float ndl=max(0.0,dot(n,uSunDir));
+        if(ndl>0.0){
+          float vis=1.0-uShadow*occluded(wp,h,uSunDir,1e4);
+          acc+=uSunCol*ndl*vis;
+          if(gloss>0.0){
+            float nh=max(dot(n,normalize(uSunDir+EYE)),0.0);
+            spec+=uSunCol*vis*gloss*(pow(nh,110.0)*1.5+pow(nh,14.0)*0.14);
+          }
+        }
+      }
       for(int k=0;k<8;k++){
         if(float(k)>=uNL) break;
         vec3 d=vec3(uLp[k].xy-wp, uLp[k].z-h);   // light height is absolute
@@ -2471,6 +2491,7 @@ document.getElementById("ver").textContent=VERSION;
         bands=document.getElementById("bands"), bdith=document.getElementById("bdith"),
         ss=document.getElementById("ss"), water=document.getElementById("water"),
         daylight=document.getElementById("daylight"),
+        sun=document.getElementById("sun"), sunang=document.getElementById("sunang"),
         seedBox=document.getElementById("seed");
   // DAYLIGHT. The lighting model here is a dungeon's: near-black ambient plus a
   // handful of point lights, which is exactly wrong outdoors -- a meadow at noon
@@ -2482,9 +2503,9 @@ document.getElementById("ver").textContent=VERSION;
   // dungeon -- so neither kind of map opens looking wrong.
   const NIGHT={amb:18, rng:150, shd:80};
   function applyDaylight(on){
-    if(on){ amb.value=100; rng.value=rng.min; shd.value=45; }
-    else  { amb.value=NIGHT.amb; rng.value=NIGHT.rng; shd.value=NIGHT.shd; }
-    for(const el of [amb,rng,shd]) el.dispatchEvent(new Event("input",{bubbles:true}));
+    if(on){ amb.value=52; rng.value=rng.min; shd.value=60; sun.value=85; }
+    else  { amb.value=NIGHT.amb; rng.value=NIGHT.rng; shd.value=NIGHT.shd; sun.value=0; }
+    for(const el of [amb,rng,shd,sun]) el.dispatchEvent(new Event("input",{bubbles:true}));
   }
   daylight.checked = SOCKET_SET;
   daylight.onchange = () => { applyDaylight(daylight.checked);
@@ -2495,6 +2516,19 @@ document.getElementById("ver").textContent=VERSION;
   function drawGL(){
     syncSprite();
     gl.uniform1f(U("uAmb"),amb.value/100);
+    // Sun direction in WORLD space, matching the light positions the torches use.
+    // Elevation is fixed at a late-afternoon 38 degrees: high enough that flat
+    // ground is clearly lit, low enough that a scarp throws a shadow you can see.
+    {
+      const a=sunang.value*Math.PI/180, el=38*Math.PI/180;
+      gl.uniform3f(U("uSunDir"), Math.cos(a)*Math.cos(el), Math.sin(a)*Math.cos(el),
+                   Math.sin(el));
+      // Warm, and paired with the cool ambient the sky provides. Equal-temperature
+      // sun and fill is what makes a render look like a product shot rather than
+      // a place.
+      const k=sun.value/100;
+      gl.uniform3f(U("uSunCol"), k*1.00, k*0.94, k*0.80);
+    }
     gl.uniform1f(U("uShadow"),shd.value/100);
     gl.uniform1f(U("uWater"),water.value/100);
     gl.uniform1f(U("uTime"),clock);
@@ -2542,7 +2576,15 @@ document.getElementById("ver").textContent=VERSION;
     // available to us, and it also smooths the shadow jitter and dither stipple.
     const k=Math.max(1,parseInt(pix.value,10));
     const s=Math.max(1,parseInt(ss.value,10));
-    glc.width=Math.ceil(innerWidth/k*s); glc.height=Math.ceil(innerHeight/k*s);
+    // RENDER AT DEVICE PIXELS. The backing store used to be sized in CSS pixels,
+    // so on any display at a scale factor other than 100% the browser stretched
+    // the finished frame to fit -- a 1984-wide canvas blown up to 2976 device
+    // pixels. `image-rendering:pixelated` does not save it: 1.5x nearest doubles
+    // some columns and not others, which reads as everything being slightly soft.
+    // Painting one backing pixel per device pixel is the only thing that makes
+    // pixel art land on pixels.
+    const dpr=Math.max(1, Math.min(3, window.devicePixelRatio||1));
+    glc.width=Math.ceil(innerWidth*dpr/k*s); glc.height=Math.ceil(innerHeight*dpr/k*s);
     glc.style.width=innerWidth+"px"; glc.style.height=innerHeight+"px";
     glc.style.imageRendering = s>1 ? "auto" : "pixelated";
   }
