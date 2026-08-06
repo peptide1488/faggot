@@ -30,9 +30,16 @@
   <label>ambient <input id="amb" type="range" min="0" max="100" value="18"></label>
   <label>sun <input id="sun" type="range" min="0" max="150" value="0"></label>
   <label>sun angle <input id="sunang" type="range" min="0" max="360" value="215"></label>
+  <label>sun height <input id="sunel" type="range" min="3" max="88" value="38"></label>
+  <label>sun colour <input id="suncol" type="color" value="#fff0cc"></label>
+  <label>sky colour <input id="ambcol" type="color" value="#8899cc"></label>
+  <label>fog <input id="fog" type="range" min="0" max="100" value="0"></label>
+  <label>fog colour <input id="fogcol" type="color" value="#93a7bb"></label>
+  <label>fog top <input id="fogtop" type="range" min="0" max="60" value="12"></label>
   <label>torch <input id="rng" type="range" min="20" max="400" value="150"></label>
   <label>shadows <input id="shd" type="range" min="0" max="100" value="80"></label>
   <label>water <input id="water" type="range" min="0" max="100" value="60"></label>
+  <label>water colour <input id="watcol" type="color" value="#3f6f86"></label>
   <label>light bands <input id="bands" type="range" min="0" max="24" value="0"></label>
   <label>band dither <input id="bdith" type="range" min="0" max="100" value="0"></label>
   <!-- anti-alias defaults OFF: supersampling is a debugging aid here, not the
@@ -1076,6 +1083,20 @@ function connectRegions(cells, W, H){
   return removed;
 }
 
+// "#8899cc" -> [0.53, 0.60, 0.80]. The pickers hand back hex; the shader wants
+// linear-ish floats, and doing it per frame is cheaper than watching for change
+// events on six controls.
+const hex3=h=>[parseInt(h.substr(1,2),16)/255,
+               parseInt(h.substr(3,2),16)/255,
+               parseInt(h.substr(5,2),16)/255];
+// A LIGHT'S COLOUR IS ITS HUE, NOT ITS BRIGHTNESS -- the slider next to it owns
+// that. Feeding the picker's value in raw multiplies the two together, so
+// choosing a believable sky (#8899cc, none of whose channels is above 0.8)
+// silently drops the fill to 60% and the whole map goes contrasty and yellow.
+// Scaling by the brightest channel keeps the tint and leaves the intensity where
+// the person put it.
+const tint=h=>{ const c=hex3(h), m=Math.max(c[0],c[1],c[2])||1;
+                return [c[0]/m, c[1]/m, c[2]/m]; };
 const load=src=>new Promise((ok,no)=>{const im=new Image();
   im.onload=()=>ok(im); im.onerror=()=>no(new Error("failed: "+src)); im.src=src;});
 const DIRS=["east","south-east","south","south-west","west","north-west","north","north-east"];
@@ -1401,7 +1422,9 @@ document.getElementById("ver").textContent=VERSION;
     uniform vec2 uRes,uOrigin,uPan,uVP;
     uniform float uZoom;
     uniform float uPPU,uAmb,uMode,uHoff,uHrange,uCam,uShadow;
-    uniform vec3 uSunDir, uSunCol;
+    uniform vec3 uSunDir, uSunCol, uAmbCol, uFogCol;
+    uniform float uFog, uFogHeight;
+    uniform vec3 uWaterCol;
     uniform float uPixel,uLevels,uDither,uBands,uLightDither;
     uniform float uTime,uWater,uMaxH;
 
@@ -1613,7 +1636,10 @@ document.getElementById("ver").textContent=VERSION;
     // a torch on a matte surface is a soft pool of light, on water it is a
     // sharp streak that breaks into pieces on the ripples.
     vec3 shade(vec3 albedo, vec3 n, vec2 wp, float h, float gloss){
-      vec3 acc=vec3(uAmb), spec=vec3(0.0);
+      // Ambient is a COLOUR now, not a grey. The sky is the fill light outdoors
+      // and it is blue; underground it is whatever the stone bounces. A grey fill
+      // is the one choice that never looks like anywhere.
+      vec3 acc=uAmbCol*uAmb, spec=vec3(0.0);
       // THE SUN. A directional light, which is a different thing from a brighter
       // ambient: ambient lifts everything equally and flattens the map, while a
       // sun has a direction, so a slope facing it reads bright and the far side of
@@ -1768,8 +1794,25 @@ document.getElementById("ver").textContent=VERSION;
         float amp = uWater;
         nrm = waterNormal(wp,uTime,amp);
         float wh = waterHeight(wp,uTime);
-        // Wave troughs sit deeper in the tint, crests catch more light. The baked
-        // albedo already carries the basin's AO, so this only modulates it.
+        // THE WATER'S COLOUR COMES FROM THE WORLD, NOT FROM THE TILE. It used to
+        // modulate the baked albedo, and every mere tile bakes its own bed from
+        // its own seed -- so a pond was a patchwork with a hard edge at every
+        // tile boundary, a diamond grid you cannot unsee once you have noticed
+        // it. Anything sampled per tile will do that. A function of the world
+        // position cannot: neighbouring tiles evaluate the same function at
+        // adjoining coordinates and meet exactly, which is the same argument
+        // that made the ripple itself continuous.
+        //
+        // Three sine trains again, at a fraction of the ripple's frequency, for
+        // the slow variation a body of water has -- weed beds, silt, depth. No
+        // texture, no seam, and it costs six sines.
+        float mot = 0.5 + 0.30*sin(dot(wp,vec2(0.21,0.13))*1.9 + 0.7)
+                        + 0.22*sin(dot(wp,vec2(-0.17,0.24))*2.7 + 2.1)
+                        + 0.14*sin(dot(wp,vec2(0.09,-0.11))*4.3 + 4.4);
+        mot = clamp(mot, 0.0, 1.0);
+        vec3 deep = uWaterCol * 0.42;
+        col = mix(deep, uWaterCol, mot);
+        // Wave troughs sit deeper in the tint, crests catch more light.
         col *= 0.78 + 0.44*clamp(wh*7.0+0.5,0.0,1.0);
         // Shoreline. Anything that is not water within a couple of pixels means a
         // bank, a rim or a causeway pier; foam gathers there and rides the swell.
@@ -1791,7 +1834,12 @@ document.getElementById("ver").textContent=VERSION;
       // Height and normals are DATA views -- an emissive glow has no business in
       // either, and drawing it there would hide the buffer being inspected.
       if(uMode>2.5){ gl_FragColor=vec4(vec3(hgt/uHrange+0.5),1.0); return; }
-      if(empty){ gl_FragColor=vec4(vec3(0.03,0.03,0.04)+fxAdd,1.0); return; }
+      if(empty){
+        // The void takes the fog colour as it thickens, otherwise the map sits on
+        // a black card with a grey haze stopping dead at its edge.
+        vec3 v = mix(vec3(0.03,0.03,0.04), uFogCol, clamp(uFog*0.55,0.0,1.0));
+        gl_FragColor=vec4(v+fxAdd,1.0); return;
+      }
       if(uMode>1.5){ gl_FragColor=vec4(nrm*0.5+0.5,1.0); return; }
       if(uMode>0.5){ gl_FragColor=vec4(post(col+fxAdd),1.0); return; }
       vec3 lit = shade(col,nrm,worldAt(P,hgt),hgt,gloss);
@@ -1816,7 +1864,20 @@ document.getElementById("ver").textContent=VERSION;
           }
         }
       }
-      gl_FragColor=vec4(post(lit+fxAdd),1.0);
+      // ---- fog ---------------------------------------------------------------
+      // DISTANCE FROM THE CAMERA, which the depth buffer already knows: depthAt
+      // is what sorts every surface in this shader, so fog costs one exponential
+      // and no new information. Height fades it out as well, so a hilltop stands
+      // clear of what is lying in the valleys -- fog that ignores height is a
+      // grey wash over everything and reads as a dirty lens.
+      vec3 outc = lit + fxAdd;
+      if(uFog > 0.0){
+        float dist = max(0.0, uCam - zBest);
+        float f = 1.0 - exp(-dist * dist * uFog * 0.0025);
+        f *= exp(-max(0.0, hgt - uFogHeight) * 0.55);
+        outc = mix(outc, uFogCol, clamp(f, 0.0, 1.0));
+      }
+      gl_FragColor=vec4(post(outc),1.0);
     }`;
 
   const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
@@ -3140,15 +3201,27 @@ document.getElementById("ver").textContent=VERSION;
     const def=FXDEF[name]||{};
     const e={name, wx, wy, z:(z||0)+(def.z||0), t:0, frame:0, k:1, rot:0};
     if(def.aimed && fromWx!==undefined){
-      // The bolt is baked as a streak along world +X. Point it by rotating the
-      // SAMPLE in screen space -- the art is a 2D image from a fixed camera, so
-      // the honest rotation is the one the viewer sees. It sits at the midpoint
-      // of the flight, and the rect grows by root-2 so the corners survive.
+      // AN AIMED EFFECT FLIES. It is baked as a streak along world +X, so it is
+      // pointed by rotating the SAMPLE in screen space -- the art is a 2D image
+      // from a fixed camera, so the honest rotation is the one the viewer sees --
+      // and the rect grows by root-2 so the corners survive the turn.
+      //
+      // It used to be parked at the MIDPOINT for its whole life, which is why it
+      // never looked like it came from the caster: the dart's only travel was
+      // the couple of units the bake animates within its own frame, so on any
+      // throw longer than that it simply appeared in the middle of the gap. It
+      // carries its endpoints now and stepEffects walks it across them, so it
+      // leaves the hand and arrives at the target however far away that is.
       const [ax,ay]=worldToScreen(0,0), [bx,by]=worldToScreen(1,0);
       const [cx,cy]=worldToScreen(fromWx,fromWy), [dx2,dy2]=worldToScreen(wx,wy);
       e.rot=Math.atan2(dy2-cy,dx2-cx)-Math.atan2(by-ay,bx-ax);
       e.k=1.42;
-      e.wx=(wx+fromWx)/2; e.wy=(wy+fromWy)/2;
+      // start AT the caster, a little in front of him so it reads as thrown
+      // rather than as growing out of his chest
+      const d=Math.hypot(wx-fromWx, wy-fromWy) || 1;
+      e.fromX=fromWx+(wx-fromWx)/d*0.45; e.fromY=fromWy+(wy-fromWy)/d*0.45;
+      e.toX=wx; e.toY=wy;
+      e.wx=e.fromX; e.wy=e.fromY;
     }
     fx.push(e);
     return e;
@@ -3169,6 +3242,15 @@ document.getElementById("ver").textContent=VERSION;
       const n=FXMAN.effects[e.name];
       if(e.t>=n){ fx.splice(i,1); continue; }
       e.frame=Math.floor(e.t);
+      if(e.toX!==undefined){
+        // Across the gap over its own lifetime. Eased out at the end so it
+        // arrives rather than stopping dead: the last frames of the bake are the
+        // dart striking, and they should land on the target, not short of it.
+        const u=Math.min(1, e.t/Math.max(1,n-1));
+        const k=1-(1-u)*(1-u);
+        e.wx=e.fromX+(e.toX-e.fromX)*k;
+        e.wy=e.fromY+(e.toY-e.fromY)*k;
+      }
     }
   }
 
@@ -3266,6 +3348,10 @@ document.getElementById("ver").textContent=VERSION;
         ss=document.getElementById("ss"), water=document.getElementById("water"),
         daylight=document.getElementById("daylight"),
         sun=document.getElementById("sun"), sunang=document.getElementById("sunang"),
+        sunel=document.getElementById("sunel"), suncol=document.getElementById("suncol"),
+        ambcol=document.getElementById("ambcol"), fog=document.getElementById("fog"),
+        fogcol=document.getElementById("fogcol"), fogtop=document.getElementById("fogtop"),
+        watcol=document.getElementById("watcol"),
         seedBox=document.getElementById("seed");
   // DAYLIGHT. The lighting model here is a dungeon's: near-black ambient plus a
   // handful of point lights, which is exactly wrong outdoors -- a meadow at noon
@@ -3277,9 +3363,13 @@ document.getElementById("ver").textContent=VERSION;
   // dungeon -- so neither kind of map opens looking wrong.
   const NIGHT={amb:18, rng:150, shd:80};
   function applyDaylight(on){
-    if(on){ amb.value=52; rng.value=rng.min; shd.value=60; sun.value=85; }
-    else  { amb.value=NIGHT.amb; rng.value=NIGHT.rng; shd.value=NIGHT.shd; sun.value=0; }
-    for(const el of [amb,rng,shd,sun]) el.dispatchEvent(new Event("input",{bubbles:true}));
+    if(on){ amb.value=52; rng.value=rng.min; shd.value=60; sun.value=85;
+            sunel.value=38; suncol.value="#fff0cc"; ambcol.value="#8899cc";
+            fog.value=10; fogcol.value="#a8bccc"; }
+    else  { amb.value=NIGHT.amb; rng.value=NIGHT.rng; shd.value=NIGHT.shd; sun.value=0;
+            sunel.value=38; suncol.value="#ffd9a0"; ambcol.value="#5566aa";
+            fog.value=8;  fogcol.value="#0d1016"; }
+    for(const el of [amb,rng,shd,sun,sunel,fog]) el.dispatchEvent(new Event("input",{bubbles:true}));
   }
   daylight.checked = SOCKET_SET;
   daylight.onchange = () => { applyDaylight(daylight.checked);
@@ -3294,18 +3384,26 @@ document.getElementById("ver").textContent=VERSION;
     // Elevation is fixed at a late-afternoon 38 degrees: high enough that flat
     // ground is clearly lit, low enough that a scarp throws a shadow you can see.
     {
-      const a=sunang.value*Math.PI/180, el=38*Math.PI/180;
+      const a=sunang.value*Math.PI/180, el=sunel.value*Math.PI/180;
       gl.uniform3f(U("uSunDir"), Math.cos(a)*Math.cos(el), Math.sin(a)*Math.cos(el),
                    Math.sin(el));
-      // Warm, and paired with the cool ambient the sky provides. Equal-temperature
-      // sun and fill is what makes a render look like a product shot rather than
-      // a place.
-      const k=sun.value/100;
-      gl.uniform3f(U("uSunCol"), k*1.00, k*0.94, k*0.80);
+      // Warm by default, and paired with a cool sky. EQUAL-TEMPERATURE sun and
+      // fill is what makes a render look like a product shot rather than a place,
+      // so both are pickable and the defaults are deliberately not the same hue.
+      const k=sun.value/100, c=tint(suncol.value);
+      gl.uniform3f(U("uSunCol"), k*c[0], k*c[1], k*c[2]);
+      const ac=tint(ambcol.value);
+      gl.uniform3f(U("uAmbCol"), ac[0], ac[1], ac[2]);
+      const fc=hex3(fogcol.value);
+      gl.uniform3f(U("uFogCol"), fc[0], fc[1], fc[2]);
+      gl.uniform1f(U("uFog"), fog.value/100);
+      gl.uniform1f(U("uFogHeight"), parseFloat(fogtop.value)/10);
     }
     gl.uniform1f(U("uShadow"),shd.value/100);
     gl.uniform1f(U("uWater"),water.value/100);
     gl.uniform1f(U("uWaterZ"),WATER_SURFACE);
+    { const w=tint(watcol.value);
+      gl.uniform3f(U("uWaterCol"), w[0], w[1], w[2]); }
     gl.uniform1f(U("uMaxH"),sceneMaxH);
     gl.uniform1f(U("uTime"),clock);
     gl.uniform1f(U("uMode"),parseFloat(mode.value));
