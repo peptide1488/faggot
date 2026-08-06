@@ -263,7 +263,12 @@ const SVAR = [];                       // {name, rot, sock, w}
 // A PEAK IS RARE ON PURPOSE. It is the third level, not a second plateau: one
 // outcrop that overlooks the map is a feature, and a board half of which is at
 // the top band is just a smaller map with a moat round it.
-const ROLE_W = { ground:18, high_ground:9, peak:2.2, liquid:3.4, track:3.0,
+// WATER'S WEIGHT ONLY CONTROLS THE EXTRA. The river is seeded, so its cells are
+// forced whatever this says; everything the solver adds on top of it is a pool it
+// chose freely. Measured on a 12x12: at 3.4 a map came out 17% water when the
+// river itself is about 10% of it. Dropping it does not thin the river, it stops
+// the ponds.
+const ROLE_W = { ground:18, high_ground:9, peak:2.2, liquid:0.5, track:3.0,
                  transition:4.5, slope:5.0, track_slope:3.4, wallow:1.4 };
 // ...and weights alone are not enough, and cannot be made enough.
 //
@@ -310,7 +315,10 @@ const MAP_MIX = { land:[0.62, 1.0], high:[0.04, 0.46],
                   // single pool of its own. Capping at 13 rejected the shape that
                   // had just been asked for, and the fallback then returned maps
                   // wetter than either number.
-                  water:[0.01, 0.21],
+                  // A river on a bigger board is a smaller FRACTION of it: one
+                  // tile wide over N tiles is about 1/N before the meander, so
+                  // 12x12 wants a tighter band than 9x9 did.
+                  water:[0.01, 0.13],
                   // PLAIN LOW GROUND IS A FEATURE, and counted on its own -- not
                   // together with high ground, which let a map of plateau, road
                   // and river through with literally no grass on it. Without a
@@ -1561,7 +1569,16 @@ document.getElementById("ver").textContent=VERSION;
     }));
   }catch(e){ status.innerHTML="<b>"+e.message+"</b><br>serve over http, not file://"; return; }
 
-  const W=9, H=9;                       // tiles (9x9 = 36x36 squares)
+  // MAP SIZE. Every tile costs composite area, and the composite is the ceiling
+  // here: at 9x9 it is already 6144x3584. The upper-layer canvases below are
+  // skipped for socket sets, which never use them, and that is what pays for the
+  // extra ground -- three canvases instead of six.
+  //   9x9  =  36x36 squares, ~22 megapixel composite
+  //  12x12 =  48x48 squares, ~39 megapixel composite
+  // ?map=N overrides, so a big one can be tried without editing this.
+  const MAP_N = Math.max(5, Math.min(16,
+    parseInt(PARAMS.get("map") || "12", 10) || 12));
+  const W=MAP_N, H=MAP_N;
   const SW=W*CELLS, SH=H*CELLS;         // squares
   const glc=document.getElementById("gl");
   const gl=glc.getContext("webgl",{alpha:false});
@@ -2651,7 +2668,8 @@ document.getElementById("ver").textContent=VERSION;
   function rebuildComposite(draws){
     draws = draws || lastDraws;
     if(!draws) return;
-    const mk=()=>{const c=document.createElement("canvas");c.width=CW;c.height=CH;return c;};
+    const mk=(w,h)=>{const c=document.createElement("canvas");
+                     c.width=w||CW; c.height=h||CH; return c;};
     const ca=mk(), cn=mk(), ch=mk();
     // The height composite is read back per prop by blitProp's occlusion test, so
     // it is the one of the three that wants a CPU-side backing store. Albedo and
@@ -2659,7 +2677,14 @@ document.getElementById("ver").textContent=VERSION;
     const xa=ca.getContext("2d"), xn=cn.getContext("2d"),
           xh=ch.getContext("2d",{willReadFrequently:true});
     hgtCtx=xh;
-    const ca1=mk(), cn1=mk(), ch1=mk();
+    // ONLY IF THE SET HAS ONE. The upper layer exists for a dungeon's bridges and
+    // overpasses; an outdoor set has no second storey, and allocating three more
+    // canvases the size of the whole map to leave them empty is half the memory
+    // of the composite for nothing. At 12x12 that is the difference between
+    // ~940MB of canvas and ~470MB.
+    const needUpper = !SOCKET_SET;
+    const mk1 = () => needUpper ? mk() : mk(1, 1);
+    const ca1=mk1(), cn1=mk1(), ch1=mk1();
     const xa1=ca1.getContext("2d"), xn1=cn1.getContext("2d"),
           xh1=ch1.getContext("2d",{willReadFrequently:true});
     for(const it of draws){
