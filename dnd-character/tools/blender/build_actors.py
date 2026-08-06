@@ -56,7 +56,7 @@ WIZARD = dict(
     robe=(0.20, 0.12, 0.33), trim=(0.17, 0.10, 0.29), skin=(0.76, 0.58, 0.44),
     hair=(0.86, 0.86, 0.89), wood=(0.32, 0.21, 0.12), metal=(0.25, 0.72, 0.95),
     boot=(0.16, 0.11, 0.09),
-    hat="wizard", beard=True, weapon="staff")
+    hat="wizard", beard=True, weapon="staff", hunch=0.0)
 
 # Radii are ABSOLUTE world units, not fractions of `h` -- which is a trap the first
 # goblin fell straight into. Copying the wizard's numbers onto a body two thirds his
@@ -64,12 +64,12 @@ WIZARD = dict(
 # than the wizard in absolute terms, with a head that is large only relative to the
 # rest of him.
 GOBLIN = dict(
-    h=1.02, hip=0.105, waist=0.132, chest=0.140, shoulder=0.145, head=0.112,
-    stride=0.12, bob=0.045,
+    h=1.02, hip=0.135, waist=0.095, chest=0.150, shoulder=0.150, head=0.108,
+    stride=0.12, bob=0.045, hunch=0.075,
     robe=(0.30, 0.20, 0.10), trim=(0.20, 0.13, 0.07), skin=(0.26, 0.38, 0.14),
     hair=(0.14, 0.10, 0.06), wood=(0.30, 0.20, 0.12), metal=(0.46, 0.46, 0.50),
     boot=(0.14, 0.10, 0.07),
-    hat="hood", beard=False, weapon="cleaver")
+    hat="none", beard=False, weapon="cleaver")
 
 BODIES = {"wizard": WIZARD, "goblin": GOBLIN}
 
@@ -155,6 +155,10 @@ def build(body, action, t):
     fold = 1.0 - 0.72 * p.get("collapse", 0.0)
     z = lambda v: (v * fold + bob)
 
+    # A hunch carries the head and chest FORWARD of the feet. It is the other half
+    # of reading as a goblin rather than a short man: the wizard stands upright and
+    # this one does not.
+    hunch = b.get("hunch", 0.0)
     hipz = h * 0.11
     waistz = h * 0.55
     chestz = h * 0.67
@@ -165,15 +169,18 @@ def build(body, action, t):
     parts = [
         box("boot_l", sw + lean, 0.085, z(0.0) + 0.0, h * 0.13, h * 0.085, h * 0.07, BOOT),
         box("boot_r", -sw + lean, -0.085, z(0.0), h * 0.13, h * 0.085, h * 0.07, BOOT),
+        # Hip -> waist -> chest, and the WAIST IS THE NARROWEST. A monotonic stack
+        # of radii is a cylinder however carefully the numbers are chosen, and a
+        # cylinder is what the first two goblins were. The pinch is the silhouette.
         tube("robe", z(hipz), z(waistz), b["hip"], b["waist"], S, ROBE, cx=lean),
         tube("torso", z(waistz), z(chestz), b["waist"], b["chest"], S, ROBE,
-             cx=lean + p["pitch"] * 0.10),
+             cx=lean + hunch * 0.5 + p["pitch"] * 0.10),
         tube("neck", z(chestz), z(neckz), b["head"] * 0.5, b["head"] * 0.5, S, SKIN,
-             cx=lean + p["pitch"] * 0.16),
+             cx=lean + hunch * 0.8 + p["pitch"] * 0.16),
         tube("head", z(neckz), z(headz), b["head"] * 0.92, b["head"], S, SKIN,
-             cx=lean + p["pitch"] * 0.22),
+             cx=lean + hunch + p["pitch"] * 0.22),
         tube("head_top", z(headz), z(topz), b["head"], b["head"] * 0.72, S, SKIN,
-             cx=lean + p["pitch"] * 0.26),
+             cx=lean + hunch + p["pitch"] * 0.26),
     ]
     if b["hat"] == "wizard":
         parts += [
@@ -186,23 +193,26 @@ def build(body, action, t):
         # A hood, and the EARS: a goblin is read by his silhouette above the
         # shoulders before anything else, and two spikes off the skull do more work
         # than any amount of face.
-        # The hood has to OVERSHOOT the skull it covers, or the crown pokes through
-        # it as a bare green disc -- which is exactly what the first render did.
-        parts += [tube("hood", z(headz - h * 0.05), z(topz + h * 0.07),
-                       b["head"] * 1.22, b["head"] * 0.34, S, TRIM,
-                       cx=lean + p["pitch"] * 0.28)]
-        # Ears: long, swept back and UP, so they break the head's outline instead of
-        # sitting beside it as two beads. This is the whole silhouette read.
+        # EARS SWEPT BACK, not up. A vertical cone either side of the skull is a
+        # horn, and two horns on a green head is a devil, not a goblin. Flat blades
+        # angled back and slightly down break the outline behind the head, which is
+        # where the eye expects a goblin's ears to be.
         for side, cy in (("l", 1.0), ("r", -1.0)):
-            parts.append(tube("ear_" + side, z(headz - h * 0.02), z(topz + h * 0.06),
-                              b["head"] * 0.34, 0.010, 5, SKIN,
-                              cx=lean - b["head"] * 0.55 + p["pitch"] * 0.22,
-                              cy=cy * b["head"] * 1.15))
+            parts.append(box("ear_" + side,
+                             lean + hunch - b["head"] * 0.95 + p["pitch"] * 0.20,
+                             cy * b["head"] * 0.72,
+                             z(headz - h * 0.005),
+                             b["head"] * 1.5, 0.014, b["head"] * 0.52, SKIN,
+                             rotz=cy * 0.42))
     if b["beard"]:
         parts.append(tube("beard", z(chestz - 0.06), z(headz), b["head"] * 0.48,
                           b["head"] * 0.96, 6, HAIR,
                           cx=b["head"] * 0.72 + lean + p["pitch"] * 0.20))
 
+    if b.get("shoulders", True) and b["hat"] != "wizard":
+        parts.append(tube("shoulders", z(chestz - h * 0.05), z(chestz + h * 0.01),
+                          b["chest"], b["shoulder"] * 1.15, S, ROBE,
+                          cx=lean + hunch * 0.6))
     armz0, armz1 = z(waistz + h * 0.06), z(chestz)
     parts += [
         tube("arm_l", armz0, armz1, h * 0.035, h * 0.032, 6, ROBE,
@@ -220,16 +230,22 @@ def build(body, action, t):
                  cx=wx - sw * 0.6, cy=b["shoulder"] * 1.2),
         ]
     elif b["weapon"] == "cleaver":
-        # Held out to the side and swung by the whole body: `twist` moves the blade
-        # around him, which at this size reads better than an elbow ever could.
+        # ANCHORED TO THE HAND, not to the body's centre. The first version put the
+        # weapon a fixed distance in front of the torso, so it hung in the air beside
+        # him with a visible gap -- a prop lying on nothing. It swings from the arm's
+        # own position, and `twist` carries it around him, which at this size reads
+        # better than an elbow ever could.
         tw = p["twist"]
-        bx = wx + math.cos(tw) * h * 0.20
-        by = -b["shoulder"] * 1.1 - math.sin(tw) * h * 0.20
+        hand_x = lean + p["reach"] + p["arm"] * b["stride"] * 0.5
+        hand_y = -b["shoulder"]
+        bx = hand_x + math.cos(tw) * h * 0.075
+        by = hand_y - math.sin(tw) * h * 0.075
         parts += [
-            tube("haft", z(chestz - h * 0.20), z(chestz - h * 0.02), 0.018, 0.016,
+            tube("haft", z(armz1 - h * 0.16), z(armz1 + h * 0.05), 0.017, 0.015,
                  5, WOOD, cx=bx, cy=by),
-            box("blade", bx + h * 0.035, by, z(chestz - h * 0.05),
-                h * 0.11, 0.016, h * 0.085, METAL),
+            box("blade", bx + math.cos(tw) * h * 0.045, by - math.sin(tw) * h * 0.045,
+                z(armz1 + h * 0.02), h * 0.105, 0.015, h * 0.075, METAL,
+                rotz=tw),
         ]
 
     pivot = bpy.data.objects.new("pivot", None)
