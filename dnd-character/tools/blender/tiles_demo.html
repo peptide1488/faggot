@@ -1088,7 +1088,7 @@ const DIRS=["east","south-east","south","south-west","west","north-west","north"
 // map draws, everything else in the background behind it. An actor asked to play
 // an action it does not have yet keeps walking and starts the moment it lands,
 // which is the only failure mode here that does not show as a missing frame.
-let ACTMAN=null, FXMAN=null;
+let ACTMAN=null, FXMAN=null, loadQueue=null;
 const ACT={};                     // ACT[body][action][dir][frame] = {a,n,h}
 const FXIMG={};                   // FXIMG[name][frame]     = {a,n,h}
 const actLoading={};
@@ -1316,9 +1316,26 @@ document.getElementById("ver").textContent=VERSION;
     if(Math.max(ACT_RES,FX_RES)>CELL_RES)
       throw new Error("sprite res "+Math.max(ACT_RES,FX_RES)+" exceeds the atlas "+
                       "cell ("+CELL_RES+") — raise CELL_RES");
-    status.textContent="loading actors…";
-    await Promise.all(ACTMAN.bodies.map(b=>loadAction(b,"walk")));
-    await Promise.all(Object.keys(FXMAN.effects).map(loadEffect));
+    // THE MAP DOES NOT WAIT FOR THE ACTORS. This used to await both bodies' walk
+    // cycles and all four effects before the first build -- 360 images, and the
+    // effects are 640px now, so it is a hundred megabytes of PNG to decode before
+    // a single tile is drawn. On a warm cache in an automated browser that looked
+    // instant. On a real machine opening it cold it is a black screen with the
+    // CPU and GPU pinned, for long enough to look like a hang, and the status
+    // line saying "loading actors" was the only clue it was not one.
+    //
+    // Nothing needs them to draw a map: actorFrame() returns null until a body's
+    // action has landed and syncSprites just skips that slot, play() defers until
+    // its action arrives, and cast() refuses an effect it has not got. So the
+    // whole lot goes in the background, nearest-use first -- the hero walks, then
+    // the goblins, then the spells, then everything else.
+    loadQueue = (async () => {
+      await loadAction("wizard", "walk");
+      for (const b of ACTMAN.bodies) await loadAction(b, "walk");
+      for (const n of Object.keys(FXMAN.effects)) await loadEffect(n);
+      for (const b of ACTMAN.bodies)
+        for (const act of Object.keys(ACTMAN.actions)) await loadAction(b, act);
+    })();
     propMeta = await (await fetch("out/props/props.json")).json();
     await Promise.all(PROP_NAMES.map(async p=>{
       propImg[p]={ a:await load("out/props/"+p+".png"),
@@ -3538,13 +3555,6 @@ document.getElementById("ver").textContent=VERSION;
 
   if(!build()) return;
   zoom.value=Math.round(fitZoom()*100); centreView(); fit();
-
-  // The rest of the actor art comes in behind the map. Walk was enough to draw
-  // the first frame; a swing needs attack, and it is 30 MB that nobody should
-  // wait on to see a meadow.
-  (async()=>{ for(const b of ACTMAN.bodies)
-                for(const act of Object.keys(ACTMAN.actions))
-                  await loadAction(b,act); })();
 
   endTurn();                      // start the first turn with a full move budget
   // ONE tick, so a headless caller advances the world exactly the way the frame
