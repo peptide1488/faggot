@@ -3625,10 +3625,40 @@ def main():
         k = args.index("--rot")
         rots = [int(x) for x in args[k + 1].split(",")]
         args = args[:k] + args[k + 2:]
+    # --only <substring>, THE SAME FLAG ITS SIBLINGS TAKE. build_actors.py and
+    # build_effects.py have both had it all along; this script alone wanted its
+    # tiles named in full, positionally. That difference is the whole bug: the
+    # flag was reasonably assumed, read as a tile name, missed the table, printed
+    # SKIP, rendered nothing -- and still finished with DONE. The worst shape a
+    # failure can have, because it costs the twenty minutes you expected to
+    # spend, raises nothing, and leaves the art untouched, so the next thing you
+    # do is compare against a stale image and conclude a working change did
+    # nothing. Matching the siblings is a better fix than documenting the quirk.
+    only = None
+    if "--only" in args:
+        k = args.index("--only")
+        if k + 1 >= len(args):
+            raise SystemExit("--only needs a name or part of one")
+        only = args[k + 1]
+        args = args[:k] + args[k + 2:]
+    # AN UNKNOWN FLAG IS A MISTAKE, NOT A TILE NAME.
+    stray = [a for a in args[1:] if a.startswith("-")]
+    if stray:
+        raise SystemExit(
+            "unknown option(s): %s\n"
+            "Flags are --theme <name>, --manifest-only, --rot <deg[,deg...]>.\n"
+            "To bake a subset, name the tiles positionally:\n"
+            "  blender -b -P build_tiles.py -- out --theme %s %s"
+            % (" ".join(stray), THEME, sorted(tiles())[0]))
     root = os.path.abspath(args[0]) if args else os.path.abspath("out")
     # Each theme owns a directory. Baking a new set never costs us an old one.
     outdir = os.path.join(root, THEME)
     wanted = args[1:] if len(args) > 1 else list(tiles().keys())
+    if only:
+        wanted = [n for n in wanted if only in n]
+        if not wanted:
+            raise SystemExit("--only %r matched no tile; have: %s"
+                             % (only, " ".join(sorted(tiles()))))
     os.makedirs(outdir, exist_ok=True)
     print("THEME", THEME, "->", outdir)
 
@@ -3637,6 +3667,17 @@ def main():
         write_manifest(outdir)
         print("DONE (manifest only) ->", outdir)
         return
+    # A NAME YOU TYPED THAT IS NOT IN THE TABLE IS A TYPO, and skipping it renders
+    # nothing while still reporting DONE -- the same silent no-op the flag check
+    # above exists to stop. Only fatal for names given explicitly: the default
+    # `wanted` is the table itself and cannot contain one.
+    if len(args) > 1 and not only:
+        typos = [n for n in wanted if n not in T]
+        if typos:
+            near = [t for t in sorted(T) if any(x in t for x in typos)]
+            hint = ("did you mean: " + " ".join(near[:6])) if near else \
+                "run with no tile names at all to bake the whole set"
+            raise SystemExit("no such tile(s): %s\n%s" % (" ".join(typos), hint))
     for name in wanted:
         if name not in T:
             print("SKIP unknown tile", name)

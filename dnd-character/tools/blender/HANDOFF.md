@@ -37,37 +37,46 @@ if the lighting looks wrong after a refresh, toggle daylight to reset it.
 |---|---|
 | `python shot.py <url> -o x.png --eval "expr" --key e` | screenshots the live page, prints console errors and any expression. Uses the `playwright` python package and its own chromium — **does not need the MCP browser** |
 | `node demo-test.js` | 7 checks on the socket solver: sockets well-formed, rotations permute, every abutting pair agrees, maps are not flat / unclimbable / drowned |
-| `blender -b -P check_seams.py -- --theme grass10A` | for every pair of tiles whose sockets say they may abut, samples both edge profiles and reports the worst height disagreement in world units |
+| `blender -b -P check_seams.py -- --theme grass10A` | for every pair of VARIANTS whose sockets say they may abut — all 160, not just rotation 0 — samples both edge profiles and reports the worst height disagreement. Expect **0 of 14496** |
+| `blender -b -P check_profile.py -- --theme grass10A` | what SHAPE each level change is: its gradient, and for one asked to shelve, how much of its dry ledge an actor could stand on |
+| `python socket_spec.py out/grass10A -o SOCKETS.md` | rewrites the edge/connection spec from the manifest: every socket, every piece, and which corners no tile can make |
 
-The last two exist because **the session's two worst bugs were both a comment or a
-variable claiming something the code did not do**, and neither was visible in a
-screenshot. Measure first.
+These exist because **every bug worth the name here was a claim that nothing
+checked**: a comment describing what the code did not do, a shore that agreed
+perfectly with its neighbours on the wrong shape, a socket that said a level
+change crossed an edge but not which end of it was high. None of them was
+visible in a screenshot and none of them raised anything. Measure first.
+
+Two of these were themselves wrong and worth knowing about, because a checker
+that lies is worse than none: check_seams.py compared only rotation 0 against
+rotation 0, which is 946 of 15272 pairs and misses the case where the fault
+actually was; and check_profile.py judged a sea cliff as a failed beach until it
+learned to read the INTENT out of `SHELF` rather than infer it from the bands.
 
 ---
 
 ## Bake
 
 ```sh
-blender -b -P build_tiles.py  -- out --theme grass10A       # 30 tiles, ~25 min
+blender -b -P build_tiles.py  -- out --theme grass10A       # 40 tiles, ~30 min
 blender -b -P build_props.py  -- out/props                  # furniture + outdoor props
 blender -b -P build_actors.py -- out/actors                 # 2 bodies x 4 actions x 8 dirs
 blender -b -P build_effects.py -- out/effects               # 4 spell effects
 python pack_tiles.py out/grass10A --albedo-q 100            # lossless: pixel sets need it
 ```
 
-Useful flags: `--rot 0` (bench one rotation), `--manifest-only`, `--action <name>`.
+Useful flags: `--rot 0` (bench one rotation), `--manifest-only`,
+`--only <name or part of one>`, `--action <name>`.
 
-**To bake a subset, name the tiles POSITIONALLY** — there is no `--only`:
-
-```sh
-blender -b -P build_tiles.py -- out --theme grass10A grass10A-headland-0450
-```
-
-An unrecognised word is read as a tile name, so `--only headland` prints
-`SKIP unknown tile --only` / `SKIP unknown tile headland`, renders nothing, and
-still says `DONE`. That is worth knowing: it cost two bakes that appeared to
-succeed and changed no art, and led to a real fix being called ineffective
-because the image compared against it had never been re-rendered.
+`--only` now means the same thing in all three build scripts, and an unknown
+flag or a mistyped tile name is a hard error rather than a skip. It did not use
+to be: `build_tiles.py` alone wanted its tiles named in full and positionally, so
+`--only headland` was read as a TILE NAME, matched nothing, printed `SKIP`,
+rendered nothing -- and still finished with `DONE`. That is the worst shape a
+failure can have. It costs the twenty minutes you expected to spend, raises
+nothing, and leaves the art untouched, so the next thing you do is compare
+against a stale image and conclude a working change did nothing. It cost exactly
+that, twice.
 
 **After any tile re-bake: delete `out/<set>/packed/` and re-pack.** A stale pack
 serves the previous vocabulary and 404s the new one.
@@ -149,27 +158,41 @@ failed on a clause that should never have fired.
 
 ---
 
-## Next job: wire actors and effects into the demo
+## Actors and effects — done, and how they work
 
-`out/actors/actors.json` and `out/effects/effects.json` are written and **nothing
-reads either**. The goblin and the fireball exist as ~1000 PNGs that no map displays.
-This is the whole remaining gap and it is browser work — use `shot.py` to verify.
+Every moving thing is one kind of object: a 384px triple pasted into an eight-cell
+ATLAS with a screen rect. The hero is slot 0 and nothing about him is special —
+he reads from the same `out/actors/` bake the goblin does. Effects bake larger
+(640) because a blast expands past a figure's frame, so the atlas cell is the
+largest over the manifests and each sprite occupies the top-left res x res of it.
 
-The wizard is already loaded and drawn (`wiz[dir][frame]`, `syncSprite`,
-`heroRect`); actors want the same treatment generalised over body and action.
-`hold_last: ["death"]` in the manifest means death holds its final frame — a death
-that loops is a resurrection.
+Two things cost real frame rate, and neither is where you would look. GLSL ES
+UNROLLS every loop, so a second per-pixel sprite pass cost half the frame rate
+**with every slot empty** — the code is generated whether or not the runtime cap
+lets it run. Same for a shadow-caster loop inside the 28-step march: it is one
+caster, written out rather than looped. If you add per-sprite work, measure it
+with everything switched off before assuming a cap protects you.
 
-Note `finishBuild` currently skips prop placement for socket sets except the outdoor
-table, and `PROP_NAMES` is what the loader fetches.
+`__engine.pause()` / `.step(n)` stop time and hand-crank it. Not a debug hook:
+without them a screenshot lands after the animation it was meant to photograph,
+which looks exactly like an effect that never rendered.
 
 ---
 
 ## Also open
 
-- **Drops are a vertical extrusion.** A shore that shelves on every approach needs
-  shore/bank corner variants in both chiralities — roughly 8–12 new tiles across the
-  three transition families, plus a bake. This is the "make more tiles" item.
+- **Two corners, and only two.** `SOCKETS.md` is generated and says which: a beach
+  meeting a sea cliff, in both chiralities. A `cove` was built for it and reverted —
+  it closed them and then disagreed with every bluff by 0.394 units, sixteen texels,
+  along the seam they share. The reason is in SOCKETS.md and it is structural, not a
+  tuning problem: the headland works because the cliff's progress is CONSTANT along
+  each of its crossing edges, and any piece whose two crossings sit on edges where
+  that progress varies cannot collapse to the family it has to match.
+- **The skirt is not the bug it looks like.** A flat brown wall beside a proper crag
+  face was never the skirt's fault; it was a seam step the skirt was filling. Both
+  causes are fixed (a per-tile seed on the break line, then a crossing socket that
+  never said which end was high). On a live map the only exposed skirt is at the
+  map's outer boundary, which is what it is for.
 - **The mire** is a basin with a pond; fine, but only two variants.
 - **Goblin ears read as horns from the front** views; they work from the obliques.
 - The dungeon sets still use the wall contract. Both contracts coexist deliberately —
