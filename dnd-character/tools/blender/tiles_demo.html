@@ -1352,6 +1352,19 @@ document.getElementById("ver").textContent=VERSION;
 
   let cells, sq, CW, CH, OX, OY, texA, texN, texH;
   let hgtCtx=null;                    // the composited height buffer, for heightAt
+  // ITS PIXELS, KEPT. heightAt used to call getImageData(1,1) per sample -- up to
+  // three, since it iterates to converge -- on a canvas of twenty-two million
+  // pixels. That is among the slowest calls in the platform, and standable() grew
+  // a slope test that needs four heightAts, so every edge the pathfinder
+  // considered cost up to twelve readbacks. One click is a dijkstra over ~10000
+  // edges: ~120000 readbacks, which is not slow, it is a freeze. Two 22MB arrays
+  // instead, filled once per composite from the scan that was already happening.
+  // The buffer itself, not a copy of it. Splitting R and A into two arrays meant
+  // a 22-million-iteration loop on every re-composite -- and a re-composite runs
+  // when the view rotates, a door opens or a debug overlay is toggled, so it was
+  // paid at exactly the moments a person is watching. Holding the ImageData and
+  // indexing i*4 costs nothing and the readback was already being done.
+  let hgtData=null;
   // The tallest thing anywhere on the map, MEASURED off that buffer rather than
   // assumed from STEP or OVER_Z: a tree, a crag or a prop stands well above the
   // ground it is rooted in, and a shadow march that stopped at a guessed ceiling
@@ -1359,6 +1372,7 @@ document.getElementById("ver").textContent=VERSION;
   // early-out can never fire.
   let sceneMaxH = 1e9;
   let sqZ=null;                       // per-square ground height, from that buffer
+  let sqSlope=null;                   // ...and how steep it is there, same pass
   // How far up you can step. About a third of a level: enough for a bank or the lip
   // of a ford, nowhere near enough for a scarp.
   const CLIMB = 0.62;
@@ -1816,7 +1830,17 @@ document.getElementById("ver").textContent=VERSION;
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
   const al=gl.getAttribLocation(pr,"p");
   gl.enableVertexAttribArray(al); gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
-  const U=n=>gl.getUniformLocation(pr,n);
+  // CACHED. gl.getUniformLocation is a lookup into the linked program by string,
+  // and drawGL asked for about fifty-five of them every frame -- twenty-five by
+  // hand plus three per light, each one also building the string "uLp[3]" to ask
+  // with. A uniform's location cannot change for the life of the program, so
+  // asking once is the whole of it.
+  const _uloc = new Map();
+  const U = n => {
+    let l = _uloc.get(n);
+    if (l === undefined) { l = gl.getUniformLocation(pr, n); _uloc.set(n, l); }
+    return l;
+  };
 
   function upload(src,unit,existing,nearest){
     const t=existing||gl.createTexture();
@@ -2137,15 +2161,15 @@ document.getElementById("ver").textContent=VERSION;
   // screen depends on how high it is, so the first guess is wrong by exactly the
   // amount it is trying to measure, and the second lands.
   function heightAt(wx,wy){
-    if(!hgtCtx) return 0;
+    if(!hgtData) return 0;
     let h=0;
     for(let it=0; it<3; it++){
       const sx=Math.round(OX+(wx+wy)*COS45*PPU);
       const sy=Math.round(OY+(wx-wy)*SIN30*COS45*PPU - h*COS30*PPU);
       if(sx<0||sy<0||sx>=CW||sy>=CH) return h;
-      const d=hgtCtx.getImageData(sx,sy,1,1).data;
-      if(d[3]===0) return h;
-      const h2=d[0]/255*HEIGHT_RANGE-HEIGHT_OFF;
+      const i=(sy*CW+sx)*4;
+      if(hgtData[i+3]===0) return h;
+      const h2=hgtData[i]/255*HEIGHT_RANGE-HEIGHT_OFF;
       if(Math.abs(h2-h)<0.01){ h=h2; break; }
       h=h2;
     }
@@ -2157,9 +2181,17 @@ document.getElementById("ver").textContent=VERSION;
   // passability is asked tens of thousands of times by the flood alone.
   function buildSquareHeights(){
     sqZ=new Float32Array(SW*SH);
+    sqSlope=new Float32Array(SW*SH);
+    // Both in ONE pass, and once. The slope test lives in standable(), which the
+    // pathfinder calls for every edge it considers -- recomputing it there meant
+    // four height samples per edge, thousands of times per click, to answer a
+    // question about the ground that cannot change between two clicks.
     for(let Y=0;Y<SH;Y++) for(let X=0;X<SW;X++){
-      const [wx,wy]=sqWorld(X,Y);
+      const [wx,wy]=sqWorld(X,Y), d=0.5;
       sqZ[Y*SW+X]=heightAt(wx,wy);
+      const zx=(heightAt(wx+d,wy)-heightAt(wx-d,wy))/(2*d);
+      const zy=(heightAt(wx,wy+d)-heightAt(wx,wy-d))/(2*d);
+      sqSlope[Y*SW+X]=Math.hypot(zx,zy);
     }
   }
 
@@ -2167,6 +2199,7 @@ document.getElementById("ver").textContent=VERSION;
   // buffer rather than the tile's band, for the same reason squareZ is: a tile
   // does not have one height, and the buffer is what was actually drawn.
   function slopeUnder(X,Y){
+    if(sqSlope && X>=0 && Y>=0 && X<SW && Y<SH) return sqSlope[Y*SW+X];
     const [wx,wy]=sqWorld(X,Y), d=0.5;
     const zx=(heightAt(wx+d,wy)-heightAt(wx-d,wy))/(2*d);
     const zy=(heightAt(wx,wy+d)-heightAt(wx,wy-d))/(2*d);
@@ -2536,20 +2569,31 @@ document.getElementById("ver").textContent=VERSION;
       // came out under the tallest caster and the march stopped short of it:
       // 4133 pixels of the dungeon set changed, all of them shadow. Nothing here
       // may be assumed; the buffers know.
-      const step = 2;
-      const scan = (ctx, cv) => {
+      // ONE readback per layer, and it does two jobs: the ceiling the shadow
+      // march stops at, and the height/coverage arrays heightAt reads for the
+      // rest of the frame's life. Pulling the pixels out of the canvas is the
+      // expensive part; doing anything with them afterwards is free by
+      // comparison, so nothing else should ever ask the canvas again.
+      // The ceiling is a BOUND with slack, so it is sampled on a grid rather
+      // than read exhaustively -- a few pixels of the very tallest crag are not
+      // worth twenty-two million iterations to be exact about, and the half-unit
+      // added below covers whatever the grid stepped over.
+      const scan = (ctx, cv, keep) => {
         const W = cv.width, H = cv.height;
         if (!W || !H) return -1e9;
         const d = ctx.getImageData(0, 0, W, H).data;
+        if (keep) hgtData = d;
         let top = -1e9;
+        const step = 4;
         for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) {
           const i = (y * W + x) * 4;
           if (d[i + 3] > 8 && d[i] > top) top = d[i];
         }
         return top < -1e8 ? top : top / 255 * HEIGHT_RANGE - HEIGHT_OFF;
       };
-      // Half a unit of slack for whatever the grid stepped over.
-      sceneMaxH = Math.max(scan(xh, ch), hasUpper ? scan(xh1, ch1) : -1e9) + 0.5;
+      // Half a unit of slack, for the upper layer's own casters.
+      sceneMaxH = Math.max(scan(xh, ch, true),
+                           hasUpper ? scan(xh1, ch1, false) : -1e9) + 0.5;
     }
     resizeCanvas();
     texA=upload(ca,0,texA,true); texN=upload(cn,1,texN); texH=upload(ch,2,texH);
