@@ -287,6 +287,19 @@ def main():
             else:
                 note = "%s meeting %s" % (MEANING.get(a, a), MEANING.get(b, b))
             w("| `%s` | `%s` | %s |" % (a, b, note))
+    w("**A CROSSING OVER SOMETHING NEEDS ITS OWN SOCKET, and this set has none.** "
+      "A ford works because it is water the whole way across: its arms are `W+P` "
+      "and the bank pieces meet them. A BRIDGE is not that -- the road is at ground "
+      "level with water underneath -- and a tile with water on two edges and road "
+      "on the other two is a saddle whose edges can match neither a mere nor a "
+      "track. Built that way it disagreed with every track it touched by 0.95 "
+      "units, exactly BED_Z, because the height field at the road edge is the "
+      "riverbed and the deck is separate geometry the seam check rightly cannot "
+      "see. What would work is a `W+B` socket -- water, with a deck over it -- "
+      "presented by the span and by two bank approaches, so both sides of every "
+      "seam agree that the ground there is riverbed and the thing above it is "
+      "carried. That is three pieces and one socket, not a tweak.")
+    w("")
     if any(rises(a) and rises(b) and base(a) != base(b) for a, b in ranked):
         w("")
         w("**Why the level-change corners are hard, from an attempt that failed.** "
