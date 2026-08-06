@@ -36,13 +36,11 @@ def field_for(name, spec, rot):
     """The same construction add_terrain uses, so this measures what is baked."""
     import zlib
     seed = bt.SEED * 977 + (zlib.crc32(name.encode()) % 99991)
-    sp = dict(spec)
-    for key in ("high", "arms"):
-        if sp.get(key):
-            sp[key] = bt.rotate_edges(sp[key], rot)
-    if sp.get("ramp"):
-        sp["ramp"] = bt.rotate_edges([sp["ramp"]], rot)[0]
-    return bt.FIELDS[spec["terrain"]](sp, seed)
+    # bt.rotate_spec, NOT a copy of it: this file existed to catch seams that
+    # disagree, and a second hand-kept list of which spec keys name an edge is
+    # itself a way to disagree -- it would have reported the headland as fine
+    # while the bake put its geometry at the wrong rotation.
+    return bt.FIELDS[spec["terrain"]](bt.rotate_spec(spec, rot), seed)
 
 
 def edge_profile(f, edge):
@@ -68,32 +66,53 @@ def main():
     if not terrain:
         print("set %r has no terrain tiles" % bt.THEME)
         return
-    socks = {n: bt.tile_sockets(s) for n, s in terrain.items()}
 
+    # EVERY VARIANT, NOT EVERY TILE. This compared tile A at r0 against tile B at
+    # r0 and nothing else, which is a small corner of what the solver actually
+    # builds: almost every adjacency on a real map is against a ROTATED
+    # neighbour. Worse, it is exactly the case an unoriented crossing socket can
+    # hide -- X01 says "a level change crosses here" and not which end of the
+    # edge is the high one, so two pieces whose faces run opposite ways still
+    # match on paper. Profiles are computed once per (variant, edge) and then
+    # only compared, so covering 16x more pairs costs almost nothing.
+    prof = {}
+    socks = {}
+    for n, sp in terrain.items():
+        for rot in bt.ROTATIONS:
+            f = field_for(n, sp, rot)
+            for e in EDGES:
+                prof[(n, rot, e)] = edge_profile(f, e)
+            socks[(n, rot)] = bt.tile_sockets(bt.rotate_spec(sp, rot))
+
+    variants = sorted(socks)
     worst = []
     pairs = 0
-    for na, sa in terrain.items():
-        for nb, sb in terrain.items():
+    for a in variants:
+        for b in variants:
             for e in EDGES:
-                if socks[na][e] != socks[nb][OPP[e]]:
+                if socks[a][e] != socks[b][OPP[e]]:
                     continue          # the solver would never put these together
                 pairs += 1
-                fa = field_for(na, sa, 0)
-                fb = field_for(nb, sb, 0)
-                pa = edge_profile(fa, e)
-                pb = edge_profile(fb, OPP[e])
-                d = max(abs(x - y) for x, y in zip(pa, pb))
-                worst.append((d, na, nb, e))
+                d = max(abs(x - y) for x, y in
+                        zip(prof[(a[0], a[1], e)], prof[(b[0], b[1], OPP[e])]))
+                worst.append((d, a, b, e))
 
-    worst.sort(reverse=True)
+    worst.sort(reverse=True, key=lambda w: w[0])
     bad = [w for w in worst if w[0] > TEXEL]
-    print("checked %d abutting pairs; texel = %.4f units" % (pairs, TEXEL))
-    print("worst 8:")
-    for d, na, nb, e in worst[:8]:
-        flag = "  <-- STEP" if d > TEXEL else ""
-        print("  %.4f  %s %s | %s%s"
-              % (d, na.replace(bt.THEME + "-", ""), e,
-                 nb.replace(bt.THEME + "-", ""), flag))
+    print("checked %d abutting pairs over %d variants; texel = %.4f units"
+          % (pairs, len(variants), TEXEL))
+    seen, shown = set(), 0
+    print("worst offenders (one line per pair of PIECES):")
+    for d, a, b, e in worst:
+        if d <= TEXEL or shown >= 10:
+            break
+        key = tuple(sorted((a[0], b[0])))
+        if key in seen:
+            continue
+        seen.add(key); shown += 1
+        print("  %.4f  %s r%d %s | %s r%d"
+              % (d, a[0].replace(bt.THEME + "-", ""), a[1], e,
+                 b[0].replace(bt.THEME + "-", ""), b[1]))
     print("%d of %d pairs disagree by more than a texel" % (len(bad), len(worst)))
 
 

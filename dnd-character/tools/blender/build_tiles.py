@@ -1556,10 +1556,22 @@ def field_headland(seed, shore, cliff, join="max"):
     z_bed, z_mid, z_top = _band_z(-1), _band_z(0), _band_z(1)
     run_s, shelf_s = _shelf(-1, 0)
     run_c, shelf_c = _shelf(0, 1)
+    run_b, shelf_b = _shelf(-1, 1)
 
     def f(u, v):
-        s = _scarp(u, v, seed, [shore], join, run_s, shelf_s)   # water -> beach
         c = _scarp(u, v, seed, [cliff], join, run_c, shelf_c)   # beach -> top
+        # THE BEACH NARROWS AS THE CLIFF RISES, and it has to. Where this piece
+        # meets a strand the water-to-land cross-section must be the strand's;
+        # where it meets a sea cliff, the SAME edge is a water-to-top crossing and
+        # must be the bluff's, which is a different shape entirely. Holding the
+        # shore's shelving run all the way across made every headland disagree
+        # with every bluff by 1.44 units along the seam they share. Interpolating
+        # by the cliff's own progress puts the strand's profile at c=0 and the
+        # bluff's at c=1, so each edge is the shape its socket promises and the
+        # tile morphs between them -- which is what a headland looks like anyway.
+        run = run_s + (run_b - run_s) * c
+        shelf = shelf_s + (shelf_b - shelf_s) * c
+        s = _scarp(u, v, seed, [shore], join, run, shelf)       # water -> beach
         z = z_bed + (z_mid - z_bed) * s + (z_top - z_mid) * s * c
         steep = 4.0 * c * (1.0 - c) * s + 4.0 * s * (1.0 - s)
         z += _ground(u, v, seed, RELIEF) * (1.0 - 0.8 * min(1.0, steep))
@@ -2642,12 +2654,7 @@ def add_terrain(name, spec, rot):
     the world as `x_r0` -- the same rule the flagstone floor keeps, and the reason a
     set does not look like four unrelated sets shuffled together."""
     seed = SEED * 977 + (zlib.crc32(name.encode()) % 99991)
-    sp = dict(spec)
-    for key in ("high", "arms"):
-        if sp.get(key):
-            sp[key] = rotate_edges(sp[key], rot)
-    if sp.get("ramp"):
-        sp["ramp"] = rotate_edges([sp["ramp"]], rot)[0]
+    sp = rotate_spec(spec, rot)
     f = FIELDS[spec["terrain"]](sp, seed)
     sample = terrain_surface(f, name=name, water=bool(sp.get("water")))
     # Crags only where a level actually changes. `cap` is the top band: nothing on
@@ -2919,6 +2926,28 @@ def add_wall(edge, m_stone, m_mortar, seed=11, base=0.0, others=()):
                     depth, u1 - u0, h, m_stone, bevel=(0.018, 2))
             n += 1
     return n
+
+
+# EVERY SPEC KEY THAT NAMES AN EDGE. Rotating a tile has to turn its geometry with
+# its sockets, and the geometry is built from these -- so a key missing from this
+# list means the piece is baked in its r0 orientation while tile_sockets reports
+# the rotated contract. That is not subtle: the headland pieces disagreed with
+# their neighbours by a full STEP at three rotations out of four, because `shore`
+# and `cliff` were new keys and this list was hand-kept in two files.
+EDGE_LIST_KEYS = ("high", "arms")        # lists of edges
+EDGE_ONE_KEYS = ("ramp", "shore", "cliff")   # a single edge
+
+
+def rotate_spec(spec, rot):
+    """A tile's spec as it stands at `rot`, with every edge it names turned."""
+    sp = dict(spec)
+    for key in EDGE_LIST_KEYS:
+        if sp.get(key):
+            sp[key] = rotate_edges(sp[key], rot)
+    for key in EDGE_ONE_KEYS:
+        if sp.get(key):
+            sp[key] = rotate_edges([sp[key]], rot)[0]
+    return sp
 
 
 def rotate_edges(edges, deg):
@@ -3378,17 +3407,35 @@ def tile_sockets(spec):
         out = {}
         for e in EDGE_ORDER:
             if e == shore:
-                out[e] = "X01"
+                out[e] = "X01>%s" % cliff        # the cliff climbs toward `cliff`
             elif e == _opposite(shore):
                 out[e] = "W"
             elif e == cliff:
-                out[e] = "Xw1"
+                out[e] = "Xw1>%s" % shore        # water to top, rising landward
             else:
-                out[e] = "Xw0"
+                out[e] = "Xw0>%s" % shore        # water to beach, rising landward
         return out
 
     lo, hi = spec.get("lo", 0), spec.get("hi", 1)
     cross = "X%s%s" % ("w" if lo == -1 else lo, hi)
+
+    def crossing(toward):
+        """The crossing socket, SAYING WHICH END OF THE EDGE IS THE HIGH ONE.
+
+        X01 alone means "a level change crosses here" and nothing about its
+        direction, so two faces running opposite ways matched on paper: the same
+        bluff at r0 and r180 could abut, and their surfaces disagreed by 2.75
+        units -- its entire span. 840 of 15272 legal pairs stepped like that, the
+        skirt filled the gap, and it came out as a smooth brown wall beside a
+        proper crag face. That is the smooth-wall bug again, from a second cause:
+        the first was a per-tile seed moving the break line, this is a contract
+        that never described the break's direction at all.
+
+        `toward` is a WORLD edge, and it stays a world edge through rotation
+        because the spec is rotated before the sockets are derived -- so two tiles
+        either agree about which way the ground rises or they cannot be placed
+        together."""
+        return "%s>%s" % (cross, toward)
 
     if kind == "track":
         # A track sits ON a band, so its edges are that band's socket with a P
@@ -3402,7 +3449,7 @@ def tile_sockets(spec):
                 elif _opposite(e) in high:
                     out[e] = band(lo)
                 else:
-                    out[e] = cross
+                    out[e] = crossing(high[0])
             else:
                 out[e] = band(lo)
             if e in spec.get("arms", []):
@@ -3421,18 +3468,25 @@ def tile_sockets(spec):
             elif e == _opposite(h):
                 out[e] = band(lo)
             else:
-                out[e] = cross
+                # both crossing edges rise toward the one high edge
+                out[e] = crossing(h)
     else:
         # Two adjacent edges. Under `max` the high ground unions and fills both of
         # them (inside corner); under `min` it intersects to a nub and neither edge
         # is fully high (outside corner). The two other edges carry the crossing in
         # the first case and the flat low band in the second -- which is exactly the
         # asymmetry that makes them different tiles rather than rotations.
+        # Two adjacent high edges, so a crossing edge rises toward the OTHER one:
+        # under `max` the crossing edges are the two opposites, and the one facing
+        # h1 climbs toward h2; under `min` the crossings are the high edges
+        # themselves, and the nub in the corner means the same thing.
+        h1, h2 = high[0], high[1]
         for e in EDGE_ORDER:
             if join == "max":
-                out[e] = band(hi) if e in high else cross
+                out[e] = band(hi) if e in high else crossing(
+                    h2 if e == _opposite(h1) else h1)
             else:
-                out[e] = cross if e in high else band(lo)
+                out[e] = crossing(h2 if e == h1 else h1) if e in high                     else band(lo)
     return out
 
 
