@@ -232,7 +232,7 @@ const SVAR = [];                       // {name, rot, sock, w}
 // enough to buy the ring; it is open ground being MUCH cheaper that keeps the map
 // calm, not the features being expensive.
 const ROLE_W = { ground:18, high_ground:9, liquid:3.4, track:3.0, transition:4.5,
-                 slope:2.6, track_slope:1.8, wallow:1.4 };
+                 slope:5.0, track_slope:3.4, wallow:1.4 };
 // ...and weights alone are not enough, and cannot be made enough.
 //
 // A weight says how often a tile is picked LOCALLY; it cannot say "roughly a third
@@ -258,7 +258,7 @@ const ROLE_W = { ground:18, high_ground:9, liquid:3.4, track:3.0, transition:4.5
 // to spend a tile on a ramp in the first place. Placing one up front inverts it:
 // the ramp exists, and the plateau grows around it because that is the only thing
 // its high edge can connect to.
-const MAP_SEEDS = { slope:[1,2], high_ground:[1,2], liquid:[1,2] };
+const MAP_SEEDS = { slope:[2,4], high_ground:[1,2], liquid:[1,2] };
 // LAND IS EVERYTHING THAT IS NOT WATER. A transition tile is not an obstacle -- it
 // is walkable ground that happens to change level partway across -- and counting it
 // as "not land" is what made 97 maps out of 112 fail this test while the checks

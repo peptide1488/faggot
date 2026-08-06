@@ -1228,6 +1228,8 @@ SCARP_W = 0.155          # scarp run-out as a fraction of the tile: STEP over th
                          # is the face angle. Narrower reads as a wall, wider as a
                          # hill; this is the value that still says "you can't walk up"
 PATH_W = 0.17            # half-width of a worn track, in tile widths
+BORDER_RELIEF = 0.03     # relief AT A SEAM. One number for the whole set: see
+                         # _ground for what happens when two fields disagree here
 MEADOW_RELIEF = 0.03     # how far a nominally FLAT tile may move. Not zero --
                          # a dead plane reads as a table -- but far below
                          # RELIEF, which domed every open tile into a cushion
@@ -1295,12 +1297,26 @@ def _interior(u, v):
     return _sstep(min(uu, 1.0 - uu, vv, 1.0 - vv) / SEAM_BAND)
 
 
-def _ground(u, v, seed, octaves=5):
-    """Undulation in -1..1: shared field at the border, own field in the middle."""
-    a = _fbm(u, v, SEAM_SEED, 4)
-    b = _fbm(u, v, seed, octaves)
+def _ground(u, v, seed, amp, octaves=5):
+    """Ground undulation in world units, ALREADY SCALED.
+
+    The amplitude is an argument and not the caller's business, because the amount
+    of relief has to AGREE AT A SEAM. Every field used to multiply this by its own
+    number -- RELIEF on a scarp, MEADOW_RELIEF on flat ground -- and the two tiles
+    then disagreed about the height of the border they share by up to a fifth of a
+    unit. The lattice still lined up, so nothing looked broken; instead the skirt
+    quietly filled the step, and a plateau edge came out as a smooth brown wall with
+    no rock on it, right next to a proper crag face. That is the whole answer to
+    "why do some walls have no rocks": those were not cliff faces at all.
+
+    So the border amplitude is a constant for the whole set and only the interior
+    grows to the field's own. Both fields are periodic and the border one is shared,
+    so two tiles meeting agree to the last bit."""
     w = _interior(u, v)
-    return (a + (b - a) * w - 0.5) * 2.0
+    a = (_fbm(u, v, SEAM_SEED, 4) - 0.5) * 2.0          # shared: every tile has it
+    b = (_fbm(u, v, seed, octaves) - 0.5) * 2.0         # this tile's own
+    edge = BORDER_RELIEF * a
+    return edge + (amp * b - edge) * w
 
 
 def _scarp(u, v, seed, sides, join="max"):
@@ -1331,11 +1347,12 @@ def _scarp(u, v, seed, sides, join="max"):
         line, w = _scarp_line(a, seed)
         p = _sstep((t - line) / w + 0.5)
         steep = 4.0 * p * (1.0 - p)               # 0 at crest and toe, 1 mid-face
-        # bedding planes: shelves across the face, out of phase along the edge
+        # Bedding and gullies are SHARED too. They are part of the cross-section,
+        # so a per-tile seed here reintroduces exactly the step the shared break
+        # line just removed -- smaller, but on every transition seam in the map.
         p += 0.075 * steep * math.sin(p * math.pi * 5.5
-                                      + 7.0 * _fbm1(a, seed + 97, 2, 4))
-        # gullies: channels down the fall line, so the face is fluted not flat
-        p += 0.115 * steep * (_fbm(a, t * 0.55, seed + 613, 3, 7) - 0.5) * 2.0
+                                      + 7.0 * _fbm1(a, SEAM_SEED + 97, 2, 4))
+        p += 0.115 * steep * (_fbm(a, t * 0.55, SEAM_SEED + 613, 3, 7) - 0.5) * 2.0
         vals.append(max(0.0, min(1.12, p)))
     if not vals:
         return 0.0
@@ -1352,7 +1369,7 @@ def _ramp(u, v, seed, side):
     t = {"Y+": v, "Y-": 1.0 - v, "X+": u, "X-": 1.0 - u}[side]
     a = {"Y+": u, "Y-": 1.0 - u, "X+": v, "X-": 1.0 - v}[side]
     s = _sstep(t)
-    return s + 0.06 * s * (1.0 - s) * (_fbm1(a, seed + 41, 2, 3) - 0.5) * 2.0
+    return s + 0.06 * s * (1.0 - s) * (_fbm1(a, SEAM_SEED + 41, 2, 3) - 0.5) * 2.0
 
 
 def _arms(u, v, seed, arms, half_w):
@@ -1410,7 +1427,7 @@ def field_flat(seed, z=0.0, ripple=0.0):
     r = ripple or MEADOW_RELIEF
 
     def f(u, v):
-        return z + r * _ground(u, v, seed), 0.0
+        return z + _ground(u, v, seed, r), 0.0
     return f
 
 
@@ -1441,7 +1458,7 @@ def field_step(seed, sides, z_lo=0.0, z_hi=None, join="max", ramp=None,
                 r = _ramp(u, v, seed, sides[0])
                 s = s + (r - s) * cut
                 steep *= 1.0 - cut
-        z = z_lo + span * s + RELIEF * _ground(u, v, seed) * (1.0 - 0.8 * steep)
+        z = z_lo + span * s + _ground(u, v, seed, RELIEF) * (1.0 - 0.8 * steep)
         return z, 0.0
     return f
 
@@ -1459,7 +1476,7 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
         mud = _arms(u, v, seed, arms, PATH_W)
         mud *= 0.74 + 0.52 * _fbm(u, v, seed + 88, 3, 6)     # frayed verge
         mud = max(0.0, min(1.0, mud))
-        z = MEADOW_RELIEF * _ground(u, v, seed) * (1.0 - 0.6 * mud) + z_lo
+        z = _ground(u, v, seed, MEADOW_RELIEF) * (1.0 - 0.6 * mud) + z_lo
         z -= PATH_CUT * mud
         if ramp:
             z += (z_hi - z_lo) * _ramp(u, v, seed, ramp)
@@ -1489,7 +1506,7 @@ def field_mire(seed):
         ang = math.atan2(dy, dx) / (2.0 * math.pi) + 0.5
         r = 0.62 + 0.26 * (_fbm1(ang, seed + 404, 3, 3) - 0.5) * 2.0
         mud = _sstep((r - d) / 0.30)
-        z = MEADOW_RELIEF * _ground(u, v, seed) * (1.0 - 0.7 * mud)
+        z = _ground(u, v, seed, MEADOW_RELIEF) * (1.0 - 0.7 * mud)
         z -= 0.30 * mud * mud                            # the hollow
         z -= 0.035 * mud * (_fbm(u, v, seed + 909, 2, 9) - 0.5) * 2.0   # poaching
         return z, mud
@@ -1663,16 +1680,30 @@ def _lump(name, cx, cy, cz, r, mat, seed, squash=0.6, rough=0.30, rings=9, segs=
     return ob
 
 
-def _scarp_line(a, seed, freq_scale=1.0):
+def _scarp_line(a, seed=None, freq_scale=1.0):
     """Where the break runs, and how far it takes to run out, at along-edge `a`.
 
-    Factored out of _scarp because the ROCK has to stand on the same line the
-    ground breaks along -- if the crags are placed from their own noise they sit
-    in front of the slope or behind it, and the two never look like one landform."""
+    SEEDED FOR THE WHOLE SET, not per tile -- `seed` is accepted and ignored, so
+    call sites can stay honest about what they are asking for.
+
+    This is the contract that makes a level change tile at all. Two pieces that
+    present the same crossing socket must have the SAME cross-section where they
+    meet, or the ground steps at the seam. Seeding the line per tile broke that
+    silently: every tile rendered correctly on its own, the lattice still lined up,
+    and the skirt quietly filled the step -- which is why a plateau edge could come
+    out as a smooth brown wall with no rock on it, right beside a proper crag face.
+    Measured by check_seams.py at up to 2.23 units, against a texel of 0.025.
+
+    Variety between tiles comes from the interior (relief, erosion, where the crags
+    fall), not from moving the edge everyone has to agree on.
+
+    Factored out of _scarp because the ROCK has to stand on the same line the ground
+    breaks along -- crags placed from their own noise sit in front of the slope or
+    behind it, and the two never read as one landform."""
     line = (0.52
-            + 0.115 * (_fbm1(a, seed + 31, 2, 2) - 0.5) * 2.0
-            + 0.045 * (_fbm1(a, seed + 57, 2, 5) - 0.5) * 2.0)
-    w = SCARP_W * (0.60 + 1.30 * _fbm1(a, seed + 83, 2, 3))
+            + 0.115 * (_fbm1(a, SEAM_SEED + 31, 2, 2) - 0.5) * 2.0
+            + 0.045 * (_fbm1(a, SEAM_SEED + 57, 2, 5) - 0.5) * 2.0)
+    w = SCARP_W * (0.60 + 1.30 * _fbm1(a, SEAM_SEED + 83, 2, 3))
     return line, w
 
 
