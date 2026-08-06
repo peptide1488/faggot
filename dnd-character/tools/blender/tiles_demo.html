@@ -1321,6 +1321,12 @@ document.getElementById("ver").textContent=VERSION;
 
   let cells, sq, CW, CH, OX, OY, texA, texN, texH;
   let hgtCtx=null;                    // the composited height buffer, for heightAt
+  // The tallest thing anywhere on the map, MEASURED off that buffer rather than
+  // assumed from STEP or OVER_Z: a tree, a crag or a prop stands well above the
+  // ground it is rooted in, and a shadow march that stopped at a guessed ceiling
+  // would drop their shadows. Starts high so that before the first composite the
+  // early-out can never fire.
+  let sceneMaxH = 1e9;
   let sqZ=null;                       // per-square ground height, from that buffer
   // How far up you can step. About a third of a level: enough for a bank or the lip
   // of a ford, nowhere near enough for a scarp.
@@ -1352,7 +1358,7 @@ document.getElementById("ver").textContent=VERSION;
     uniform float uPPU,uAmb,uMode,uHoff,uHrange,uCam,uShadow;
     uniform vec3 uSunDir, uSunCol;
     uniform float uPixel,uLevels,uDither,uBands,uLightDither;
-    uniform float uTime,uWater;
+    uniform float uTime,uWater,uMaxH;
 
     // ---- PS1 output stage ---------------------------------------------------
     // Ordered dithering, done the way the hardware effectively did it: quantise
@@ -1473,32 +1479,62 @@ document.getElementById("ver").textContent=VERSION;
       if(uShadow<=0.0) return 0.0;
       const int N=28;
       float maxT=min(distToLight, 14.0);
+      // A fixed world step was tried here and reverted. It makes a near light
+      // cheap -- 28 samples over three units becomes six -- but that IS the
+      // sampling rate, so a torch-lit room changes: 5522 pixels of the dungeon
+      // set moved, all of them shadow, while the outdoor set did not move at all
+      // because the sun's ray is long enough that its step was already 0.5. It is
+      // a quality trade dressed as a free win, and the honest saving next door
+      // (one texture fetch instead of two) was four times the size and cost
+      // nothing. If it is ever wanted, it belongs behind the shadow slider as a
+      // quality setting, not hidden in the constant.
       float dt=maxT/float(N);
+      // (No backticks anywhere in this shader: it is a JS template literal, and
+      // one inside a comment ends the string and breaks the page.)
       // jitter the phase per pixel: a fixed step lands on the same heights along
       // a shadow boundary and produces scalloped arcs, which read far worse than
       // the fine noise you get from breaking the pattern up
       float jit=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);
+      // Nothing above the tallest thing on the map can shade anything, so a ray
+      // that has climbed past uMaxH is done -- and a rising ray gets there fast.
+      // Only for rays that DO rise: a light below the surface never clears it.
+      bool rising = L.z > 0.0;
       for(int i=1;i<=N;i++){
         float t=dt*(float(i)+jit)+0.30;         // start offset: avoids self-acne
         if(t>maxT) break;
+        if(rising && h+L.z*t > uMaxH) break;
         vec2 p=wp+L.xy*t;
         float rh=h+L.z*t;
         vec2 sp=vec2(uOrigin.x+(p.x+p.y)*COS45*uPPU,
                      uOrigin.y+(p.x-p.y)*SIN30*COS45*uPPU - rh*COS30*uPPU);
         vec2 uv=sp/uRes;
         if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) continue;
-        if(texture2D(uAlb,uv).a>0.03){
-          if(texture2D(uHgt,uv).r*uHrange-uHoff > rh+0.14) return 1.0;
+        // ONE FETCH, NOT TWO. This used to read the albedo purely to ask whether
+        // the map covers this pixel, then read the height to compare it. The
+        // height pass answers both, and in the innermost loop of the most
+        // expensive function in the shader that is half the memory traffic:
+        // 3.99ms a frame to 2.78 at 7.2 megapixels.
+        //
+        // NOT quite the same coverage, and it is worth being exact about since
+        // the whole file leans on measuring rather than assuming. Comparing the
+        // alpha of every baked tile against its _H pass: 648 of 648 tiles
+        // disagree somewhere, by at most 662 pixels of about 157000 -- 0.4%, all
+        // of it the antialiased rim where the two renders straddle the alpha
+        // threshold differently. So a shadow ray can treat half a texel of tile
+        // edge as covered when the albedo would not, inside a march that already
+        // carries a 0.14 height bias and a per-pixel jitter. That is below what
+        // this test resolves; a whole-frame diff of the outdoor set came out
+        // pixel-identical. It is a trade, not an identity -- if a silhouette ever
+        // needs to be exact, this is the line that made it approximate.
+        vec4 hs=texture2D(uHgt,uv);
+        if(hs.a>0.03 && hs.r*uHrange-uHoff > rh+0.14) return 1.0;
+        if(uHasUpper>0.5){
+          vec4 hu=texture2D(uHgt1,uv);
+          if(hu.a>0.03 && hu.r*uHrange-uHoff > rh+0.14) return 1.0;
         }
-        if(uHasUpper>0.5 && texture2D(uAlb1,uv).a>0.03){
-          if(texture2D(uHgt1,uv).r*uHrange-uHoff > rh+0.14) return 1.0;
-        }
-        // Actors cast too: their height maps are not in the scene buffer. Capped
-        // at uNCast rather than run over every slot -- this is inside a 28-step
-        // march that already runs per pixel per light, so each extra caster is
-        // 28 more texture fetches everywhere. Effects never cast: they are the
-        // light source, not something standing in front of one.
-        // ONE caster, slot 0, and written out rather than looped. This is inside
+        // Actors cast too: their height maps are not in the scene buffer.
+        // Effects never do -- they are the light source, not something standing
+        // in front of one. ONE caster, slot 0, written out rather than looped. This is inside
         // a 28-step march that is itself inside the light loop, so the compiler
         // emits this body 28 times per light and it is the most expensive place
         // in the shader to add anything. Slot 0 is the nearest actor, which is
@@ -2292,7 +2328,8 @@ document.getElementById("ver").textContent=VERSION;
           xh=ch.getContext("2d",{willReadFrequently:true});
     hgtCtx=xh;
     const ca1=mk(), cn1=mk(), ch1=mk();
-    const xa1=ca1.getContext("2d"), xn1=cn1.getContext("2d"), xh1=ch1.getContext("2d");
+    const xa1=ca1.getContext("2d"), xn1=cn1.getContext("2d"),
+          xh1=ch1.getContext("2d",{willReadFrequently:true});
     for(const it of draws){
       if(it.kind==="tile"){
         const c=it.c;
@@ -2447,6 +2484,34 @@ document.getElementById("ver").textContent=VERSION;
                 v ? v.replace(">","→") : e);
         }
       }
+    }
+    // ONE scan of the finished height buffer, once per composite. It is the
+    // ceiling the shadow march stops at, and paying for it here rather than
+    // guessing is what lets that early-out be safe. Sampled on a grid: this is a
+    // bound, and a few pixels of the very tallest crag are not worth 12 million
+    // getImageData reads to be exact about.
+    {
+      // BOTH LAYERS, and measured on each. The first version scanned only the
+      // ground buffer and added a constant for the upper one, on the reasoning
+      // that a deck sits at OVER_Z -- forgetting that things STAND on the deck.
+      // A wall on an overpass reaches OVER_Z plus its own height, so the ceiling
+      // came out under the tallest caster and the march stopped short of it:
+      // 4133 pixels of the dungeon set changed, all of them shadow. Nothing here
+      // may be assumed; the buffers know.
+      const step = 2;
+      const scan = (ctx, cv) => {
+        const W = cv.width, H = cv.height;
+        if (!W || !H) return -1e9;
+        const d = ctx.getImageData(0, 0, W, H).data;
+        let top = -1e9;
+        for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) {
+          const i = (y * W + x) * 4;
+          if (d[i + 3] > 8 && d[i] > top) top = d[i];
+        }
+        return top < -1e8 ? top : top / 255 * HEIGHT_RANGE - HEIGHT_OFF;
+      };
+      // Half a unit of slack for whatever the grid stepped over.
+      sceneMaxH = Math.max(scan(xh, ch), hasUpper ? scan(xh1, ch1) : -1e9) + 0.5;
     }
     resizeCanvas();
     texA=upload(ca,0,texA,true); texN=upload(cn,1,texN); texH=upload(ch,2,texH);
@@ -3156,6 +3221,7 @@ document.getElementById("ver").textContent=VERSION;
     gl.uniform1f(U("uShadow"),shd.value/100);
     gl.uniform1f(U("uWater"),water.value/100);
     gl.uniform1f(U("uWaterZ"),WATER_SURFACE);
+    gl.uniform1f(U("uMaxH"),sceneMaxH);
     gl.uniform1f(U("uTime"),clock);
     gl.uniform1f(U("uMode"),parseFloat(mode.value));
     // Slot 0 is his staff gem (not his chest -- a light at his own position blows
