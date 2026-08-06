@@ -63,7 +63,8 @@
     <label style="display:inline-flex"><input type="radio" name="spell" value="heal"> heal</label>
     <label style="display:inline-flex"><input type="radio" name="spell" value="frost"> frost</label>
   </div>
-  <button id="spawn">spawn a goblin</button>
+  <label>you are <select id="who"></select></label>
+  <button id="spawn">spawn a monster</button>
   <label><input id="dbg" type="checkbox"> debug: tile roles</label>
   <label><input id="dbgE" type="checkbox"> debug: edge colours</label>
   <button id="regen">regenerate map</button>
@@ -1263,6 +1264,7 @@ const DIRS=["east","south-east","south","south-west","west","north-west","north"
 // an action it does not have yet keeps walking and starts the moment it lands,
 // which is the only failure mode here that does not show as a missing frame.
 let ACTMAN=null, FXMAN=null, loadQueue=null;
+let HERO_BODY="wizard";        // which class you are; ?who=rogue or the picker
 const ACT={};                     // ACT[body][action][dir][frame] = {a,n,h}
 const FXIMG={};                   // FXIMG[name][frame]     = {a,n,h}
 const actLoading={};
@@ -1483,8 +1485,27 @@ document.getElementById("ver").textContent=VERSION;
     // The hero reads from this bake too. out/wizard3d/ was the same model with
     // only a walk cycle, and keeping him on it would have meant a second sprite
     // path that could not swing a sword.
-    ACTMAN = await (await fetch("out/actors/actors.json")).json();
-    FXMAN  = await (await fetch("out/effects/effects.json")).json();
+    // NO-STORE ON THE MANIFESTS. The tile images are cache-busted by the pack's
+    // build stamp, but these two were not -- so after a re-bake the browser
+    // happily served the previous roster and the page ran against a list of
+    // bodies that no longer described what was on disk. It looks exactly like the
+    // new work never happened: a paladin that will not load, monsters that are
+    // all goblins. They are two small files; read them fresh.
+    const fresh = u => fetch(u, {cache:"no-store"}).then(r=>r.json());
+    ACTMAN = await fresh("out/actors/actors.json");
+    FXMAN  = await fresh("out/effects/effects.json");
+    // The roster drives the picker: a body baked is a body playable, with no
+    // second list here to fall out of step with the bake.
+    {
+      const sel=document.getElementById("who");
+      const list=(ACTMAN.classes&&ACTMAN.classes.length) ? ACTMAN.classes : ACTMAN.bodies;
+      HERO_BODY = PARAMS.get("who") || localStorage.getItem("iso.who") || list[0];
+      if(!list.includes(HERO_BODY)) HERO_BODY=list[0];
+      sel.innerHTML=list.map(b=>"<option"+(b===HERO_BODY?" selected":"")+">"+b+"</option>").join("");
+      sel.onchange=()=>{ localStorage.setItem("iso.who", sel.value);
+                         location.search="?set="+encodeURIComponent(TILESET)+
+                           "&seed="+SEED+"&goblins="+N_GOBLINS+"&who="+sel.value; };
+    }
     if(ACTMAN.res) ACT_RES=ACTMAN.res;
     if(FXMAN.res)  FX_RES=FXMAN.res;
     if(Math.max(ACT_RES,FX_RES)>CELL_RES)
@@ -1504,7 +1525,7 @@ document.getElementById("ver").textContent=VERSION;
     // whole lot goes in the background, nearest-use first -- the hero walks, then
     // the goblins, then the spells, then everything else.
     loadQueue = (async () => {
-      await loadAction("wizard", "walk");
+      await loadAction(HERO_BODY, "walk");
       for (const b of ACTMAN.bodies) await loadAction(b, "walk");
       for (const n of Object.keys(FXMAN.effects)) await loadEffect(n);
       for (const b of ACTMAN.bodies)
@@ -2879,7 +2900,7 @@ document.getElementById("ver").textContent=VERSION;
     // silently drops the actor count reproduces a DIFFERENT scene, which is how
     // the parameter came to be dropped in the first place.
     history.replaceState(null,"", "?set="+TILESET+"&seed="+SEED+
-                                  "&goblins="+N_GOBLINS);
+                                  "&goblins="+N_GOBLINS+"&who="+HERO_BODY);
     if(SOCKET_SET){
       // An outdoor set is a LANDSCAPE, not a dungeon: no rooms to carve, no doors
       // to dress, no rift to gouge and no elevation pass, because every one of
@@ -3139,7 +3160,7 @@ document.getElementById("ver").textContent=VERSION;
     // start on the most-connected square
     // start in the largest connected component, decided by the repair pass above
     const start = flood ? flood.s0 : 0;
-    hero=newActor("wizard",start);
+    hero=newActor(HERO_BODY,start);
     actors=[hero]; fx=[];
     const seen=new Set([start]), st=[start];
     while(st.length){
@@ -3341,7 +3362,15 @@ document.getElementById("ver").textContent=VERSION;
         if(Math.hypot(wx-hero.wx,wy-hero.wy)>3){ sq=s; break; }
       }
       if(sq===null) continue;
-      actors.push(newActor("goblin",sq,{wander:true, speed:2.4, hp:3}));
+      // A MIXED BAND, from whatever was baked. An ogre is slower and tougher
+      // than a kobold and the numbers say so, so a fight is not four copies of
+      // one thing at four positions.
+      const pool=(ACTMAN.monsters&&ACTMAN.monsters.length)?ACTMAN.monsters:["goblin"];
+      const body=pool[(Math.random()*pool.length)|0];
+      const big=/ogre|troll/.test(body), small=/kobold|goblin/.test(body);
+      actors.push(newActor(body,sq,{wander:true,
+                                    speed: big?1.9 : small?2.6 : 2.3,
+                                    hp: big?5 : small?2 : 3}));
     }
   }
 
@@ -3749,7 +3778,9 @@ document.getElementById("ver").textContent=VERSION;
   const refit=()=>{ zoom.value=Math.round(fitZoom()*100); centreView(); fit(); refreshMoveRange(); };
   // regenerate = a NEW seed; typing a seed and pressing enter = that exact map
   document.getElementById("regen").onclick=()=>{ SEED=(Math.random()*1e9)|0; if(build()) refit(); };
-  document.getElementById("spawn").onclick=()=>{ spawnGoblins(1); flash("goblin"); };
+  document.getElementById("spawn").onclick=()=>{
+    const before=actors.length; spawnGoblins(1);
+    flash(actors.length>before ? actors[actors.length-1].body : "no room"); };
   seedBox.onchange=()=>{ const v=parseInt(seedBox.value,10); if(!isNaN(v)){ SEED=v; if(build()) refit(); } };
 
   // How many pixels of the sprite actually survive the depth test: render the
@@ -3803,7 +3834,11 @@ document.getElementById("ver").textContent=VERSION;
                        rot:+e.rot.toFixed(3)})),
     loaded:()=>Object.keys(actLoading).filter(k=>{
       const [b,a]=k.split("/"); return ACT[b]&&ACT[b][a]; }),
-    goblins:()=>actors.filter(a=>a.body==="goblin"),
+    // EVERYONE WHO IS NOT YOU. It filtered on body==="goblin", which was true
+    // when a goblin was the only thing to fight and silently returned nothing the
+    // moment the roster grew.
+    foes:()=>actors.filter(a=>a!==hero),
+    goblins:()=>actors.filter(a=>a!==hero),
     spawn:(body,sq)=>{ const a=newActor(body, sq===undefined
                          ? reach[(Math.random()*reach.length)|0] : sq, {wander:true});
                        actors.push(a); return a; },

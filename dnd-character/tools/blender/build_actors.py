@@ -435,6 +435,22 @@ def build(body, action, t):
     return pivot
 
 
+def write_manifest(outdir, total):
+    """actors.json: what was baked, and which side each body is on.
+
+    WHICH SIDE MATTERS TO THE RUNTIME -- it decides what the player may be and
+    what may be spawned against them -- and this table already knows, so it says
+    so rather than the demo keeping a second list to drift out of step."""
+    import json
+    with open(os.path.join(outdir, "actors.json"), "w") as fh:
+        json.dump({"res": bw.RES, "ppu": bw.PPU, "dirs": DIRS,
+                   "actions": ACTIONS, "bodies": list(BODIES),
+                   "classes": ["wizard"] + list(CLASSES),
+                   "monsters": ["goblin"] + list(MONSTERS),
+                   "hold_last": ["death"]}, fh, indent=1)
+    print("DONE %d frames ->" % total, outdir)
+
+
 def main():
     argv = sys.argv
     args = argv[argv.index("--") + 1:] if "--" in argv else []
@@ -442,6 +458,12 @@ def main():
     only = args[args.index("--only") + 1] if "--only" in args else None
     onlyact = args[args.index("--action") + 1] if "--action" in args else None
     os.makedirs(outdir, exist_ok=True)
+
+    # Rewriting the manifest must not cost 10080 renders: the two are separate
+    # facts and only one of them is expensive.
+    if "--manifest-only" in args:
+        write_manifest(outdir, 0)
+        return
 
     bw.add_camera()
     bw.add_lighting()
@@ -463,12 +485,7 @@ def main():
                     bw.render_triple(outdir, "%s_%s_%s_f%d" % (name, action, d, f))
                     total += 1
             print("RENDERED %-8s %-7s x%d frames x8 dirs" % (name, action, n))
-    import json
-    with open(os.path.join(outdir, "actors.json"), "w") as fh:
-        json.dump({"res": bw.RES, "ppu": bw.PPU, "dirs": DIRS,
-                   "actions": ACTIONS, "bodies": list(BODIES),
-                   "hold_last": ["death"]}, fh, indent=1)
-    print("DONE %d frames ->" % total, outdir)
+    write_manifest(outdir, total)
 
 
 if __name__ == "__main__":
