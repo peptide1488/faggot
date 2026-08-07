@@ -1614,6 +1614,18 @@ document.getElementById("ver").textContent=VERSION;
   // paid at exactly the moments a person is watching. Holding the ImageData and
   // indexing i*4 costs nothing and the readback was already being done.
   let hgtData=null;
+  // HEIGHT BUFFER RESOLUTION, relative to the composite.
+  // On the composite path this must stay 1: the same canvas is uploaded as uHgt
+  // and every lit pixel reads it, so it is art resolution by definition.
+  // On the G-buffer path NOTHING on the GPU reads it -- gRender supplies height
+  // straight from the tile art -- and its only remaining job is answering "how
+  // high, and how steep, is this SQUARE", at world-unit spacing. Art resolution
+  // for that is 640 pixels per 3 world units of a question asked once per square,
+  // and it was the last thing in the renderer still allocated per map AREA:
+  // 147MB of canvas plus a 147MB readback at 12x12, and 2.6GB at 32x32, which is
+  // what actually stopped the map getting bigger. A quarter linear is a
+  // sixteenth of that.
+  let HSCALE=1;
   // The tallest thing anywhere on the map, MEASURED off that buffer rather than
   // assumed from STEP or OVER_Z: a tree, a crag or a prop stands well above the
   // ground it is rooted in, and a shadow march that stopped at a guessed ceiling
@@ -2705,10 +2717,11 @@ document.getElementById("ver").textContent=VERSION;
     if(!hgtData) return 0;
     let h=0;
     for(let it=0; it<3; it++){
-      const sx=Math.round(OX+(wx+wy)*COS45*PPU);
-      const sy=Math.round(OY+(wx-wy)*SIN30*COS45*PPU - h*COS30*PPU);
-      if(sx<0||sy<0||sx>=CW||sy>=CH) return h;
-      const i=(sy*CW+sx)*4;
+      const HS=HSCALE, BW=Math.ceil(CW/HS), BH=Math.ceil(CH/HS);
+      const sx=Math.round((OX+(wx+wy)*COS45*PPU)/HS);
+      const sy=Math.round((OY+(wx-wy)*SIN30*COS45*PPU - h*COS30*PPU)/HS);
+      if(sx<0||sy<0||sx>=BW||sy>=BH) return h;
+      const i=(sy*BW+sx)*4;
       if(hgtData[i+3]===0) return h;
       const h2=hgtData[i]/255*HEIGHT_RANGE-HEIGHT_OFF;
       if(Math.abs(h2-h)<0.01){ h=h2; break; }
@@ -2812,14 +2825,21 @@ document.getElementById("ver").textContent=VERSION;
     return c;
   }
   function blitProp(xa,xn,xh, alb,nrm,hgt, px,py){
-    const ix=Math.round(px), iy=Math.round(py);
+    // ALL OF THIS IS IN HEIGHT-BUFFER PIXELS, which are HSCALE times coarser than
+    // composite pixels on the G-buffer path and identical to them on the other.
+    // The occlusion test is a per-pixel comparison against the height buffer, so
+    // it has to be done in that buffer's own resolution or getImageData and the
+    // drawing disagree about where things are.
+    const HS=HSCALE, R=PROP_RES/HS;
+    const BW=Math.ceil(CW/HS), BH=Math.ceil(CH/HS);
+    const ix=Math.round(px/HS), iy=Math.round(py/HS);
     const x0=Math.max(0,ix), y0=Math.max(0,iy);
-    const x1=Math.min(CW,ix+PROP_RES), y1=Math.min(CH,iy+PROP_RES);
+    const x1=Math.min(BW,ix+R), y1=Math.min(BH,iy+R);
     const w=x1-x0, h=y1-y0;
     if(w<=0||h<=0) return;                       // entirely off the composite
     const work=_scr("work",w,h), g=work.getContext("2d");
     g.clearRect(0,0,w,h);
-    g.drawImage(hgt, ix-x0, iy-y0);
+    g.drawImage(hgt, ix-x0, iy-y0, R, R);
     const src=g.getImageData(0,0,w,h).data;
     const dst=xh.getImageData(x0,y0,w,h).data;
     // A prop pixel survives where it is at least as near as what is already there.
@@ -2836,16 +2856,19 @@ document.getElementById("ver").textContent=VERSION;
     if(!any) return;                             // fully hidden behind masonry
     const mk=_scr("mask",w,h);
     mk.getContext("2d").putImageData(mask,0,0);
-    const layer=(ctx,img)=>{
+    const layer=(ctx,img,scale)=>{
       g.globalCompositeOperation="source-over";
       g.clearRect(0,0,w,h);
-      g.drawImage(img, ix-x0, iy-y0);
+      g.drawImage(img, ix-x0, iy-y0, R, R);
       g.globalCompositeOperation="destination-in";
       g.drawImage(mk,0,0);
       g.globalCompositeOperation="source-over";
-      ctx.drawImage(work, x0, y0);
+      ctx.drawImage(work, x0*scale, y0*scale, w*scale, h*scale);
     };
-    layer(xa,alb); layer(xn,nrm); layer(xh,hgt);
+    // On the G-buffer path the colour and normal buffers are stubs -- gRender
+    // draws the visible prop -- so only the height layer has a reader.
+    if(HS===1){ layer(xa,alb,1); layer(xn,nrm,1); }
+    layer(xh,hgt,1);
   }
   // Move range as a tiny SW x SH mask sampled in the shader -- cheaper and
   // sharper than compositing highlight sprites, and it updates every step.
@@ -2939,7 +2962,10 @@ document.getElementById("ver").textContent=VERSION;
     // slopeUnder and the prop depth test are all CPU-side and all read this
     // buffer, so it is still assembled -- then released, as it always was.
     const G=useGBuf();
-    const ca=G?mk(1,1):mk(), cn=G?mk(1,1):mk(), ch=mk();
+    HSCALE = G ? 4 : 1;
+    const HS = HSCALE;
+    const ca=G?mk(1,1):mk(), cn=G?mk(1,1):mk(),
+          ch=mk(Math.ceil(CW/HS), Math.ceil(CH/HS));
     // The height composite is read back per prop by blitProp's occlusion test, so
     // it is the one of the three that wants a CPU-side backing store. Albedo and
     // normals are write-only here and keep the default (GPU) path.
@@ -2976,6 +3002,10 @@ document.getElementById("ver").textContent=VERSION;
         c.px=OX+c.i*STEP_I[0]+c.j*STEP_J[0];
         c.py=OY+c.i*STEP_I[1]+c.j*STEP_J[1];
         const put=(ctx,im,b)=>ctx.drawImage(im, c.px+b[0], c.py+b[1], b[2], b[3]);
+        // The height canvas may be smaller than the other two, so it is written
+        // in its own coordinates rather than sharing put().
+        const putH=(im,b)=>xh.drawImage(im, (c.px+b[0])/HS, (c.py+b[1])/HS,
+                                            b[2]/HS, b[3]/HS);
         // CAUSEWAY LANDING -- the black gap either side of a bridge deck.
         // A causeway tile is baked with basin walls only on the edges BESIDE the
         // deck; the two edges the deck CROSSES have none, because whether they
@@ -2995,10 +3025,10 @@ document.getElementById("ver").textContent=VERSION;
           if(!t || FAM(t.kind)!==FAM(c.kind)){
             const F=imgs[(c.kind==="bridge"?"bridge_flank":"water_flank")
                          +"_r"+(edge==="Y+"?0:270)];
-            put(xa,F[0],F.box); put(xn,F[1],F.box); put(xh,F[2],F.box);
+            put(xa,F[0],F.box); put(xn,F[1],F.box); putH(F[2],F.box);
           }
         }
-        put(xa,a,E.box); put(xn,n,E.box); put(xh,h,E.box);
+        put(xa,a,E.box); put(xn,n,E.box); putH(h,E.box);
         if(c.upper){
           const art1 = (c.upper.kind==="over_walk"||c.upper.kind==="over_walk_n")
             ? {name:c.upper.kind, rot: c.upper.spanAxis==="y"?0:90}
@@ -3007,7 +3037,9 @@ document.getElementById("ver").textContent=VERSION;
           put(xa1,U[0],U.box); put(xn1,U[1],U.box); put(xh1,U[2],U.box);
         }
       }else{
-        if(G) continue;                 // gRender draws props with a depth test
+        // gRender draws the prop the player SEES. This still has to run, because
+        // the height buffer is also what decides whether a square is standable,
+        // and a prop missing from it is a boulder you can walk through.
         const P=propImg[it.name];
         const [sx,sy]=worldToScreen(it.wx,it.wy);
         const px=sx-PROP_RES/2, py=sy-PROP_RES/2-(it.z||0)*COS30*PPU;
@@ -4216,6 +4248,9 @@ document.getElementById("ver").textContent=VERSION;
                       + (gW*gH*4*3))/1048576).toFixed(1)
                  : +(CW*CH*4*(hasUpper?6:3)*2/1048576).toFixed(1),
                gTiles: gLastCount, gUploaded: gArt.size,
+               // The CPU height buffer, the last thing sized by map area.
+               heightMB: +(Math.ceil(CW/HSCALE)*Math.ceil(CH/HSCALE)*4/1048576).toFixed(1),
+               heightScale: HSCALE,
                // Composite textures must NOT exist on the G-buffer path; if they
                // do, something rebuilt them and the saving is imaginary.
                compositeTexAlive: !!texA };
