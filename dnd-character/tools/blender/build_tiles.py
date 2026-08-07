@@ -1045,16 +1045,8 @@ def add_gorge(walkway=False, span_axis='y', rims=None):
 
 
 def add_stream(walkway=False, span_axis='y', rims=None):
-    """A stream: shallow bed, earth banks, water surface at the same WATER_Z the
-    dungeon basin uses so the runtime's height/lighting treatment is unchanged."""
-    m_water = bpy.data.materials.get("water")
-    if m_water is None:
-        m_water = bpy.data.materials.new("water")
-        m_water.use_nodes = True
-        b = m_water.node_tree.nodes["Principled BSDF"]
-        b.inputs["Base Color"].default_value = (0.06, 0.13, 0.14, 1.0)
-        b.inputs["Roughness"].default_value = 0.12
-        b.inputs["Metallic"].default_value = 0.35
+    """A stream: shallow bed and earth banks, cut to the same -0.95 the dungeon
+    basin uses, and left DRY. The runtime floods it to the manifest's water_z."""
     m_rock = mkmat("rock", theme().get("rock", (0.42, 0.41, 0.38)), 0.9, vary=0.40)
     m_soil = mkmat("soil", theme()["mortar"], 0.95, vary=0.30)
     m_grass = mkmat("grass", theme()["stone"], 0.92, vary=0.42)
@@ -1079,9 +1071,6 @@ def add_stream(walkway=False, span_axis='y', rims=None):
             x, y = (rng.uniform(-0.18, 0.18), u) if span_axis == 'y' else (u, rng.uniform(-0.18, 0.18))
             box("step%d" % k, x, y, WATER_Z - 0.30, s, s, 0.42, m_rock,
                 rotz=rng.uniform(0, math.pi), bevel=(0.05, 2))
-    new_obj("water_surface",
-            [(-bh, -bh, WATER_Z), (bh, -bh, WATER_Z), (bh, bh, WATER_Z), (-bh, bh, WATER_Z)],
-            [(0, 1, 2, 3)], m_water)
 
 
 def add_pit(m_stone, m_mortar, walkway=False, span_axis='y', rims=None):
@@ -1233,20 +1222,13 @@ def add_over_stairs(edge, m_stone):
 def add_water(m_stone, walkway=False, span_axis='y', rims=None):
     if kit() == "outdoor":
         return add_stream(walkway=walkway, span_axis=span_axis, rims=rims)
-    """A flooded basin: shallow stone bed with a flat water surface above it.
+    """A flooded basin: a stone bed, cut to -0.95, and NOTHING ON TOP OF IT.
 
-    The water plane is a separate flat surface at WATER_Z, so in the height pass
-    it reads as one clean level -- which is what makes reflections/rippling
-    possible later, and what stops the runtime lighting treating it as rubble."""
-    m_water = bpy.data.materials.get("water")
-    if m_water is None:
-        m_water = bpy.data.materials.new("water")
-        m_water.use_nodes = True
-        b = m_water.node_tree.nodes["Principled BSDF"]
-        b.inputs["Base Color"].default_value = (0.05, 0.14, 0.20, 1.0)
-        b.inputs["Roughness"].default_value = 0.12
-        b.inputs["Metallic"].default_value = 0.35
-
+    There used to be a flat plane at WATER_Z here. It is gone for the same reason
+    the landscape's is: the height pass records whatever is highest, so a baked
+    surface hides the bed from the runtime and the water can only ever be one
+    depth. The basin is DRY ART; the renderer floods it to `water_z` from the
+    manifest, and the depth it gets to work with is the cut itself."""
     bh = HALF * (TILE_W_PX + 2.0 * BLEED_PX) / TILE_W_PX
     new_obj("water_bed",
             [(-bh, -bh, -0.95), (bh, -bh, -0.95), (bh, bh, -0.95), (-bh, bh, -0.95)],
@@ -1261,9 +1243,6 @@ def add_water(m_stone, walkway=False, span_axis='y', rims=None):
         else:
             lo, hi = rim_span(rimset, t)
             box("wrim_" + edge, off, (lo + hi) / 2.0, -0.95, t, hi - lo, 0.95, m_stone)
-    new_obj("water_surface",
-            [(-bh, -bh, WATER_Z), (bh, -bh, WATER_Z), (bh, bh, WATER_Z), (-bh, bh, WATER_Z)],
-            [(0, 1, 2, 3)], m_water)
     if walkway:
         if span_axis == 'y':
             box("wspan", 0.0, 0.0, -0.14, BRIDGE_W, SIZE, 0.14, m_stone, bevel=(0.03, 2))
@@ -2001,107 +1980,13 @@ def add_crags(seed, sample, cap, base=0.0):
         y += step
     return n
 
-
-def water_material():
-    """Water you can see into.
-
-    I argued against this on the grounds that the height pass would report the BED
-    where the runtime needs the SURFACE, sinking anything standing in the shallows.
-    That was wrong, and worth writing down: render_pair SWAPS every material out for
-    height_material before the _H pass, so what the albedo does with transparency
-    has no bearing on it at all. The depth buffer sees the water plane as a solid
-    surface either way.
-
-    So the bed shows through, which is most of what makes shallow water read as
-    SHALLOW: the shelving beach and the stones on it stay visible, dimmed and tinted,
-    instead of being replaced by a flat sheet of blue at the exact line where the
-    ground crosses the water level."""
-    m = bpy.data.materials.get("water")
-    if m:
-        return m
-    t = theme()
-    c = t.get("water", (0.09, 0.26, 0.30))
-    m = bpy.data.materials.new("water")
-    m.use_nodes = True
-    nt = m.node_tree
-    b = nt.nodes["Principled BSDF"]
-    b.inputs["Roughness"].default_value = 0.35
-
-    swell = _noise_node(nt, 3.0, 3.0, 0.5).outputs["Fac"]
-    ripple = _noise_node(nt, 13.0, 5.0, 0.7).outputs["Fac"]
-    col = _mix(nt, tuple(x * 0.72 for x in c), tuple(min(1.0, x * 1.5) for x in c),
-               _band(nt, swell, 0.0, 1.0, 0.42, 0.60))
-    col = _mix(nt, col, tuple(min(1.0, x * 2.1) for x in c),
-               _band(nt, ripple, 0.0, 0.55, 0.50, 0.64))
-    # glints: the bright dashes on the surface in every one of the references
-    col = _mix(nt, col, (0.62, 0.78, 0.80), _dots(nt, 22.0, 0.12, 0.10))
-    steps = t.get("posterize")
-    if steps:
-        col = _posterize(nt, col, steps)
-    nt.links.new(col, b.inputs["Base Color"])
-    # Not a constant: water thins out at the edge of a body and thickens over the
-    # deep, so the transparency follows the same ripple that colours it. Flat alpha
-    # reads as coloured glass laid on the ground.
-    b.inputs["Alpha"].default_value = 1.0
-    nt.links.new(_band(nt, ripple, 0.42, 0.72, 0.44, 0.62), b.inputs["Alpha"])
-    return m
-
-
-def add_water_plane(z=None, floor=None):
-    """The water: a VOLUME, not a plane.
-
-    A bare quad at the water line left the surface hovering over the bed with a
-    daylight gap between the two -- the tile read as a blue sheet floating above a
-    brown box. Water has to fill the tile the way the ground does, so this is a top
-    face plus four sides running down past the bottom of the terrain skirt.
-
-    The sides are held a hair INSIDE the lattice cell so that wherever the ground
-    also reaches the boundary -- the grass half of a shore, say -- the terrain skirt
-    covers them instead of the two fighting over the same plane."""
-    z = WATER_LEVEL if z is None else z
-    bh = _bh()
-    top = [(-bh, -bh, z), (bh, -bh, z), (bh, bh, z), (-bh, bh, z)]
-    new_obj("water", top, [(0, 1, 2, 3)], water_material())
-
-    ih = bh * 0.998
-    # Down to the TILE'S OWN skirt, not to a fixed depth. A pond in a meadow sits in
-    # ground that is barely cut at all, so a full-depth water box hung a band of
-    # blue below the earth all the way round the tile -- the wallow looked like it
-    # was floating on a lake.
-    floor = (BED_Z - 0.5) if floor is None else floor
-    ring = [(-ih, -ih), (ih, -ih), (ih, ih), (-ih, ih), (-ih, -ih)]
-    verts, faces = [], []
-    for x, y in ring:
-        verts.append((x, y, z))
-        verts.append((x, y, floor))
-    for k in range(len(ring) - 1):
-        a = k * 2
-        faces.append((a, a + 1, a + 3, a + 2))
-    new_obj("water_side", verts, faces, water_deep_material())
-
-
-def water_deep_material():
-    """The water seen edge-on. Darker than the surface and flat -- what you get
-    looking into a body of water is not what you get looking across it."""
-    m = bpy.data.materials.get("water_deep")
-    if m:
-        return m
-    t = theme()
-    c = t.get("water", (0.075, 0.235, 0.275))
-    m = bpy.data.materials.new("water_deep")
-    m.use_nodes = True
-    nt = m.node_tree
-    b = nt.nodes["Principled BSDF"]
-    b.inputs["Roughness"].default_value = 0.6
-    col = _mix(nt, tuple(x * 0.30 for x in c), tuple(x * 0.62 for x in c),
-               _band(nt, _noise_node(nt, 5.0, 3.0, 0.5).outputs["Fac"],
-                     0.0, 1.0, 0.42, 0.60))
-    steps = t.get("posterize")
-    if steps:
-        col = _posterize(nt, col, steps)
-    nt.links.new(col, b.inputs["Base Color"])
-    b.inputs["Alpha"].default_value = 0.88   # seen edge-on, water is nearly opaque
-    return m
+# THE WATER MATERIALS ARE GONE, and so is add_water_plane. Water is no longer a
+# thing the bake knows about: it is a LEVEL the runtime holds, drawn wherever the
+# height buffer falls below it. What used to live here was a semi-transparent top
+# face at WATER_LEVEL plus a box of sides running down to the skirt -- three
+# materials and about a hundred lines that between them could only ever produce
+# ONE depth of water, because the surface was baked into the height pass and the
+# bed underneath it could not be measured afterwards. Beer's law needs the bed.
 
 
 def terrain_scatter(sample, base, seed):
@@ -2741,8 +2626,11 @@ def add_terrain(name, spec, rot):
         top = 1 if spec["terrain"] == "headland" else sp.get("hi", 1)
         add_crags(seed, sample, _band_z(top) - 0.06)
     terrain_scatter(sample, 0.0, seed)
-    if sp.get("water"):
-        add_water_plane(floor=getattr(sample, "floor", None))
+    # NO WATER IS BAKED. The bed runs down to BED_Z and stops; the runtime draws
+    # water wherever the height buffer is below its water LEVEL. See the note on
+    # WATER_LEVEL: a baked plane records itself in the height pass, so the depth
+    # under it is unknowable at runtime and every water effect degrades to a flat
+    # constant. A dry bed keeps the depth, which is the whole of the effect.
 
 
 def add_floor(m_stone, m_mortar, base=0.0):
@@ -3636,16 +3524,22 @@ def write_manifest(outdir):
                               for r in ROTATIONS}
             ent["band"] = spec.get("band", spec.get("lo", 0))
         man["tiles"][name] = ent
-    # WHERE THIS SET'S WATER SURFACE SITS. There are two of them and always have
+    # WHERE THIS SET'S WATER STARTS OUT. There are two of them and always have
     # been: a dungeon's flooded basin at WATER_Z, and a landscape's mere at
     # WATER_LEVEL, which has to sit just under the ground band so a shore can
-    # shelve through it. The runtime finds water by looking for flat, up-facing
-    # pixels AT THAT HEIGHT -- it is how water is identified at all, with no mask
-    # pass -- so a shader holding one constant silently stops recognising the
-    # other set's water: no ripple, no foam, no fresnel, just the baked plane.
-    # That is exactly what happened to the outdoor sets. Ship the number.
+    # shelve through it. It is now a DEFAULT rather than a constant -- the level
+    # is a slider, nothing is baked at it, and the runtime floods every bed below
+    # it -- but a set still has to say where its own water sits or the page opens
+    # on a dry riverbed. Ship the number.
     socketed = any("sockets" in e for e in man["tiles"].values())
     man["water_z"] = WATER_LEVEL if socketed else WATER_Z
+    # ...AND HOW FAR DOWN WATER GOES. "Below the level" alone is not enough: a
+    # chasm is also below the level, and with nothing to stop it the renderer
+    # fills a 3.4-unit pit with river. Every water bed in every set is cut to
+    # -0.95 (BED_Z, and the dungeon basin and stream by hand); PIT is -3.4. So
+    # the floor sits between them and says which holes hold water. It is a fact
+    # about the bake, which is why it is emitted here and not guessed there.
+    man["water_floor"] = BED_Z - 0.15
     path = os.path.join(outdir, "tiles.json")
     with open(path, "w") as f:
         json.dump(man, f, indent=1, sort_keys=True)

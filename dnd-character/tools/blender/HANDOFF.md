@@ -340,3 +340,91 @@ BOTH STEPS MUST LAND TOGETHER: dry beds render as holes until the shader fills t
 - `shot.py` exits non-zero on any console error (stone/sandstone 404 the themed
   prop dir by design), which silently breaks `&&` chains.
 - `serve.py` on 8777 dies with the shell that started it; use a background task.
+
+---
+
+# 2026-08-07 (later) — water became a level
+
+THE NEXT JOB from the section above is DONE in source and half-verified in art.
+Both halves landed together, as they had to: dry beds render as holes until the
+shader fills them.
+
+## What changed
+
+**Nothing in the bake is water any more.** `add_water_plane` and both water
+materials are deleted; `add_water` (dungeon basin) and `add_stream` lost their
+`water_surface` planes too. Every bed in every set is now cut dry to -0.95 and
+left there. The dungeon had to change with the landscape because the SHADER is
+shared: a plane sitting exactly at `uWaterZ` fails a `hgt < uWaterZ` test, so
+leaving the basin wet would have turned dungeon water into flat baked albedo.
+
+**The shader floods everything below the level.** `hgt < uWaterZ` replaces
+`abs(hgt-uWaterZ)<0.05`; `d = uWaterZ - hgt + swell`; the bed comes back through
+`exp(-d*k)` with `k = mix(6.0, 0.8, clarity)`; foam is `smoothstep(0.14,0.0,d)`,
+which retired the four-sample neighbour edge-detect (that hack found rims, piers
+and boulders as readily as shorelines, because a height STEP is not a waterline).
+
+**The column darkens with depth as well**, `mix(uWaterCol*0.16, col, exp(-d*0.9))`.
+This is easy to miss and it is half the effect: absorption alone only governs how
+much BED returns, so with the water's own colour held constant the deep channel
+came out exactly as bright as the shallows -- a flat blue sheet, which is what it
+looked like before. First render of the dry bake had this wrong and it read pale.
+
+**Two facts now ship in the manifest**, not one. `water_z` is the DEFAULT level
+(the slider owns it after load). `water_floor` = `BED_Z - 0.15` = -1.10 is new and
+load-bearing: "below the level" also describes a CHASM, and without a floor the
+renderer fills a 3.4-unit pit with river. Beds are at -0.95, `PIT` is -3.4, so the
+floor sits between them and says which holes hold water.
+
+**`water level` is a slider** (-1.10..+1.80, seeded from the manifest on set load
+because Chrome restores slider positions across reloads). At -0.95 the lake is a
+drying mudflat; at +0.25 the meadow floods and you can read the road THROUGH the
+shallow water. River, canal, moat and sewer are now one bed shape at four levels.
+
+**`standable()` refuses squares below `WATER_SURFACE`.** Not optional: with a
+baked plane the wet half of a shore read as flat ground AT the water's height, so
+you could stand ON the river -- the move-range overlay in the old screenshots
+spills out over the water. With the bed dry the same code stands you IN it.
+Standable squares 1883 -> 1380 on the same seed, which is the shoreline arriving.
+
+## Measured, not assumed
+
+- Clarity 0 vs 100 moves **5.573% of pixels against a 0.126% control** (water
+  frozen with `water=0`; the residual control is the actors, which animate).
+- The clarity diff MAP is the real evidence and it is the signature of absorption
+  rather than a blend: **no effect at the waterline**, maximum at mid depth. A
+  flat blend would have been uniform over the whole body.
+- Bed height under water measures -0.96 median against a -0.20 level: 0.76 units.
+- Composite vs G-buffer with water frozen: 9.76% of pixels, and the diff map is
+  1px seams and actors -- **the water body is black in it**, so the two paths
+  agree exactly about water. Do not read that 9.76% as a water fault.
+
+## State of the bake — the part that is unfinished
+
+grass10A, dust10A, scree10A: **baked and packed**. stone: baking. sandstone:
+queued behind it. The queue is one background shell doing bake -> `rm -rf packed`
+-> re-pack per set.
+
+**Only grass10A has been looked at.** The untested claim is the DUNGEON pair:
+`water_floor` keeping a pit dry while flooding a basin is the rule that has never
+run, because grass10A has no pits. Load `?set=stone` first thing.
+
+Also not yet run since the change: `check_seams.py` (terrain fields were not
+touched, only an object removed, so 0 bad pairs is the expectation),
+`__engine.bench(30)` (wait for a free GPU; expect marginally faster, four texture
+reads per water pixel are gone). `node demo-test.js` passes 10/10.
+
+## Traps this session
+
+- **Backticks inside the shader source are a JS syntax error.** The GLSL lives in
+  a template literal, so a comment saying `` `uWaterZ` `` ends the string. It
+  reports as `PAGEERROR Unexpected identifier 'uWaterZ'` -- which reads like a
+  GLSL compile failure and is not one. Prose in that block takes no backticks.
+- **The skirt needs its own guard.** Water is drawn on up-facing surfaces only
+  (`nrm.z>0.35`): the curtain hanging off a tile is vertical and reaches below the
+  water line even on ordinary band-0 ground, so without it the board wears a blue
+  hem all the way round its outer edge.
+- **A bake invalidates every packed set.** `tiles_demo.html` fetches
+  `packed/pack.json` first and only falls back to raw PNGs if it is missing, so
+  skipping the re-pack serves the OLD art and the change looks like it did
+  nothing. Same shape as every stale-cache trap in this file.

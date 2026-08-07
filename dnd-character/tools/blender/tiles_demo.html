@@ -40,6 +40,10 @@
   <label>shadows <input id="shd" type="range" min="0" max="100" value="80"></label>
   <label>water <input id="water" type="range" min="0" max="100" value="60"></label>
   <label>water clarity <input id="wclear" type="range" min="0" max="100" value="55"></label>
+  <!-- THE WATER LEVEL, in hundredths of a world unit. Nothing is baked at it, so
+       it is free to move: at -95 the river is a dry gully you can walk down, at 0
+       it is up to the meadow. The set's own default arrives with its manifest. -->
+  <label>water level <input id="wlev" type="range" min="-110" max="180" value="-20"><span id="wlevout"></span></label>
   <label>water colour <input id="watcol" type="color" value="#3f6f86"></label>
   <label>light bands <input id="bands" type="range" min="0" max="24" value="0"></label>
   <label>band dither <input id="bdith" type="range" min="0" max="100" value="0"></label>
@@ -1495,9 +1499,14 @@ const FXDEF={
   arrow:   { light:[0.30,0.28,0.24], r:2.2, z:0.0, aimed:true }
 };
 const OVER_Z=2.8;                    // build_tiles.py OVER_Z (upper floor height)
-// Where this set's water surface sits, from its manifest. -0.42 is the dungeon
-// value and the fallback for a set baked before the manifest carried it.
+// Where this set's water sits and how deep it may go, from its manifest. -0.42 is
+// the dungeon level and -1.10 the floor of every set's beds; both are fallbacks
+// for a set baked before the manifest carried them. WATER_SURFACE is the live
+// level after the first frame -- the slider owns it, the manifest only seeds it --
+// and standable() reads it, which is what makes the shoreline the edge of the map
+// you may walk on rather than a property of a tile.
 let WATER_SURFACE = -0.42;
+let WATER_FLOOR = -1.10;
 // Sprite resolutions, from actors.json / effects.json. The defaults match the
 // bakes that existed when this was written; the manifest wins.
 let ACT_RES = 384, FX_RES = 512;
@@ -1539,7 +1548,16 @@ document.getElementById("ver").textContent=VERSION;
     if(r.ok){
       MAN=await r.json();
       SOCKET_SET=Object.values(MAN.tiles).some(t=>t.sockets);
-      if(typeof MAN.water_z==="number") WATER_SURFACE=MAN.water_z;
+      // The set's water level is a DEFAULT now, not a constant: it seeds the
+      // slider, which owns it from then on. Assigned here rather than left to the
+      // slider's markup because Chrome restores slider positions across reloads,
+      // so a set switched after a refresh would otherwise inherit the other set's
+      // level -- a dungeon opening bone dry, which reads as a broken bake.
+      if(typeof MAN.water_z==="number"){
+        WATER_SURFACE=MAN.water_z;
+        wlev.value=Math.round(WATER_SURFACE*100);
+      }
+      if(typeof MAN.water_floor==="number") WATER_FLOOR=MAN.water_floor;
       if(SOCKET_SET) buildSocketVariants(MAN);
     }
   }catch(e){}
@@ -1865,20 +1883,26 @@ document.getElementById("ver").textContent=VERSION;
     }
 
     // ---- water ---------------------------------------------------------------
-    // WATER IS FOUND IN THE HEIGHT BUFFER, not in a mask pass. The baked water
-    // plane is the only UP-FACING surface anywhere in the tile set that sits at a
-    // negative height: a chasm's sides are vertical (normal.z ~ 0), stair treads
-    // and floors are all >= 0, and a pit bed is far below at -3.4. So "flat, and
-    // at WATER_Z" identifies exactly the water pixels, with no extra texture, no
-    // extra memory, and nothing for the compositor to keep in sync.
-    // THE SET SAYS WHERE ITS WATER IS. There are two surfaces in build_tiles.py
-    // and always have been -- a dungeon's flooded basin at WATER_Z, a landscape's
-    // mere at WATER_LEVEL, which sits just under the ground band so a shore can
-    // shelve through it. This was a const holding the dungeon's number, so on an
-    // outdoor set the test below never matched and the whole live-water branch
-    // never ran: no ripple, no foam, no fresnel, just the flat baked plane. It
-    // comes from the manifest now, because it is a fact about the set.
+    // WATER IS A LEVEL, NOT A SURFACE. Nothing in the bake is water any more: the
+    // beds are cut dry, down to -0.95, and this shader floods everything that
+    // lies below uWaterZ. The height buffer is therefore the DEPTH of the water
+    // at every pixel, which is the entire point -- a baked plane records itself
+    // in the height pass and hides the bed, so no runtime effect could be a
+    // function of depth and "water clarity" could only ever be a flat blend.
+    //
+    // What the one number buys: shallows genuinely clear and the channel
+    // genuinely deep (Beer's law below), a shoreline that is where the depth
+    // crosses zero rather than where a neighbouring pixel happens to differ, and
+    // a level you can MOVE -- drop it and the river is a dry gully, raise it and
+    // the meadow floods. River, canal, moat and sewer stop being different art
+    // and become one bed shape at four levels.
     uniform float uWaterZ;
+    // ...AND HOW FAR DOWN IT GOES. A chasm is below the level too, and a pit bed
+    // at -3.4 would fill with river. Every water bed in every set is cut to -0.95,
+    // so the floor from the manifest sits between the two and says which holes
+    // hold water. Without it the first thing a dungeon set shows is a flooded
+    // chasm, which looks like a shader bug and is really a missing fact.
+    uniform float uWaterFloor;
     // Direction from a surface toward the fixed 2:1 iso camera. Same basis
     // depthAt() uses: depth falls off along +(x-y) and +z, so that IS the eye.
     const vec3 EYE = vec3(0.6123724,-0.6123724,0.5);
@@ -2166,65 +2190,87 @@ document.getElementById("ver").textContent=VERSION;
       else { col=a.rgb; nrm=normalize(texture2D(uNrm,vUv).rgb*2.0-1.0); hgt=hS;
              empty = a.a<0.03; }
 
-      // ---- water: replace the baked flat plane with a live surface ----------
+      // ---- water: flood everything that lies under the level ----------------
       float gloss=0.0;
-      if(uWater>0.0 && which==0 && !empty && nrm.z>0.9 && abs(hgt-uWaterZ)<0.05){
+      // Depth decides everything below, so it is computed first. Two guards, and
+      // they are not the same guard. uWaterFloor keeps CHASMS dry -- see the
+      // uniform. nrm.z>0.35 keeps the SKIRT dry: the curtain hanging off the
+      // side of a tile is vertical and reaches below the water line even on
+      // ordinary band-0 ground, so without it the board wears a blue hem all the
+      // way round its outer edge. Water lies on things you could stand on, which
+      // is generous enough for a shelving beach and mean enough for a cliff face.
+      float wdep = uWaterZ - hgt;
+      if(which==0 && !empty && nrm.z>0.35 && hgt>uWaterFloor && wdep>-0.07){
         vec2 wp = worldAt(P,hgt);
         float amp = uWater;
-        nrm = waterNormal(wp,uTime,amp);
-        float wh = waterHeight(wp,uTime);
-        // THE WATER'S COLOUR COMES FROM THE WORLD, NOT FROM THE TILE. It used to
-        // modulate the baked albedo, and every mere tile bakes its own bed from
-        // its own seed -- so a pond was a patchwork with a hard edge at every
-        // tile boundary, a diamond grid you cannot unsee once you have noticed
-        // it. Anything sampled per tile will do that. A function of the world
-        // position cannot: neighbouring tiles evaluate the same function at
-        // adjoining coordinates and meet exactly, which is the same argument
-        // that made the ripple itself continuous.
-        //
-        // Three sine trains again, at a fraction of the ripple's frequency, for
-        // the slow variation a body of water has -- weed beds, silt, depth. No
-        // texture, no seam, and it costs six sines.
-        float mot = 0.5 + 0.30*sin(dot(wp,vec2(0.21,0.13))*1.9 + 0.7)
-                        + 0.22*sin(dot(wp,vec2(-0.17,0.24))*2.7 + 2.1)
-                        + 0.14*sin(dot(wp,vec2(0.09,-0.11))*4.3 + 4.4);
-        mot = clamp(mot, 0.0, 1.0);
-        vec3 deep = uWaterCol * 0.42;
-        col = mix(deep, uWaterCol, mot);
-        // Wave troughs sit deeper in the tint, crests catch more light.
-        col *= 0.78 + 0.44*clamp(wh*7.0+0.5,0.0,1.0);
-        // ...AND YOU CAN SEE THE BOTTOM. a.rgb here is the BED: the bake writes
-        // the water plane into the height pass but leaves the bed in the albedo,
-        // which is exactly why modulating the albedo used to show a patchwork of
-        // per-tile bed seeds. That patchwork was only ever wrong as the WATER's
-        // colour -- as the thing lying under the water it is the point.
-        //
-        // Absorption, not a plain alpha blend: what comes back up has travelled
-        // through the water twice, so it is tinted by the water's own colour and
-        // dimmed, which is what stops a transparent river reading as a sheet of
-        // glass over grass. The ripple modulates it too -- a crest thins the
-        // column and shows more bed -- so the bottom shimmers with the surface
-        // instead of sitting flat and separate underneath it.
-        {
-          vec3 through = a.rgb * mix(vec3(1.0), uWaterCol, 0.72) * 0.92;
-          float clarity = uWaterClear * clamp(0.62 + 0.38*(wh*6.0), 0.25, 1.0);
-          col = mix(col, through, clarity);
-        }
-        // Shoreline. Anything that is not water within a couple of pixels means a
-        // bank, a rim or a causeway pier; foam gathers there and rides the swell.
-        vec2 t=toStep(2.5);
-        float e=0.0;
-        e=max(e,abs(texture2D(uHgt,vUv+vec2(t.x,0.0)).r*uHrange-uHoff-hgt));
-        e=max(e,abs(texture2D(uHgt,vUv-vec2(t.x,0.0)).r*uHrange-uHoff-hgt));
-        e=max(e,abs(texture2D(uHgt,vUv+vec2(0.0,t.y)).r*uHrange-uHoff-hgt));
-        e=max(e,abs(texture2D(uHgt,vUv-vec2(0.0,t.y)).r*uHrange-uHoff-hgt));
-        float foam=smoothstep(0.06,0.34,e)*(0.55+0.45*clamp(wh*9.0+0.5,0.0,1.0));
-        col=mix(col,vec3(0.36,0.44,0.46),foam*0.55);
-        // Schlick fresnel against the fixed eye. Flat water reflects ~5% straight
-        // down the camera; a wave face tipped toward the horizon reflects several
-        // times that, which is what makes a ripple field glitter unevenly.
-        float fres=0.02+0.98*pow(1.0-max(dot(nrm,EYE),0.0),5.0);
-        gloss = uWater*(0.30+3.2*fres);
+        // THE SWELL MOVES THE SHORELINE, which is why the guard above admits
+        // pixels that are slightly DRY: they are dry in the trough and wet under
+        // the crest, and the last inch of beach washes in and out instead of
+        // ending on a fixed contour. d -- not wdep -- is the depth from here on.
+        float wh = waterHeight(wp,uTime)*amp;
+        float d = wdep + wh;
+        if(d>0.0){
+          nrm = waterNormal(wp,uTime,amp);
+          // THE WATER'S COLOUR COMES FROM THE WORLD, NOT FROM THE TILE. It used to
+          // modulate the baked albedo, and every mere tile bakes its own bed from
+          // its own seed -- so a pond was a patchwork with a hard edge at every
+          // tile boundary, a diamond grid you cannot unsee once you have noticed
+          // it. Anything sampled per tile will do that. A function of the world
+          // position cannot: neighbouring tiles evaluate the same function at
+          // adjoining coordinates and meet exactly, which is the same argument
+          // that made the ripple itself continuous.
+          //
+          // Three sine trains again, at a fraction of the ripple's frequency, for
+          // the slow variation a body of water has -- weed beds, silt, depth. No
+          // texture, no seam, and it costs six sines.
+          float mot = 0.5 + 0.30*sin(dot(wp,vec2(0.21,0.13))*1.9 + 0.7)
+                          + 0.22*sin(dot(wp,vec2(-0.17,0.24))*2.7 + 2.1)
+                          + 0.14*sin(dot(wp,vec2(0.09,-0.11))*4.3 + 4.4);
+          mot = clamp(mot, 0.0, 1.0);
+          vec3 deep = uWaterCol * 0.42;
+          col = mix(deep, uWaterCol, mot);
+          // Wave troughs sit deeper in the tint, crests catch more light.
+          col *= 0.78 + 0.44*clamp(wh*7.0+0.5,0.0,1.0);
+          // THE COLUMN DARKENS WITH DEPTH TOO, and this is a second thing depth
+          // buys, easy to miss: absorption below only governs how much BED comes
+          // back, so with the water's own colour held constant the deep channel
+          // came out exactly as bright as the shallows -- a flat sheet of blue,
+          // which is what it looked like before the beds were dry. What you see
+          // over deep water is light that scattered back out, and less of it
+          // makes the return trip from further down.
+          col = mix(uWaterCol*0.16, col, exp(-d*0.9));
+          // ...AND YOU CAN SEE THE BOTTOM, AS FAR DOWN AS THE WATER LETS YOU.
+          // a.rgb is the BED: nothing is baked over it any more, so it is the real
+          // floor of the river and its own per-tile seeds are the silt and stones
+          // they were always meant to be. (They were only ever wrong as the WATER's
+          // colour, which is why that comes from the world position instead.)
+          //
+          // BEER'S LAW. Light crosses the column twice, so what comes back is
+          // exp(-depth*k) of what went down, tinted by the water on the way. This
+          // is the whole reason the beds were baked dry: with a plane at the water
+          // line there was no depth to put in that exponent, so "clarity" could
+          // only be a constant blend and a shallow ford looked exactly as deep as
+          // the channel. k IS the clarity slider read as an extinction coefficient
+          // -- 0.8 is a clear pool where a metre of bed still shows, 6.0 is silt
+          // where a hand's depth is already opaque -- and depth does the rest.
+          vec3 bed = a.rgb * mix(vec3(1.0), uWaterCol, 0.55);
+          float k = mix(6.0, 0.8, uWaterClear);
+          col = mix(col, bed, exp(-d*k));
+          // FOAM IS WHERE THE DEPTH CROSSES ZERO. It used to be an edge detect:
+          // four extra height samples asking "is the pixel next door at a
+          // different height", which finds a rim, a pier or a boulder as readily
+          // as a shoreline and cannot tell the water's edge from the bank's. The
+          // depth answers it directly -- surf is the band of water too shallow to
+          // be water -- and it rides the swell for free, because d already does.
+          float foam = smoothstep(0.14, 0.0, d);
+          col = mix(col, vec3(0.80,0.86,0.88), foam*0.75);
+          // Schlick fresnel against the fixed eye. Flat water reflects ~5%
+          // straight down the camera; a wave face tipped toward the horizon
+          // reflects several times that, which is what makes a ripple field
+          // glitter unevenly.
+          float fres=0.02+0.98*pow(1.0-max(dot(nrm,EYE),0.0),5.0);
+          gloss = uWater*(0.30+3.2*fres);
+        }   // ...else the crest has receded past this pixel and it is beach today
       }
 
       // Height and normals are DATA views -- an emissive glow has no business in
@@ -2674,6 +2720,13 @@ document.getElementById("ver").textContent=VERSION;
       }
       if(blocked && blocked[Y*SW+X]) return false;
       if(c.noStand) return false;                  // open water on a socket set
+      // UNDER WATER IS NOT GROUND, and now that is one test instead of a property
+      // of a tile: a shore is walkable down to the waterline and no further, and
+      // dropping the level walks you out onto the riverbed. It used to be an
+      // accident of the bake -- the water plane made the wet half of a shore read
+      // as flat ground AT the water's own height, so you stood ON the river. With
+      // the bed dry the same code would stand you IN it, up to your neck.
+      if(c.socket && sqZ && sqZ[Y*SW+X] < WATER_SURFACE + 0.02) return false;
       if(c.kind==="pit"||c.kind==="water") return false;     // chasm / deep water
       // YOU CANNOT STAND ON A ROCK FACE. The rise between two square CENTRES is
       // not enough on its own: a scarp spread over three or more squares clears
@@ -4198,7 +4251,12 @@ document.getElementById("ver").textContent=VERSION;
     }
     gl.uniform1f(U("uShadow"),shd.value/100);
     gl.uniform1f(U("uWater"),water.value/100);
+    // The slider IS the level -- read every frame, written back to WATER_SURFACE
+    // so the pathfinder and the shader cannot disagree about where the shore is.
+    WATER_SURFACE=parseFloat(wlev.value)/100;
+    wlevout.textContent=" "+WATER_SURFACE.toFixed(2);
     gl.uniform1f(U("uWaterZ"),WATER_SURFACE);
+    gl.uniform1f(U("uWaterFloor"),WATER_FLOOR);
     { const w=tint(watcol.value);
       gl.uniform3f(U("uWaterCol"), w[0], w[1], w[2]); }
     gl.uniform1f(U("uWaterClear"), wclear.value/100);
