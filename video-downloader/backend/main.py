@@ -55,6 +55,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
+
+def _git_revision() -> str:
+    import subprocess
+
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, cwd=BASE_DIR, timeout=5,
+        ).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+# Captured at import, NOT per request: a pull updates the working tree
+# immediately while this process keeps running the code it already loaded.
+# Reporting the checkout would claim a fix is live before it actually is.
+LOADED_REVISION = _git_revision()
+
 # Set to a browser name (e.g. "firefox", "chrome", "edge") to let yt-dlp
 # reuse that browser's cookies for sites that require login/age verification.
 COOKIES_FROM_BROWSER = os.environ.get("COOKIES_FROM_BROWSER")
@@ -335,16 +353,14 @@ def update_job(job_id: str, **kwargs):
 
 @app.get("/api/version")
 def get_version():
-    import subprocess
-
-    try:
-        rev = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, cwd=BASE_DIR, timeout=5,
-        ).stdout.strip()
-    except Exception:
-        rev = "unknown"
-    return {"revision": rev, "yt_dlp": yt_dlp.version.__version__}
+    checkout = _git_revision()
+    return {
+        "revision": LOADED_REVISION,
+        "yt_dlp": yt_dlp.version.__version__,
+        # Differs when the tree was updated but the server wasn't restarted
+        "checkout_revision": checkout,
+        "restart_required": checkout != LOADED_REVISION,
+    }
 
 
 @app.get("/api/info")
