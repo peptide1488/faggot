@@ -69,6 +69,7 @@ export default function App() {
           reconnectTimer = setTimeout(() => {
             fetchJobs()
             fetchFiles()
+            fetchVersion()
             connectWs()
           }, 2000)
         }
@@ -176,6 +177,12 @@ export default function App() {
           {version ? (
             <>
               build <code>{version.revision}</code> · yt-dlp <code>{version.yt_dlp}</code>
+              {version.restart_required && (
+                <span className="stale">
+                  {' '}
+                  · restart to load <code>{version.checkout_revision}</code>
+                </span>
+              )}
             </>
           ) : (
             'backend offline'
