@@ -30,6 +30,21 @@ header h1 {
   margin-top: 4px;
 }
 
+/* Which build is actually serving - makes stale backends obvious */
+.version {
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.version code {
+  background: #1a1d27;
+  border: 1px solid #2a2e3a;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+}
+
 .card {
   background: #1a1d27;
   border: 1px solid #2a2e3a;

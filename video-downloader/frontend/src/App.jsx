@@ -34,11 +34,13 @@ export default function App() {
   const [audioFormat, setAudioFormat] = useState('mp3')
   const [jobs, setJobs] = useState([])
   const [files, setFiles] = useState([])
+  const [version, setVersion] = useState(null)
   const wsRef = useRef(null)
 
   useEffect(() => {
     fetchJobs()
     fetchFiles()
+    fetchVersion()
 
     let closed = false
     let reconnectTimer = null
@@ -95,6 +97,15 @@ export default function App() {
     const res = await fetch(`${API_BASE}/api/files`)
     const data = await res.json()
     setFiles(data)
+  }
+
+  async function fetchVersion() {
+    try {
+      const res = await fetch(`${API_BASE}/api/version`)
+      setVersion(await res.json())
+    } catch {
+      setVersion(null)
+    }
   }
 
   async function handleFetchInfo() {
@@ -161,6 +172,15 @@ export default function App() {
       <header>
         <h1>🎬 Omni Video Downloader</h1>
         <p className="subtitle">Download videos and audio from thousands of sites</p>
+        <p className="version">
+          {version ? (
+            <>
+              build <code>{version.revision}</code> · yt-dlp <code>{version.yt_dlp}</code>
+            </>
+          ) : (
+            'backend offline'
+          )}
+        </p>
       </header>
 
       <section className="card">
