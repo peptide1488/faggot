@@ -163,6 +163,37 @@ _EMBED_URL = re.compile(r"""["'](https?://[^"'\s<>]+/embed[^"'\s<>]*)["']""", re
 
 _EMBED_ID = re.compile(r"^(https?://)([^/]+)/embed/(\d+)")
 
+# Players are commonly served from a decorated hostname that fronts the real
+# site: videotxxx.com and txxx.me both front txxx.com, the host extractors
+# know. Strip the decoration and normalise the TLD to find the watch host.
+_PLAYER_HOST_PREFIXES = ("video", "player", "embed", "stream", "cdn")
+
+
+def watch_host_aliases(host: str) -> list:
+    """Hosts to try for a watch page, most likely first."""
+    bare = host.lower().removeprefix("www.")
+    labels = bare.split(".")
+    head, rest = labels[0], labels[1:]
+    aliases = []
+    for prefix in _PLAYER_HOST_PREFIXES:
+        if head == prefix and rest:
+            # player.example.net -> example.net
+            aliases.append(".".join(rest))
+        elif head.startswith(prefix) and len(head) - len(prefix) >= 3:
+            # videotxxx.com -> txxx.com (never an empty label)
+            aliases.append(".".join([head[len(prefix):]] + rest))
+    # Mirrors serve the same ids from an alternate TLD; extractors know .com
+    aliases += [".".join(a.split(".")[:-1] + ["com"]) for a in list(aliases)]
+    for candidate in (".".join(labels[:-1] + ["com"]), bare):
+        aliases.append(candidate)
+    seen, ordered = set(), []
+    for a in aliases:
+        parts = a.split(".")
+        if a not in seen and all(parts) and len(parts) >= 2:
+            seen.add(a)
+            ordered.append(a)
+    return ordered
+
 
 def embed_page_variants(url: str) -> list:
     """An /embed/ URL usually has no extractor even when the site's normal
@@ -173,12 +204,7 @@ def embed_page_variants(url: str) -> list:
     if not m:
         return []
     scheme, host, video_id = m.groups()
-    bare = host.lower().removeprefix("www.")
-    # Mirrors reuse ids but often redirect watch-page URLs to a nav page
-    # (txxx.me/videos/<id> -> txxx.me/most-popular), so try the canonical
-    # .com domain - the one extractors know - before the mirror.
-    canonical = ".".join(bare.split(".")[:-1] + ["com"])
-    hosts = [canonical, bare] if canonical != bare else [bare]
+    hosts = watch_host_aliases(host)
     return [
         f"{scheme}{h}/{path}/{video_id}/"
         for h in hosts
