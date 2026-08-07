@@ -52,7 +52,9 @@ export PYTHONUTF8=1
 echo "Starting backend on $BACKEND_PORT..."
 cd backend
 source venv/Scripts/activate 2>/dev/null || source venv/bin/activate
-uvicorn main:app --reload --port "$BACKEND_PORT" > ../backend.log 2>&1 &
+# No --reload: its file watcher reloads some changes and not others, so the
+# running code silently drifts from the checkout. Restart this script instead.
+uvicorn main:app --port "$BACKEND_PORT" > ../backend.log 2>&1 &
 BACKEND_PID=$!
 cd ..
 
