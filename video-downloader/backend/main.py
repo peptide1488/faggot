@@ -190,7 +190,7 @@ def _registrable_domain(netloc: str) -> str:
     return ".".join(netloc.lower().split(":")[0].split(".")[-2:])
 
 
-def discover_embed_urls(url: str, limit: int = 4) -> list:
+def discover_embed_urls(url: str, limit: int = 12) -> list:
     """Aggregator sites (pornzog and friends) host no media themselves - they
     iframe a third-party tube. When every extraction attempt fails, scrape the
     page for cross-domain iframe/embed URLs so we can retry against the host
@@ -219,8 +219,15 @@ def discover_embed_urls(url: str, limit: int = 4) -> list:
                 continue
             seen.add(variant)
             found.append(variant)
-    # Try hosts yt-dlp knows first, then anything that looks like a player
-    found.sort(key=lambda u: (not _has_dedicated_extractor(u), "/embed" not in u))
+    # Order: hosts yt-dlp knows, then URLs carrying a video id (a bare
+    # "/most-popular/" nav link can't be the video), then players
+    found.sort(
+        key=lambda u: (
+            not _has_dedicated_extractor(u),
+            not re.search(r"/\d{4,}", u),
+            "/embed" not in u,
+        )
+    )
     return found[:limit]
 
 
