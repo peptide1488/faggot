@@ -1589,14 +1589,12 @@ document.getElementById("ver").textContent=VERSION;
   const gl=glc.getContext("webgl2",{alpha:false}) ||
            glc.getContext("webgl",{alpha:false});
   const GL2 = !!(gl && gl.TEXTURE_BINDING_3D);          // a webgl2-only enum
-  // OPT-IN WHILE IT IS BEING PROVEN. ?gbuffer=1 selects it; the composite stays
-  // the default and the A/B reference until this matches it pixel for pixel.
-  const GBUF_ASK = GL2 && PARAMS.get("gbuffer") === "1";
-  // The upper layer (a dungeon's bridges and overpasses) is a second set of
-  // three buffers that gRender does not draw yet, so a set that HAS one still
-  // goes through the composite. Outdoor sets have no second storey and are also
-  // the big maps, which is where the memory actually hurts.
-  const useGBuf = () => GBUF_ASK && !hasUpper;
+  // ONE RENDERER. Every tile set goes through this -- a set is art, not a
+  // rendering strategy, and the moment "which pack is it" can pick a code path
+  // there are two renderers to keep in step and they drift.
+  // ?gbuffer=0 falls back to the composite; that switch exists to A/B the two,
+  // not to give any set a path of its own.
+  const useGBuf = () => GL2 && PARAMS.get("gbuffer") !== "0";
   if(!gl){ status.textContent="no WebGL"; return; }
 
   let cells, sq, CW, CH, OX, OY, texA, texN, texH;
@@ -2197,7 +2195,11 @@ document.getElementById("ver").textContent=VERSION;
   // quality change, so it can be compared against the composite pixel for pixel.
   const GPAD = 128;              // margin in target px, so off-screen geometry
                                  // still casts shadows onto the visible edge
-  let gFbo=null, gTex=null, gDepth=null, gW=0, gH=0, gProg=null, gQuad=null;
+  // TWO LAYERS, ONE MECHANISM. The upper layer is a second surface at the same
+  // pixel -- what makes walking UNDER a bridge expressible at all, since one
+  // height buffer can only remember the nearer of the two. It is the same three
+  // targets drawn by the same pass, not a special case.
+  let gLo=null, gUp=null, gW=0, gH=0, gProg=null, gQuad=null, gU=null;
   const gArt = new Map();        // "name_r90" -> [texA, texN, texH]
   let gLastCount=0;
 
@@ -2286,34 +2288,44 @@ document.getElementById("ver").textContent=VERSION;
     gQuad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, gQuad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0, 1,0, 0,1, 1,1]), gl.STATIC_DRAW);
+    const L=n=>gl.getUniformLocation(gProg,n);
+    gU={rect:L("uRect"), org:L("uGOrg"), size:L("uGSize"), scale:L("uGScale"),
+        zoff:L("uZOff"), bias:L("uBias"), tA:L("tA"), tN:L("tN"), tH:L("tH")};
   }
 
   function gResize(w,h){
-    if(gFbo && gW===w && gH===h) return;
+    if(gLo && gW===w && gH===h) return;
     gW=w; gH=h;
-    if(gFbo) gl.deleteFramebuffer(gFbo);
-    if(gTex) gTex.forEach(function(t){ gl.deleteTexture(t); });
-    if(gDepth) gl.deleteRenderbuffer(gDepth);
-    gFbo = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, gFbo);
-    gTex = [0,1,2].map(function(k){
-      const t=gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D,t);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0+k, gl.TEXTURE_2D, t, 0);
-      return t;
-    });
-    gDepth = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, gDepth);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, gDepth);
-    const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-    if(st !== gl.FRAMEBUFFER_COMPLETE)
-      throw new Error("gbuffer incomplete: 0x"+st.toString(16));
+    const drop = t => { if(!t) return;
+      gl.deleteFramebuffer(t.fbo); t.tex.forEach(x=>gl.deleteTexture(x));
+      gl.deleteRenderbuffer(t.depth); };
+    drop(gLo); drop(gUp);
+    // ONE FUNCTION, CALLED TWICE. Ground and upper differ in what gets drawn
+    // into them, not in what they are.
+    const mkTarget = () => {
+      const fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      const tex = [0,1,2].map(k=>{
+        const t=gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D,t);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0+k, gl.TEXTURE_2D, t, 0);
+        return t;
+      });
+      const depth = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+      const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      if(st !== gl.FRAMEBUFFER_COMPLETE)
+        throw new Error("gbuffer incomplete: 0x"+st.toString(16));
+      return {fbo, tex, depth};
+    };
+    gLo = mkTarget(); gUp = mkTarget();
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
@@ -2329,12 +2341,11 @@ document.getElementById("ver").textContent=VERSION;
     gOrgY = (-GPAD*k - panY)/z;
   }
 
-  // Draw the visible tiles into the targets. Returns how many were drawn.
-  function gRender(draws){
-    if(!gProg) gInit();
-    gResize(glc.width + 2*GPAD, glc.height + 2*GPAD);
-    gView();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, gFbo);
+  // ONE PASS, RUN TWICE: once for the ground, once for whatever is above it.
+  // `upper` picks which surface of a cell is drawn, and nothing else differs --
+  // same program, same blending, same height-as-depth.
+  function gPass(T, draws, upper){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T.fbo);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
     gl.viewport(0,0,gW,gH);
     // DEPTH IS ALWAYS ON, because a disabled depth test does not WRITE either --
@@ -2349,48 +2360,66 @@ document.getElementById("ver").textContent=VERSION;
     // source alpha -- which is why UNPACK_PREMULTIPLY_ALPHA_WEBGL is off above.
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    gl.useProgram(gProg);
-    gl.bindBuffer(gl.ARRAY_BUFFER, gQuad);
-    const ap = gl.getAttribLocation(gProg,"p");
-    gl.enableVertexAttribArray(ap);
-    gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
-    const uRect=gl.getUniformLocation(gProg,"uRect");
-    const uZOff=gl.getUniformLocation(gProg,"uZOff");
-    const uBias=gl.getUniformLocation(gProg,"uBias");
-    gl.uniform2f(gl.getUniformLocation(gProg,"uGOrg"), gOrgX, gOrgY);
-    gl.uniform2f(gl.getUniformLocation(gProg,"uGSize"), gW, gH);
-    gl.uniform1f(gl.getUniformLocation(gProg,"uGScale"), gScale);
-    gl.uniform1i(gl.getUniformLocation(gProg,"tA"),0);
-    gl.uniform1i(gl.getUniformLocation(gProg,"tN"),1);
-    gl.uniform1i(gl.getUniformLocation(gProg,"tH"),2);
+    gl.uniform2f(gU.org, gOrgX, gOrgY);
+    gl.uniform2f(gU.size, gW, gH);
+    gl.uniform1f(gU.scale, gScale);
     // The window in composite space, so a tile off the side is never uploaded,
     // never bound and never drawn. THIS is what makes the map size irrelevant.
     const x0=gOrgX, y0=gOrgY, x1=gOrgX+gW*gScale, y1=gOrgY+gH*gScale;
     let n=0, mode=-1;
-    // ONE PASS, IN DRAW ORDER. Tiles and props are interleaved in the list and
-    // that interleaving is load-bearing: a tile drawn after a prop covers it
-    // outright, which is how a prop behind a wall disappears.
-    const quad=(rx,ry,w,h,T,zoff,bias,want)=>{
+    const quad=(rx,ry,w,h,T2,zoff,bias,want)=>{
       if(rx+w<x0 || rx>x1 || ry+h<y0 || ry>y1) return 0;
-      if(mode!==want){
-        mode=want;
-        gl.depthFunc(want ? gl.LEQUAL : gl.ALWAYS);
-      }
-      for(let k=0;k<3;k++){ gl.activeTexture(gl.TEXTURE0+k); gl.bindTexture(gl.TEXTURE_2D,T[k]); }
-      gl.uniform1f(uZOff, zoff); gl.uniform1f(uBias, bias);
-      gl.uniform4f(uRect, rx, ry, w, h);
+      if(mode!==want){ mode=want; gl.depthFunc(want ? gl.LEQUAL : gl.ALWAYS); }
+      for(let k=0;k<3;k++){ gl.activeTexture(gl.TEXTURE0+k); gl.bindTexture(gl.TEXTURE_2D,T2[k]); }
+      gl.uniform1f(gU.zoff, zoff); gl.uniform1f(gU.bias, bias);
+      gl.uniform4f(gU.rect, rx, ry, w, h);
       gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
       return 1;
     };
     for(const it of draws){
       if(it.kind==="tile"){
-        const c=it.c, art=tileArt(c), key=art.name+"_r"+art.rot, E=imgs[key];
-        if(!E) throw new Error("no image for tile "+key+" -- add it to the loader name list");
+        const c=it.c;
         c.px=OX+c.i*STEP_I[0]+c.j*STEP_J[0];
         c.py=OY+c.i*STEP_I[1]+c.j*STEP_J[1];
+        let key, E;
+        if(upper){
+          if(!c.upper) continue;
+          // A DECK, OR THE WALKWAY OVER IT. Same choice the composite made.
+          const a1 = (c.upper.kind==="over_walk"||c.upper.kind==="over_walk_n")
+            ? {name:c.upper.kind, rot: c.upper.spanAxis==="y"?0:90}
+            : {name:"over_floor", rot:0};
+          key = a1.name+"_r"+a1.rot;
+        }else{
+          const art=tileArt(c); key = art.name+"_r"+art.rot;
+          // CAUSEWAY LANDING -- the black gap either side of a bridge deck.
+          // A causeway tile is baked with basin walls only on the edges BESIDE
+          // the deck; the two edges the deck CROSSES have none, because whether
+          // they need one depends on the neighbour and baking every combination
+          // would need 64 variants. So the wall either side of the deck is a
+          // separate overlay piece, and without it a landing leaves the drop from
+          // floor level to the water showing through to the background.
+          // Drawn UNDER the tile, which is what keeps the water plane hiding the
+          // submerged part of the wall instead of the wall painting over it.
+          if(c.kind==="bridge"||c.kind==="water_bridge"){
+            const edge = c.spanAxis==="x" ? "X-" : "Y+";
+            const nb = NEIGH.find(o=>o.edge===edge);
+            const ni=c.i+nb.di, nj=c.j+nb.dj;
+            const t = (ni<0||ni>=W||nj<0||nj>=H) ? null : cells[nj*W+ni];
+            if(!t || FAM(t.kind)!==FAM(c.kind)){
+              const fk=(c.kind==="bridge"?"bridge_flank":"water_flank")
+                       +"_r"+(edge==="Y+"?0:270);
+              const F=imgs[fk];
+              if(F) n+=quad(c.px+F.box[0], c.py+F.box[1], F.box[2], F.box[3],
+                            gTexFor(fk,F), 0, 0, 0);
+            }
+          }
+        }
+        E = imgs[key];
+        if(!E) throw new Error("no image for tile "+key+" -- add it to the loader name list");
         const b=E.box;
         n+=quad(c.px+b[0], c.py+b[1], b[2], b[3], gTexFor(key,E), 0, 0, 0);
-      }else{
+      }else if(!upper){
+        // Props stand on the ground layer, as they did in the composite.
         const P=propImg[it.name];
         if(!P) continue;
         const sc=worldToScreen(it.wx,it.wy);
@@ -2405,6 +2434,24 @@ document.getElementById("ver").textContent=VERSION;
     }
     gl.disable(gl.BLEND);
     gl.disable(gl.DEPTH_TEST);
+    return n;
+  }
+
+  // Draw the visible tiles into the targets. Returns how many were drawn.
+  function gRender(draws){
+    if(!gProg) gInit();
+    gResize(glc.width + 2*GPAD, glc.height + 2*GPAD);
+    gView();
+    gl.useProgram(gProg);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gQuad);
+    const ap = gl.getAttribLocation(gProg,"p");
+    gl.enableVertexAttribArray(ap);
+    gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
+    gl.uniform1i(gU.tA,0); gl.uniform1i(gU.tN,1); gl.uniform1i(gU.tH,2);
+    // The upper pass runs unconditionally. On a map with nothing above ground it
+    // draws nothing and costs a clear -- which is cheaper than a branch that
+    // could ever disagree with what the shader is sampling.
+    const n = gPass(gLo, draws, false) + gPass(gUp, draws, true);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gLastCount=n;
     return n;
@@ -3948,7 +3995,9 @@ document.getElementById("ver").textContent=VERSION;
       gl.vertexAttribPointer(al, 2, gl.FLOAT, false, 0, 0);
       for(let k=0;k<3;k++){
         gl.activeTexture(gl.TEXTURE0+k);
-        gl.bindTexture(gl.TEXTURE_2D, gTex[k]);
+        gl.bindTexture(gl.TEXTURE_2D, gLo.tex[k]);
+        gl.activeTexture(gl.TEXTURE0+6+k);
+        gl.bindTexture(gl.TEXTURE_2D, gUp.tex[k]);
       }
       gl.uniform1f(U("uGBuf"),1);
       gl.uniform2f(U("uGOrg"), gOrgX, gOrgY);
@@ -4245,7 +4294,7 @@ document.getElementById("ver").textContent=VERSION;
                path: useGBuf() ? "gbuffer" : "composite",
                liveMB: useGBuf()
                  ? +(([...gArt.values()].reduce((t,T)=>t+T.n,0)
-                      + (gW*gH*4*3))/1048576).toFixed(1)
+                      + (gW*gH*4*3*2))/1048576).toFixed(1)
                  : +(CW*CH*4*(hasUpper?6:3)*2/1048576).toFixed(1),
                gTiles: gLastCount, gUploaded: gArt.size,
                // The CPU height buffer, the last thing sized by map area.
