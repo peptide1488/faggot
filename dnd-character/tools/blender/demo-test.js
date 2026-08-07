@@ -135,6 +135,13 @@ let solved = 0, mismatches = [];
 // the seed -- seeding only asks for tiles of a role along a line; whether they
 // end up joined is the only question worth asking.
 let noRoad = [], noRiver = [], wetness = [];
+// A BRIDGE IS ONLY A BRIDGE IF IT IS ON THE ROAD. The sockets guarantee a deck
+// never ends against something that is not a deck, and that is NOT the property
+// worth testing: the first working version satisfied it perfectly while putting
+// spans wherever the river ran, which at the map boundary means a pier over the
+// shore leading nowhere. What has to hold is that every bridge tile is part of
+// the road walk that crosses the map.
+let bridgeSeeds = [], strandedBridge = [];
 for (let seed = 1; seed <= 12; seed++) {
   S.reseed(seed * 7919);
   const cells = S.socketWfc(W, H);
@@ -162,7 +169,13 @@ for (let seed = 1; seed <= 12; seed++) {
         for (const nb of S.NEIGH) {
           const ni = i + nb.di, nj = j + nb.dj, n = at(ni, nj);
           if (!n || seen.has(nj * W + ni)) continue;
-          if (!/\+P/.test(sockOf(at(i, j))[nb.edge])) continue;
+          // +B is a road too -- one carried over water on a deck rather than laid
+          // on the ground. This is a SECOND COPY of the rule in tiles_demo.html's
+          // roadCrosses, and it disagreed with it the moment the bridge shipped:
+          // 10 of 12 seeds reported no road across a map whose road crossed on a
+          // bridge. The duplication is the bug; if a third copy is ever wanted,
+          // export the predicate instead.
+          if (!/\+[PB]/.test(sockOf(at(i, j))[nb.edge])) continue;
           seen.add(nj * W + ni); st.push([ni, nj]);
         }
       }
@@ -173,6 +186,35 @@ for (let seed = 1; seed <= 12; seed++) {
     for (let i = 0; i < W; i++) north.push([i, 0]);
     const crossed = walk(west, i => i === W - 1) || walk(north, (i, j) => j === H - 1);
     if (!crossed) noRoad.push(seed);
+
+    // Every cell the road reaches from ANY border, flooded in full. `walk` above
+    // stops the moment it touches the far edge, so its `seen` is a partial answer
+    // and reusing it would pass a stranded bridge whenever the road happened to
+    // finish first.
+    const bridges = cells.filter(c => /^span/.test(c.role));
+    if (bridges.length) {
+      bridgeSeeds.push(seed);
+      // FLOODED FROM THE TRACKS, not from the border. Seeding every border cell
+      // was the first attempt and it is worthless: a pier hanging off the map
+      // edge is a border cell, so it was "on the road" before the walk started,
+      // and the mutation that removes the mask keeping spans off the shore still
+      // passed 12 of 12. What separates a crossing from a diving board is that
+      // real road on real ground reaches it.
+      const seen = new Set(), st = [];
+      for (const c of cells) if (/^track/.test(c.role)) { st.push([c.i, c.j]); seen.add(c.j * W + c.i); }
+      while (st.length) {
+        const [i, j] = st.pop();
+        for (const nb of S.NEIGH) {
+          const ni = i + nb.di, nj = j + nb.dj, n = at(ni, nj);
+          if (!n || seen.has(nj * W + ni)) continue;
+          if (!/\+[PB]/.test(sockOf(at(i, j))[nb.edge])) continue;
+          seen.add(nj * W + ni); st.push([ni, nj]);
+        }
+      }
+      for (const c of bridges)
+        if (!seen.has(c.j * W + c.i)) strandedBridge.push(seed + '@' + c.i + ',' + c.j);
+    }
+
     const wet = cells.filter(c => c.role === 'liquid').length;
     wetness.push(wet);
     if (!wet) noRiver.push(seed);
@@ -221,6 +263,15 @@ T('maps are not mostly water', drowned === 0, drowned + '/12 drowned');
 // is a different question and the only one worth asking.
 T('a road crosses the map, west edge to east',
   noRoad.length === 0, noRoad.length ? 'seeds without one: ' + noRoad.join(',') : '');
+T('every bridge is on the road, not a pier over the shore',
+  strandedBridge.length === 0, strandedBridge.join(' '));
+// Not "most maps have one" -- a river is bridged on a coin flip and only where
+// the two seeded lines actually meet, so the honest floor is that the piece can
+// still be placed at all. It has silently stopped being placeable twice already:
+// once because the river seed's own predicate excluded it, once because the mask
+// that keeps it off the shore was too strong.
+T('a bridge is still reachable by the generator',
+  bridgeSeeds.length > 0, bridgeSeeds.length + ' of 12 seeds bridged');
 T('every map has water in it',
   noRiver.length === 0, noRiver.length ? 'dry seeds: ' + noRiver.join(',') : '');
 T('and not too much of it -- a river, not a swamp',

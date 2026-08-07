@@ -273,8 +273,15 @@ const SVAR = [];                       // {name, rot, sock, w}
 // chose freely. Measured on a 12x12: at 3.4 a map came out 17% water when the
 // river itself is about 10% of it. Dropping it does not thin the river, it stops
 // the ponds.
+// A BRIDGE IS RARE BECAUSE IT IS A BRIDGE, not because the sockets make it hard.
+// Its span carries W on both flanks, so it can stand anywhere a mere can, and at
+// a track's weight the solver would happily plank the whole river. The sockets
+// already stop a bridge to nowhere -- a +B edge has only another +B to meet -- so
+// what is left to say is how often a river should be crossed, and the answer is
+// about once.
 const ROLE_W = { ground:18, high_ground:9, peak:2.2, liquid:0.5, track:3.0,
-                 transition:4.5, slope:5.0, track_slope:3.4, wallow:1.4 };
+                 transition:4.5, slope:5.0, track_slope:3.4, wallow:1.4,
+                 span:0.8, span_flank:0.8 };
 // ...and weights alone are not enough, and cannot be made enough.
 //
 // A weight says how often a tile is picked LOCALLY; it cannot say "roughly a third
@@ -383,7 +390,11 @@ function seedPath(dom, propagate, W, H, want, down, wobble, joined, out){
     const n = idx(me[0], me[1]);
     const keep = [...dom[n]].filter(v => {
       if(!want(SVAR[v])) return false;
-      return !joined || need.every(e => /\+P/.test(SVAR[v].sock[e]));
+      // +B is a join you could walk as much as +P is -- it is the same road,
+      // carried rather than laid. Reading only +P here meant the road seed could
+      // never choose a bridge for the one cell where it meets the river, which is
+      // the only cell a bridge was ever for.
+      return !joined || need.every(e => /\+[PB]/.test(SVAR[v].sock[e]));
     });
     if(!keep.length) return false;
     dom[n] = new Set(keep);
@@ -413,8 +424,11 @@ function roadCrosses(dom, W, H){
         if(ni<0||ni>=W||nj<0||nj>=H) continue;
         const m=idx(ni,nj); if(seen[m]) continue;
         // a shared socket carrying +P is a join you could walk; anything else is
-        // two roads that happen to be next to each other
-        if(!/\+P/.test(at(idx(i,j)).sock[nb.edge])) continue;
+        // two roads that happen to be next to each other. +B is the same join
+        // carried over water on a deck -- a bridge is a way across or it is
+        // nothing, and reading only +P here would have rejected every map that
+        // solved its river crossing with one.
+        if(!/\+[PB]/.test(at(idx(i,j)).sock[nb.edge])) continue;
         seen[m]=1; st.push([ni,nj]);
       }
     }
@@ -488,8 +502,22 @@ function socketWfc(W,H,tries=300){
     // it: its arms are W+P and its sides are W. Asking for "every edge is water,
     // with or without a track on it" lets the two paths meet where they should,
     // at a ford, instead of making them rivals for the same cell.
-    const isWater = v => ORDER.every(e => /^W(\+P)?$/.test(v.sock[e]));
-    const isTrack = v => /track/.test(v.role);
+    // ...AND A BRIDGE IS WATER TOO, for exactly the reason a ford is. This read
+    // `/^W(\+P)?$/` and so pinned every river cell to a piece with no deck on it:
+    // measured over eight seeds, 0 bridges placed and 8 to 21 fords. The pieces
+    // and the sockets were both right; the river's own seed forbade the span, the
+    // same way it once forbade the ford by pinning to role `liquid`. A span's
+    // flanks are W and its ends are W+B, and the two approaches either side are
+    // then FORCED -- nothing else in the set presents W+B -- so the crossing
+    // assembles itself from one seeded cell.
+    const isWater = v => ORDER.every(e => /^W(\+[PB])?$/.test(v.sock[e]));
+    // A BRIDGE IS A ROAD. Both seeds have to admit it or it lands somewhere no
+    // road reaches: seeded as water only, the span went in wherever the river ran
+    // and came out as a pier hanging off the map edge over the shore. Where the
+    // two lines cross, the cell's domain is now {ford, span} -- both satisfy both
+    // seeds -- and the ROLE WEIGHT decides which, so how often a river is bridged
+    // rather than waded is one number in ROLE_W and not a special case here.
+    const isTrack = v => /track|span/.test(v.role);
     // ACROSS EACH OTHER, NOT ALONG. Each picked its own direction, so half the
     // time the river and the road ran parallel -- and since a ford is both, they
     // merged into one long wet street: twenty ford tiles on a nine by nine board
@@ -498,7 +526,29 @@ function socketWfc(W,H,tries=300){
     const riverDown = rnd()<0.5;
     const river=[];
     if(!seedPath(dom, propagate, W, H, isWater, riverDown, 0.30, false, river)){ rej.river++; continue; }
-    if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true)){ rej.road++; continue; }
+    const road=[];
+    if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true, road)){ rej.road++; continue; }
+    // A BRIDGE ONLY WHERE THE ROAD IS. Admitting the span to the river seed put it
+    // anywhere the river ran, and it went to the MAP EDGE almost every time -- for
+    // a structural reason worth keeping: in the interior a `W+B` edge has to be
+    // answered by another span or by an approach standing on a real bank, and at
+    // the boundary it is answered by nothing at all. So the cheapest place to put
+    // a bridge was always the one place it could lead nowhere. Measured: 2 of 8
+    // seeds bridged, both off the edge, one of them a pier over the shore.
+    // Being on the road is the thing that makes a crossing a crossing, and it is
+    // one mask.
+    {
+      const onRoad=new Uint8Array(W*H);
+      for(const [i,j] of road) onRoad[j*W+i]=1;
+      const stack=[]; let bad=false;
+      for(let n=0;n<W*H && !bad;n++){
+        if(onRoad[n]) continue;
+        const d=dom[n]; let changed=false;
+        for(const v of d) if(/^span/.test(SVAR[v].role)){ d.delete(v); changed=true; }
+        if(changed){ if(!d.size){ bad=true; break; } stack.push([n%W,(n/W)|0]); }
+      }
+      if(bad || !propagate(stack)){ rej.road++; continue; }
+    }
     // A RIVER, NOT A LAKE. Seeding only asked for water ALONG a line; nothing
     // stopped the collapse from spreading it, and with the acceptance test
     // falling through (see below) what came back was a map that was mostly
@@ -530,6 +580,33 @@ function socketWfc(W,H,tries=300){
         if(changed){ if(!d.size){ bad=true; break; } stack.push([n%W,(n/W)|0]); }
       }
       if(bad || !propagate(stack)){ rej.river++; continue; }
+    }
+    // ---- BRIDGE OR FORD: state it, do not weight it.
+    // The crossing is a PLACE -- the one cell on both lines -- and that is a fact
+    // about the whole board, which is the exact thing this file already says a
+    // weight cannot express. Weighting was tried: at span 0.8 no seed in twelve
+    // bridged, and at 12 -- four times a track's weight -- one in six did, because
+    // a span needs BOTH its along-road neighbours to be approaches and the collapse
+    // usually decides one of them first, killing the span before its cell is
+    // reached. Raising the number further only makes a rare thing arrive by luck.
+    // Collapsed here instead, the approaches are forced (nothing else presents
+    // `W+B`) and the ford keeps every crossing this one does not take.
+    if(rnd() < 0.5){
+      const onRiver=new Uint8Array(W*H);
+      for(const [ri,rj] of river) onRiver[rj*W+ri]=1;
+      const save=dom.map(d=>new Set(d));
+      for(const [i,j] of road){
+        const n=idx(i,j);
+        if(!onRiver[n]) continue;
+        const keep=[...dom[n]].filter(v=>SVAR[v].role==="span");
+        if(!keep.length) continue;
+        dom[n]=new Set(keep);
+        // A failure here is not a bad map, it is a river this road cannot bridge.
+        // Put the board back and let it wade across, rather than throwing away an
+        // attempt that was fine.
+        if(!propagate([[i,j]])) for(let m=0;m<W*H;m++) dom[m]=save[m];
+        break;
+      }
     }
     // ORDER MATTERS. The mask above shrinks every domain off the river, and
     // running it before the road was seeded left the road nowhere to cross:
@@ -1514,7 +1591,8 @@ let ACT_RES = 384, FX_RES = 512;
 // one vocabulary: a role is what a tile IS, a socket is what an edge PROMISES.
 const ROLE_COLOUR={ ground:"#3ad24a", high_ground:"#eaeaea", transition:"#ff8c00",
                     slope:"#ffd400", track:"#c07a3a", track_slope:"#e0a050",
-                    liquid:"#2b6bff", wallow:"#00e0c0" };
+                    liquid:"#2b6bff", wallow:"#00e0c0",
+                    span:"#ff5ac8", span_flank:"#ff9ad8" };
 // G0/G1 ground low/high, W water, X.. a level change crossing this edge,
 // +P a track crossing it. Related sockets share a hue on purpose: a wrong
 // tiling usually shows up as one wedge in the wrong FAMILY, not a wrong shade.

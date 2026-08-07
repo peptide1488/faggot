@@ -443,3 +443,118 @@ are gone) but that is reasoning, not a measurement, and it is not one yet.
   `packed/pack.json` first and only falls back to raw PNGs if it is missing, so
   skipping the re-pack serves the OLD art and the change looks like it did
   nothing. Same shape as every stale-cache trap in this file.
+
+---
+
+# 2026-08-07 (later still) — the bridge, and what it exposed
+
+Closes the `Also open` bullet "A bridge needs a socket that does not exist", and
+with it the "crossings OVER things" family — for water, at one level. It cost
+**two pieces and one socket**, not the three SOCKETS.md guessed at: the far bank
+is the near bank at r180.
+
+**Water becoming a level is what made it buildable**, and that is the whole
+story. While water was a baked plane the height buffer recorded the plane, so
+anything laid over it either sat under a sheet of albedo or replaced the water —
+a bridge came out as a dam. With the bed cut dry and the runtime flooding
+everything below `uWaterZ`, the deck is the only thing in the height buffer where
+it stands, the bed either side is still below the level, and the river runs up to
+the span and out the far side on its own.
+
+## The socket
+
+`W+B` — "the ground here is bed, and something is CARRIED over it". `+P` says the
+ground itself carries the track, which is why a ford works and why a bridge built
+as a track disagreed with every track it touched by exactly BED_Z. `W+B` makes
+both sides of the seam agree about the GROUND; the deck is a separate promise
+they also both keep. B never matches P, so a deck cannot end in mid-air against a
+wading ford.
+
+| piece | role | `X+` | `Y+` | `X-` | `Y-` |
+|---|---|---|---|---|---|
+| bridge-0580 (span) | span | `W` | `W+B` | `W` | `W+B` |
+| bridge-0590 (approach) | span_flank | `Xw0>Y+` | `G0+P` | `Xw0>Y+` | `W+B` |
+
+The approach's flanks are the crossing socket the strand and the shoal already
+present, so a bridge lands on a beach with no piece of its own to do it. Nothing
+else in the set presents `W+B`, so **one seeded span forces its own approaches**.
+
+## Three things that were each a whole afternoon of "it does nothing"
+
+- **The river's own seed predicate excluded the span.** `isWater` read
+  `/^W(\+P)?$/`, so every river cell was pinned to a piece with no deck. Measured
+  over eight seeds: **0 bridges, 8–21 fords**. The pieces and the sockets were
+  both correct the entire time. This is the same shape as the bug its own comment
+  documents — pinning the river to role `liquid` once excluded the ford.
+- **Then it went to the map edge every time**, for a structural reason worth
+  keeping: in the interior a `W+B` edge must be answered by another span or an
+  approach standing on a real bank; at the boundary it is answered by nothing. So
+  the cheapest place to put a bridge was the one place it could lead nowhere. Two
+  of eight seeds bridged and both were piers over the shore.
+- **Weighting it could not work and the numbers say why.** At `span: 0.8`, no
+  seed in twelve bridged; at `12` — four times a track's weight — one in six did.
+  A span needs BOTH along-road neighbours to be approaches and the collapse
+  usually decides one of them first. So the crossing is now **stated, not
+  weighted**: the one cell on both seeded lines is collapsed to a span on a coin
+  flip, and the ford keeps every crossing that does not take. 3 of 12 seeds
+  bridge. `ROLE_W` is back to 0.8 and only governs spurious extras.
+
+## The deck is exactly two squares wide, and that is a movement rule
+
+At 1.5 units it straddled the lattice, so the plank edge — a 1.0-unit drop to the
+bed in one texel — fell INSIDE the squares it was meant to carry and `standable`
+rejected them on slope: **1 of 16 squares on a span tile**. At `2.0 * CELL` it
+lines up: 4 of 16, a full walkable lane, and BFS from the road above reaches
+every standable square on the approach and both spans. The dungeon causeway ducks
+this by declaring squares 1 and 2 walkable by fiat (`onCauseway`); this earns them
+under the rule everything else obeys.
+
+## THE NEXT JOB — a ford is not walkable, and has not been since water became a level
+
+Found while measuring the bridge, and it is worse than the bridge was missing.
+**Every ford tile on seed 1 measured 0 of 64 squares standable.** The bed is at
+BED_Z −0.95 against a level of −0.20, so a ford is 0.75 deep — not a place to
+wade, a place to drown. `roadCrosses` and `demo-test.js` both check SOCKETS, so
+the road "crosses" a river no one can walk, and every map that solves its crossing
+with a ford (9 of 12 seeds) has a road that stops at the water.
+
+It is the same class of finding as the water-as-a-level work itself: the contract
+was right and the surface underneath it was not. The fix is not to raise BED_Z —
+the ford's `W` flanks must keep meeting the mere. A ford is a shallow BAR across
+the channel, so the shelf belongs to the `W+P` faces: every piece presenting `W+P`
+(ford-0560/0561/0562, track-0563) would carry the crossing line at just above
+WATER_SURFACE and fall back to the bed at its `W` flanks. All four agree or
+`check_seams.py` says so, which is the check that already exists.
+
+## Measured, not assumed
+
+- `check_seams.py --theme grass10A`: **0 of 16864 pairs** disagree by more than a
+  texel (16864, not 16256 — two pieces × 4 rotations added pairs).
+- `node demo-test.js` 12/12, including two new ones.
+- Deck top and rail top measure R−B 32 and 33; deck side and rail side 19 and 15.
+  **The rails are not greyer than the planking** — every vertical face in this set
+  is cooler than every horizontal one, the terrain included. Turning `wear` down
+  to chase it changed nothing, which is how the guess got caught.
+
+## Traps this session
+
+- **`socket_spec.py` refuses a socket it has no entry for**, which is the right
+  behaviour and will stop a bake cold: add to `MEANING` and `BANDS` together. Its
+  prose about the missing bridge was hardcoded and had to be branched on the
+  socket existing, or the generated file confidently states the opposite of what
+  its own table shows two lines above.
+- **`demo-test.js` keeps a SECOND COPY of the road-walk rule** and it still read
+  `/\+P/`. It reported 10 of 12 seeds with no road across maps whose road crossed
+  on a bridge. If a third copy is ever wanted, export the predicate.
+- **The first stranded-bridge test was worthless and the mutation proved it.**
+  Flooding from every border cell makes a pier hanging off the map edge "on the
+  road" before the walk starts; removing the mask it guards still passed 12 of 12.
+  Flooded from the track tiles instead it means something — but be honest: that
+  version is **not** mutation-proven either, because with the crossing seed in
+  place spurious spans are too rare to show in twelve seeds. The
+  "a bridge is still reachable by the generator" test IS proven: restoring the old
+  `isWater` fails it, 0 of 12.
+- `python -m py_compile` catches nothing about Blender scripts but is still the
+  cheapest first check; the real one is a stub-`bpy` import that runs
+  `outdoor_tiles` and `tile_sockets` without a bake, which turned the socket
+  design round in seconds instead of a 35-second render each time.

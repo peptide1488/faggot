@@ -42,6 +42,7 @@ MEANING = {
     "G0+P": "ground low, with a track crossing this edge",
     "G1+P": "ground high, with a track crossing this edge",
     "W+P": "water, with a track crossing this edge (a ford)",
+    "W+B": "water, with a track carried OVER it on a deck (a bridge)",
     "G2": "ground, top band",
     "G2+P": "ground top, with a track crossing this edge",
     "X01": "a level change crosses this edge (low <-> high)",
@@ -64,7 +65,10 @@ BANDS = {
     "G0": {0}, "G0+P": {0},
     "G1": {1}, "G1+P": {1},
     "G2": {2}, "G2+P": {2},
-    "W": {-1}, "W+P": {-1},
+    # W+B touches the bed and nothing else: the deck over it is carried, not
+    # ground, so it constrains no band. That is the whole reason the socket exists
+    # -- both sides of the seam agree the GROUND here is riverbed.
+    "W": {-1}, "W+P": {-1}, "W+B": {-1},
     "X01": {0, 1}, "Xw0": {-1, 0}, "Xw1": {-1, 1}, "X12": {1, 2},
 }
 
@@ -287,18 +291,28 @@ def main():
             else:
                 note = "%s meeting %s" % (MEANING.get(a, a), MEANING.get(b, b))
             w("| `%s` | `%s` | %s |" % (a, b, note))
-    w("**A CROSSING OVER SOMETHING NEEDS ITS OWN SOCKET, and this set has none.** "
-      "A ford works because it is water the whole way across: its arms are `W+P` "
-      "and the bank pieces meet them. A BRIDGE is not that -- the road is at ground "
-      "level with water underneath -- and a tile with water on two edges and road "
-      "on the other two is a saddle whose edges can match neither a mere nor a "
-      "track. Built that way it disagreed with every track it touched by 0.95 "
-      "units, exactly BED_Z, because the height field at the road edge is the "
-      "riverbed and the deck is separate geometry the seam check rightly cannot "
-      "see. What would work is a `W+B` socket -- water, with a deck over it -- "
-      "presented by the span and by two bank approaches, so both sides of every "
-      "seam agree that the ground there is riverbed and the thing above it is "
-      "carried. That is three pieces and one socket, not a tweak.")
+    if "W+B" in supply:
+        w("**A CROSSING OVER SOMETHING HAS ITS OWN SOCKET NOW, and it is `W+B`.** "
+          "A ford works because it is water the whole way across: its arms are "
+          "`W+P` and the bank pieces meet them. A BRIDGE is not that -- the road is "
+          "at ground level with water underneath -- and built as a track it "
+          "disagreed with every track it touched by 0.95 units, exactly BED_Z, "
+          "because the height field at the road edge is the riverbed and the deck "
+          "is separate geometry the seam check rightly cannot see. `W+B` says the "
+          "ground here is bed and something is CARRIED over it, so both sides of "
+          "every seam agree about the ground and the deck is a promise they also "
+          "both keep. It cost two pieces, not the three guessed at here: the far "
+          "bank is the near bank at r180. What it still cannot make is a bridge "
+          "that TURNS -- `W+B` against `W+B` round a corner -- and a bridge "
+          "alongside a sea cliff; both are in the table above.")
+    else:
+        w("**A CROSSING OVER SOMETHING NEEDS ITS OWN SOCKET, and this set has "
+          "none.** A ford works because it is water the whole way across: its arms "
+          "are `W+P` and the bank pieces meet them. A BRIDGE is not that -- the "
+          "road is at ground level with water underneath -- and a tile with water "
+          "on two edges and road on the other two is a saddle whose edges can match "
+          "neither a mere nor a track. What would work is a `W+B` socket: water, "
+          "with a deck over it, presented by the span and by the bank approach.")
     w("")
     if any(rises(a) and rises(b) and base(a) != base(b) for a, b in ranked):
         w("")

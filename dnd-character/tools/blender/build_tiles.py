@@ -334,6 +334,23 @@ def outdoor_tiles(sid):
     add("track", 563, terrain="track", arms=["Y+", "Y-"], high=["Y+"],
         lo=-1, hi=1, water=True)
 
+    # ---- A BRIDGE: the road at ground level, the river running under it.
+    # A ford is water the whole way across and a bridge is not, which is why this
+    # needed a socket rather than a tweak -- see the `+B` note in tile_sockets.
+    # Two pieces, not the three SOCKETS.md guessed at: the far bank is the near
+    # bank at r180, and every piece already exists in all four rotations.
+    # The span is a bare bed with planking over it, so its W edges abut open water
+    # and its W+B edges abut each other -- a crossing is approach, span..., approach,
+    # any length, exactly the way the ford middle made a wide ford possible.
+    add("bridge", 580, terrain="track", arms=[], deck=["Y+", "Y-"],
+        lo=-1, hi=-1, water=True, role="span")
+    # The bank end: bed at the water edge, ground at the road edge, the crossing
+    # socket the strand and the shoal already present on its two flanks -- so a
+    # bridge lands on a beach with no piece of its own to do it. It carries the
+    # abutments, and it is the only place the deck meets the track.
+    add("bridge", 590, terrain="track", arms=["Y+"], deck=["Y-"], high=["Y+"],
+        lo=-1, hi=0, water=True, role="span_flank", piers=["Y-"])
+
     # ---- where a cliff comes down to the sea. Both chiralities: the mirror is
     # NOT a rotation, because rotating turns all four edges together and the
     # corner (Xw1 then X01) stays in the same order however far you turn it.
@@ -2600,6 +2617,112 @@ def terrain_material():
     return m
 
 
+# --- a crossing OVER something ---------------------------------------------
+# WATER BEING A LEVEL IS WHAT MADE THIS BUILDABLE. While water was a baked plane
+# the height buffer recorded the plane, so anything laid over it either sat under
+# a sheet of albedo or replaced the water entirely -- a bridge came out as a dam.
+# Now the bed is cut dry and the runtime floods everything below its water level:
+# the deck is the only thing in the height buffer where it stands, the bed either
+# side of it is still below the level, and the river runs up to the span and out
+# the far side on its own.
+DECK_Z = 0.06     # deck top: a hair proud of band 0, so it meets a track cleanly
+DECK_T = 0.16     # plank thickness
+# EXACTLY TWO SQUARES WIDE, and that is a movement rule before it is a look.
+# At 1.5 the deck straddled square boundaries, so the plank edge -- a 1.0-unit
+# drop to the bed in one texel -- fell INSIDE the squares it was meant to carry,
+# and `standable` rejected them on slope: measured, 1 of 16 squares on a span
+# tile. The dungeon causeway ducks this by declaring squares 1 and 2 walkable by
+# fiat (`onCauseway`); a deck that lines up with the lattice earns them under the
+# rule everything else obeys, which is "you may stand where ground was painted".
+DECK_W = 2.0 * CELL
+
+
+def _landfall(field, toward, floor):
+    """How far along `axis` the ground first stands as high as `floor`.
+
+    ASKED OF THE GROUND, NOT GUESSED. The first cut ran the deck a fixed 30% of a
+    half-tile past the middle and it ended in mid-air against the bank, because a
+    shore is SHELVING -- `_shelf(-1, 0)` spreads the rise across most of the tile,
+    so where the bank actually reaches deck height is a property of the band pair
+    and the shelf, not a number anyone can pick. Sampling it means the same code
+    lands a deck correctly on any pair a later set invents."""
+    for k in range(41):
+        t = k / 40.0
+        u = 0.5 + 0.5 * t * (1.0 if toward in ("X+",) else
+                             (-1.0 if toward == "X-" else 0.0))
+        v = 0.5 + 0.5 * t * (1.0 if toward in ("Y+",) else
+                             (-1.0 if toward == "Y-" else 0.0))
+        if field(u, v)[0] >= floor:
+            return t
+    return 1.0
+
+
+def add_deck(sp, seed, field=None):
+    """Plank deck, rails, and abutments where the spec asks for them.
+
+    Built PER AXIS rather than per edge: two opposite deck edges are one run of
+    planking, not two boxes meeting in the middle -- coplanar tops z-fight, and
+    the join showed as a seam straight down the crown of the bridge."""
+    edges = sp.get("deck", [])
+    if not edges:
+        return
+    # The rails LOOK greyer than the planking they belong to and they are not:
+    # measured off the bake, rail top and deck top are R-B 33 and 32, rail side and
+    # deck side 15 and 19. Every vertical face in this set is cooler than every
+    # horizontal one -- the terrain reads the same way -- so a bridge whose rails
+    # are mostly side-on reads cool, and turning `wear` down to chase it changed
+    # nothing, which is how the guess was caught.
+    m_wood = mkmat("wood", theme().get("wood", (0.29, 0.20, 0.13)), 0.86, vary=0.22)
+    m_rock = mkmat("rock", theme().get("rock", (0.42, 0.41, 0.38)), 0.90, vary=0.40)
+    rng = random.Random(seed + 313)
+    bh = _bh()
+    # Where only ONE edge is decked the run has to carry ON until the bank is
+    # under it, then a little further so it beds in rather than stopping at the
+    # exact contact point.
+    for axis, plus, minus in (('y', "Y+", "Y-"), ('x', "X+", "X-")):
+        hi, lo = plus in edges, minus in edges
+        if not (hi or lo):
+            continue
+        far, near = bh, -bh
+        # ...and STOPS SHORT of the edge. A land edge carries `G0+P`, which promises
+        # the neighbour a track crossing at ground level at the edge midpoint; a deck
+        # standing on that midpoint hands it a plank end 0.16 proud of the mud
+        # instead. The last sixth of the tile stays real ground, so the track owns
+        # the seam and the deck ends on the bank where a bridge ends.
+        if not hi:
+            far = HALF * (min(0.84, _landfall(field, plus, DECK_Z - DECK_T) + 0.16)
+                          if field else 0.6)
+        if not lo:
+            near = -HALF * (min(0.84, _landfall(field, minus, DECK_Z - DECK_T) + 0.16)
+                            if field else 0.6)
+        mid, length = (far + near) / 2.0, far - near
+        if axis == 'y':
+            box("deck", 0.0, mid, DECK_Z - DECK_T, DECK_W, length, DECK_T, m_wood,
+                bevel=(0.03, 2))
+            for s in (-1.0, 1.0):
+                box("rail%d" % int(s), s * (DECK_W / 2 + 0.06), mid, DECK_Z,
+                    0.12, length, 0.26, m_wood, bevel=(0.02, 2))
+        else:
+            box("deck", mid, 0.0, DECK_Z - DECK_T, length, DECK_W, DECK_T, m_wood,
+                bevel=(0.03, 2))
+            for s in (-1.0, 1.0):
+                box("rail%d" % int(s), mid, s * (DECK_W / 2 + 0.06), DECK_Z,
+                    length, 0.12, 0.26, m_wood, bevel=(0.02, 2))
+    # ABUTMENTS BELONG AT THE BANKS, NOT UNDER EVERY TILE. One pier per span tile
+    # is the six-columns-in-a-row mistake add_over_floor already documents; the
+    # approach carries them, so a three-tile crossing has two abutments and a
+    # clear span, which is what a bridge looks like.
+    for e in sp.get("piers", []):
+        u = HALF * 0.62
+        for s in (-1.0, 1.0):
+            px, py = ((s * (DECK_W / 2 - 0.12), u if e == "Y+" else -u)
+                      if e in ("Y+", "Y-") else
+                      (u if e == "X+" else -u, s * (DECK_W / 2 - 0.12)))
+            box("pier%d" % int(s), px, py, BED_Z - 0.10, 0.30, 0.30,
+                DECK_Z - DECK_T - BED_Z + 0.10, m_rock,
+                rotz=rng.uniform(-0.05, 0.05), bevel=(0.03, 2))
+
+
 def add_terrain(name, spec, rot):
     """Outdoor tile: build the ground, then let it decide what stands on it.
 
@@ -2626,6 +2749,9 @@ def add_terrain(name, spec, rot):
         top = 1 if spec["terrain"] == "headland" else sp.get("hi", 1)
         add_crags(seed, sample, _band_z(top) - 0.06)
     terrain_scatter(sample, 0.0, seed)
+    # AFTER the scatter, so a boulder the bed happened to earn cannot stand
+    # through the planking.
+    add_deck(sp, seed, f)
     # NO WATER IS BAKED. The bed runs down to BED_Z and stops; the runtime draws
     # water wherever the height buffer is below its water LEVEL. See the note on
     # WATER_LEVEL: a baked plane records itself in the height pass, so the depth
@@ -3437,6 +3563,17 @@ def tile_sockets(spec):
                 out[e] = band(lo)
             if e in spec.get("arms", []):
                 out[e] = out[e] + "+P"
+        # A SECOND MARKER, FOR A CROSSING OVER SOMETHING RATHER THAN THROUGH IT.
+        # `+P` says the ground itself carries the track, which is why a ford works:
+        # its arms are W+P and the height field IS the track. A bridge is not that.
+        # Built with `+P` it disagreed with every track it touched by exactly BED_Z,
+        # because the seam check reads the height field -- correctly -- and a deck is
+        # not in it. `+B` says "the ground here is bed and something is carried over
+        # it", so both sides of the seam agree about the GROUND and the deck is a
+        # separate promise they also both keep. B never matches P, which is what
+        # stops a bridge deck ending in mid-air against a wading ford.
+        for e in spec.get("deck", []):
+            out[e] = out[e] + "+B"
         return out
 
     # kind == "step": the transition family
