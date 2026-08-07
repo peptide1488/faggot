@@ -285,6 +285,31 @@ def source_candidates(url: str) -> list:
     return candidates
 
 
+def log(message: str):
+    """Print ASCII-safe: Windows consoles use a legacy codepage and raise
+    UnicodeEncodeError on non-ASCII video titles, killing the job."""
+    print(message.encode("ascii", "backslashreplace").decode(), flush=True)
+
+
+def failure_summary(failures: list) -> str:
+    """Describe what each candidate actually failed with.
+
+    Reporting only the first error is useless: candidate #1 is always the
+    aggregator page, whose "Unsupported URL" is expected and says nothing
+    about why the embed it points to could not be downloaded.
+    """
+    parts = []
+    for source_url, exc in failures:
+        host = urlsplit(source_url).netloc or source_url
+        text = str(exc).strip()
+        reason = text.splitlines()[0] if text else type(exc).__name__
+        reason = reason.replace("ERROR: ", "")
+        if len(reason) > 140:
+            reason = reason[:137] + "..."
+        parts.append(f"{host}: {reason}")
+    return " | ".join(parts) or "no candidate URLs could be extracted"
+
+
 _HEIGHT_HINT = re.compile(r"(\d{3,4})[pP](?:[\b_./-]|$)")
 
 
@@ -374,20 +399,22 @@ def get_info(url: str):
         "noplaylist": False,
     }
     info = None
-    primary_error = None
+    failures = []
     # The page itself first; if nothing works, whatever it embeds
     for source_url, source_opts in source_candidates(url):
+        candidate_error = None
         for attempt_opts in extraction_attempts({**ydl_opts, **source_opts}):
             try:
                 with make_ydl(attempt_opts) as ydl:
                     info = ydl.extract_info(source_url, download=False)
                 break
             except Exception as exc:
-                primary_error = primary_error or exc
+                candidate_error = exc
         if info is not None:
             break
+        failures.append((source_url, candidate_error))
     if info is None:
-        raise HTTPException(status_code=400, detail=str(primary_error))
+        raise HTTPException(status_code=400, detail=failure_summary(failures))
 
     is_playlist = info.get("_type") == "playlist" or "entries" in info
 
@@ -551,9 +578,11 @@ def run_download(job_id: str, req: DownloadRequest):
 
     try:
         filename = None
-        primary_error = None
+        failures = []
         # The page itself first; if nothing works, whatever it embeds
         for source_url, source_opts in source_candidates(req.url):
+            log(f"[job {job_id}] trying {source_url}")
+            candidate_error = None
             for attempt_opts in extraction_attempts({**ydl_opts, **source_opts}):
                 try:
                     filename = do_download(attempt_opts, source_url)
@@ -561,17 +590,17 @@ def run_download(job_id: str, req: DownloadRequest):
                 except Exception as exc:
                     if job_id in cancel_requests:
                         raise yt_dlp.utils.DownloadCancelled("Cancelled by user")
-                    msg = f"[job {job_id}] extraction attempt failed: {exc}"
-                    print(msg.encode("ascii", "backslashreplace").decode(), flush=True)
-                    primary_error = primary_error or exc
+                    log(f"[job {job_id}] {source_url} failed: {exc}")
+                    candidate_error = exc
                     # Clear leftovers so the next attempt starts clean
                     for leftover in staging_dir.iterdir():
                         if leftover.is_file():
                             leftover.unlink()
             if filename is not None:
                 break
+            failures.append((source_url, candidate_error))
         if filename is None:
-            raise primary_error
+            raise ValueError(failure_summary(failures))
         update_job(
             job_id,
             status="completed",
