@@ -39,6 +39,7 @@
   <label>torch <input id="rng" type="range" min="20" max="400" value="150"></label>
   <label>shadows <input id="shd" type="range" min="0" max="100" value="80"></label>
   <label>water <input id="water" type="range" min="0" max="100" value="60"></label>
+  <label>water clarity <input id="wclear" type="range" min="0" max="100" value="55"></label>
   <label>water colour <input id="watcol" type="color" value="#3f6f86"></label>
   <label>light bands <input id="bands" type="range" min="0" max="24" value="0"></label>
   <label>band dither <input id="bdith" type="range" min="0" max="100" value="0"></label>
@@ -1785,6 +1786,7 @@ document.getElementById("ver").textContent=VERSION;
     uniform vec3 uWaterCol;
     uniform float uPixel,uLevels,uDither,uBands,uLightDither;
     uniform float uTime,uWater,uMaxH;
+    uniform float uWaterClear;   // how much of the bed comes through
     // G-BUFFER MODE. uAlb/uNrm/uHgt are either the whole map composited at art
     // resolution (uGBuf 0) or just what is on screen this frame (uGBuf 1). All
     // the maths above is in COMPOSITE space either way; only the lookup differs,
@@ -2191,6 +2193,23 @@ document.getElementById("ver").textContent=VERSION;
         col = mix(deep, uWaterCol, mot);
         // Wave troughs sit deeper in the tint, crests catch more light.
         col *= 0.78 + 0.44*clamp(wh*7.0+0.5,0.0,1.0);
+        // ...AND YOU CAN SEE THE BOTTOM. a.rgb here is the BED: the bake writes
+        // the water plane into the height pass but leaves the bed in the albedo,
+        // which is exactly why modulating the albedo used to show a patchwork of
+        // per-tile bed seeds. That patchwork was only ever wrong as the WATER's
+        // colour -- as the thing lying under the water it is the point.
+        //
+        // Absorption, not a plain alpha blend: what comes back up has travelled
+        // through the water twice, so it is tinted by the water's own colour and
+        // dimmed, which is what stops a transparent river reading as a sheet of
+        // glass over grass. The ripple modulates it too -- a crest thins the
+        // column and shows more bed -- so the bottom shimmers with the surface
+        // instead of sitting flat and separate underneath it.
+        {
+          vec3 through = a.rgb * mix(vec3(1.0), uWaterCol, 0.72) * 0.92;
+          float clarity = uWaterClear * clamp(0.62 + 0.38*(wh*6.0), 0.25, 1.0);
+          col = mix(col, through, clarity);
+        }
         // Shoreline. Anything that is not water within a couple of pixels means a
         // bank, a rim or a causeway pier; foam gathers there and rides the swell.
         vec2 t=toStep(2.5);
@@ -4182,6 +4201,7 @@ document.getElementById("ver").textContent=VERSION;
     gl.uniform1f(U("uWaterZ"),WATER_SURFACE);
     { const w=tint(watcol.value);
       gl.uniform3f(U("uWaterCol"), w[0], w[1], w[2]); }
+    gl.uniform1f(U("uWaterClear"), wclear.value/100);
     gl.uniform1f(U("uMaxH"),sceneMaxH);
     gl.uniform1f(U("uTime"),clock);
     gl.uniform1f(U("uMode"),parseFloat(mode.value));
