@@ -305,27 +305,16 @@ const MAP_SEEDS = { slope:[2,4], high_ground:[1,2], peak:[0,1] };
 // ground that happens to change level partway across, and counting it as "not
 // land" is what made 97 maps in 112 fail this test while the interesting checks
 // never ran at all.
-const MAP_MIX = { land:[0.62, 1.0], high:[0.04, 0.46],
-                  // Water is a RIVER now rather than scattered ponds, so the band
-                  // it may occupy is much narrower: a tenth of the map is a
-                  // watercourse, a third of it was a swamp.
-                  // A one-tile river that meanders lays down more cells than a
-                  // straight one -- every sideways step is another tile -- so a
-                  // nine-span river is twelve to fifteen tiles before WFC adds a
-                  // single pool of its own. Capping at 13 rejected the shape that
-                  // had just been asked for, and the fallback then returned maps
-                  // wetter than either number.
-                  // A river on a bigger board is a smaller FRACTION of it: one
-                  // tile wide over N tiles is about 1/N before the meander, so
-                  // 12x12 wants a tighter band than 9x9 did.
-                  water:[0.01, 0.13],
-                  // PLAIN LOW GROUND IS A FEATURE, and counted on its own -- not
-                  // together with high ground, which let a map of plateau, road
-                  // and river through with literally no grass on it. Without a
-                  // floor under everything the map is busy edge to edge and reads
-                  // as texture rather than terrain: nowhere for the eye, or a
-                  // fight, to rest.
-                  open:[0.10, 1.0], peakMax:0.14 };
+const MAP_MIX = { land:[0.62,1.0], high:[0.01,0.46], water:[0.01,0.13], open:[0.008,1.0],
+                  peakMax:0.14 };
+// RANGES SET FROM WHAT THE SOLVER ACTUALLY PRODUCES, not from what a map ought
+// to look like in the abstract. Sampled over 206 attempts of a 12x12 (the
+// sampler is still there, window.__wfcSamples): `open` has a median of 0.014 and
+// a maximum of 0.111, and the floor was 0.10 -- so it rejected 134 of 206 maps,
+// `high` another 69, and the run NEVER accepted. It reached attempt 292 of 300
+// every time and took the "settle for anything" branch at tries-8, which is why
+// the page sat black for 20 seconds AND why the water rule never applied: the
+// map you were shown had passed no test at all.
 
 // A RIVER AND A ROAD ARE PATHS, NOT QUANTITIES. Weighting water up gives you more
 // water everywhere; it cannot give you one river. Weighting was tried three times
@@ -351,7 +340,7 @@ function buildSocketVariants(man){
   return SVAR.length;
 }
 
-function seedPath(dom, propagate, W, H, want, down, wobble, joined){
+function seedPath(dom, propagate, W, H, want, down, wobble, joined, out){
   const idx=(i,j)=>j*W+i;
   const N=SVAR.length;
   // ONE ORTHOGONAL STEP AT A TIME. The first version advanced along the span and
@@ -376,6 +365,8 @@ function seedPath(dom, propagate, W, H, want, down, wobble, joined){
   // convention the neighbour table uses.
   const edgeTo = (p, q) => q[0] > p[0] ? "X+" : q[0] < p[0] ? "X-"
                          : q[1] > p[1] ? "Y-" : "Y+";
+  // The caller needs to know WHERE the river went, to keep the water near it.
+  if(out) for(const c of path) out.push(c);
   for(let k=0; k<path.length; k++){
     const me = path[k], prev = path[k-1], next = path[k+1];
     const need = [];
@@ -433,7 +424,7 @@ function roadCrosses(dom, W, H){
 function socketWfc(W,H,tries=300){
   const N=SVAR.length, idx=(i,j)=>j*W+i;
   let accepted=null;
-  const rej={land:0, ways:0, low:0, flat:0, river:0, road:0, nocross:0, busy:0, peaky:0};
+  const rej={land:0, ways:0, low:0, flat:0, river:0, road:0, nocross:0, busy:0, peaky:0, wide:0};
   // Precompute compatibility once: OK[e][a] is the set of b that may sit across
   // edge e from a. Recomputing this inside propagate was the whole cost.
   const OK={};
@@ -446,9 +437,15 @@ function socketWfc(W,H,tries=300){
     }
     OK[nb.edge]=tab;
   }
+  // ARC CONSISTENCY OVER FULL DOMAINS IS THE SAME EVERY TIME. Nothing has been
+  // collapsed yet, so this depends only on the tile set -- and it was being
+  // recomputed from scratch on all 292 attempts a 16x16 needed, which is most of
+  // the 20.5 seconds the page spent black. Compute once, clone per attempt.
+  let BASE=null;
   for(let attempt=0;attempt<tries;attempt++){
     const dom=new Array(W*H);
-    for(let n=0;n<W*H;n++){ dom[n]=new Set(); for(let v=0;v<N;v++) dom[n].add(v); }
+    if(BASE){ for(let n=0;n<W*H;n++) dom[n]=new Set(BASE[n]); }
+    else { for(let n=0;n<W*H;n++){ dom[n]=new Set(); for(let v=0;v<N;v++) dom[n].add(v); } }
     const propagate=stack=>{
       while(stack.length){
         const [i,j]=stack.pop();
@@ -464,7 +461,10 @@ function socketWfc(W,H,tries=300){
       }
       return true;
     };
-    if(!propagate(Array.from({length:W*H},(_,n)=>[n%W,(n/W)|0]))) continue;
+    if(!BASE){
+      if(!propagate(Array.from({length:W*H},(_,n)=>[n%W,(n/W)|0]))) continue;
+      BASE = dom.map(d=>new Set(d));
+    }
 
     // ---- seeds. Kept off the border: a feature pinned against the edge of the map
     // has only half its neighbourhood to grow into, and a plateau needs room for a
@@ -491,7 +491,31 @@ function socketWfc(W,H,tries=300){
     // and no grass at all. Crossing at right angles they meet once, which is a
     // ford, which is the thing worth having.
     const riverDown = rnd()<0.5;
-    if(!seedPath(dom, propagate, W, H, isWater, riverDown, 0.30, false)){ rej.river++; continue; }
+    const river=[];
+    if(!seedPath(dom, propagate, W, H, isWater, riverDown, 0.30, false, river)){ rej.river++; continue; }
+    // A RIVER, NOT A LAKE. Seeding only asked for water ALONG a line; nothing
+    // stopped the collapse from spreading it, and with the acceptance test
+    // falling through (see below) what came back was a map that was mostly
+    // water. Water is now only permitted within one tile of the line that was
+    // actually drawn, which bounds the channel at three tiles and, with the
+    // run check further down, two in practice.
+    {
+      const near=new Uint8Array(W*H);
+      for(const [ri,rj] of river)
+        for(let dj=-1;dj<=1;dj++) for(let di=-1;di<=1;di++){
+          const i=ri+di, j=rj+dj;
+          if(i>=0&&i<W&&j>=0&&j<H) near[j*W+i]=1;
+        }
+      let bad=false;
+      const stack=[];
+      for(let n=0;n<W*H && !bad;n++){
+        if(near[n]) continue;
+        const d=dom[n]; let changed=false;
+        for(const v of d) if(SVAR[v].role==="liquid"){ d.delete(v); changed=true; }
+        if(changed){ if(!d.size){ bad=true; break; } stack.push([n%W,(n/W)|0]); }
+      }
+      if(bad || !propagate(stack)){ rej.river++; continue; }
+    }
     if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true)){ rej.road++; continue; }
 
     let seeded=true;
@@ -546,6 +570,12 @@ function socketWfc(W,H,tries=300){
         if(r==="ground") open++;
       }
       const T=W*H;
+      // WHAT THE SOLVER ACTUALLY PRODUCES, sampled every attempt. Two rounds of
+      // tuning were spent guessing these ranges; the samples say what they
+      // should be, and the tally below says which clause is doing the rejecting.
+      (window.__wfcSamples=window.__wfcSamples||[]).push(
+        {land:land/T, high:high/T, water:water/T, low:low/T,
+         ways:ways/T, open:open/T, peak:peak/T});
       // Count WHY maps are rejected. Two rounds of tuning were spent guessing which
       // clause was doing the rejecting; the tally answers it in one run.
       const inRange=(v,[lo,hi])=>v>=T*lo && v<=T*hi;
@@ -569,6 +599,17 @@ function socketWfc(W,H,tries=300){
       if(!inRange(open, MAP_MIX.open)){ rej.busy++; continue; }
       // The top band is an outcrop, not a second storey over the whole map.
       if(peak > T*MAP_MIX.peakMax){ rej.peaky++; continue; }
+      // NEVER MORE THAN TWO TILES THICK, measured the way you would look at it:
+      // the longest unbroken run of water across any row and down any column.
+      {
+        const wet=n=>SVAR[[...dom[n]][0]].role==="liquid";
+        let worst=0;
+        for(let j=0;j<H;j++){ let run=0;
+          for(let i=0;i<W;i++){ run = wet(j*W+i) ? run+1 : 0; if(run>worst) worst=run; } }
+        for(let i=0;i<W;i++){ let run=0;
+          for(let j=0;j<H;j++){ run = wet(j*W+i) ? run+1 : 0; if(run>worst) worst=run; } }
+        if(worst > 2){ rej.wide++; continue; }
+      }
       accepted = {attempt, land, high, water, ways};
     }
     // Publish which attempt was taken and why: "the map is flat" and "the map was
@@ -1266,8 +1307,25 @@ const hex3=h=>[parseInt(h.substr(1,2),16)/255,
 // the person put it.
 const tint=h=>{ const c=hex3(h), m=Math.max(c[0],c[1],c[2])||1;
                 return [c[0]/m, c[1]/m, c[2]/m]; };
-const load=src=>new Promise((ok,no)=>{const im=new Image();
-  im.onload=()=>ok(im); im.onerror=()=>no(new Error("failed: "+src)); im.src=src;});
+// DECODE OFF THE MAIN THREAD. new Image() decodes on it, and the browser
+// serialises those decodes, so 552 packed tile images -- 27MB, already cropped
+// and webp -- took 21.9 seconds to become usable while the page sat black. It
+// was never the bytes: it was one core decoding them one at a time.
+// createImageBitmap hands the work to the browser's decode pool, which does it
+// in parallel and off-thread, and returns something both drawImage() and
+// texImage2D() take directly.
+const load = src => fetch(src).then(r => {
+  if(!r.ok) throw new Error("failed: "+src);
+  return r.blob();
+}).then(b => createImageBitmap(b)).catch(e => {
+  // Older browsers, and any decode createImageBitmap refuses: fall back to the
+  // element rather than failing the load, since one missing image aborts the
+  // whole set.
+  if(typeof createImageBitmap !== "function" || /decode|blob/i.test(e.message||""))
+    return new Promise((ok,no)=>{const im=new Image();
+      im.onload=()=>ok(im); im.onerror=()=>no(new Error("failed: "+src)); im.src=src;});
+  throw e;
+});
 const DIRS=["east","south-east","south","south-west","west","north-west","north","north-east"];
 
 // ---- actors and effects: the asset half -----------------------------------
@@ -1294,6 +1352,23 @@ function loadAction(body,action){
         triple("out/actors/"+body+"_"+action+"_"+d+"_f"+f))).then(fr=>[d,fr])))
     .then(pairs=>{ (ACT[body]=ACT[body]||{})[action]=Object.fromEntries(pairs); });
 }
+// WHICH BODIES ARE ACTUALLY HERE. The hero always, plus whatever is standing on
+// the map; `actors` is populated by the time this is first called, and reading it
+// rather than the manifest is the whole point -- the manifest lists everything
+// that was ever baked.
+function sceneBodies(){
+  const set=new Set([HERO_BODY]);
+  try{ for(const a of actors) if(a && a.body) set.add(a.body); }catch(e){}
+  return [...set];
+}
+// Everything one body can do. Memoised by loadAction, so calling it twice is
+// free and calling it early is harmless.
+async function ensureBody(body){
+  if(!ACTMAN || !body) return;
+  await loadAction(body, "walk");
+  for(const act of Object.keys(ACTMAN.actions)) await loadAction(body, act);
+}
+
 // Effects are radial -- one render, no directions -- so a whole effect is about
 // as much art as one direction of one action, and they all load up front.
 const loadEffect=name=>Promise.all(
@@ -1547,12 +1622,22 @@ document.getElementById("ver").textContent=VERSION;
     // its action arrives, and cast() refuses an effect it has not got. So the
     // whole lot goes in the background, nearest-use first -- the hero walks, then
     // the goblins, then the spells, then everything else.
+    // ...AND IT ONLY LOADS WHAT IS ON THE MAP. Backgrounding this was not
+    // enough. The last stage fetched every body crossed with every action --
+    // 21 bodies, 10,080 files, 490MB -- so a scene containing a wizard and two
+    // goblins spent a minute pulling down the other nineteen classes at full
+    // tilt, with the browser's six connections per host saturated the whole
+    // time. Measured with measure_load.py: 10,081 requests, 465MB, against
+    // 87 requests and 9.3MB for the tile art the map is actually made of.
+    //
+    // A body that is not in the scene is loaded when something asks for it --
+    // ensureBody below, off the picker and off newActor -- which is soon enough,
+    // because that is a click away and this is a minute away.
     loadQueue = (async () => {
       await loadAction(HERO_BODY, "walk");
-      for (const b of ACTMAN.bodies) await loadAction(b, "walk");
+      for (const b of sceneBodies()) await loadAction(b, "walk");
       for (const n of Object.keys(FXMAN.effects)) await loadEffect(n);
-      for (const b of ACTMAN.bodies)
-        for (const act of Object.keys(ACTMAN.actions)) await loadAction(b, act);
+      for (const b of sceneBodies()) await ensureBody(b);
     })();
     // A SET'S PROPS ARE DRESSED LIKE ITS GROUND. build_props.py bakes a copy per
     // theme now, because one shared set meant a highland-green pine standing on
@@ -1594,7 +1679,24 @@ document.getElementById("ver").textContent=VERSION;
   // there are two renderers to keep in step and they drift.
   // ?gbuffer=0 falls back to the composite; that switch exists to A/B the two,
   // not to give any set a path of its own.
-  const useGBuf = () => GL2 && PARAMS.get("gbuffer") !== "0";
+  // gDead is the one exception, and it is not a second path: it is this one
+  // having failed on this machine. A BLACK SCREEN IS THE WORST FAILURE MODE --
+  // it says nothing about what broke -- so anything thrown out of the G-buffer
+  // drops back to the composite and SAYS SO, rather than rendering nothing.
+  let gDead = "";
+  const useGBuf = () => GL2 && !gDead && PARAMS.get("gbuffer") !== "0";
+
+  // Loud, on the page, where a failure is actually noticed. The console is not
+  // where someone looking at a black canvas is looking.
+  function fail(what, e){
+    gDead = what + ": " + (e && e.message ? e.message : e);
+    try{
+      const el=document.getElementById("status");
+      if(el){ el.textContent = "renderer fell back to composite -- " + gDead;
+              el.style.color = "#ffb454"; }
+    }catch(_){}
+    console.error("[gbuffer] " + gDead, e);
+  }
   if(!gl){ status.textContent="no WebGL"; return; }
 
   let cells, sq, CW, CH, OX, OY, texA, texN, texH;
@@ -2295,6 +2397,15 @@ document.getElementById("ver").textContent=VERSION;
 
   function gResize(w,h){
     if(gLo && gW===w && gH===h) return;
+    // THE LIMIT IS ASKABLE, so ask it rather than finding out by getting an
+    // incomplete framebuffer. A large window at high anti-alias can want a
+    // target wider than the driver will allocate, and that is a fallback, not
+    // a crash.
+    const lim = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),
+                         gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+    if(w > lim || h > lim)
+      throw new Error("target "+w+"x"+h+" exceeds this GPU's limit of "+lim
+                      +" (lower anti-alias, or raise pixel size)");
     gW=w; gH=h;
     const drop = t => { if(!t) return;
       gl.deleteFramebuffer(t.fbo); t.tex.forEach(x=>gl.deleteTexture(x));
@@ -3293,6 +3404,12 @@ document.getElementById("ver").textContent=VERSION;
     flash("view rotated");
   }
 
+  // WHERE THE TIME GOES, per phase, so "loading is slow" can name the phase.
+  // The status line said "loading tile images" for 21 of 22 seconds and the art
+  // turned out to be 1.6s of it -- the label was simply the last one set.
+  const PHASE={};
+  const phase=(name,fn)=>{ const t=performance.now(); const r=fn();
+                           PHASE[name]=+(performance.now()-t).toFixed(0); return r; };
   function build(){
     // Reseed rather than continue the stream: building twice with the same seed
     // has to give the same map, however many maps were made in between.
@@ -3307,11 +3424,11 @@ document.getElementById("ver").textContent=VERSION;
       // An outdoor set is a LANDSCAPE, not a dungeon: no rooms to carve, no doors
       // to dress, no rift to gouge and no elevation pass, because every one of
       // those is already a tile in the vocabulary. The solver output is the map.
-      const out=socketWfc(W,H);
+      const out=phase('wfc',()=>socketWfc(W,H));
       if(!out){ status.textContent="socket WFC found no tiling"; return; }
       cells=out; RIFT_CELLS=cells; RIFT_W=W; RIFT_H=H;
       sqZ=null;                       // heights belong to the map about to be built
-      passable=buildSquares();
+      passable=phase('squares',()=>buildSquares());
       window.__elevDebug={afterGen:{raised:cells.filter(c=>c.level===1).length,
                                     stairs:0}, stats:null, passes:[]};
       // The flood is computed INSIDE finishBuild for a landscape: what is reachable
@@ -3764,6 +3881,11 @@ document.getElementById("ver").textContent=VERSION;
     return DIRS[((Math.round(a/(Math.PI/4))%8)+8)%8];
   }
   function newActor(body,sq,opt){
+    // A body that walks onto the map fetches itself. Until it lands, actorFrame
+    // returns null and syncSprites skips the slot -- the actor is simply not
+    // drawn for a moment, which is the same thing that already happens for an
+    // action that has not arrived.
+    ensureBody(body);
     const [wx,wy]=sqWorld(sqX(sq),sqY(sq));
     return Object.assign({body, sq, wx, wy, z:squareZ(sqX(sq),sqY(sq),sqL(sq)),
                           dir:"south", action:"walk", frame:0, t:0, path:[],
@@ -3987,7 +4109,18 @@ document.getElementById("ver").textContent=VERSION;
     // dozen textured quads -- which is what makes panning and zooming free:
     // there is no map-sized buffer to rebuild when the view moves.
     if(useGBuf() && lastDraws){
-      gRender(lastDraws);
+      try{
+        gRender(lastDraws);
+      }catch(e){
+        // Fall back for good, and rebuild what the composite path needs -- it
+        // was never built, because this path said it would not be needed.
+        fail("gbuffer", e);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.uniform1f(U("uGBuf"),0);
+        rebuildComposite();
+        drawGL();
+        return;
+      }
       // gRender leaves its own program and vertex buffer bound.
       gl.useProgram(pr);
       gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -4078,7 +4211,13 @@ document.getElementById("ver").textContent=VERSION;
     gl.uniform1f(U("uLightDither"),bdith.value/100);
     gl.viewport(0,0,glc.width,glc.height);
     gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    FRAMES++;
   }
+  // HOW MANY FRAMES HAVE ACTUALLY REACHED THE SCREEN. Asking the canvas instead
+  // -- readPixels on a presented drawing buffer -- reads black whatever was
+  // drawn, which is how a load measurement came back with 260 seconds for a page
+  // that was already up. A counter cannot lie about this.
+  let FRAMES=0;
   function resizeCanvas(){
     // pixel size k  -> render at 1/k and upscale NEAREST (the PS1 chunk)
     // anti-alias  s -> render at xS and downscale LINEAR (supersampling)
@@ -4258,10 +4397,22 @@ document.getElementById("ver").textContent=VERSION;
     return {visible:diff, area:w*h, pct:+(100*diff/(w*h)).toFixed(1)};
   }
 
+  // ANY uncaught error used to end as a black canvas and nothing else. The one
+  // thing a person staring at a black screen needs is the first line of the
+  // error that caused it.
+  window.addEventListener("error", ev=>{
+    const el=document.getElementById("status");
+    if(el && !el.dataset.err){
+      el.dataset.err="1";
+      el.textContent = "ERROR: " + (ev.message||ev.error) + "  (see console)";
+      el.style.color = "#ff6b6b";
+    }
+  });
+
   window.__engine={hero:()=>hero,cells:()=>cells,path:()=>hero.path,reach:()=>reach,
     worldToScreen,sqWorld,bfsSq,SW,SH,spriteVisiblePixels,spriteRect,
     standable:(X,Y,L)=>passable(X,Y,L||0,X,Y,L||0),
-    propPlan:()=>propPlan, draws:()=>lastDraws,
+    propPlan:()=>propPlan, draws:()=>lastDraws, frames:()=>FRAMES, phases:()=>PHASE,
     // WHAT THE MAP COSTS, in bytes, split the way the two renderers differ.
     // The composite path pays for the whole map at art resolution whether or not
     // any of it is on screen; the G-buffer path pays for the art it actually
