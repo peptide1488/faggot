@@ -399,20 +399,35 @@ Standable squares 1883 -> 1380 on the same seed, which is the shoreline arriving
   1px seams and actors -- **the water body is black in it**, so the two paths
   agree exactly about water. Do not read that 9.76% as a water fault.
 
-## State of the bake — the part that is unfinished
+## State of the bake — all five, done and looked at
 
-grass10A, dust10A, scree10A: **baked and packed**. stone: baking. sandstone:
-queued behind it. The queue is one background shell doing bake -> `rm -rf packed`
--> re-pack per set.
+**All five sets are baked and packed** against the dry-bed change, in one shell
+doing bake -> `rm -rf packed` -> re-pack per set. Pack sizes: outdoor 184 tiles
+~129MB -> ~25MB each, stone 268 -> 84MB, sandstone 220 -> 71MB.
 
-**Only grass10A has been looked at.** The untested claim is the DUNGEON pair:
-`water_floor` keeping a pit dry while flooding a basin is the rule that has never
-run, because grass10A has no pits. Load `?set=stone` first thing.
+**The dungeon rule is verified, and it was the one claim nothing had exercised.**
+On `?set=stone&seed=3` the height buffer holds exactly two populations below the
+floor line: **239 squares at -0.96** (basin beds -- above `water_floor`, so they
+flood) and **82 at -3.40** (chasm beds -- below it, so they stay dry). The picture
+agrees: the basins ripple with their flagstone bed visible THROUGH the water, and
+the chasm beside them is a dry hole with no blue fringe down its walls. sandstone
+splits 368 floodable / 167 below the floor and looks the same. A dungeon basin is
+0.54 deep against the outdoor channel's 0.76, so more bed comes back -- which is
+the effect being right, not a difference in treatment.
 
-Also not yet run since the change: `check_seams.py` (terrain fields were not
-touched, only an object removed, so 0 bad pairs is the expectation),
-`__engine.bench(30)` (wait for a free GPU; expect marginally faster, four texture
-reads per water pixel are gone). `node demo-test.js` passes 10/10.
+`check_seams.py --theme grass10A`: **0 of 16256 pairs** disagree by more than a
+texel. (16256, not the 14496 in the older section -- the tile table has grown.)
+`node demo-test.js` passes 10/10.
+
+**`__engine.bench()` cannot be run through `shot.py`, and the number it gives is
+a lie of the same family as the rAF clamp.** That chromium reports
+`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)`
+-- it is rendering on the CPU. It measured 561ms a frame at 5.76 megapixels
+against the 3.99ms this renderer does on a 3090, so the two numbers are not
+comparable in either direction and no conclusion about performance can be drawn
+from the headless one. Bench in a real browser or not at all. The change should
+be marginally FASTER (the foam edge-detect's four texture reads per water pixel
+are gone) but that is reasoning, not a measurement, and it is not one yet.
 
 ## Traps this session
 
