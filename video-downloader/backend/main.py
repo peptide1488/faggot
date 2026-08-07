@@ -174,11 +174,11 @@ def embed_page_variants(url: str) -> list:
         return []
     scheme, host, video_id = m.groups()
     bare = host.lower().removeprefix("www.")
-    hosts = [bare]
-    # Mirrors reuse ids; the extractor only knows the canonical domain
+    # Mirrors reuse ids but often redirect watch-page URLs to a nav page
+    # (txxx.me/videos/<id> -> txxx.me/most-popular), so try the canonical
+    # .com domain - the one extractors know - before the mirror.
     canonical = ".".join(bare.split(".")[:-1] + ["com"])
-    if canonical != bare:
-        hosts.append(canonical)
+    hosts = [canonical, bare] if canonical != bare else [bare]
     return [
         f"{scheme}{h}/{path}/{video_id}/"
         for h in hosts
