@@ -259,3 +259,84 @@ difference in it, because at a hundred pixels the silhouette is the performance.
 - **Goblin ears read as horns from the front** views; they work from the obliques.
 - The dungeon sets still use the wall contract. Both contracts coexist deliberately —
   the manifest decides which a set uses — so nothing needs migrating.
+
+
+---
+
+# 2026-08-07 — renderer, load time, water
+
+Commits `20bce44`..`3b4377e` on `iso3d-engine`. All green: `node demo-test.js`
+10/10, `check_seams.py` 0 bad pairs, five sets load clean.
+
+## What changed
+
+**One renderer, G-buffer, default on.** The old path composited the whole map at
+art resolution (840MB at 12x12, 1418MB at 16x16 — it grew with map AREA and every
+pan re-uploaded it). Now each tile VARIANT uploads once and only the visible ones
+are drawn as quads into viewport-sized targets each frame. Cost is bounded by what
+the SET contains (184 variants, 459MB) plus a viewport, whatever the map size.
+grass10A 840->440MB, stone 872->300MB. `?gbuffer=0` gets the composite back, for
+A/B only — no tile set has a path of its own. `__engine.vram()` reports both.
+
+**Load: 21s -> 2s.** It was never the art (1.6s: 0.94 fetch, 0.62 decode).
+`socketWfc` was 20.5s, running 292 of 300 attempts EVERY time and then taking the
+`tries-8` "settle for anything" branch — so it was slow AND threw the result away,
+which is why no water rule ever applied. The acceptance ranges were unsatisfiable:
+`open` needed >=0.10 against a measured median of 0.014. Ranges now come from
+sampled distributions (`window.__wfcSamples` is still live).
+Separately, the actor loader fetched every body x every action at startup —
+10,081 requests, 465MB — for a scene with a wizard and two goblins. Now loads what
+is on the map; rest on demand. `measure_load.py` prints the timeline.
+
+**Water is a river.** The flood was SHORE tiles: 12 of 256 were role "liquid"
+while 104 were "transition" — shore pieces that are half water by area. Every
+constraint measured the role and passed while the map drowned. "Wet" is now
+"carries a water socket on any edge", which is both what the river corridor masks
+on and what the metric counts.
+
+## THE NEXT JOB, and it is the user's design
+
+Water is currently BAKED INTO THE TILES as a plane at a fixed WATER_LEVEL. The
+height pass records that plane, so the renderer never learns the bed depth — which
+is why the new `water clarity` slider is a flat constant blend and looks weak.
+(The slider does work: clarity 0 vs 100 moves 4.91% of pixels, max delta 239.
+Measured, not assumed.)
+
+Bake the beds DRY and make water a LEVEL:
+
+1. `build_tiles.py`: stop emitting the water plane; let the bed run to BED_Z.
+2. Shader: draw water wherever surface height < uWaterZ (not `abs(h-uWaterZ)<0.05`),
+   with `depth = uWaterZ - hgt`. Absorb by Beer's law `exp(-depth*k)` — shallows
+   genuinely clear, channel genuinely deep. Foam is where depth crosses zero,
+   replacing the neighbour-sampling edge hack.
+3. Water level becomes a slider (uWaterZ is already a uniform).
+
+This gives real depth-based transparency, an adjustable level (drop it and the
+river is a dry gully), and makes river/canal/sewer one system — a bed shape plus a
+level. It also simplifies the WFC "wet" test to bed-height-vs-level.
+BOTH STEPS MUST LAND TOGETHER: dry beds render as holes until the shader fills them.
+
+## Discipline that paid, repeatedly
+
+- **Run the control first.** Composite-vs-itself differs by 7-10% of pixels because
+  the water animates — far too noisy to see a 1px seam through. Freezing water
+  first drops the control to 0.006%, and the real difference showed as 3.18% with
+  93% of it one pixel wide. Two wrong conclusions came from skipping this.
+- **Look at the diff MAP, not the percentage.** It found a missing causeway flank
+  that the aggregate number hid completely.
+- **Measure before believing.** "Loading is slow" was assumed to be assets for the
+  whole session; `--wait 16` had been in every capture command as an unquestioned
+  constant. The art was 7% of it.
+- Correlate, don't eyeball: a "10px prop offset" measured as best-shift 0,0.
+
+## Traps
+
+- `video-downloader` shares this git repo. That session switched the worktree to
+  `claude/elegant-bohr-zx67jk` mid-edit and the blender files vanished. Nothing was
+  lost (commits are on `iso3d-engine`), but consider `git worktree` to separate them.
+- `git add -A` from this directory sweeps in `.playwright-mcp/` junk — add files by name.
+- Windows Python cannot open MSYS `/c/...` paths; `cd` to the directory and use
+  bare filenames.
+- `shot.py` exits non-zero on any console error (stone/sandstone 404 the themed
+  prop dir by design), which silently breaks `&&` chains.
+- `serve.py` on 8777 dies with the shell that started it; use a background task.
