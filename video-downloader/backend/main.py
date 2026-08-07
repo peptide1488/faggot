@@ -157,45 +157,6 @@ def normalize_url(url: str) -> str:
     return url
 
 
-_IFRAME_SRC = re.compile(r"""<iframe[^>]+\bsrc\s*=\s*["']([^"']+)["']""", re.I)
-_EMBED_URL = re.compile(r"""["'](https?://[^"'\s<>]+/embed[^"'\s<>]*)["']""", re.I)
-
-
-def _registrable_domain(netloc: str) -> str:
-    return ".".join(netloc.lower().split(":")[0].split(".")[-2:])
-
-
-def discover_embed_urls(url: str, limit: int = 4) -> list:
-    """Aggregator sites (pornzog and friends) host no media themselves - they
-    iframe a third-party tube. When every extraction attempt fails, scrape the
-    page for cross-domain iframe/embed URLs so we can retry against the host
-    that actually serves the video."""
-    try:
-        opts = {**BASE_YDL_OPTS, "quiet": True, "no_warnings": True}
-        with make_ydl(opts) as ydl:
-            html = ydl.urlopen(url).read().decode("utf-8", "replace")
-    except Exception:
-        return []
-
-    origin = _registrable_domain(urlsplit(url).netloc)
-    found, seen = [], set()
-    for match in list(_IFRAME_SRC.finditer(html)) + list(_EMBED_URL.finditer(html)):
-        candidate = match.group(1).strip().replace("&amp;", "&")
-        if candidate.startswith("//"):
-            candidate = "https:" + candidate
-        if not candidate.startswith("http"):
-            continue
-        if _registrable_domain(urlsplit(candidate).netloc) == origin:
-            continue
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        found.append(candidate)
-    # Try hosts yt-dlp knows first, then anything that looks like a player
-    found.sort(key=lambda u: (not _has_dedicated_extractor(u), "/embed" not in u))
-    return found[:limit]
-
-
 _HEIGHT_HINT = re.compile(r"(\d{3,4})[pP](?:[\b_./-]|$)")
 
 
@@ -288,17 +249,13 @@ def get_info(url: str):
     }
     info = None
     primary_error = None
-    # The page itself first; if nothing works, whatever it embeds
-    for source_url in [url] + discover_embed_urls(url):
-        for attempt_opts in extraction_attempts(ydl_opts):
-            try:
-                with make_ydl(attempt_opts) as ydl:
-                    info = ydl.extract_info(source_url, download=False)
-                break
-            except Exception as exc:
-                primary_error = primary_error or exc
-        if info is not None:
+    for attempt_opts in extraction_attempts(ydl_opts):
+        try:
+            with make_ydl(attempt_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
             break
+        except Exception as exc:
+            primary_error = primary_error or exc
     if info is None:
         raise HTTPException(status_code=400, detail=str(primary_error))
 
@@ -444,11 +401,11 @@ def run_download(job_id: str, req: DownloadRequest):
             moved.append(dest.name)
         return moved, reasons
 
-    def do_download(opts, source_url):
+    def do_download(opts):
         with make_ydl(opts) as ydl:
             # Extract first without format processing so missing heights can
             # be recovered before "best" is chosen, then download
-            info = ydl.extract_info(source_url, download=False, process=False)
+            info = ydl.extract_info(req.url, download=False, process=False)
             if isinstance(info, dict):
                 infer_missing_heights(info)
             ydl.process_ie_result(info, download=True)
@@ -465,24 +422,20 @@ def run_download(job_id: str, req: DownloadRequest):
     try:
         filename = None
         primary_error = None
-        # The page itself first; if nothing works, whatever it embeds
-        for source_url in [req.url] + discover_embed_urls(req.url):
-            for attempt_opts in extraction_attempts(ydl_opts):
-                try:
-                    filename = do_download(attempt_opts, source_url)
-                    break
-                except Exception as exc:
-                    if job_id in cancel_requests:
-                        raise yt_dlp.utils.DownloadCancelled("Cancelled by user")
-                    msg = f"[job {job_id}] extraction attempt failed: {exc}"
-                    print(msg.encode("ascii", "backslashreplace").decode(), flush=True)
-                    primary_error = primary_error or exc
-                    # Clear leftovers so the next attempt starts clean
-                    for leftover in staging_dir.iterdir():
-                        if leftover.is_file():
-                            leftover.unlink()
-            if filename is not None:
+        for attempt_opts in extraction_attempts(ydl_opts):
+            try:
+                filename = do_download(attempt_opts)
                 break
+            except Exception as exc:
+                if job_id in cancel_requests:
+                    raise yt_dlp.utils.DownloadCancelled("Cancelled by user")
+                msg = f"[job {job_id}] extraction attempt failed: {exc}"
+                print(msg.encode("ascii", "backslashreplace").decode(), flush=True)
+                primary_error = primary_error or exc
+                # Clear leftovers so the next attempt starts clean
+                for leftover in staging_dir.iterdir():
+                    if leftover.is_file():
+                        leftover.unlink()
         if filename is None:
             raise primary_error
         update_job(
