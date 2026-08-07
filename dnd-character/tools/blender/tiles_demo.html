@@ -305,7 +305,7 @@ const MAP_SEEDS = { slope:[2,4], high_ground:[1,2], peak:[0,1] };
 // ground that happens to change level partway across, and counting it as "not
 // land" is what made 97 maps in 112 fail this test while the interesting checks
 // never ran at all.
-const MAP_MIX = { land:[0.62,1.0], high:[0.01,0.46], water:[0.01,0.13], open:[0.008,1.0],
+const MAP_MIX = { land:[0.62,1.0], high:[0.01,0.46], water:[0.10,0.26], open:[0.008,1.0],
                   peakMax:0.14 };
 // RANGES SET FROM WHAT THE SOLVER ACTUALLY PRODUCES, not from what a map ought
 // to look like in the abstract. Sampled over 206 attempts of a 12x12 (the
@@ -493,6 +493,7 @@ function socketWfc(W,H,tries=300){
     const riverDown = rnd()<0.5;
     const river=[];
     if(!seedPath(dom, propagate, W, H, isWater, riverDown, 0.30, false, river)){ rej.river++; continue; }
+    if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true)){ rej.road++; continue; }
     // A RIVER, NOT A LAKE. Seeding only asked for water ALONG a line; nothing
     // stopped the collapse from spreading it, and with the acceptance test
     // falling through (see below) what came back was a map that was mostly
@@ -506,17 +507,28 @@ function socketWfc(W,H,tries=300){
           const i=ri+di, j=rj+dj;
           if(i>=0&&i<W&&j>=0&&j<H) near[j*W+i]=1;
         }
+      // ANY TILE THAT CARRIES WATER, not just a fully-liquid one. This is the
+      // whole bug: only 12 of 256 tiles were role "liquid" while 104 were
+      // "transition" -- shore pieces that shelve down to the bed and are half
+      // water by area. Masking on the role let every shore tile spread across
+      // the map, which is the flooding you can see. A tile is wet if ANY of its
+      // edges is a water socket.
+      const wet = v => { const sk=SVAR[v].sock;
+                         for(const e in sk) if(/^W/.test(sk[e])) return true;
+                         return false; };
       let bad=false;
       const stack=[];
       for(let n=0;n<W*H && !bad;n++){
         if(near[n]) continue;
         const d=dom[n]; let changed=false;
-        for(const v of d) if(SVAR[v].role==="liquid"){ d.delete(v); changed=true; }
+        for(const v of d) if(wet(v)){ d.delete(v); changed=true; }
         if(changed){ if(!d.size){ bad=true; break; } stack.push([n%W,(n/W)|0]); }
       }
       if(bad || !propagate(stack)){ rej.river++; continue; }
     }
-    if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true)){ rej.road++; continue; }
+    // ORDER MATTERS. The mask above shrinks every domain off the river, and
+    // running it before the road was seeded left the road nowhere to cross:
+    // 150 of 300 attempts died on rej.road. The road picks its line first.
 
     let seeded=true;
     for(const [role,[lo,hi]] of Object.entries(MAP_SEEDS)){
@@ -562,7 +574,13 @@ function socketWfc(W,H,tries=300){
         if(r!=="liquid") land++;
         if(r==="high_ground"||r==="peak") high++;
         if(r==="peak") peak++;
-        if(r==="liquid") water++;
+        // MEASURED THE WAY IT LOOKS: a shore tile is water on screen even though
+        // its role is "transition", so the metric counts anything carrying a
+        // water socket. Counting role==="liquid" reported 12 wet tiles on a map
+        // that was half blue, and every water constraint passed while it flooded.
+        { const sk=SVAR[[...dom[n]][0]].sock; let w=false;
+          for(const e in sk) if(/^W/.test(sk[e])) { w=true; break; }
+          if(w) water++; }
         if(r==="ground"||r==="track"||r==="wallow") low++;
         if(r==="slope"||r==="track_slope") ways++;
         // PLAIN LOW GROUND, and not high ground as well -- counting both let a
