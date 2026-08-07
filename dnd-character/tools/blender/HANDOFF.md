@@ -558,3 +558,99 @@ WATER_SURFACE and fall back to the bed at its `W` flanks. All four agree or
   cheapest first check; the real one is a stub-`bpy` import that runs
   `outdoor_tiles` and `tile_sockets` without a bake, which turned the socket
   design round in seconds instead of a 35-second render each time.
+
+---
+
+# 2026-08-08 — the ford: built, measured, and REVERTED
+
+The previous section's NEXT JOB was attempted in full and **backed out**. The
+change was correct in isolation and surfaced a worse bug underneath it that I
+could not fix without wrecking the solver — twice, measured both times. The tree
+is back at the bridge commit. Read this before rebuilding it, because the design
+below is different from the one that was tried.
+
+## What was built, and it worked
+
+`FORD_Z = WATER_LEVEL + 0.06`, a `bar` argument on `field_track` that LIFTS the
+crossing to that height and never lowers it (a ford climbing out of the water has
+its far edge on dry ground, and mixing toward the bar there digs a trench 0.14
+below the band it promised its neighbour), and `_bar()` — a flat-topped,
+lattice-aligned, non-wandering mask, because `_arms` is a smoothstep ridge whose
+only full-height point is its centreline and `standable` throws out anything
+steeper than grass will root on. Flat core = the two middle squares, the same
+measurement that made the bridge deck walkable. Set on the four pieces presenting
+`W+P`: ford-0560/0561/0562 and track-0563.
+
+- `check_seams.py`: **0 of 16864** — all four agreed, which was the risk.
+- Ford squares standable: **0 of 64 → 125 of 240**.
+- Ford tiles joined to a plain track tile, at the default level vs with the level
+  raised 0.04 above the crown (which reproduces the old behaviour exactly, using
+  the water slider as the A/B): seed 3 **10 vs 2**, seed 6 **4 vs 1**, seed 8
+  **4 vs 1**.
+
+## What it surfaced, which is the real bug
+
+**The river is PAVED with fords, end to end.** Seed 2: 16 ford tiles, 146
+standable squares, **0 of them connected to any track** — a causeway following
+every bend of the channel and joining nothing. The screenshot is unmistakable.
+
+It has always been there. `isWater` asks for cells whose every edge is water
+"with or without a track on it", and a ford's `W+P` arms chain to each other
+perfectly well ALONG the channel, not just across it. While a ford's bed sat flat
+under the water this was invisible; giving it a bar you can walk on made it both
+visible and walkable, which is worse than leaving it alone.
+
+## Two fixes tried, both regressed the solver. Numbers, so nobody repeats them
+
+Baseline accepts an attempt around **106–127** of 300.
+
+1. **Hard mask** — off the road, delete every variant presenting `W+P`/`W+B`.
+   Ford count fell to 4–5, which is right, and the solve **never accepted a single
+   attempt**: 292–296 of 300 on every seed, falling out of the `tries-8`
+   settle-for-anything branch. `rej.river` 103–118, `rej.road` 40–61.
+2. **Soft preference** — same filter, but skip the cell instead of emptying it,
+   with a snapshot restore if propagation fails. Ford count 4–5 again and still
+   **FALLBACK on all four seeds**. Narrowing those domains at all is enough to put
+   the wet-tile fraction outside `MAP_MIX.water` and `rej.land` eats the attempt.
+
+Note both were caught only because `__wfcDebug.accepted` was checked. `demo-test.js`
+passed 12/12 through both of them, and the maps looked fine — the fallback branch
+returns a tiling, just not one anything approved.
+
+## THE NEXT JOB — a causeway needs its own socket, `W+C`
+
+The mistake was putting the bar on the `W+P` faces. `W+P` is the river's own
+filler as much as it is the crossing, so anything done to it is done to the whole
+channel. **The fix is the shape the bridge already proved**: a crossing over
+something gets its own socket.
+
+Two pieces, exactly like span/span_flank — a causeway span and a causeway
+approach — presenting `W+C` where the bridge presents `W+B`. Then:
+
+- ford-0560/0561/0562 keep their flat beds and stay river filler, unchanged, and
+  the along-river causeway cannot happen because a causeway piece cannot chain to
+  a plain ford (`W+C` meets only `W+C`).
+- The seam contract is safe. This is the reason it CANNOT be done as a variant of
+  `W+P`: two pieces presenting the same socket with different profiles disagree by
+  0.81 at the edge they share, and `check_seams.py` would rightly say so.
+- **No generator surgery at all.** The crossing seed already written for the
+  bridge picks the one cell on both seeded lines; let it choose between span and
+  causeway on a coin flip. Everything that made the bridge land — the approaches
+  being forced because nothing else presents the socket, the road mask, the
+  `roadCrosses` `+[PB]` walk (which becomes `+[PBC]`) — is already there.
+
+The alternative root fix — stop the river seed accepting `W+P` at all — needs the
+road's line known BEFORE the river is seeded, and `seedPath` both computes a path
+and applies it in one pass. Splitting it is a refactor of a delicate function for
+no gain the socket does not already give.
+
+## Traps
+
+- **`demo-test.js` cannot see a fallback solve.** It passed 12/12 while every
+  attempt on every seed was rejected and the settle-for-anything branch was
+  returning the map. If a generator change is made, read
+  `__wfcDebug.accepted` — `null` means nothing approved of what you are looking at.
+  This is worth a test of its own and does not have one.
+- The water level slider is an honest A/B rig for anything depending on the
+  waterline: set `wlev.value`, dispatch `input`, wait two rAFs, and `standable`
+  changes under you because `WATER_SURFACE` is read every frame.
