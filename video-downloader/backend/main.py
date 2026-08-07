@@ -161,6 +161,31 @@ _IFRAME_SRC = re.compile(r"""<iframe[^>]+\bsrc\s*=\s*["']([^"']+)["']""", re.I)
 _EMBED_URL = re.compile(r"""["'](https?://[^"'\s<>]+/embed[^"'\s<>]*)["']""", re.I)
 
 
+_EMBED_ID = re.compile(r"^(https?://)([^/]+)/embed/(\d+)")
+
+
+def embed_page_variants(url: str) -> list:
+    """An /embed/ URL usually has no extractor even when the site's normal
+    watch page does, and players are often served from a mirror domain
+    (txxx.me for txxx.com). Offer the canonical watch-page forms so a
+    dedicated extractor can match instead of falling through to Generic."""
+    m = _EMBED_ID.match(url)
+    if not m:
+        return []
+    scheme, host, video_id = m.groups()
+    bare = host.lower().removeprefix("www.")
+    hosts = [bare]
+    # Mirrors reuse ids; the extractor only knows the canonical domain
+    canonical = ".".join(bare.split(".")[:-1] + ["com"])
+    if canonical != bare:
+        hosts.append(canonical)
+    return [
+        f"{scheme}{h}/{path}/{video_id}/"
+        for h in hosts
+        for path in ("videos", "video")
+    ]
+
+
 def _registrable_domain(netloc: str) -> str:
     return ".".join(netloc.lower().split(":")[0].split(".")[-2:])
 
@@ -189,11 +214,24 @@ def discover_embed_urls(url: str, limit: int = 4) -> list:
             continue
         if candidate in seen:
             continue
-        seen.add(candidate)
-        found.append(candidate)
+        for variant in [candidate] + embed_page_variants(candidate):
+            if variant in seen:
+                continue
+            seen.add(variant)
+            found.append(variant)
     # Try hosts yt-dlp knows first, then anything that looks like a player
     found.sort(key=lambda u: (not _has_dedicated_extractor(u), "/embed" not in u))
     return found[:limit]
+
+
+def source_candidates(url: str) -> list:
+    """(url, extra_opts) pairs to try in order: the page itself, then anything
+    it embeds. Embeds carry a Referer for the page that embedded them - embed
+    endpoints routinely 403 requests that arrive without one."""
+    candidates = [(url, {})]
+    for embed in discover_embed_urls(url):
+        candidates.append((embed, {"http_headers": {"Referer": url}}))
+    return candidates
 
 
 _HEIGHT_HINT = re.compile(r"(\d{3,4})[pP](?:[\b_./-]|$)")
@@ -289,8 +327,8 @@ def get_info(url: str):
     info = None
     primary_error = None
     # The page itself first; if nothing works, whatever it embeds
-    for source_url in [url] + discover_embed_urls(url):
-        for attempt_opts in extraction_attempts(ydl_opts):
+    for source_url, source_opts in source_candidates(url):
+        for attempt_opts in extraction_attempts({**ydl_opts, **source_opts}):
             try:
                 with make_ydl(attempt_opts) as ydl:
                     info = ydl.extract_info(source_url, download=False)
@@ -466,8 +504,8 @@ def run_download(job_id: str, req: DownloadRequest):
         filename = None
         primary_error = None
         # The page itself first; if nothing works, whatever it embeds
-        for source_url in [req.url] + discover_embed_urls(req.url):
-            for attempt_opts in extraction_attempts(ydl_opts):
+        for source_url, source_opts in source_candidates(req.url):
+            for attempt_opts in extraction_attempts({**ydl_opts, **source_opts}):
                 try:
                     filename = do_download(attempt_opts, source_url)
                     break
