@@ -37,6 +37,11 @@ header h1 {
   margin-top: 6px;
 }
 
+/* Loaded code is behind the checkout - the app is lying about being current */
+.stale {
+  color: #e0c08f;
+}
+
 .version code {
   background: #1a1d27;
   border: 1px solid #2a2e3a;
