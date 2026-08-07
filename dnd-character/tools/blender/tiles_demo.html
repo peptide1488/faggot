@@ -1581,7 +1581,22 @@ document.getElementById("ver").textContent=VERSION;
   const W=MAP_N, H=MAP_N;
   const SW=W*CELLS, SH=H*CELLS;         // squares
   const glc=document.getElementById("gl");
-  const gl=glc.getContext("webgl",{alpha:false});
+  // WEBGL2 WHERE WE CAN GET IT. The lighting shader is GLSL ES 1.00 and stays
+  // that way -- a WebGL2 context compiles it unchanged -- but the G-buffer pass
+  // needs to write three targets at once, and MRT is core in 2 rather than an
+  // extension in 1. Falls back to webgl1, where the G-buffer path simply is not
+  // offered and the whole-map composite is used instead.
+  const gl=glc.getContext("webgl2",{alpha:false}) ||
+           glc.getContext("webgl",{alpha:false});
+  const GL2 = !!(gl && gl.TEXTURE_BINDING_3D);          // a webgl2-only enum
+  // OPT-IN WHILE IT IS BEING PROVEN. ?gbuffer=1 selects it; the composite stays
+  // the default and the A/B reference until this matches it pixel for pixel.
+  const GBUF_ASK = GL2 && PARAMS.get("gbuffer") === "1";
+  // The upper layer (a dungeon's bridges and overpasses) is a second set of
+  // three buffers that gRender does not draw yet, so a set that HAS one still
+  // goes through the composite. Outdoor sets have no second storey and are also
+  // the big maps, which is where the memory actually hurts.
+  const useGBuf = () => GBUF_ASK && !hasUpper;
   if(!gl){ status.textContent="no WebGL"; return; }
 
   let cells, sq, CW, CH, OX, OY, texA, texN, texH;
@@ -1640,6 +1655,25 @@ document.getElementById("ver").textContent=VERSION;
     uniform vec3 uWaterCol;
     uniform float uPixel,uLevels,uDither,uBands,uLightDither;
     uniform float uTime,uWater,uMaxH;
+    // G-BUFFER MODE. uAlb/uNrm/uHgt are either the whole map composited at art
+    // resolution (uGBuf 0) or just what is on screen this frame (uGBuf 1). All
+    // the maths above is in COMPOSITE space either way; only the lookup differs,
+    // so exactly one function changes and the lighting is provably the same.
+    uniform float uGBuf, uGScale;
+    uniform vec2 uGOrg, uGSize;
+
+    // Composite-space point -> texture coordinate in whichever buffer is bound.
+    vec2 toUV(vec2 P){
+      if(uGBuf < 0.5) return P/uRes;
+      vec2 g = (P - uGOrg)/uGScale;          // target pixels, y down
+      return vec2(g.x, uGSize.y - g.y)/uGSize;
+    }
+    // A step of n composite pixels, as a uv delta. The foam edge-detect samples
+    // its neighbours a fixed distance away in MAP pixels, and that distance is a
+    // different number of texels in each buffer.
+    vec2 toStep(float n){
+      return uGBuf < 0.5 ? vec2(n)/uRes : vec2(n/uGScale)/uGSize;
+    }
 
     // ---- PS1 output stage ---------------------------------------------------
     // Ordered dithering, done the way the hardware effectively did it: quantise
@@ -1794,7 +1828,7 @@ document.getElementById("ver").textContent=VERSION;
         float rh=h+L.z*t;
         vec2 sp=vec2(uOrigin.x+(p.x+p.y)*COS45*uPPU,
                      uOrigin.y+(p.x-p.y)*SIN30*COS45*uPPU - rh*COS30*uPPU);
-        vec2 uv=sp/uRes;
+        vec2 uv=toUV(sp);
         if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) continue;
         // ONE FETCH, NOT TWO. This used to read the albedo purely to ask whether
         // the map covers this pixel, then read the height to compare it. The
@@ -1919,7 +1953,7 @@ document.getElementById("ver").textContent=VERSION;
       // Only the visible viewport is shaded: pan/zoom happen HERE, not as a CSS
       // transform on a map-sized canvas. Cost is now independent of map size.
       vec2 P = (vec2(gl_FragCoord.x, uVP.y - gl_FragCoord.y)*uPixel - uPan)/uZoom;
-      vec2 vUv = P/uRes;
+      vec2 vUv = toUV(P);
       if(vUv.x<0.0||vUv.x>1.0||vUv.y<0.0||vUv.y>1.0){
         gl_FragColor=vec4(0.03,0.03,0.04,1.0); return;
       }
@@ -2029,7 +2063,7 @@ document.getElementById("ver").textContent=VERSION;
         col *= 0.78 + 0.44*clamp(wh*7.0+0.5,0.0,1.0);
         // Shoreline. Anything that is not water within a couple of pixels means a
         // bank, a rim or a causeway pier; foam gathers there and rides the swell.
-        vec2 t=2.5/uRes;
+        vec2 t=toStep(2.5);
         float e=0.0;
         e=max(e,abs(texture2D(uHgt,vUv+vec2(t.x,0.0)).r*uHrange-uHoff-hgt));
         e=max(e,abs(texture2D(uHgt,vUv-vec2(t.x,0.0)).r*uHrange-uHoff-hgt));
@@ -2133,6 +2167,235 @@ document.getElementById("ver").textContent=VERSION;
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,f);
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src);
     return t;
+  }
+
+  // ---- G-buffer -----------------------------------------------------------
+  // WHY THIS EXISTS. The other path composites the ENTIRE map into three canvases
+  // at art resolution and uploads them, so a 12x12 costs 840MB and a 16x16 costs
+  // 1418MB -- it grows with map AREA, and every pan re-uploads it. Measured, not
+  // estimated: __engine.vram() reports both.
+  //
+  // This path never composites. It uploads each tile VARIANT once and redraws the
+  // visible ones into viewport-sized targets every frame. The cost is then the
+  // art the set contains (184 variants, 459MB, and that is a CEILING -- a 100x100
+  // map loads the same 184 files) plus one viewport. Panning is free because
+  // there is nothing to rebuild.
+  //
+  // Held at art resolution deliberately: this is a different memory SHAPE, not a
+  // quality change, so it can be compared against the composite pixel for pixel.
+  const GPAD = 128;              // margin in target px, so off-screen geometry
+                                 // still casts shadows onto the visible edge
+  let gFbo=null, gTex=null, gDepth=null, gW=0, gH=0, gProg=null, gQuad=null;
+  const gArt = new Map();        // "name_r90" -> [texA, texN, texH]
+  let gLastCount=0;
+
+  // ONE TEXTURE PER IMAGE, uploaded the first time the tile is actually drawn.
+  // Uploading the whole set up front would cost 459MB for a map that may use 86
+  // of it; this pays only for what appears on screen.
+  function gTexFor(key, E){
+    let t = gArt.get(key);
+    if(t) return t;
+    t = [0,1,2].map(function(k){
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      // Same split as the composite path: colour is NEAREST (crunchy), normals
+      // and height are DATA and stay LINEAR or the lighting jitters per texel.
+      const f = k===0 ? gl.NEAREST : gl.LINEAR;
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,E[k]);
+      return tex;
+    });
+    t.n = 4*(E[0].width*E[0].height + E[1].width*E[1].height + E[2].width*E[2].height);
+    gArt.set(key, t);
+    return t;
+  }
+
+  function gInit(){
+    // ESSL 3.00, because writing three targets at once is core in WebGL2 and an
+    // extension in 1. The LIGHTING shader stays 1.00 and untouched -- a program
+    // is all-one-version, but a context can hold both.
+    const VS3 = `#version 300 es
+      in vec2 p;
+      uniform vec4 uRect;              // composite-space x,y,w,h
+      uniform vec2 uGOrg, uGSize;      // composite coord of texel 0, target size
+      uniform float uGScale;           // composite units per target pixel
+      out vec2 vT;
+      void main(){
+        vT = p;
+        vec2 comp = uRect.xy + p*uRect.zw;
+        vec2 g = (comp - uGOrg)/uGScale;
+        gl_Position = vec4(2.0*g.x/uGSize.x - 1.0, 1.0 - 2.0*g.y/uGSize.y, 0.0, 1.0);
+      }`;
+    const FS3 = `#version 300 es
+      precision highp float;
+      in vec2 vT;
+      uniform sampler2D tA, tN, tH;
+      layout(location=0) out vec4 oA;
+      layout(location=1) out vec4 oN;
+      layout(location=2) out vec4 oH;
+      uniform float uZOff;      // tile elevation folded into a prop height
+      uniform float uBias;      // depth slack, see the prop pass
+      void main(){
+        vec4 a = texture(tA, vT);
+        // FULLY TRANSPARENT PIXELS MUST NOT WRITE. A tile PNG is mostly empty
+        // margin; source-over already handles it for colour, but discarding
+        // also keeps the depth buffer clean for the prop pass.
+        if(a.a < 0.004) discard;
+        vec4 h = texture(tH, vT);
+        // A PROP HEIGHT IS MEASURED FROM ITS OWN BASE, so one standing on a
+        // plateau still claims ground level and the depth test thinks it is
+        // down on the floor. The composite path fixed this by compositing a
+        // brightened copy of the height image per prop, through three canvas
+        // operations; here it is an add.
+        h.r = clamp(h.r + uZOff, 0.0, 1.0);
+        oA = a;
+        oN = texture(tN, vT);
+        oH = h;
+        // HEIGHT IS THE DEPTH BUFFER. Taller wins, so depth runs the other
+        // way. This is the same comparison blitProp did by reading the
+        // composite back to the CPU pixel by pixel.
+        gl_FragDepth = clamp(1.0 - h.r - uBias, 0.0, 1.0);
+      }`;
+    const mkSh=function(t,src){
+      const sh=gl.createShader(t); gl.shaderSource(sh,src); gl.compileShader(sh);
+      if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))
+        throw new Error("gbuffer shader: "+gl.getShaderInfoLog(sh));
+      return sh; };
+    gProg = gl.createProgram();
+    gl.attachShader(gProg, mkSh(gl.VERTEX_SHADER, VS3));
+    gl.attachShader(gProg, mkSh(gl.FRAGMENT_SHADER, FS3));
+    gl.linkProgram(gProg);
+    if(!gl.getProgramParameter(gProg, gl.LINK_STATUS))
+      throw new Error("gbuffer link: "+gl.getProgramInfoLog(gProg));
+    gQuad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, gQuad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0, 1,0, 0,1, 1,1]), gl.STATIC_DRAW);
+  }
+
+  function gResize(w,h){
+    if(gFbo && gW===w && gH===h) return;
+    gW=w; gH=h;
+    if(gFbo) gl.deleteFramebuffer(gFbo);
+    if(gTex) gTex.forEach(function(t){ gl.deleteTexture(t); });
+    if(gDepth) gl.deleteRenderbuffer(gDepth);
+    gFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gFbo);
+    gTex = [0,1,2].map(function(k){
+      const t=gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D,t);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0+k, gl.TEXTURE_2D, t, 0);
+      return t;
+    });
+    gDepth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, gDepth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, gDepth);
+    const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if(st !== gl.FRAMEBUFFER_COMPLETE)
+      throw new Error("gbuffer incomplete: 0x"+st.toString(16));
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // The composite-space rectangle the target currently covers. Pan, zoom and
+  // pixel size are all already expressed by this one mapping, so the lighting
+  // shader can keep computing in composite space and convert only when sampling.
+  let gOrgX=0, gOrgY=0, gScale=1;
+  function gView(){
+    const k = Math.max(1,parseInt(pix.value,10))/Math.max(1,parseInt(ss.value,10));
+    const z = zoom.value/100;
+    gScale = k/z;
+    gOrgX = (-GPAD*k - panX)/z;
+    gOrgY = (-GPAD*k - panY)/z;
+  }
+
+  // Draw the visible tiles into the targets. Returns how many were drawn.
+  function gRender(draws){
+    if(!gProg) gInit();
+    gResize(glc.width + 2*GPAD, glc.height + 2*GPAD);
+    gView();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gFbo);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+    gl.viewport(0,0,gW,gH);
+    // DEPTH IS ALWAYS ON, because a disabled depth test does not WRITE either --
+    // and the tiles have to leave their heights behind for the props to test
+    // against. Tiles use ALWAYS, which keeps them in painter order exactly as
+    // the composite had them; props switch to LEQUAL below.
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.clearColor(0,0,0,0); gl.clearDepth(1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    // Source-over, exactly what drawImage does, with straight (un-premultiplied)
+    // source alpha -- which is why UNPACK_PREMULTIPLY_ALPHA_WEBGL is off above.
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(gProg);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gQuad);
+    const ap = gl.getAttribLocation(gProg,"p");
+    gl.enableVertexAttribArray(ap);
+    gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
+    const uRect=gl.getUniformLocation(gProg,"uRect");
+    const uZOff=gl.getUniformLocation(gProg,"uZOff");
+    const uBias=gl.getUniformLocation(gProg,"uBias");
+    gl.uniform2f(gl.getUniformLocation(gProg,"uGOrg"), gOrgX, gOrgY);
+    gl.uniform2f(gl.getUniformLocation(gProg,"uGSize"), gW, gH);
+    gl.uniform1f(gl.getUniformLocation(gProg,"uGScale"), gScale);
+    gl.uniform1i(gl.getUniformLocation(gProg,"tA"),0);
+    gl.uniform1i(gl.getUniformLocation(gProg,"tN"),1);
+    gl.uniform1i(gl.getUniformLocation(gProg,"tH"),2);
+    // The window in composite space, so a tile off the side is never uploaded,
+    // never bound and never drawn. THIS is what makes the map size irrelevant.
+    const x0=gOrgX, y0=gOrgY, x1=gOrgX+gW*gScale, y1=gOrgY+gH*gScale;
+    let n=0, mode=-1;
+    // ONE PASS, IN DRAW ORDER. Tiles and props are interleaved in the list and
+    // that interleaving is load-bearing: a tile drawn after a prop covers it
+    // outright, which is how a prop behind a wall disappears.
+    const quad=(rx,ry,w,h,T,zoff,bias,want)=>{
+      if(rx+w<x0 || rx>x1 || ry+h<y0 || ry>y1) return 0;
+      if(mode!==want){
+        mode=want;
+        gl.depthFunc(want ? gl.LEQUAL : gl.ALWAYS);
+      }
+      for(let k=0;k<3;k++){ gl.activeTexture(gl.TEXTURE0+k); gl.bindTexture(gl.TEXTURE_2D,T[k]); }
+      gl.uniform1f(uZOff, zoff); gl.uniform1f(uBias, bias);
+      gl.uniform4f(uRect, rx, ry, w, h);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      return 1;
+    };
+    for(const it of draws){
+      if(it.kind==="tile"){
+        const c=it.c, art=tileArt(c), key=art.name+"_r"+art.rot, E=imgs[key];
+        if(!E) throw new Error("no image for tile "+key+" -- add it to the loader name list");
+        c.px=OX+c.i*STEP_I[0]+c.j*STEP_J[0];
+        c.py=OY+c.i*STEP_I[1]+c.j*STEP_J[1];
+        const b=E.box;
+        n+=quad(c.px+b[0], c.py+b[1], b[2], b[3], gTexFor(key,E), 0, 0, 0);
+      }else{
+        const P=propImg[it.name];
+        if(!P) continue;
+        const sc=worldToScreen(it.wx,it.wy);
+        const px=sc[0]-PROP_RES/2, py=sc[1]-PROP_RES/2-(it.z||0)*COS30*PPU;
+        // TWO LEVELS OF SLACK, the same tolerance blitProp used (src >= dst-2 on
+        // a 0..255 channel), so a prop whose base is coplanar with the floor it
+        // stands on is not eaten by rounding.
+        n+=quad(px, py, PROP_RES, PROP_RES,
+                gTexFor("prop:"+it.name, [P.a,P.n,P.h]),
+                (it.z||0)/HEIGHT_RANGE, 2.0/255.0, 1);
+      }
+    }
+    gl.disable(gl.BLEND);
+    gl.disable(gl.DEPTH_TEST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gLastCount=n;
+    return n;
   }
 
   // ---- coordinates --------------------------------------------------------
@@ -2670,7 +2933,13 @@ document.getElementById("ver").textContent=VERSION;
     if(!draws) return;
     const mk=(w,h)=>{const c=document.createElement("canvas");
                      c.width=w||CW; c.height=h||CH; return c;};
-    const ca=mk(), cn=mk(), ch=mk();
+    // IN G-BUFFER MODE, ONLY HEIGHT IS REAL. Albedo and normals are drawn by
+    // gRender straight into the viewport targets, so compositing them here would
+    // build 280MB of canvas for nobody to read. Height is different: heightAt,
+    // slopeUnder and the prop depth test are all CPU-side and all read this
+    // buffer, so it is still assembled -- then released, as it always was.
+    const G=useGBuf();
+    const ca=G?mk(1,1):mk(), cn=G?mk(1,1):mk(), ch=mk();
     // The height composite is read back per prop by blitProp's occlusion test, so
     // it is the one of the three that wants a CPU-side backing store. Albedo and
     // normals are write-only here and keep the default (GPU) path.
@@ -2738,6 +3007,7 @@ document.getElementById("ver").textContent=VERSION;
           put(xa1,U[0],U.box); put(xn1,U[1],U.box); put(xh1,U[2],U.box);
         }
       }else{
+        if(G) continue;                 // gRender draws props with a depth test
         const P=propImg[it.name];
         const [sx,sy]=worldToScreen(it.wx,it.wy);
         const px=sx-PROP_RES/2, py=sy-PROP_RES/2-(it.z||0)*COS30*PPU;
@@ -2882,8 +3152,10 @@ document.getElementById("ver").textContent=VERSION;
                            hasUpper ? scan(xh1, ch1, false) : -1e9) + 0.5;
     }
     resizeCanvas();
-    texA=upload(ca,0,texA,true); texN=upload(cn,1,texN); texH=upload(ch,2,texH);
-    texA1=upload(ca1,6,texA1,true); texN1=upload(cn1,7,texN1); texH1=upload(ch1,8,texH1);
+    if(!G){
+      texA=upload(ca,0,texA,true); texN=upload(cn,1,texN); texH=upload(ch,2,texH);
+      texA1=upload(ca1,6,texA1,true); texN1=upload(cn1,7,texN1); texH1=upload(ch1,8,texH1);
+    }
   }
 
 
@@ -3632,6 +3904,27 @@ document.getElementById("ver").textContent=VERSION;
 
   function drawGL(){
     syncSprites();
+    // THE VISIBLE TILES, REDRAWN. Cheap enough to do every frame -- it is a few
+    // dozen textured quads -- which is what makes panning and zooming free:
+    // there is no map-sized buffer to rebuild when the view moves.
+    if(useGBuf() && lastDraws){
+      gRender(lastDraws);
+      // gRender leaves its own program and vertex buffer bound.
+      gl.useProgram(pr);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.enableVertexAttribArray(al);
+      gl.vertexAttribPointer(al, 2, gl.FLOAT, false, 0, 0);
+      for(let k=0;k<3;k++){
+        gl.activeTexture(gl.TEXTURE0+k);
+        gl.bindTexture(gl.TEXTURE_2D, gTex[k]);
+      }
+      gl.uniform1f(U("uGBuf"),1);
+      gl.uniform2f(U("uGOrg"), gOrgX, gOrgY);
+      gl.uniform2f(U("uGSize"), gW, gH);
+      gl.uniform1f(U("uGScale"), gScale);
+    }else{
+      gl.uniform1f(U("uGBuf"),0);
+    }
     gl.uniform1f(U("uAmb"),amb.value/100);
     // Sun direction in WORLD space, matching the light positions the torches use.
     // Elevation is fixed at a late-afternoon 38 degrees: high enough that flat
@@ -3888,6 +4181,45 @@ document.getElementById("ver").textContent=VERSION;
     worldToScreen,sqWorld,bfsSq,SW,SH,spriteVisiblePixels,spriteRect,
     standable:(X,Y,L)=>passable(X,Y,L||0,X,Y,L||0),
     propPlan:()=>propPlan, draws:()=>lastDraws,
+    // WHAT THE MAP COSTS, in bytes, split the way the two renderers differ.
+    // The composite path pays for the whole map at art resolution whether or not
+    // any of it is on screen; the G-buffer path pays for the art it actually
+    // draws plus a viewport. Reporting both from the live scene is the only way
+    // to compare them honestly -- every earlier estimate of this was arithmetic
+    // done from tile counts, and the arithmetic left out the upper layer.
+    vram:()=>{
+      const seen=new Map();
+      for(const it of (lastDraws||[])){
+        if(it.kind!=="tile") continue;
+        const a=tileArt(it.c), k=a.name+"_r"+a.rot, E=imgs[k];
+        if(E && !seen.has(k)) seen.set(k, E[0].width*E[0].height + E[1].width*E[1].height
+                                         + E[2].width*E[2].height);
+      }
+      let art=0; for(const v of seen.values()) art+=v*4;
+      const layers = 3 * (hasUpper?2:1);
+      return { variants:seen.size, loaded:Object.keys(imgs).length,
+               compositeMB: +(CW*CH*4*layers/1048576).toFixed(1),
+               // the composite exists twice: a 2D canvas and the GL texture
+               compositeTotalMB: +(CW*CH*4*layers*2/1048576).toFixed(1),
+               usedArtMB: +(art/1048576).toFixed(1),
+               allArtMB: +(Object.values(imgs).reduce((t,E)=>t+
+                  (E[0].width*E[0].height+E[1].width*E[1].height+E[2].width*E[2].height)*4,0)
+                  /1048576).toFixed(1),
+               viewportMB: +(glc.width*glc.height*4*3/1048576).toFixed(1),
+               CW, CH,
+               // WHAT THIS RUN ACTUALLY PAID. The two paths are listed above as
+               // alternatives; this is the one in force, so a claim about the
+               // saving can be read off rather than argued.
+               path: useGBuf() ? "gbuffer" : "composite",
+               liveMB: useGBuf()
+                 ? +(([...gArt.values()].reduce((t,T)=>t+T.n,0)
+                      + (gW*gH*4*3))/1048576).toFixed(1)
+                 : +(CW*CH*4*(hasUpper?6:3)*2/1048576).toFixed(1),
+               gTiles: gLastCount, gUploaded: gArt.size,
+               // Composite textures must NOT exist on the G-buffer path; if they
+               // do, something rebuilt them and the saving is imaginary.
+               compositeTexAlive: !!texA };
+    },
     pathToward, squareZ, heightAt,
     // Slope under a square, from the composited height buffer -- the same buffer
     // walkability reads. "Can you stand here" and "is this a rock face" are
