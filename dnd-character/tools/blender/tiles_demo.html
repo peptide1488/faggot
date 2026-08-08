@@ -7,8 +7,18 @@
   #stage { position:relative; width:100vw; height:100vh; overflow:hidden; }
   canvas { position:absolute; top:0; left:0; transform-origin:0 0;
            image-rendering:pixelated; image-rendering:crisp-edges; }
+  /* The panel is taller than the viewport and grows every time a control is
+     added, so the bottom of it was simply unreachable -- resizing and zooming
+     do not help, because it is pinned to the top and clipped by the window.
+     Bound it to the viewport and let it scroll on its own. */
   #hud { position:fixed; top:10px; left:10px; background:#12121aee; border:1px solid #2a2a38;
-         padding:10px 12px; border-radius:6px; z-index:5; width:300px; }
+         padding:10px 12px; border-radius:6px; z-index:5; width:300px;
+         max-height:calc(100vh - 20px); overflow-y:auto; overscroll-behavior:contain; }
+  /* A thin scrollbar that belongs to the panel rather than the page. */
+  #hud { scrollbar-width:thin; scrollbar-color:#3a3a4e transparent; }
+  #hud::-webkit-scrollbar { width:8px; }
+  #hud::-webkit-scrollbar-thumb { background:#3a3a4e; border-radius:4px; }
+  #hud::-webkit-scrollbar-track { background:transparent; }
   #hud h1 { font-size:13px; margin:0 0 6px; color:#eaeaf2; }
   label { display:flex; align-items:center; gap:8px; margin:3px 0; }
   input[type=range], select { flex:1; }
