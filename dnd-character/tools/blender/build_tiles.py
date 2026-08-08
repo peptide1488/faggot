@@ -1480,6 +1480,38 @@ def _ramp(u, v, seed, side):
     return s + 0.06 * s * (1.0 - s) * (_fbm1(a, SEAM_SEED + 41, 2, 3) - 0.5) * 2.0
 
 
+def _lane(u, v, arms, flat=0.25, edge=0.40):
+    """Flat-topped, LATTICE-ALIGNED mask for something that has to be WALKED.
+
+    Not `_arms`, and the difference is the whole of three separate bugs. A worn
+    track's crown wanders and is a rounded smoothstep ridge, which is exactly
+    right for how a path LOOKS and exactly wrong for anything an actor has to
+    cross: only the centreline reaches full height, so a cut made with it is a
+    notch one sample wide, and a wandering centre cannot line up with the
+    movement lattice so which squares clear the test changes along the tile.
+
+    Measured, all three times: the bridge deck carried 1 of 16 squares, the ford
+    bar the same, and the ramp channel left `track-0550` with a full row of four
+    blocked squares -- impassable, no diagonal around it.
+
+    The flat top is the two middle squares exactly (CELLS=4, so
+    |lat-0.5| <= 0.25 of a tile), and the falloff ends by 0.40 so the tile's
+    perpendicular edges are untouched and still present their family's profile.
+    That last part is load-bearing: a ramp promises the SAME sockets as the
+    straight scarp it replaces."""
+    best = 0.0
+    for e in arms:
+        if e in ("Y+", "Y-"):
+            alo, lat = ((v - 0.5) if e == "Y+" else (0.5 - v)), u
+        else:
+            alo, lat = ((u - 0.5) if e == "X+" else (0.5 - u)), v
+        if alo < 0.0:
+            continue
+        d = abs(lat - 0.5)
+        best = max(best, 1.0 if d <= flat else _sstep((edge - d) / (edge - flat)))
+    return best
+
+
 def _arms(u, v, seed, arms, half_w):
     """Mask 0..1 for a track that leaves the tile through each edge in `arms`.
 
@@ -1562,10 +1594,16 @@ def field_step(seed, sides, z_lo=0.0, z_hi=None, join="max", ramp=None,
             s = _scarp(u, v, seed, sides, join, run, shelf)
             steep = 4.0 * s * (1.0 - s)
             if channel > 0.0:
-                cut = _arms(u, v, seed, [sides[0], _opposite(sides[0])], channel)
+                cut = _lane(u, v, [sides[0], _opposite(sides[0])])
                 r = _ramp(u, v, seed, sides[0])
                 s = s + (r - s) * cut
-                steep *= 1.0 - cut
+                # RELIEF HAS TO BE DAMPED ON THE RAMP TOO, not just on the face it
+                # replaces. `steep` exists to stop ground noise being added to a
+                # near-vertical surface; killing it wherever the channel cuts put
+                # the noise back at full strength on the steepest thing an actor
+                # ever walks. The ramp's own mid-slope is 0.84 gradient against a
+                # 0.95 limit, so full relief on top is what tipped squares over.
+                steep = max(steep * (1.0 - cut), cut * 4.0 * r * (1.0 - r))
         z = z_lo + span * s + _ground(u, v, seed, RELIEF) * (1.0 - 0.8 * steep)
         return z, 0.0
     return f
@@ -1634,14 +1672,30 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
         mud = _arms(u, v, seed, arms, PATH_W)
         mud *= 0.74 + 0.52 * _fbm(u, v, seed + 88, 3, 6)     # frayed verge
         mud = max(0.0, min(1.0, mud))
-        z = _ground(u, v, seed, MEADOW_RELIEF) * (1.0 - 0.6 * mud) + z_lo
-        z -= PATH_CUT * mud
+        # A CLIMBING TRACK STACKS THREE THINGS ON THE STEEPEST GROUND ANYONE WALKS:
+        # the ramp itself (0.84 gradient at mid-slope against a 0.95 limit), then
+        # meadow relief on top of it, then a rut cut into that. The first fix got
+        # the lane to exactly 0.95 -- passing by nothing, one noise sample from
+        # failing. Relief and rut are damped by the ramp's own steepness now, the
+        # same way `field_step` damps them on the face this replaces.
+        r = _ramp(u, v, seed, sides[0]) if sides else 0.0
+        climb = max(mud, _lane(u, v, arms)) if sides else 0.0
+        steep = 4.0 * r * (1.0 - r) * climb
+        z = (_ground(u, v, seed, MEADOW_RELIEF)
+             * (1.0 - 0.6 * mud) * (1.0 - 0.85 * steep) + z_lo)
+        z -= PATH_CUT * mud * (1.0 - 0.7 * steep)
         if ramp:
             z += (z_hi - z_lo) * _ramp(u, v, seed, ramp)
         elif sides:
             s = _scarp(u, v, seed, sides, join, run, shelf)
-            r = _ramp(u, v, seed, sides[0])
-            z += (z_hi - z_lo) * (s + (r - s) * mud)
+            # CUT BY THE LANE, PAINTED BY THE MUD. These were the same mask, so the
+            # width the ground was cut to was the width of the worn dirt -- 1.36
+            # units against a 1.0-unit lattice, and blended by a smoothstep ridge
+            # on top, which left `track-0550` with a full row of four unwalkable
+            # squares. A path is worn down a slope that is wider than the path;
+            # keeping the two masks separate says exactly that, and lets the dirt
+            # stay as narrow as it looks.
+            z += (z_hi - z_lo) * (s + (r - s) * climb)
         return z, mud
     return f
 
