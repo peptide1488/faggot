@@ -1773,12 +1773,51 @@ document.getElementById("ver").textContent=VERSION;
     // A body that is not in the scene is loaded when something asks for it --
     // ensureBody below, off the picker and off newActor -- which is soon enough,
     // because that is a click away and this is a minute away.
+    // WHAT THE FIRST FRAME NEEDS, AND NOTHING ELSE. Walking bodies and the
+    // effects; everything else is prefetched when the browser is idle.
+    //
+    // This used to finish with ensureBody() for every body in the scene, which
+    // is every ACTION in every one of eight DIRECTIONS -- measured, 1441 actor
+    // files and 94.7 MB against 26 MB for the entire tile set, still streaming
+    // long after the first frame was drawn at 3.9s. That is the whole of the bad
+    // load: the tiles were never the problem, the same way they were not the
+    // problem when this was 10,081 requests.
+    //
+    // Nothing depended on it. The draw path at play() already loads an action it
+    // does not have and starts the animation when it lands, which the comment on
+    // ACT calls the one failure mode that does not show as a missing frame. The
+    // prefetch below only exists so that first attack does not wait on a fetch.
     loadQueue = (async () => {
       await loadAction(HERO_BODY, "walk");
       for (const b of sceneBodies()) await loadAction(b, "walk");
       for (const n of Object.keys(FXMAN.effects)) await loadEffect(n);
-      for (const b of sceneBodies()) await ensureBody(b);
     })();
+    // ONE ACTION AT A TIME, AND ONLY WHEN NOTHING ELSE WANTS THE NETWORK. Kicking
+    // these off together is what made the page feel stalled for ten seconds after
+    // it was already interactive.
+    loadQueue.then(() => {
+      // The job list is RE-DERIVED each step, not built once: sceneBodies() is
+      // empty of goblins at this point, so a list built here covered the hero
+      // only -- measured, 913 files prefetched instead of the full set, with
+      // every goblin's attack still arriving on first swing.
+      const nextJob = () => {
+        for (const b of sceneBodies())
+          for (const act of Object.keys(ACTMAN.actions))
+            if (act !== "walk" && !(ACT[b] && ACT[b][act]) && !actLoading[b + "/" + act])
+              return [b, act];
+        return null;
+      };
+      // A PLAIN TIMER, NOT requestIdleCallback. rIC never fired here at all --
+      // measured, the prefetch queue was still untouched sixteen seconds in --
+      // so the fallback has to be the mechanism rather than the safety net.
+      const step = () => {
+        const j = nextJob();
+        if (!j) return;                       // everything on the map is covered
+        loadAction(j[0], j[1]).then(() => setTimeout(step, 250),
+                                    () => setTimeout(step, 250));
+      };
+      setTimeout(step, 1500);
+    });
     // A SET'S PROPS ARE DRESSED LIKE ITS GROUND. build_props.py bakes a copy per
     // theme now, because one shared set meant a highland-green pine standing on
     // a desert and on cold scree. Falls back to the shared directory, which is
@@ -4097,11 +4136,18 @@ document.getElementById("ver").textContent=VERSION;
     return DIRS[((Math.round(a/(Math.PI/4))%8)+8)%8];
   }
   function newActor(body,sq,opt){
-    // A body that walks onto the map fetches itself. Until it lands, actorFrame
-    // returns null and syncSprites skips the slot -- the actor is simply not
-    // drawn for a moment, which is the same thing that already happens for an
-    // action that has not arrived.
-    ensureBody(body);
+    // A body that walks onto the map fetches WHAT IT NEEDS TO BE DRAWN, which is
+    // walk and nothing else. Until it lands, actorFrame returns null and
+    // syncSprites skips the slot -- the actor is simply not drawn for a moment,
+    // which is the same thing that already happens for an action that has not
+    // arrived.
+    //
+    // This called ensureBody, i.e. every action in all eight directions, for
+    // every actor the moment it was created -- so spawning a wizard and two
+    // goblins pulled 1441 files and 94.7 MB before anything had been clicked.
+    // The attack and death sets arrive on the idle prefetch, or on demand from
+    // play() if something swings first.
+    loadAction(body, "walk");
     const [wx,wy]=sqWorld(sqX(sq),sqY(sq));
     return Object.assign({body, sq, wx, wy, z:squareZ(sqX(sq),sqY(sq),sqL(sq)),
                           dir:"south", action:"walk", frame:0, t:0, path:[],
