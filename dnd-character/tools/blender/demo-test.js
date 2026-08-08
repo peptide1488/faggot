@@ -77,7 +77,7 @@ const src = [
   grab('function seedPath(dom, propagate, W, H'),
   grab('function roadCrosses(dom, W, H)'),
   grab('function socketWfc(W,H'),
-  'module.exports = { SVAR, buildSocketVariants, socketWfc, reseed, ORDER, OPP, NEIGH };',
+  'module.exports = { SVAR, buildSocketVariants, socketWfc, reseed, ORDER, OPP, NEIGH, MAP_MIX };',
 ].join('\n');
 
 const sandbox = { module: { exports: {} }, console, window: {}, Math, Set, Array,
@@ -142,9 +142,25 @@ let noRoad = [], noRiver = [], wetness = [];
 // shore leading nowhere. What has to hold is that every bridge tile is part of
 // the road walk that crosses the map.
 let bridgeSeeds = [], strandedBridge = [];
-for (let seed = 1; seed <= 12; seed++) {
+// THE SOLVER RETURNS A MAP EVEN WHEN IT APPROVES OF NONE. Past `tries-8` it takes
+// the settle-for-anything branch, and what comes back is a legal tiling that
+// failed every acceptance rule there is -- so every check in this file passes and
+// the generator is broken. That is not hypothetical: two generator changes on
+// 2026-08-08 took the accept from around attempt 110 to never, on every seed, and
+// this suite reported 12 of 12 through both of them. `accepted` is the only thing
+// that says which happened; nothing else can tell the two apart.
+let fellBack = [], acceptedAt = [];
+// SEEDS=60 to widen the sample. Twelve is the default because the suite has to
+// stay quick, and twelve is NOT enough to tune a rejection rate on: sweeping the
+// crossing-seed cutoff over five values gave 1, 0, 2, 1, 0 fallbacks with the
+// random stream held identical, which is noise with a trend somewhere inside it.
+const SEEDS = parseInt(process.env.SEEDS || '12', 10);
+for (let seed = 1; seed <= SEEDS; seed++) {
   S.reseed(seed * 7919);
   const cells = S.socketWfc(W, H);
+  const dbg = sandbox.window.__wfcDebug;
+  if (!dbg || !dbg.accepted) fellBack.push(seed);
+  else acceptedAt.push(dbg.accepted.attempt);
   if (!cells) continue;
   solved++;
   // Bounds-checked. Without this, i=W indexes j*W+W, which is the FIRST cell of
@@ -215,9 +231,21 @@ for (let seed = 1; seed <= 12; seed++) {
         if (!seen.has(c.j * W + c.i)) strandedBridge.push(seed + '@' + c.i + ',' + c.j);
     }
 
-    const wet = cells.filter(c => c.role === 'liquid').length;
-    wetness.push(wet);
-    if (!wet) noRiver.push(seed);
+    // MEASURED THE WAY THE SOLVER MEASURES IT -- any tile carrying a water socket,
+    // not role `liquid`. This counted meres, which is a THIRD copy of a rule
+    // tiles_demo.html already fixed once for exactly this reason: a shore tile is
+    // water on screen while its role says `transition`, and 12 of 256 tiles are
+    // role liquid against 104 that are half water by area. It reported 4 of 60
+    // seeds "dry" the moment the crossing seed started turning a mere into a span
+    // -- maps with a full river in them, counted by the wrong thing.
+    const anyWater = c => {
+      const s = sockOf(c);
+      return S.ORDER.some(e => /^W/.test(s[e]));
+    };
+    const wet = cells.filter(anyWater).length;
+    const meres = cells.filter(c => c.role === 'liquid').length;
+    wetness.push({ seed, wet, fell: !dbg || !dbg.accepted });
+    if (!wet) noRiver.push(seed + (meres ? '' : '(no mere either)'));
   }
   for (const c of cells) {
     for (const nb of S.NEIGH) {
@@ -231,8 +259,8 @@ for (let seed = 1; seed <= 12; seed++) {
     }
   }
 }
-T('the solver produced a tiling for every seed', solved === 12,
-  solved + '/12 seeds solved');
+T('the solver produced a tiling for every seed', solved === SEEDS,
+  solved + '/' + SEEDS + ' seeds solved');
 T('every abutting pair agrees across the edge it shares', mismatches.length === 0,
   mismatches.slice(0, 4).join('\n       '));
 
@@ -253,14 +281,34 @@ for (let seed = 1; seed <= 12; seed++) {
   if (high && !ways) noway++;
   if (water > W * H * 0.5) drowned++;
 }
-T('maps are not flat', flat === 0, flat + '/12 had no high ground');
-T('high ground always has a way up', noway === 0, noway + '/12 were unclimbable');
-T('maps are not mostly water', drowned === 0, drowned + '/12 drowned');
+T('maps are not flat', flat === 0, flat + '/' + SEEDS + ' had no high ground');
+T('high ground always has a way up', noway === 0, noway + '/' + SEEDS + ' were unclimbable');
+T('maps are not mostly water', drowned === 0, drowned + '/' + SEEDS + ' drowned');
 
 // ---- what the seeding PROMISED, checked on the solved map --------------------
 // Seeding only asks for tiles of a role along a line. Whether they end up joined
 // into something you could walk, or whether the river survived the solve at all,
 // is a different question and the only one worth asking.
+// A BUDGET, NOT A ZERO, and the budget is measured rather than hoped for. Over 60
+// seeds: 1 falls through with the crossing seed switched off entirely, 2 with it
+// cut off at half the tries, 4 with it on for every attempt -- and the one that
+// fails with it off (seed 48) fails in every configuration, so some seeds are
+// simply marginal and asserting zero would be asserting the noise. 10% still
+// catches what this exists for by a mile: both generator changes that were backed
+// out on 2026-08-08 fell through on 12 seeds of 12.
+T('the solver ACCEPTS its maps rather than settling for them',
+  fellBack.length <= Math.max(1, Math.ceil(SEEDS * 0.10)),
+  'fell through to the tries-8 branch on ' + fellBack.length + '/' + SEEDS
+    + ' seeds: ' + fellBack.join(',')
+    + '  (budget ' + Math.max(1, Math.ceil(SEEDS * 0.10)) + ')');
+// Not a pass/fail — the accept ATTEMPT is the early-warning number. It sat around
+// 110 while this was written; a change that pushes it to 250 has not broken
+// anything yet and is one more constraint away from doing so.
+if (acceptedAt.length)
+  console.log('       accepted at attempt: median ' +
+    acceptedAt.slice().sort((a, b) => a - b)[acceptedAt.length >> 1] +
+    ', worst ' + Math.max(...acceptedAt) + ' of 300');
+
 T('a road crosses the map, west edge to east',
   noRoad.length === 0, noRoad.length ? 'seeds without one: ' + noRoad.join(',') : '');
 T('every bridge is on the road, not a pier over the shore',
@@ -271,12 +319,25 @@ T('every bridge is on the road, not a pier over the shore',
 // once because the river seed's own predicate excluded it, once because the mask
 // that keeps it off the shore was too strong.
 T('a bridge is still reachable by the generator',
-  bridgeSeeds.length > 0, bridgeSeeds.length + ' of 12 seeds bridged');
+  bridgeSeeds.length > 0, bridgeSeeds.length + ' of ' + SEEDS + ' seeds bridged');
 T('every map has water in it',
   noRiver.length === 0, noRiver.length ? 'dry seeds: ' + noRiver.join(',') : '');
-T('and not too much of it -- a river, not a swamp',
-  wetness.every(w => w <= W * H * 0.23),
-  'water tiles per map: ' + wetness.join(',') + ' of ' + (W * H));
+// THE SOLVER'S OWN BOUND, lifted from MAP_MIX rather than written down again
+// here. The hardcoded 0.23 was calibrated against the mere count above and became
+// meaningless the moment the count started measuring what the solver measures --
+// every map read 36 of 144 and "failed" a limit of 33.
+//
+// Asserted only on maps the solver ACCEPTED. A fallback map is out of range by
+// definition; that is what the budget test above is for, and failing it twice
+// just makes one bad seed look like two problems.
+{
+  const judged = wetness.filter(w => !w.fell);
+  const over = judged.filter(w => w.wet > W * H * S.MAP_MIX.water[1]);
+  T('and not too much of it -- a river, not a swamp',
+    over.length === 0,
+    over.map(w => 'seed ' + w.seed + ': ' + w.wet).join(', ') +
+    ' of ' + (W * H) + ', limit ' + Math.floor(W * H * S.MAP_MIX.water[1]));
+}
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

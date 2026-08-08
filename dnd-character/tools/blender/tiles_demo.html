@@ -591,7 +591,22 @@ function socketWfc(W,H,tries=300){
     // reached. Raising the number further only makes a rare thing arrive by luck.
     // Collapsed here instead, the approaches are forced (nothing else presents
     // `W+B`) and the ford keeps every crossing this one does not take.
-    if(rnd() < 0.5){
+    // A BRIDGE IS WORTH HALF THE ATTEMPTS, NOT THE MAP. Seeding the crossing
+    // poisons an attempt whenever propagation succeeds and the board it leaves
+    // then satisfies no acceptance rule, so the last half of the tries is left
+    // clear for a map that just wades.
+    //
+    // MEASURED OVER 60 SEEDS, not 12 -- at 12 the answer is 0, 1 or 2 depending
+    // on the seed and reads as pure noise. Crossing seed off: 1 of 60 falls
+    // through to the settle-for-anything branch. Always on: 4 of 60. Cut off at
+    // half the tries: 2 of 60, and the one seed that fails with the seeding
+    // switched off entirely (48) fails in every configuration, so the honest cost
+    // of bridges is about one map in sixty.
+    //
+    // Do not expect a cutoff sweep to be monotonic: the stream diverges the
+    // instant a crossing actually lands, so two cutoffs are two different
+    // experiments. 0.25 measured WORSE than 0.5 and no better than always-on.
+    if(rnd() < 0.5 && attempt < tries*0.5){
       const onRiver=new Uint8Array(W*H);
       for(const [ri,rj] of river) onRiver[rj*W+ri]=1;
       const save=dom.map(d=>new Set(d));
