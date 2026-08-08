@@ -2647,8 +2647,31 @@ document.getElementById("ver").textContent=VERSION;
     gl.viewport(0,0,gW,gH);
     // DEPTH IS ALWAYS ON, because a disabled depth test does not WRITE either --
     // and the tiles have to leave their heights behind for the props to test
-    // against. Tiles use ALWAYS, which keeps them in painter order exactly as
-    // the composite had them; props switch to LEQUAL below.
+    // against.
+    //
+    // TILES USED TO USE `ALWAYS`, to keep them in painter order exactly as the
+    // composite had them, and that was the seam. Every tile overshoots its
+    // lattice cell by 8px so neighbours overlap (see _bh in build_tiles.py), and
+    // in that overlap band a tile carries its OWN height extrapolated past its
+    // cell. Under ALWAYS whichever tile drew last simply stamped that over its
+    // neighbour's real ground, so every tile edge got a hairline of wrong -- and
+    // usually LOWER -- height. Measured on flat grass: 0.455% of height-buffer
+    // pixels dipped below both neighbours, worst 69 of 255.
+    //
+    // That one defect produced all three symptoms: water floods anything under
+    // uWaterZ, so the dips drew a blue dotted lattice across the whole board;
+    // the same dips perturbed the normals, which is the pale lattice under it;
+    // and they broke the depth sort at shorelines, which is what left rocks
+    // apparently floating over the water.
+    //
+    // LEQUAL fixes it by making the comparison mean something: depth is
+    // 1 - height, so TALLER WINS and a lower value can no longer overwrite a
+    // higher one. Painter order still decides ties -- LEQUAL passes on equal --
+    // so flat ground composites exactly as before. Measured: dips 0.455% ->
+    // 0.026%, blue hairlines on grass 0.27% -> 0.00%, and the whole frame moves
+    // by 0.75% (grass) and 0.16% (stone), concentrated on the seams themselves.
+    // Inflating the quads was tried first and did nothing: the overlap was
+    // already there, it was the resolution of it that was wrong.
     gl.enable(gl.DEPTH_TEST);
     gl.depthMask(true);
     gl.clearColor(0,0,0,0); gl.clearDepth(1.0);
@@ -2714,7 +2737,7 @@ document.getElementById("ver").textContent=VERSION;
         E = imgs[key];
         if(!E) throw new Error("no image for tile "+key+" -- add it to the loader name list");
         const b=E.box;
-        n+=quad(c.px+b[0], c.py+b[1], b[2], b[3], gTexFor(key,E), 0, 0, 0);
+        n+=quad(c.px+b[0], c.py+b[1], b[2], b[3], gTexFor(key,E), 0, 0, 1);
       }else if(!upper){
         // Props stand on the ground layer, as they did in the composite.
         const P=propImg[it.name];
