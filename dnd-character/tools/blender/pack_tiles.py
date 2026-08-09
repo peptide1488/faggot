@@ -60,7 +60,7 @@ def pack_one(job):
     """One tile, three passes. Pure function of its inputs so it can run in a
     worker process -- the work is CPU-bound encoding, and there are 8 cores
     sitting idle while one of them does 172 tiles in sequence."""
-    dirpath, out, stem, nrm_scale, albedo_q, method = job
+    dirpath, out, stem, nrm_scale, albedo_q, method, erode = job
     pa = os.path.join(dirpath, stem + ".png")
     pn = os.path.join(dirpath, stem + "_NRM.png")
     ph = os.path.join(dirpath, stem + "_H.png")
@@ -99,10 +99,33 @@ def pack_one(job):
     # wrong way and lit black while the walls beside them lit correctly.
     alpha = a.getchannel("A")
 
+    # ---- THE OVERSHOOT BELONGS TO THE ALBEDO AND TO NOTHING ELSE.
+    # Every tile is baked wider than its lattice cell (theme "bleed", 7 output px
+    # for grass10A; the packed tile is 656 across a 640 cell). That strip exists
+    # for ONE reason: AO has nothing to occlude at the boundary of a mesh, so the
+    # outermost ring bakes brighter -- luma 147 against 101 -- and posterising
+    # turns it into a pale grid, which the neighbour paints over.
+    #
+    # Height and normal never wanted it. In that strip they carry this tile's own
+    # surface extrapolated past where it exists, and the paint-over only happens
+    # for neighbours that draw LATER: iso order is back to front, so a tile's
+    # overshoot into its BACK neighbour is never covered. That band then shades
+    # from a surface that is not there, at 63% of its neighbours' brightness --
+    # the dotted lattice on every tile edge.
+    #
+    # Eroding the mask on those two passes is the same fix as suppressing them in
+    # the shader, done where the geometry is actually KNOWN. A shader has to infer
+    # the cell from the anchor and the lattice basis; the packer has the bleed.
+    # The erosion is deliberately a couple of px SHORT of the full bleed, so
+    # neighbours still overlap slightly and rasterisation cannot open a gap.
+    data_alpha = alpha
+    for _ in range(erode):
+        data_alpha = data_alpha.filter(ImageFilter.MinFilter(3))
+
     # ---- normal: crop to the SAME box (it must line up with the albedo),
     # optionally halve, always lossless
     n = Image.open(pn).convert("RGB").crop(box)
-    n.putalpha(alpha)
+    n.putalpha(data_alpha)
     if nrm_scale != 1.0:
         n = n.resize((max(1, round(n.width * nrm_scale)),
                       max(1, round(n.height * nrm_scale))), Image.LANCZOS)
@@ -119,7 +142,7 @@ def pack_one(job):
     # ---- height: one value, lossless, full resolution. This is a depth buffer,
     # not a picture -- but it still needs the mask, for the same reason.
     hl = Image.open(ph).convert("RGBA").crop(box).convert("L")
-    h = Image.merge("RGBA", (hl, hl, hl, alpha))
+    h = Image.merge("RGBA", (hl, hl, hl, data_alpha))
     h.save(os.path.join(out, stem + "_H.webp"), "WEBP",
            lossless=True, quality=100, method=method)
 
@@ -131,13 +154,13 @@ def pack_one(job):
     return stem, {"a": e, "n": e, "h": e}, before, after, None
 
 
-def pack(dirpath, nrm_scale=0.5, albedo_q=90, method=4, jobs=None):
+def pack(dirpath, nrm_scale=0.5, albedo_q=90, method=4, jobs=None, erode=6):
     out = os.path.join(dirpath, "packed")
     os.makedirs(out, exist_ok=True)
     stems = sorted({os.path.basename(f)[:-4] for f in glob.glob(os.path.join(dirpath, "*.png"))
                     if not f.endswith("_NRM.png") and not f.endswith("_H.png")
                     and not os.path.basename(f).startswith("_")})
-    work = [(dirpath, out, s, nrm_scale, albedo_q, method) for s in stems]
+    work = [(dirpath, out, s, nrm_scale, albedo_q, method, erode) for s in stems]
     jobs = jobs or max(1, (os.cpu_count() or 4))
 
     manifest = {}
@@ -204,5 +227,6 @@ if __name__ == "__main__":
     # slowest setting there is and bought ~5%; 4 is the sane default for a step
     # that runs after every bake.
     me = int(args[args.index("--method") + 1]) if "--method" in args else 4
+    er = int(args[args.index("--erode") + 1]) if "--erode" in args else 6
     js = int(args[args.index("--jobs") + 1]) if "--jobs" in args else None
-    pack(d, ns, q, me, js)
+    pack(d, ns, q, me, js, erode=er)
