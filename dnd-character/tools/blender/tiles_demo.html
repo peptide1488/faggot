@@ -1719,6 +1719,14 @@ document.getElementById("ver").textContent=VERSION;
     const fromBlob=(rng)=>createImageBitmap(
       new Blob([blob.subarray(rng[0], rng[0]+rng[1])], {type:"image/webp"}));
     status.textContent="loading "+(uniq.length*3)+(pack?" packed":" raw")+" tile images…";
+    // WHERE THE LOAD ACTUALLY GOES. measure_load.py can only see the network and
+    // the first frame, so every estimate of decode cost until now was inference
+    // from the gap between them -- and inference was wrong twice: the request
+    // count looked like the problem until pack.bin measured 21ms for the whole
+    // set, and a decode timed from the console read 2001ms only because it was
+    // competing with a live 60fps scene. Time it where it happens.
+    const _tArt = performance.now();
+    (window.__loadPhases=window.__loadPhases||{}).beforeTileArt = +_tArt.toFixed(0);
     await Promise.all(uniq.map(async n=>{
       const t0 = pack && pack.tiles[n];
       if(blob && t0 && t0.b){
@@ -1735,6 +1743,9 @@ document.getElementById("ver").textContent=VERSION;
       const b=imgs[n].box;
       MAXR = Math.max(MAXR, 2*Math.max(Math.abs(b[0]), Math.abs(b[1]), b[0]+b[2], b[1]+b[3]));
     }));
+    (window.__loadPhases=window.__loadPhases||{}).tileArt =
+      +(performance.now()-_tArt).toFixed(0);
+    window.__loadPhases.tileArtCount = uniq.length*3;
     // Actors are 3D models rendered from the SAME camera as the tiles, so they
     // ship with the same three buffers the tiles do. No alpha-bbox cropping and
     // no billboard normal: the image centre is the model's feet by construction,
@@ -1851,6 +1862,7 @@ document.getElementById("ver").textContent=VERSION;
                    n:await load(propDir+p+"_NRM.png"),
                    h:await load(propDir+p+"_H.png") };
     }));
+    (window.__loadPhases=window.__loadPhases||{}).afterProps = +performance.now().toFixed(0);
   }catch(e){ status.innerHTML="<b>"+e.message+"</b><br>serve over http, not file://"; return; }
 
   // MAP SIZE. Every tile costs composite area, and the composite is the ceiling
@@ -4809,7 +4821,9 @@ document.getElementById("ver").textContent=VERSION;
       atlas:[...spAtlas.slice(i*4,i*4+4)].map(v=>+v.toFixed(3)),
       meta:[...spMeta.slice(i*4,i*4+4)].map(v=>+v.toFixed(3))}))};
 
+  (window.__loadPhases=window.__loadPhases||{}).beforeBuild = +performance.now().toFixed(0);
   if(!build()) return;
+  window.__loadPhases.afterBuild = +performance.now().toFixed(0);
   zoom.value=Math.round(fitZoom()*100); centreView(); fit();
 
   endTurn();                      // start the first turn with a full move budget
