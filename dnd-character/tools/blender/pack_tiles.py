@@ -152,6 +152,34 @@ def pack(dirpath, nrm_scale=0.5, albedo_q=90, method=4, jobs=None):
             else:
                 manifest[stem] = entry
 
+    # ---- one file instead of 576 -------------------------------------------
+    # THE COST OF A SET IS ITS REQUEST COUNT, NOT ITS BYTES. Measured on a 12x12
+    # grass10A: 577 requests to packed/ for 26 MB, and a browser runs six at a
+    # time to one host, so the art arrives in ~96 sequential rounds each paying
+    # its own latency. That was most of the time to first frame.
+    #
+    # A TEXTURE ATLAS is the usual answer and is the wrong one here: 54.6 Mpx per
+    # channel needs about nine 4096-square sheets, and slicing per-tile images
+    # back out of them transiently doubles an already large decoded footprint.
+    # Concatenating the same files into one blob costs nothing extra -- the
+    # runtime slices byte ranges and decodes exactly the images it decodes today,
+    # so memory, filtering and the draw path are all untouched.
+    blob = os.path.join(out, "pack.bin")
+    index = {}
+    with open(blob, "wb") as bf:
+        for stem in sorted(manifest):
+            for ch, suffix in (("a", ""), ("n", "_NRM"), ("h", "_H")):
+                p = os.path.join(out, stem + suffix + ".webp")
+                if not os.path.exists(p):
+                    continue
+                data = open(p, "rb").read()
+                index.setdefault(stem, {})[ch] = [bf.tell(), len(data)]
+                bf.write(data)
+                os.remove(p)          # the blob replaces them; keeping both
+                                      # doubles the set on disk for no gain
+    for stem, chans in index.items():
+        manifest[stem]["b"] = chans   # byte ranges, alongside the crop boxes
+
     with open(os.path.join(out, "pack.json"), "w") as f:
         # `built` is a cache buster. Every pack rewrites the SAME filenames, so a
         # browser will happily serve the previous bake's tiles and show no change
@@ -162,6 +190,9 @@ def pack(dirpath, nrm_scale=0.5, albedo_q=90, method=4, jobs=None):
     print("packed %d tiles on %d cores in %.0fs: %.1f MB -> %.1f MB  (%.1fx smaller)"
           % (len(manifest), jobs, time.time() - t0,
              before / 1e6, after / 1e6, before / max(after, 1)))
+    print("bundled into pack.bin: %d images, %.1f MB, 2 requests instead of %d"
+          % (sum(len(c) for c in index.values()), os.path.getsize(blob) / 1e6,
+             sum(len(c) for c in index.values()) + 1))
 
 
 if __name__ == "__main__":

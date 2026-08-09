@@ -1703,10 +1703,30 @@ document.getElementById("ver").textContent=VERSION;
     // A re-pack rewrites the same filenames, so without this the browser serves
     // the previous bake and the new art appears to have changed nothing.
     const bust = pack && pack.built ? "?v="+pack.built : "";
+    // ONE REQUEST FOR THE WHOLE SET. pack_tiles.py concatenates every image into
+    // packed/pack.bin and records a byte range per pass, because the cost of a
+    // set is its REQUEST COUNT and not its bytes: 577 requests for 26 MB, six at
+    // a time to one host, is ~96 sequential rounds each paying its own latency,
+    // and that was most of the time to first frame. Slicing byte ranges out of
+    // one buffer decodes exactly the same images, so memory, filtering and the
+    // draw path are all untouched -- which is why this is a blob and not a
+    // texture atlas. Falls back to per-file loading for an older pack.
+    let blob=null;
+    if(pack && pack.tiles && Object.values(pack.tiles).some(t=>t.b)){
+      status.textContent="loading tile set…";
+      blob = new Uint8Array(await (await fetch(dir+"pack.bin"+bust)).arrayBuffer());
+    }
+    const fromBlob=(rng)=>createImageBitmap(
+      new Blob([blob.subarray(rng[0], rng[0]+rng[1])], {type:"image/webp"}));
     status.textContent="loading "+(uniq.length*3)+(pack?" packed":" raw")+" tile images…";
     await Promise.all(uniq.map(async n=>{
-      imgs[n]=[await load(dir+n+ext+bust), await load(dir+n+"_NRM"+ext+bust),
-               await load(dir+n+"_H"+ext+bust)];
+      const t0 = pack && pack.tiles[n];
+      if(blob && t0 && t0.b){
+        imgs[n]=[await fromBlob(t0.b.a), await fromBlob(t0.b.n), await fromBlob(t0.b.h)];
+      }else{
+        imgs[n]=[await load(dir+n+ext+bust), await load(dir+n+"_NRM"+ext+bust),
+                 await load(dir+n+"_H"+ext+bust)];
+      }
       const t = pack && pack.tiles[n], im = imgs[n][0];
       // box = [dx, dy, w, h] from the tile's anchor. Unpacked images are simply
       // centred, which is the same statement with the offset computed instead of
