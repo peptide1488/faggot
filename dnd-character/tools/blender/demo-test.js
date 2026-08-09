@@ -191,7 +191,7 @@ for (let seed = 1; seed <= SEEDS; seed++) {
           // 10 of 12 seeds reported no road across a map whose road crossed on a
           // bridge. The duplication is the bug; if a third copy is ever wanted,
           // export the predicate instead.
-          if (!/\+[PB]/.test(sockOf(at(i, j))[nb.edge])) continue;
+          if (!/\+[PBC]/.test(sockOf(at(i, j))[nb.edge])) continue;
           seen.add(nj * W + ni); st.push([ni, nj]);
         }
       }
@@ -223,7 +223,7 @@ for (let seed = 1; seed <= SEEDS; seed++) {
         for (const nb of S.NEIGH) {
           const ni = i + nb.di, nj = j + nb.dj, n = at(ni, nj);
           if (!n || seen.has(nj * W + ni)) continue;
-          if (!/\+[PB]/.test(sockOf(at(i, j))[nb.edge])) continue;
+          if (!/\+[PBC]/.test(sockOf(at(i, j))[nb.edge])) continue;
           seen.add(nj * W + ni); st.push([ni, nj]);
         }
       }

@@ -351,6 +351,26 @@ def outdoor_tiles(sid):
     add("bridge", 590, terrain="track", arms=["Y+"], deck=["Y-"], high=["Y+"],
         lo=-1, hi=0, water=True, role="span_flank", piers=["Y-"])
 
+    # ---- A CAUSEWAY: a made bar across the channel, walkable, wet at the edges.
+    # A ford is what the river is PAVED with -- its W+P arms chain along the
+    # channel as happily as across it -- so a walkable bar cannot live on W+P
+    # without turning the whole river into a road. `W+C` meets only itself, which
+    # is what confines a causeway to a crossing. Same two-piece shape as the
+    # bridge, plus a bank for each thing the far side can be.
+    add("causeway", 610, terrain="track", arms=[], causeway=["Y+", "Y-"],
+        lo=-1, hi=-1, water=True, role="span")
+    # The bank onto FLAT GROUND: bed at the water edge, band 0 at the road edge,
+    # and the crossing socket the strand and the shoal already present on its
+    # flanks, so it lands on an ordinary beach with no piece of its own.
+    add("causeway", 620, terrain="track", arms=["Y+"], causeway=["Y-"],
+        high=["Y+"], lo=-1, hi=0, water=True, role="span_flank")
+    # The bank that climbs a CLIFF, water straight to the high band. Its flanks
+    # carry Xw1, which is what the bluff and the headland present, so a causeway
+    # can come ashore where the ground stands up instead of shelving -- the same
+    # job track-0563 does for a ford.
+    add("causeway", 630, terrain="track", arms=["Y+"], causeway=["Y-"],
+        high=["Y+"], lo=-1, hi=1, water=True, role="span_flank")
+
     # ---- where a cliff comes down to the sea. Both chiralities: the mirror is
     # NOT a rotation, because rotating turns all four edges together and the
     # corner (Xw1 then X01) stays in the same order however far you turn it.
@@ -1307,6 +1327,15 @@ MEADOW_RELIEF = 0.03     # how far a nominally FLAT tile may move. Not zero --
                          # a dead plane reads as a table -- but far below
                          # RELIEF, which domed every open tile into a cushion
 BED_Z = -0.95            # the bottom under open water
+CWAY_Z = -0.14           # a causeway's crown, just proud of the default surface.
+                         # A ford has to be ABOVE the water or it is not a ford:
+                         # standable() refuses any square below the level, so a
+                         # crossing cut into a bed 0.75 under the surface is a
+                         # place to drown. Measured on seed 1 before this existed,
+                         # every ford tile carried 0 of 64 standable squares while
+                         # roadCrosses and demo-test both passed, because both read
+                         # SOCKETS -- so on nine seeds in twelve the road simply
+                         # stopped at the river.
 WATER_LEVEL = -0.20      # the surface itself, just below the ground band, so a
                          # shore shelves THROUGH it rather than stopping at it
 PATH_CUT = 0.10          # how far a track sits below the turf it wore through
@@ -1659,7 +1688,7 @@ def field_headland(seed, shore, cliff, join="max"):
 
 
 def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None,
-                run=1.0, shelf=1.0):
+                run=1.0, shelf=1.0, bar=None, bar_arms=()):
     """A worn track: turf scraped off, ground packed down, a rut down the crown.
 
     `arms` is the junction vocabulary. `sides`/`ramp` let the same track climb --
@@ -1696,6 +1725,22 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
             # keeping the two masks separate says exactly that, and lets the dirt
             # stay as narrow as it looks.
             z += (z_hi - z_lo) * (s + (r - s) * climb)
+        if bar is not None:
+            # LIFT, NEVER LOWER, AND NEVER A BLEND. The bank end of a causeway is
+            # already on dry ground; mixing toward the bar there would dig the
+            # road into a trench 0.14 below the band it promised its neighbour.
+            # The mask is _lane, the same flat-topped lattice-aligned one the ramp
+            # uses, so the crown is two whole squares wide and standable() keeps
+            # them -- a smoothstep ridge would clear the water on its centreline
+            # only and carry no square at all.
+            m = _lane(u, v, list(bar_arms))
+            lift = max(0.0, bar - z)
+            z += lift * m
+            # Painted as a road only where it IS one: taking m flat would widen
+            # the mud to the bar's width right up to the G0+P edge, where the
+            # plain track it abuts is narrower -- a step in the road's width at
+            # the seam that no height check would report.
+            mud = max(mud, m * min(1.0, lift / 0.15))
         return z, mud
     return f
 
@@ -1754,7 +1799,10 @@ FIELDS = {
                                         _band_z(sp.get("lo", 0)),
                                         _band_z(sp.get("hi", 1)),
                                         sp.get("join", "max"), sp.get("ramp"),
-                                        *_shelf(sp.get("lo", 0), sp.get("hi", 1))),
+                                        *_shelf(sp.get("lo", 0), sp.get("hi", 1)),
+                                        bar=CWAY_Z if sp.get("causeway") else None,
+                                        bar_arms=(list(sp.get("causeway", []))
+                                                  + list(sp.get("arms", [])))),
     "mire": lambda sp, sd: field_mire(sd),
     "headland": lambda sp, sd: field_headland(sd, sp["shore"], sp["cliff"],
                                               sp.get("join", "max")),
@@ -3628,6 +3676,16 @@ def tile_sockets(spec):
         # stops a bridge deck ending in mid-air against a wading ford.
         for e in spec.get("deck", []):
             out[e] = out[e] + "+B"
+        # A CAUSEWAY IS A THIRD KIND OF CROSSING, and it needs its own socket for
+        # the same reason the bridge did. `W+P` is the river's own filler as much
+        # as it is a crossing -- the river seed picks pieces whose every edge is
+        # water, and a ford's arms chain along the channel as happily as across
+        # it. Putting a walkable bar on W+P therefore paves the whole river: 16
+        # tiles on seed 2, 146 standable squares, none of them joined to a track.
+        # `W+C` is water with a made bar over it, and it meets only itself, so a
+        # causeway cannot chain to a plain ford and cannot run down the channel.
+        for e in spec.get("causeway", []):
+            out[e] = out[e] + "+C"
         return out
 
     # kind == "step": the transition family

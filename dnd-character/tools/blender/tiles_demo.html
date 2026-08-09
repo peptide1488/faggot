@@ -404,7 +404,7 @@ function seedPath(dom, propagate, W, H, want, down, wobble, joined, out){
       // carried rather than laid. Reading only +P here meant the road seed could
       // never choose a bridge for the one cell where it meets the river, which is
       // the only cell a bridge was ever for.
-      return !joined || need.every(e => /\+[PB]/.test(SVAR[v].sock[e]));
+      return !joined || need.every(e => /\+[PBC]/.test(SVAR[v].sock[e]));
     });
     if(!keep.length) return false;
     dom[n] = new Set(keep);
@@ -438,7 +438,7 @@ function roadCrosses(dom, W, H){
         // carried over water on a deck -- a bridge is a way across or it is
         // nothing, and reading only +P here would have rejected every map that
         // solved its river crossing with one.
-        if(!/\+[PB]/.test(at(idx(i,j)).sock[nb.edge])) continue;
+        if(!/\+[PBC]/.test(at(idx(i,j)).sock[nb.edge])) continue;
         seen[m]=1; st.push([ni,nj]);
       }
     }
@@ -520,7 +520,7 @@ function socketWfc(W,H,tries=300){
     // flanks are W and its ends are W+B, and the two approaches either side are
     // then FORCED -- nothing else in the set presents W+B -- so the crossing
     // assembles itself from one seeded cell.
-    const isWater = v => ORDER.every(e => /^W(\+[PB])?$/.test(v.sock[e]));
+    const isWater = v => ORDER.every(e => /^W(\+[PBC])?$/.test(v.sock[e]));
     // A BRIDGE IS A ROAD. Both seeds have to admit it or it lands somewhere no
     // road reaches: seeded as water only, the span went in wherever the river ran
     // and came out as a pier hanging off the map edge over the shore. Where the

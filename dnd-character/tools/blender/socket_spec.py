@@ -43,6 +43,7 @@ MEANING = {
     "G1+P": "ground high, with a track crossing this edge",
     "W+P": "water, with a track crossing this edge (a ford)",
     "W+B": "water, with a track carried OVER it on a deck (a bridge)",
+    "W+C": "water, with a made bar THROUGH it you can walk (a causeway)",
     "G2": "ground, top band",
     "G2+P": "ground top, with a track crossing this edge",
     "X01": "a level change crosses this edge (low <-> high)",
@@ -68,7 +69,7 @@ BANDS = {
     # W+B touches the bed and nothing else: the deck over it is carried, not
     # ground, so it constrains no band. That is the whole reason the socket exists
     # -- both sides of the seam agree the GROUND here is riverbed.
-    "W": {-1}, "W+P": {-1}, "W+B": {-1},
+    "W": {-1}, "W+P": {-1}, "W+B": {-1}, "W+C": {-1},
     "X01": {0, 1}, "Xw0": {-1, 0}, "Xw1": {-1, 1}, "X12": {1, 2},
 }
 
