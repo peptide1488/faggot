@@ -654,3 +654,45 @@ no gain the socket does not already give.
 - The water level slider is an honest A/B rig for anything depending on the
   waterline: set `wlev.value`, dispatch `input`, wait two rAFs, and `standable`
   changes under you because `WATER_SURFACE` is read every frame.
+
+---
+
+# 2026-08-10 — the seam is fixed, and what it took
+
+Two overlapping artefacts, one root discipline failure.
+
+**The heavy black lattice** (recent, "worse now"): pack_tiles' --erode, added as
+a seam fix, measured harmful, "defaulted off" by an unasserted str.replace that
+matched nothing and printed success anyway. Every repack for two days shipped
+erode=6. The erosion cut in Chebyshev px against a bleed measured perpendicular
+on a 1:2 edge, ate 4-7px of the cell, zeroed heights to world z -4 (webp also
+zeroes RGB under alpha-0 by default), and the back neighbour's dirt skirt showed
+through everywhere. Diagnosed by a fresh model simulating the G-buffer pass in
+software from the packed inputs; found in the file, not the notes.
+
+**The faint dotted seam** (the original, ~a week old): every tile's H/N carried
+the albedo's overshoot, and back-to-front draw order let each tile stamp
+extrapolated data over the two neighbours drawn before it.
+
+**The fix, all in pack_tiles.py** (bea9a94): a world-space cell cut -- invert
+the iso projection per pixel USING THAT PIXEL'S OWN HEIGHT and zero the data
+passes beyond the two BACK edges only (front bleed is always painted over; the
+skirt lives on the front edges and a symmetric cut turns it black). Plus
+exact=True on data-pass webp, plus a premultiplied float resize for the
+half-res normal -- plain LANCZOS mixes transparent-black into edge values, and
+the old MinFilter erode existed to hide exactly that contamination.
+
+Measured: normals-buffer seam dip -7.1 -> -2.4 (the seam feature itself
+-3.8 -> -0.9), invariant A 83,196 px -> 0, user-confirmed on screen. All five
+sets repacked and bundled.
+
+**check_pack.py is the guard that was missing**: no data outside the cell's
+back edges (A), no opaque albedo missing its height inside the cell (B), both
+proven against kept known-bad packs, and the projection must round-trip on
+flat turf -- skirt included -- before it may judge. Run it after every repack.
+
+**The discipline that was missing, written once**: verify edits from disk, not
+from your own print statements; validate every instrument against a control
+that CAN fail before believing its numbers (three invalid metrics burned a full
+day); and when a fix regresses, diff the buffers and look at WHERE, not deeper
+into the theory.
