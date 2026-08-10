@@ -60,7 +60,14 @@ SYU = 0.5 * math.cos(math.radians(45)) * bt.PPU      # px per (wx-wy) unit: 40
 ZPX = math.cos(math.radians(30)) * bt.PPU            # px per world-z unit: ~98
 CELL = bt.HALF                                        # the cell is |w| <= 2.0
 BLEED_W = 10.0 / SXU          # generous bleed allowance in world units (~0.125)
-TOL_OUT = 0.05                # overshoot slack: data may exist to cell+this
+# Overshoot slack. It has to absorb the packer's FRONT HANDICAP: that lowers
+# front-overshoot heights by 2 quanta so they cannot outrank a neighbour's real
+# ground, and this checker re-derives world position FROM the stored height, so
+# a handicapped texel appears to move by dz*ZPX/(2*SYU) = 0.063*98/(2*40) =
+# 0.077 world. Without the slack, front texels read as back-edge overshoot and A
+# fires on 110,167 px of its own fix. The control still fails A by a wide margin
+# (the real overshoot ran to ~0.5), so the invariant keeps its teeth.
+TOL_OUT = 0.13
 TOL_IN = 0.06                 # dead-zone slack, ~5px perpendicular
 
 

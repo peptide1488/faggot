@@ -76,18 +76,45 @@ _CELL, _DELTA = 2.0, 0.012      # cell half-extent; ~2px of deliberate overlap
 _HOFF, _HRANGE = 4.0, 8.0       # build_tiles HEIGHT_OFF / HEIGHT_RANGE
 
 
-def cell_mask(alpha, hl, dx, dy):
-    """alpha with everything beyond the cell's two back edges zeroed."""
+def cell_world(hl, dx, dy):
+    """(wx, wy) for every texel, from that texel's own decoded height."""
     z = np.asarray(hl, dtype=np.float32) / 255.0 * _HRANGE - _HOFF
     hh, ww = z.shape
     px = dx + np.arange(ww, dtype=np.float32) + 0.5
     py = dy + np.arange(hh, dtype=np.float32)[:, None] + 0.5
     su = px[None, :] / _SXU
     di = (py + z * _ZPX) / _SYU
-    wx = (su + di) * 0.5
-    wy = (su - di) * 0.5
+    return (su + di) * 0.5, (su - di) * 0.5
+
+
+def cell_mask(alpha, wx, wy):
+    """alpha with everything beyond the cell's two BACK edges zeroed."""
     keep = (wx >= -(_CELL + _DELTA)) & (wy <= (_CELL + _DELTA))
     return Image.fromarray(np.asarray(alpha, dtype=np.uint8) * keep, "L")
+
+
+def front_handicap(hl, wx, wy, quanta=2):
+    """Lower the height of FRONT-overshoot texels so they can never outrank a
+    neighbour's real ground.
+
+    The front bleed is kept deliberately -- it is what hides the AO-bright ring
+    at the mesh boundary. But those texels are this tile's surface EXTRAPOLATED
+    past its cell, and the G-buffer resolves the overlap by height with LEQUAL.
+    Height is 8-bit, so one quantum is 8/255 = 0.031 world, and two tiles' bakes
+    legitimately differ by about that much at a shared edge (check_seams' whole
+    tolerance is one texel, 0.025). Wherever the back tile's extrapolation came
+    out one quantum taller, it WON -- and what it painted there is the dark
+    skirt-fold band the beauty pass antialiases into the ground/skirt crease,
+    luma ~76 against interior grass at ~145. That is the dotted line of black
+    specks along every seam at high zoom: measured mean RGB (64,84,65), luma 78.
+    An extrapolated texel must never beat a real one, so give it a 2-quantum
+    handicap -- larger than any legitimate disagreement, and invisible where
+    these texels actually get displayed, which is only the map's outer skirt.
+    """
+    over = (wx > _CELL + _DELTA) | (wy < -(_CELL + _DELTA))
+    arr = np.asarray(hl, dtype=np.int16)
+    return Image.fromarray(
+        np.where(over, np.maximum(arr - quanta, 0), arr).astype(np.uint8), "L")
 
 
 def crop_box(im):
@@ -126,7 +153,9 @@ def pack_one(job):
     # The mask needs each pixel's own height, so the height pass loads first.
     hl = Image.open(ph).convert("RGBA").crop(box).convert("L")
     W2, H2 = alb.size
-    masked = cell_mask(a.getchannel("A"), hl, x0 - W2 / 2.0, y0 - H2 / 2.0)
+    _wx, _wy = cell_world(hl, x0 - W2 / 2.0, y0 - H2 / 2.0)
+    masked = cell_mask(a.getchannel("A"), _wx, _wy)
+    hl = front_handicap(hl, _wx, _wy)
     a.putalpha(masked)
     if albedo_q >= 100:
         a.save(os.path.join(out, stem + ".webp"), "WEBP", lossless=True,

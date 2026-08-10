@@ -734,3 +734,48 @@ them they cover value and gradient.
 
 All three outdoor sets rebaked across every track piece, repacked, check_pack
 and check_seams clean on all three, demo-test 13/13.
+
+---
+
+# 2026-08-10 (last) — the magnified specks: a one-quantum depth tie
+
+The seam that survived the world-space cell cut: isolated near-BLACK specks
+along every tile edge, invisible at 1:1 (-2.4 luma) and ~45 luma deep at 4x
+zoom. Two legs, both needed:
+
+**What the specks are made of.** The beauty pass antialiases the ground/skirt
+crease into a dark band around every tile's FRONT edges -- luma ~76 against
+interior grass at ~145, widened to ~4 texels by the half-res render. Measured
+speck colour (64,84,65), luma 78. It is the skirt fold, displayed where it
+should never have been.
+
+**Why it displayed.** The front bleed is kept deliberately (it hides the
+AO-bright ring), but those texels are the tile's surface EXTRAPOLATED past its
+cell. The G-buffer resolves the overlap by height, and height is 8-bit: one
+quantum is 0.031 world, while two bakes legitimately differ by about a texel
+(0.025) at a shared edge. Wherever the back tile's extrapolation came out ONE
+QUANTUM taller it won the LEQUAL test and painted its fold over the front
+tile's real ground.
+
+**The fix**: front_handicap() in pack_tiles.py lowers front-overshoot heights by
+2 quanta -- larger than any legitimate disagreement, so an extrapolated texel
+can never outrank a real one. Those texels are only ever displayed at the map's
+outer skirt, where 0.063 world is invisible.
+
+  zoom-186 isolated specks   lit 642 -> 57, albedo 246 -> 60, normals 933 -> 11
+  1:1 seam, walkability, check_seams, check_slopes, demo-test: unchanged
+
+**check_pack's invariant A needed widening to 0.13** and the reason is worth
+knowing: the checker re-derives world position FROM the stored height, so the
+handicap moves a texel by dz*ZPX/(2*SYU) = 0.077 and front texels start reading
+as back-edge overshoot. A fired on 110,167 px of its own fix. The control pack
+still fails A, so the invariant kept its teeth.
+
+Measured and NOT adopted, so they are not retried: widening the cut overlap
+(_DELTA 0.012 -> 0.04, specks 642 -> 647) and full-resolution normals
+(642 -> 572 for +4MB). Neither is the cause.
+
+Found by handing the problem to a second model with the full elimination list.
+Worth repeating when a search stops converging: it read the FILES rather than
+my notes, and simulated the G-buffer pass in software from the packed inputs
+instead of diffing toggles at the end state.
