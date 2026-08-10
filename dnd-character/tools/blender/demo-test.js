@@ -55,6 +55,10 @@ const consts = [
   /const OPP *= *\{[^}]*\};/,
   /const NEIGH *= *\[[\s\S]*?\];/,
   /const ROLE_W *= *\{[\s\S]*?\};/,
+  // buildSocketVariants multiplies role weight by a per-PIECE factor, so the
+  // table and its lookup have to come across too or the lift throws.
+  /const PIECE_W *= *\[[\s\S]*?\];/,
+  /const pieceMul *= *[\s\S]*?\};/,
   /const MAP_SEEDS *= *\{[^}]*\};/,
   /const MAP_MIX *= *\{[^}]*\};/,
 ].map(re => {

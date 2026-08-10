@@ -289,6 +289,29 @@ const SVAR = [];                       // {name, rot, sock, w}
 // already stop a bridge to nowhere -- a +B edge has only another +B to meet -- so
 // what is left to say is how often a river should be crossed, and the answer is
 // about once.
+// A ROAD, NOT A ROAD NETWORK. Role weight cannot express this: straight, bend,
+// tee, crossroads and dead end are all role `track`, so the only dial that can
+// tell them apart is the PIECE. Measured on a 12x12 over five seeds before this
+// existed: a mean of 12.8 junctions and 6.8 dead-end spurs per map, one seed
+// carrying 9 tees and 10 crossroads. That is a lane network laid over a meadow.
+//
+// These MULTIPLY the role weight rather than replace it, so a junction is still
+// reachable when the sockets leave no alternative -- and the seeded road line
+// forces whatever it needs regardless. They just stop being as ordinary as a
+// straight. After: 4.0 junctions and 2.0 dead ends per map.
+//
+// LOWERING THE TRACK ROLE WEIGHT IS NOT THE SAME LEVER AND DOES NOT WORK. Swept
+// 3.0 / 1.5 / 0.8: junctions did not improve, road fragments went UP (the road
+// broke into 7-8 pieces), and two seeds fell through to the settle-for-anything
+// branch -- a cheaper track makes the seeded line harder to satisfy, which is
+// the opposite of what it looks like it should do.
+const PIECE_W = [[/-(0530|0573)$/, 0.10],    // crossroads
+                 [/-(0520|0572)$/, 0.22],    // tee
+                 [/-(0540|0574)$/, 0.15]];   // dead end
+const pieceMul = name => {
+  for(const [re,m] of PIECE_W) if(re.test(name)) return m;
+  return 1;
+};
 const ROLE_W = { ground:18, high_ground:9, peak:2.2, liquid:0.5, track:3.0,
                  transition:4.5, slope:5.0, track_slope:3.4, wallow:1.4,
                  span:0.8, span_flank:0.8 };
@@ -356,7 +379,7 @@ function buildSocketVariants(man){
       const sock = t.sockets[rot];
       if(!sock) continue;
       SVAR.push({name, rot, sock, role:t.role, band:t.band|0,
-                 w:(ROLE_W[t.role]||1)});
+                 w:(ROLE_W[t.role]||1)*pieceMul(name)});
     }
   }
   return SVAR.length;
