@@ -154,7 +154,7 @@ def pack_one(job):
     return stem, {"a": e, "n": e, "h": e}, before, after, None
 
 
-def pack(dirpath, nrm_scale=0.5, albedo_q=90, method=4, jobs=None, erode=6):
+def pack(dirpath, nrm_scale=0.5, albedo_q=90, method=4, jobs=None, erode=0):
     out = os.path.join(dirpath, "packed")
     os.makedirs(out, exist_ok=True)
     stems = sorted({os.path.basename(f)[:-4] for f in glob.glob(os.path.join(dirpath, "*.png"))
@@ -227,6 +227,6 @@ if __name__ == "__main__":
     # slowest setting there is and bought ~5%; 4 is the sane default for a step
     # that runs after every bake.
     me = int(args[args.index("--method") + 1]) if "--method" in args else 4
-    er = int(args[args.index("--erode") + 1]) if "--erode" in args else 6
+    er = int(args[args.index("--erode") + 1]) if "--erode" in args else 0
     js = int(args[args.index("--jobs") + 1]) if "--jobs" in args else None
     pack(d, ns, q, me, js, erode=er)
