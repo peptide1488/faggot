@@ -1699,7 +1699,16 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
 
     def f(u, v):
         mud = _arms(u, v, seed, arms, PATH_W)
-        mud *= 0.74 + 0.52 * _fbm(u, v, seed + 88, 3, 6)     # frayed verge
+        # THE VERGE FRAYS IN THE INTERIOR AND NOWHERE ELSE. This noise is seeded
+        # PER TILE, and it scales the mud, which the rut is cut from -- so two
+        # tracks meeting at an edge disagreed about the depth of their own cut by
+        # up to PATH_CUT * the verge spread, 0.10 * 0.26 = 0.026 units. That is
+        # 1.14 texels: grass10A happened to land under the limit and dust10A did
+        # not (8 pairs at 0.0285). Damping the DEVIATION by _interior is the same
+        # trick _ground uses for its relief -- the border keeps the mean, the
+        # middle keeps the fray, and every track edge agrees by construction.
+        verge = 0.74 + 0.52 * _fbm(u, v, seed + 88, 3, 6)
+        mud *= 1.0 + (verge - 1.0) * _interior(u, v)
         mud = max(0.0, min(1.0, mud))
         # A CLIMBING TRACK STACKS THREE THINGS ON THE STEEPEST GROUND ANYONE WALKS:
         # the ramp itself (0.84 gradient at mid-slope against a 0.95 limit), then
