@@ -1568,7 +1568,16 @@ def _arms(u, v, seed, arms, half_w):
             continue
         t = min(1.0, alo / 0.5)
         phase = 0.0 if e in ("Y+", "X+") else 0.5
-        c = 0.5 + 0.16 * math.sin(math.pi * t) * (
+        # sin SQUARED, not sin. The envelope has to kill the wander's DERIVATIVE
+        # at the edge, not just its value: sin(pi*t) is 0 at t=0 but leaves with
+        # slope pi, and the wander is seeded per tile, so two tracks sharing an
+        # edge met at exactly the same height and immediately bent apart. Their
+        # ruts then cut at different rates and the surface kinked -- measured,
+        # ~10% of abutting pairs with a gradient mismatch up to 0.93 (45 deg is
+        # 1.0) while check_seams reported the height agreeing to 0.0000, because
+        # height is all check_seams looks at. sin^2 has the same peak wander in
+        # the middle and zero slope at both ends.
+        c = 0.5 + 0.16 * math.sin(math.pi * t) ** 2 * (
             _fbm1(t * 0.5 + phase, seed + 71, 2, 3) - 0.5) * 2.0
         best = max(best, _sstep(1.0 - abs(lat - c) / half_w))
     return best

@@ -696,3 +696,41 @@ from your own print statements; validate every instrument against a control
 that CAN fail before believing its numbers (three invalid metrics burned a full
 day); and when a fix regresses, diff the buffers and look at WHERE, not deeper
 into the theory.
+
+---
+
+# 2026-08-10 (later) — the OTHER seam: same height, different slope
+
+check_seams has always asked one question: do two tiles agree about the HEIGHT
+along the edge they share. They can agree to 0.0000 and still KINK, and a
+gradient discontinuity is a lighting crease -- the shader draws it as a line.
+
+Measured over 17760 abutting pairs: ~10% mismatched by more than 0.05 gradient,
+worst 0.93 (1.0 is 45 degrees), and check_seams called every one of them
+perfect. Two causes, both per-tile noise reaching the border with a live
+derivative:
+
+  FRAYED VERGE   scaled the mud mask, and the rut is cut from it, so two tracks
+                 cut to different depths approaching the same edge. Worth up to
+                 PATH_CUT * spread = 0.026 units of HEIGHT too, which is 1.14
+                 texels -- grass10A landed under the limit, dust10A did not, and
+                 baking the bridge into dust10A is how it finally showed.
+                 Fixed by damping the deviation with _interior, the same trick
+                 _ground already used for its relief.
+  CROWN WANDER   sin(pi*t) is zero AT the edge and leaves with slope pi. Two
+                 tracks met exactly and immediately bent apart. Fixed with
+                 sin^2: same peak wander in the middle, zero slope at both ends.
+
+  worst slope mismatch   0.934 -> 0.0116     pairs over 0.05: 1882 -> 0
+  worst height (tracks)  0.0237 -> 0.0096
+
+THE RULE, worth keeping: anything seeded per tile must reach the border with
+zero value AND zero derivative, or share its seed with the neighbour.
+
+check_slopes.py enforces it. It runs on the FIELDS -- no bake, no Blender,
+seconds -- and it is mutation-proven: reverting the sin^2 envelope takes it
+from 0.0116 to 0.934 and it exits non-zero. Run it with check_seams; between
+them they cover value and gradient.
+
+All three outdoor sets rebaked across every track piece, repacked, check_pack
+and check_seams clean on all three, demo-test 13/13.
