@@ -47,7 +47,45 @@ import os
 import sys
 import time
 
+import numpy as np
 from PIL import Image, ImageFilter
+
+# ---- the world-space cell cut ----------------------------------------------
+# Every tile is baked wider than its lattice cell so the albedo can hide the
+# AO-bright mesh boundary. Carried into the HEIGHT and NORMAL passes, that
+# overshoot is the seam: tiles draw back to front, so a tile's back-edge strip
+# stamps extrapolated surface data over the two neighbours drawn before it --
+# a faint dark line on every seam. (Blind erosion was tried instead and became
+# the black-lattice disaster: it cut in Chebyshev pixels against a bleed
+# measured perpendicular on a 1:2 edge, and ate ~4-7px of the cell itself.)
+#
+# The cut is exact, not eroded: invert the iso projection per pixel USING THAT
+# PIXEL'S OWN HEIGHT (same math as the shader's worldAt; constants below are
+# derived from the same PPU/angles the bake renders with) and zero everything
+# beyond the two BACK edges of the cell. Back only, because the front bleed is
+# always painted over by later-drawn neighbours, and the SKIRT -- the curtain
+# the map boundary needs -- hangs on the front edges at exactly the overshoot
+# boundary. A symmetric cut would turn the outer skirt black.
+# check_pack.py holds the invariants and their known-bad controls.
+_SXU = 640.0 / (4.0 * (2.0 ** 0.5)) * (0.5 ** 0.5)     # 80 px per (wx+wy)
+_SYU = _SXU * 0.5                                       # 40 px per (wx-wy)
+_ZPX = 640.0 / (4.0 * (2.0 ** 0.5)) * (3.0 ** 0.5) / 2  # ~98 px per world z
+_CELL, _DELTA = 2.0, 0.012      # cell half-extent; ~1px of deliberate overlap
+_HOFF, _HRANGE = 4.0, 8.0       # build_tiles HEIGHT_OFF / HEIGHT_RANGE
+
+
+def cell_mask(alpha, hl, dx, dy):
+    """alpha with everything beyond the cell's two back edges zeroed."""
+    z = np.asarray(hl, dtype=np.float32) / 255.0 * _HRANGE - _HOFF
+    hh, ww = z.shape
+    px = dx + np.arange(ww, dtype=np.float32) + 0.5
+    py = dy + np.arange(hh, dtype=np.float32)[:, None] + 0.5
+    su = px[None, :] / _SXU
+    di = (py + z * _ZPX) / _SYU
+    wx = (su + di) * 0.5
+    wy = (su - di) * 0.5
+    keep = (wx >= -(_CELL + _DELTA)) & (wy <= (_CELL + _DELTA))
+    return Image.fromarray(np.asarray(alpha, dtype=np.uint8) * keep, "L")
 
 
 def crop_box(im):
@@ -83,6 +121,11 @@ def pack_one(job):
     # sampler does. Lossless costs little here because flat banded colour is
     # exactly what a lossless codec is good at.
     a = alb.crop(box)
+    # The mask needs each pixel's own height, so the height pass loads first.
+    hl = Image.open(ph).convert("RGBA").crop(box).convert("L")
+    W2, H2 = alb.size
+    masked = cell_mask(a.getchannel("A"), hl, x0 - W2 / 2.0, y0 - H2 / 2.0)
+    a.putalpha(masked)
     if albedo_q >= 100:
         a.save(os.path.join(out, stem + ".webp"), "WEBP", lossless=True,
                quality=100, method=method)
@@ -97,7 +140,7 @@ def pack_one(job):
     # turned each crop into an opaque rectangle, and let every tile stamp its
     # corners over its neighbours' normals and heights -- floors then faced the
     # wrong way and lit black while the walls beside them lit correctly.
-    alpha = a.getchannel("A")
+    alpha = masked
 
     # ---- THE OVERSHOOT BELONGS TO THE ALBEDO AND TO NOTHING ELSE.
     # Every tile is baked wider than its lattice cell (theme "bleed", 7 output px
@@ -127,24 +170,40 @@ def pack_one(job):
     n = Image.open(pn).convert("RGB").crop(box)
     n.putalpha(data_alpha)
     if nrm_scale != 1.0:
-        n = n.resize((max(1, round(n.width * nrm_scale)),
-                      max(1, round(n.height * nrm_scale))), Image.LANCZOS)
-        # Halving the mask and then drawing it back at full size spreads it by a
-        # texel, which is a ~2px fringe of this tile's normals lying over its
-        # neighbour along every join. Erode by one texel so the upscale lands
-        # inside the true footprint: losing the outermost antialiased pixel to
-        # the neighbour is invisible, seams are not.
-        na = n.getchannel("A").filter(ImageFilter.MinFilter(3))
-        n.putalpha(na)
+        # PREMULTIPLIED RESIZE, IN FLOAT. A plain LANCZOS on straight-alpha RGBA
+        # mixes the transparent texels' BLACK rgb into every edge value, so the
+        # half-res normal was wrong within ~2px of any alpha boundary. The old
+        # MinFilter erode existed to HIDE that contamination -- and hiding it is
+        # what put this tile's normals over its neighbour's ground. Premultiply,
+        # resize each channel as float, un-premultiply: edge values stay true,
+        # and the erode -- and everything it was covering for -- goes away.
+        arr = np.asarray(n, dtype=np.float32)
+        al = arr[:, :, 3:4] / 255.0
+        sz = (max(1, round(n.width * nrm_scale)),
+              max(1, round(n.height * nrm_scale)))
+        def fres(ch):
+            return np.asarray(Image.fromarray(ch, "F").resize(sz, Image.LANCZOS),
+                              dtype=np.float32)
+        pr = [fres(arr[:, :, k] * al[:, :, 0]) for k in range(3)]
+        aa2 = fres(arr[:, :, 3])
+        safe = np.maximum(aa2 / 255.0, 1e-4)
+        out4 = np.stack([np.clip(pr[0] / safe, 0, 255),
+                         np.clip(pr[1] / safe, 0, 255),
+                         np.clip(pr[2] / safe, 0, 255),
+                         np.clip(aa2, 0, 255)], axis=2)
+        n = Image.fromarray((out4 + 0.5).astype(np.uint8), "RGBA")
     n.save(os.path.join(out, stem + "_NRM.webp"), "WEBP",
-           lossless=True, quality=100, method=method)
+           lossless=True, quality=100, method=method, exact=True)
 
     # ---- height: one value, lossless, full resolution. This is a depth buffer,
     # not a picture -- but it still needs the mask, for the same reason.
-    hl = Image.open(ph).convert("RGBA").crop(box).convert("L")
     h = Image.merge("RGBA", (hl, hl, hl, data_alpha))
+    # exact=True or the encoder ZEROES RGB under alpha-0 texels -- and the
+    # runtime samples these LINEAR, so a zeroed height next to the cut decodes
+    # toward world z -4 and the seam comes back as a half-texel dark line.
+    # Measured: default webp returns (0,0,0,0) where exact returns the value.
     h.save(os.path.join(out, stem + "_H.webp"), "WEBP",
-           lossless=True, quality=100, method=method)
+           lossless=True, quality=100, method=method, exact=True)
 
     after = sum(os.path.getsize(os.path.join(out, stem + s + ".webp"))
                 for s in ("", "_NRM", "_H"))
