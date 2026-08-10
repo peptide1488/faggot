@@ -70,7 +70,9 @@ from PIL import Image, ImageFilter
 _SXU = 640.0 / (4.0 * (2.0 ** 0.5)) * (0.5 ** 0.5)     # 80 px per (wx+wy)
 _SYU = _SXU * 0.5                                       # 40 px per (wx-wy)
 _ZPX = 640.0 / (4.0 * (2.0 ** 0.5)) * (3.0 ** 0.5) / 2  # ~98 px per world z
-_CELL, _DELTA = 2.0, 0.012      # cell half-extent; ~1px of deliberate overlap
+_CELL, _DELTA = 2.0, 0.012      # cell half-extent; ~2px of deliberate overlap
+                                # (0.04 was tried: black-speck count 642 -> 647,
+                                #  so the specks are NOT a rounding gap in the cut)
 _HOFF, _HRANGE = 4.0, 8.0       # build_tiles HEIGHT_OFF / HEIGHT_RANGE
 
 
@@ -191,6 +193,25 @@ def pack_one(job):
                          np.clip(pr[1] / safe, 0, 255),
                          np.clip(pr[2] / safe, 0, 255),
                          np.clip(aa2, 0, 255)], axis=2)
+        # COVERAGE MUST SURVIVE THE HALVING. A resized mask shrinks by up to a
+        # texel, and the runtime samples the half-res normal LINEAR -- so a
+        # full-res pixel near any boundary got PARTIAL normal alpha, blended
+        # toward the cleared buffer, and a cleared normal decodes through
+        # rgb*2-1 to a direction facing away from the light: black. Invisible at
+        # 1:1, 45 luma deep magnified, and 46,880 px per set by invariant C.
+        # The old code ERODED here, which is the same mistake pointing the other
+        # way. Threshold instead: any texel with real coverage keeps it, so the
+        # upscale spans the whole footprint. The silhouette is hard-edged now,
+        # which is what the height pass has always been -- this is a data pass,
+        # not a picture, and the albedo still carries the antialiased outline.
+        # Threshold, then DILATE by one half-res texel. Thresholding alone left
+        # 3,558 px uncovered (invariant C): a half-res texel upscales to two
+        # full-res ones, so coverage has to extend a texel PAST the footprint to
+        # span it after the LINEAR upscale, not merely reach it.
+        out4[:, :, 3] = np.where(out4[:, :, 3] > 8.0, 255.0, 0.0)
+        am = Image.fromarray(out4[:, :, 3].astype(np.uint8), "L")
+        am = am.filter(ImageFilter.MaxFilter(3))
+        out4[:, :, 3] = np.asarray(am, dtype=np.float32)
         n = Image.fromarray((out4 + 0.5).astype(np.uint8), "RGBA")
     n.save(os.path.join(out, stem + "_NRM.webp"), "WEBP",
            lossless=True, quality=100, method=method, exact=True)

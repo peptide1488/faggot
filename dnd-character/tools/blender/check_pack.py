@@ -96,6 +96,7 @@ def check(packdir):
     tiles = man["tiles"]
     over_bad = {}
     dead_bad = {}
+    nrm_bad = {}
     rt_done = False
 
     for stem in sorted(tiles):
@@ -103,6 +104,10 @@ def check(packdir):
         dx, dy = e[0], e[1]
         alb = np.asarray(img(stem, "a", "").convert("RGBA"), dtype=np.uint8)
         hgt = np.asarray(img(stem, "h", "_H").convert("RGBA"), dtype=np.uint8)
+        nrm_im = img(stem, "n", "_NRM").convert("RGBA")
+        if nrm_im.size != (alb.shape[1], alb.shape[0]):
+            nrm_im = nrm_im.resize((alb.shape[1], alb.shape[0]), Image.BILINEAR)
+        nrm = np.asarray(nrm_im, dtype=np.uint8)
         if alb.shape != hgt.shape:
             print("SIZE MISMATCH", stem); continue
         z = hgt[:, :, 0].astype(np.float32) / 255.0 * bt.HEIGHT_RANGE - bt.HEIGHT_OFF
@@ -151,6 +156,15 @@ def check(packdir):
         n_dead = int(((aa >= 250) & (d < CELL - TOL_IN) & (ha < 250)).sum())
         if n_dead:
             dead_bad[stem] = n_dead
+        # ---- invariant C: the NORMAL has to be there too. B checked the height
+        # only, and the two masks are not the same: the normal is stored at half
+        # resolution and its alpha is built by a different path, so it can be
+        # absent where the height is present. A cleared normal decodes through
+        # rgb*2-1 to a direction pointing away from the light and shades BLACK --
+        # which is what the surviving magnified seam specks are made of.
+        n_nrm = int(((aa >= 250) & (d < CELL - TOL_IN) & (nrm[:, :, 3] < 250)).sum())
+        if n_nrm:
+            nrm_bad[stem] = n_nrm
 
     n = len(tiles)
     print("\n%s: %d tiles" % (packdir, n))
@@ -160,11 +174,16 @@ def check(packdir):
     print("  B  dead zone (opaque albedo, no height, inside cell-%.2f): %d tiles, %d px%s"
           % (TOL_IN, len(dead_bad), sum(dead_bad.values()),
              "" if dead_bad else "   -- none"))
+    print("  C  missing normal (opaque albedo, no normal, inside cell-%.2f): %d tiles, %d px%s"
+          % (TOL_IN, len(nrm_bad), sum(nrm_bad.values()),
+             "" if nrm_bad else "   -- none"))
+    for name, cnt in sorted(nrm_bad.items(), key=lambda kv: -kv[1])[:4]:
+        print("       worst C: %-40s %d px" % (name, cnt))
     for name, cnt in sorted(dead_bad.items(), key=lambda kv: -kv[1])[:4]:
         print("       worst B: %-40s %d px" % (name, cnt))
     for name, cnt in sorted(over_bad.items(), key=lambda kv: -kv[1])[:4]:
         print("       worst A: %-40s %d px" % (name, cnt))
-    return len(over_bad), len(dead_bad)
+    return len(over_bad), len(dead_bad) + len(nrm_bad)
 
 
 if __name__ == "__main__":
