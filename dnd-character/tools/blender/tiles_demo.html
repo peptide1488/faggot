@@ -2039,6 +2039,7 @@ document.getElementById("ver").textContent=VERSION;
     uniform vec2 uRes,uOrigin,uPan,uVP;
     uniform float uZoom;
     uniform float uPPU,uAmb,uMode,uHoff,uHrange,uCam,uShadow;
+    uniform vec4 uBoard;      // interior of the map in world units, for the wet-cliff test
     uniform vec3 uSunDir, uSunCol, uAmbCol, uFogCol;
     uniform float uFog, uFogHeight;
     uniform vec3 uWaterCol;
@@ -2440,8 +2441,19 @@ document.getElementById("ver").textContent=VERSION;
       // way round its outer edge. Water lies on things you could stand on, which
       // is generous enough for a shelving beach and mean enough for a cliff face.
       float wdep = uWaterZ - hgt;
-      if(which==0 && !empty && nrm.z>0.35 && hgt>uWaterFloor && wdep>-0.07){
-        vec2 wp = worldAt(P,hgt);
+      vec2 wp = worldAt(P,hgt);
+      // STEEP SURFACES DROWN TOO. The nrm.z>0.35 guard exists for exactly one
+      // pixel population: the board's outer skirt, a vertical curtain that
+      // reaches below the water line even on ordinary ground, and without the
+      // guard the map wears a blue hem. But the guard as written kept EVERY
+      // steep surface dry -- raise the level over a cliff and its face stayed
+      // bone-dry rock in the middle of a lake, with wet stripes wherever a
+      // ledge poked past 0.35. The discriminator the hem actually needs is not
+      // slope, it is PLACE: the hem lives at the cut edge of the world, so
+      // steep pixels inside the board get water and the outer margin keeps the
+      // old rule. Chasms stay dry either way -- uWaterFloor already says so.
+      bool inboard = wp.x>uBoard.x && wp.x<uBoard.z && wp.y>uBoard.y && wp.y<uBoard.w;
+      if(which==0 && !empty && (nrm.z>0.35 || inboard) && hgt>uWaterFloor && wdep>-0.07){
         float amp = uWater;
         // THE SWELL MOVES THE SHORELINE, which is why the guard above admits
         // pixels that are slightly DRY: they are dry in the trough and wet under
@@ -4527,6 +4539,11 @@ document.getElementById("ver").textContent=VERSION;
     wlevout.textContent=" "+WATER_SURFACE.toFixed(2);
     gl.uniform1f(U("uWaterZ"),WATER_SURFACE);
     gl.uniform1f(U("uWaterFloor"),WATER_FLOOR);
+    // The board interior, minus a margin the width of the outer skirt: steep
+    // pixels outside it keep the dry-hem rule. Frame: cell (0,0) centre is the
+    // origin, +X = i, -Y = j, a tile spans +-2.
+    { const m=0.35;
+      gl.uniform4f(U("uBoard"), -2+m, -((RIFT_H*4-2))+m, (RIFT_W*4-2)-m, 2-m); }
     { const w=tint(watcol.value);
       gl.uniform3f(U("uWaterCol"), w[0], w[1], w[2]); }
     gl.uniform1f(U("uWaterClear"), wclear.value/100);
