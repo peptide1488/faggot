@@ -815,3 +815,22 @@ the instrument to build is a field-vs-squareZ diff over the outermost ring.
 Still open beyond that: far-edge occlusion (reproduce before designing),
 foam speckle recheck, a bench button for real-GPU numbers, fold-repair
 polish, goblin ears, third mire variant, turning crossings.
+
+## Correction to the column-11 clue, same day
+
+The board-wide field-vs-squareZ instrument CONFOUNDS the signal: the field is
+bare ground and the art adds crag scatter, so every transition piece flags at
+plus-or-minus a full STEP and the "bad tile" map lights up everywhere (col 11:
+12 tiles, but col 9: 9 and col 0: 6 -- not an edge signature). The column-11
+hypothesis is WEAKENED, not confirmed. What is still true: seed 9 (11,10) has
+squares reading BED height where the lane climbs, which crags cannot explain
+(a boulder raises a sample, it cannot lower one), and the unreachable peaks
+sit at 11,6-8.
+
+The next instrument must compare the composite against the PACKED H ART
+sampled at square centres (which includes the crags), not against the field.
+Build that before believing anything else about this bug. And note the crag
+gate only clears mud>=0.25: the lane SHOULDERS (m 0.03-0.25) still take
+boulders, which is probably half of the remaining standability noise on
+climbing pieces -- widening the gate to the full lane falloff (mud<0.05 test
+or lane-distance test) is a one-line experiment worth running first.
