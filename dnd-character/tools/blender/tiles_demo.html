@@ -385,7 +385,7 @@ function buildSocketVariants(man){
   return SVAR.length;
 }
 
-function seedPath(dom, propagate, W, H, want, down, wobble, joined, out){
+function seedPath(dom, propagate, W, H, want, down, wobble, joined, out, noturn){
   const idx=(i,j)=>j*W+i;
   const N=SVAR.length;
   // ONE ORTHOGONAL STEP AT A TIME. The first version advanced along the span and
@@ -399,10 +399,26 @@ function seedPath(dom, propagate, W, H, want, down, wobble, joined, out){
   let a = 0, c = 1 + ((rnd()*(cross-2))|0);
   path.push(cell(a, c));
   let guard = 0;
+  // A ROAD CROSSES A RIVER STRAIGHT. `noturn` is the set of cells within one
+  // cell of the river line, and the wobble is refused there: a turn at the
+  // water cell leaves only the BEND ford in its domain -- measured, seven of
+  // twelve seeds' crossing cells held exactly ford-0562 and nothing else -- and
+  // a turn at the bank cell prunes the approaches the same way, since a span
+  // and its approaches are straight-through pieces. The rolls still spend so
+  // the stream stays comparable.
+  const near1 = (i,j)=>{ if(!noturn) return false;
+    for(let dj=-1;dj<=1;dj++) for(let di=-1;di<=1;di++)
+      if(noturn.has((i+di)+","+(j+dj))) return true;
+    return false; };
   while(a < span-1 && guard++ < span*4){
     if(rnd() < wobble){
       const nc = c + (rnd()<0.5 ? -1 : 1);
-      if(nc >= 1 && nc <= cross-2){ c = nc; path.push(cell(a, c)); continue; }
+      if(nc >= 1 && nc <= cross-2){
+        const cur = cell(a, c), tgt = cell(a, nc);
+        if(!near1(cur[0],cur[1]) && !near1(tgt[0],tgt[1])){
+          c = nc; path.push(cell(a, c)); continue;
+        }
+      }
     }
     a++; path.push(cell(a, c));
   }
@@ -560,7 +576,8 @@ function socketWfc(W,H,tries=300){
     const river=[];
     if(!seedPath(dom, propagate, W, H, isWater, riverDown, 0.30, false, river)){ rej.river++; continue; }
     const road=[];
-    if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true, road)){ rej.road++; continue; }
+    const riverKeys=new Set(river.map(([i,j])=>i+","+j));
+    if(!seedPath(dom, propagate, W, H, isTrack, !riverDown, 0.30, true, road, riverKeys)){ rej.road++; continue; }
     // A BRIDGE ONLY WHERE THE ROAD IS. Admitting the span to the river seed put it
     // anywhere the river ran, and it went to the MAP EDGE almost every time -- for
     // a structural reason worth keeping: in the interior a `W+B` edge has to be
@@ -639,21 +656,37 @@ function socketWfc(W,H,tries=300){
     // Do not expect a cutoff sweep to be monotonic: the stream diverges the
     // instant a crossing actually lands, so two cutoffs are two different
     // experiments. 0.25 measured WORSE than 0.5 and no better than always-on.
-    if(rnd() < 0.5 && attempt < tries*0.5){
+    // EVERY MAP GETS A CROSSING IT CAN WALK, or proves it cannot. This used to
+    // be a coin flip -- half of all maps got no bridge or causeway on purpose --
+    // which made sense when a ford was walkable and stopped making sense the day
+    // it was not: a ford is 0 of 64 squares standable, so on the unseeded half
+    // the road ran to the river, continued as ford ART, and quietly stopped
+    // being a road. The map lied. Now every attempt below the cutoff tries to
+    // place a span, at EVERY cell where the road meets the river rather than
+    // only the first -- a cell can refuse (its neighbourhood may not fit the
+    // approaches) while the next one over accepts, and giving up after one try
+    // was leaving crossings unbuilt that the sockets allowed.
+    // Whether it lands as a bridge or a causeway stays with the piece weights.
+    let crossTry='skipped';
+    if(attempt < tries*0.5){
+      crossTry='nocell';
       const onRiver=new Uint8Array(W*H);
       for(const [ri,rj] of river) onRiver[rj*W+ri]=1;
-      const save=dom.map(d=>new Set(d));
       for(const [i,j] of road){
         const n=idx(i,j);
         if(!onRiver[n]) continue;
         const keep=[...dom[n]].filter(v=>SVAR[v].role==="span");
-        if(!keep.length) continue;
+        if(!keep.length){
+          if(crossTry==='nocell')
+            crossTry='nospan:'+[...dom[n]].slice(0,5).map(v=>SVAR[v].name.replace(/^[^-]+-/,'')+'r'+SVAR[v].rot).join(',');
+          continue; }
+        const save=dom.map(d=>new Set(d));
         dom[n]=new Set(keep);
-        // A failure here is not a bad map, it is a river this road cannot bridge.
-        // Put the board back and let it wade across, rather than throwing away an
-        // attempt that was fine.
-        if(!propagate([[i,j]])) for(let m=0;m<W*H;m++) dom[m]=save[m];
-        break;
+        // A refusal here is not a bad map, it is a cell this road cannot bridge.
+        // Put the board back and offer the next crossing cell instead.
+        if(propagate([[i,j]])){ crossTry='placed'; break; }
+        crossTry='refused';
+        for(let m=0;m<W*H;m++) dom[m]=save[m];
       }
     }
     // ORDER MATTERS. The mask above shrinks every domain off the river, and
@@ -758,7 +791,7 @@ function socketWfc(W,H,tries=300){
           for(let j=0;j<H;j++){ run = wet(j*W+i) ? run+1 : 0; if(run>worst) worst=run; } }
         if(worst > 2){ rej.wide++; continue; }
       }
-      accepted = {attempt, land, high, water, ways};
+      accepted = {attempt, land, high, water, ways, cross: crossTry};
     }
     // Publish which attempt was taken and why: "the map is flat" and "the map was
     // rejected 119 times and the fallback ran" look identical from the outside.
