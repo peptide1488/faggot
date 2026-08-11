@@ -1496,16 +1496,42 @@ def _scarp(u, v, seed, sides, join="max", run=1.0, shelf=1.0):
     return max(vals) if join == "max" else min(vals)
 
 
-def _ramp(u, v, seed, side):
+RAMP_PEAK = 0.85         # steepest gradient a climb profile may reach: just
+                         # under STAND_SLOPE's 0.95, leaving room for relief
+
+
+def _ramp(u, v, seed, side, span=None):
     """A walkable slope: the ground climbs across the WHOLE tile, so there is no
     face to scramble. A scarp is the wall; this is the way round it.
 
     Eased at both ends, not linear. A straight ramp meeting flat ground matches in
     height but not in GRADIENT, and that leaves a crease along the seam that reads
-    as a step even though the heights agree to the millimetre."""
+    as a step even though the heights agree to the millimetre.
+
+    `span` is the climb in world units, and it picks the PROFILE. The smoothstep
+    concentrates its slope mid-tile -- peak 1.875x the mean -- which is exactly
+    calibrated for one STEP: 1.875 * 1.8/4 = 0.84, a hair under the stand limit.
+    At the (-1,1) family's 2.75 the same ease peaks at 1.29, so the middle of
+    every cliff-climbing lane was unwalkable BY CONSTRUCTION: causeway-0630
+    measured 4 of 16 squares standable and disconnected, and track-0563 has
+    carried the same defect since it was built. For those spans the profile is a
+    trapezoidal derivative instead -- still zero slope at both ends, so the seam
+    contract holds, but flat-topped at span/4/(1-f), with the blend fraction f
+    chosen so the plateau sits at RAMP_PEAK."""
     t = {"Y+": v, "Y-": 1.0 - v, "X+": u, "X-": 1.0 - u}[side]
     a = {"Y+": u, "Y-": 1.0 - u, "X+": v, "X-": 1.0 - v}[side]
-    s = _sstep(t)
+    span = STEP if span is None else span
+    if 1.875 * span / SIZE <= RAMP_PEAK:
+        s = _sstep(t)
+    else:
+        f = max(0.05, 1.0 - span / (SIZE * RAMP_PEAK))
+        P = 1.0 / (1.0 - f)                  # plateau slope in profile units
+        if t < f:
+            s = P * t * t / (2.0 * f)
+        elif t <= 1.0 - f:
+            s = P * (t - f / 2.0)
+        else:
+            s = 1.0 - P * (1.0 - t) * (1.0 - t) / (2.0 * f)
     return s + 0.06 * s * (1.0 - s) * (_fbm1(a, SEAM_SEED + 41, 2, 3) - 0.5) * 2.0
 
 
@@ -1626,14 +1652,14 @@ def field_step(seed, sides, z_lo=0.0, z_hi=None, join="max", ramp=None,
 
     def f(u, v):
         if ramp:
-            s = _ramp(u, v, seed, ramp)
+            s = _ramp(u, v, seed, ramp, z_hi - z_lo)
             steep = 0.0
         else:
             s = _scarp(u, v, seed, sides, join, run, shelf)
             steep = 4.0 * s * (1.0 - s)
             if channel > 0.0:
                 cut = _lane(u, v, [sides[0], _opposite(sides[0])])
-                r = _ramp(u, v, seed, sides[0])
+                r = _ramp(u, v, seed, sides[0], z_hi - z_lo)
                 s = s + (r - s) * cut
                 # RELIEF HAS TO BE DAMPED ON THE RAMP TOO, not just on the face it
                 # replaces. `steep` exists to stop ground noise being added to a
@@ -1725,14 +1751,14 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
         # the lane to exactly 0.95 -- passing by nothing, one noise sample from
         # failing. Relief and rut are damped by the ramp's own steepness now, the
         # same way `field_step` damps them on the face this replaces.
-        r = _ramp(u, v, seed, sides[0]) if sides else 0.0
+        r = _ramp(u, v, seed, sides[0], z_hi - z_lo) if sides else 0.0
         climb = max(mud, _lane(u, v, arms)) if sides else 0.0
         steep = 4.0 * r * (1.0 - r) * climb
         z = (_ground(u, v, seed, MEADOW_RELIEF)
              * (1.0 - 0.6 * mud) * (1.0 - 0.85 * steep) + z_lo)
         z -= PATH_CUT * mud * (1.0 - 0.7 * steep)
         if ramp:
-            z += (z_hi - z_lo) * _ramp(u, v, seed, ramp)
+            z += (z_hi - z_lo) * _ramp(u, v, seed, ramp, z_hi - z_lo)
         elif sides:
             s = _scarp(u, v, seed, sides, join, run, shelf)
             # CUT BY THE LANE, PAINTED BY THE MUD. These were the same mask, so the

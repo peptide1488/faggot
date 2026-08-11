@@ -2003,7 +2003,17 @@ document.getElementById("ver").textContent=VERSION;
   let sqSlope=null;                   // ...and how steep it is there, same pass
   // How far up you can step. About a third of a level: enough for a bank or the lip
   // of a ford, nowhere near enough for a scarp.
-  const CLIMB = 0.62;
+  // 0.90, up from 0.62 -- and 0.62 meant NO eased climb was ever passable. A
+  // smoothstep over one tile puts sstep(0.625)-sstep(0.375) = 0.45 of the span
+  // into the middle square step: 0.81 world for a STEP of 1.8, measured 0.72 on
+  // a live ramp lane. Every ramp, climbing track and causeway bank failed the
+  // step test at mid-slope while standable() said yes -- which is why the HUD's
+  // reachable count always excluded the plateaus. Nothing ever verified a BFS
+  // *up* a ramp; the ramp session verified standability and a BFS across the
+  // (flat) bridge deck. 0.90 sits under STAND_SLOPE's 0.95, so what you may
+  // step up is what you may stand on; a cliff face is 1.3-1.8 per square and
+  // stays blocked. Only socket sets read CLIMB -- dungeons use walls.
+  const CLIMB = 0.90;
   // How steep the ground under a square may be and still hold a person, as a
   // gradient (rise per world unit). 1.0 is 45 degrees. build_tiles.py starts
   // turning grass to rock at 0.75 and is fully rock by ~2.1, so this sits just
