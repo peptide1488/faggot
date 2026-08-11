@@ -2080,6 +2080,7 @@ document.getElementById("ver").textContent=VERSION;
     uniform float uZoom;
     uniform float uPPU,uAmb,uMode,uHoff,uHrange,uCam,uShadow;
     uniform vec4 uBoard;      // interior of the map in world units, for the wet-cliff test
+    uniform float uKit;       // 1 = outdoor set, 0 = dungeon (wall contract)
     uniform vec3 uSunDir, uSunCol, uAmbCol, uFogCol;
     uniform float uFog, uFogHeight;
     uniform vec3 uWaterCol;
@@ -2500,7 +2501,14 @@ document.getElementById("ver").textContent=VERSION;
       // dry-looking grass. So in the shallow band, flat ground snaps dry: a
       // beach keeps its wash because a beach SHELVES (its normal leans), and
       // anything genuinely deeper than the band floods regardless.
-      bool committed = wdep > 0.10 || nrm.z < 0.97;
+      // OUTDOOR ONLY. A dungeon floor is EXACTLY flat (the mortar bed), so a
+      // level a few centimetres above it put the whole floor under the 0.10
+      // band and the clamp snapped every room dry -- while the brick BEVELS
+      // lean past the flatness test and flooded, which dressed every wall edge
+      // in a wet film over bone-dry rooms. Flat-and-shallow is only ambiguous
+      // where relief NOISE crosses the level; on true architecture a shallow
+      // sheet over the whole floor is the correct, uniform answer.
+      bool committed = uKit < 0.5 || wdep > 0.10 || nrm.z < 0.97;
       if(which==0 && !empty && (nrm.z>0.35 || inboard) && hgt>uWaterFloor && wdep>-0.07 && committed){
         float amp = uWater;
         // THE SWELL MOVES THE SHORELINE, which is why the guard above admits
@@ -4606,6 +4614,7 @@ document.getElementById("ver").textContent=VERSION;
     // origin, +X = i, -Y = j, a tile spans +-2.
     { const m=0.35;
       gl.uniform4f(U("uBoard"), -2+m, -((RIFT_H*4-2))+m, (RIFT_W*4-2)-m, 2-m); }
+    gl.uniform1f(U("uKit"), (MAN && MAN.kit==="outdoor") ? 1.0 : 0.0);
     { const w=tint(watcol.value);
       gl.uniform3f(U("uWaterCol"), w[0], w[1], w[2]); }
     gl.uniform1f(U("uWaterClear"), wclear.value/100);
