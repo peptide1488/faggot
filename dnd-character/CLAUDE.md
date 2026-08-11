@@ -41,18 +41,10 @@ listener setup) in index.html untouched, in its original relative order.
 page — a real gotcha, not a stylistic choice; keep any future module file in that same
 concatenated eval, don't eval it alone).
 
-**Extraction methodology, if you ever do this again**: two hand-rolled line-position heuristics
-both produced real, silent corruption before this shipped — a bare top-level statement between
-two functions got swept into the wrong one, and a dedented closing `); }` from a multi-line
-arrow-function chain (`WIZ_BASE.filter(s=>\n ... \n); }`) got misread as a new top-level
-statement, truncating the function it belonged to. Both were caught by actually running the
-test suite against the extraction, not by assuming a mechanical script's output was correct.
-The fix that actually worked: for each function's exact end line, grow a candidate end line one
-at a time and use Node's real parser (`new vm.Script(text)`) to check when the accumulated text
-first becomes syntactically valid — a function is complete the instant its own braces balance,
-so this is exact, not heuristic. Don't hand-roll a brace/string/template-literal tracker for
-this; it's a known-hard problem (regex-vs-division ambiguity, nested `${}` in template literals)
-that the real parser already solves correctly.
+**Extracting functions out of a big JS file**: two hand-rolled heuristics silently corrupted
+the source before this shipped, and the fix was Node's real parser rather than a better
+heuristic. The method and both failure shapes live in the `module-extraction` skill — read it
+before splitting a file, and before any task that needs to find where a function ends.
 
 **`data.js` ordering**: a few tables reference an earlier one in the same file (`MAP_PRESETS`
 syncs against `INTERACT_TYPES`; `SPRITE_MANIFEST` uses the `_SV`/`_s4` helpers declared just
@@ -165,17 +157,15 @@ usage burns tokens fast. Follow this order:
 > trust `whereis.js` over any prose here, and treat a mismatch as a bug in this file.
 
 Data tables (all live in `data.js` now, not index.html — see the modularization note above):
-- `CLASS_FEATURES` — per-class feature text by level; `RACE_TRAITS`, `RACE_ASI`, `RACE_SPEED`
-- `FIGHTING_STYLES`, `FIGHTING_STYLE_LEVEL`, `SUBCLASSES`, `CLASS_SAVES`, `CLASS_HITDIE`
-- `const WEAPONS=` — weapon catalog; `const ARMOR =` — armor table; `WEAPON_COST`, `ADV_GEAR`
-- `FEAT_DESC` / `FEAT_GRANTS` — feats and what they grant
-- `SPELL_SRC` — compressed spell list (name:classes:school per level)
+- Character/class/gear tables (`CLASS_FEATURES`, `RACE_*`, `FIGHTING_STYLES`, `SUBCLASSES`,
+  `CLASS_SAVES`, `CLASS_HITDIE`, `WEAPONS`, `ARMOR`, `WEAPON_COST`, `ADV_GEAR`, `FEAT_DESC`,
+  `FEAT_GRANTS`, `SPELL_SRC`) are plain content — `whereis.js` finds them, the name says what
+  they hold. Only the ones below carry something the name does not.
 - `SPELL_DESC` — one-line spell descriptions. **LOAD-BEARING PROSE**: `parseSpellMechanics`
   regex-parses these strings for save type ("Dex save"), damage dice, damage type, and
   attack-roll keywords (`ranged|melee|spell attack|attack roll|beam|ray|rays|bolt`), and
   heal keywords (`heal|heals|restore|restores|regain|temporary`). Wording changes change
   game mechanics — run the tests after any edit here.
-- `SPELL_EFFECTS` — trackable buffs {rounds (6s each), conc, mods{ac,speed,tempHp,…}}
 - `CONC_SPELLS` — concentration set; `SPELL_AOE` — blast radii in tiles (rulings in comment);
   `SPELL_COND` — conditions imposed; `BONUS_ACTION_SPELLS` / `REACTION_SPELLS` — cast times
 - `SPELL_TELEPORT` — teleport spells {tiles,los}; `teleportOk`/`openTeleportTarget` —
@@ -185,8 +175,9 @@ Data tables (all live in `data.js` now, not index.html — see the modularizatio
   `timeStopTurns`/`timeStopExtraTurn` — Time Stop extra turns (hooked in all 3 end-turn paths);
   `isIncapacitated`/`INCAP_CONDS` — turn-skipping conditions; `aiKey`/`aiNarrate` — AI Narrator
   (user's Anthropic key in localStorage `grimoire.aikey`, calls claude-opus-4-8 from browser)
-- `MONSTERS_5E` — bestiary {n,cr,ac,hp,spd,init,attacks,atk,…}; `MONSTER_RVI` — resist/vuln/imm
-- `TERRAIN` — tile properties (solid/opaque/diff/dmg/deadly); `MAP_PRESETS` — battle maps
+- `MONSTERS_5E` / `MONSTER_RVI` / `TERRAIN` / `MAP_PRESETS` — bestiary, resist-vuln-imm, tile
+  properties, battle maps. `TERRAIN` keys are load-bearing for movement (`solid`/`opaque`/
+  `diff`/`dmg`/`deadly`); the rest are content.
 
 Rules logic (**mostly** `rules.js`, but see the warning above — several of these are not):
 - `function canCast` (**net.js**) / `function castSpell` (**ui.js**) — action economy + slots +
