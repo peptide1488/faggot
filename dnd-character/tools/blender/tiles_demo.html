@@ -55,6 +55,7 @@
        it is up to the meadow. The set's own default arrives with its manifest. -->
   <label>water level <input id="wlev" type="range" min="-110" max="180" value="-20"><span id="wlevout"></span></label>
   <label>water colour <input id="watcol" type="color" value="#3f6f86"></label>
+  <label>liquid <select id="liq"><option value="0">water</option><option value="1">lava</option></select></label>
   <label>light bands <input id="bands" type="range" min="0" max="24" value="0"></label>
   <label>band dither <input id="bdith" type="range" min="0" max="100" value="0"></label>
   <!-- anti-alias defaults OFF: supersampling is a debugging aid here, not the
@@ -2086,7 +2087,8 @@ document.getElementById("ver").textContent=VERSION;
     uniform vec3 uWaterCol;
     uniform float uPixel,uLevels,uDither,uBands,uLightDither;
     uniform float uTime,uWater,uMaxH;
-    uniform float uWaterClear;   // how much of the bed comes through
+    uniform float uWaterClear;
+    uniform float uLava;      // 1 = the level is molten rock, not water   // how much of the bed comes through
     // G-BUFFER MODE. uAlb/uNrm/uHgt are either the whole map composited at art
     // resolution (uGBuf 0) or just what is on screen this frame (uGBuf 1). All
     // the maths above is in COMPOSITE space either way; only the lookup differs,
@@ -2474,6 +2476,7 @@ document.getElementById("ver").textContent=VERSION;
 
       // ---- water: flood everything that lies under the level ----------------
       float gloss=0.0;
+      float lavaMix=0.0; vec3 lavaCol=vec3(0.0);
       // Depth decides everything below, so it is computed first. Two guards, and
       // they are not the same guard. uWaterFloor keeps CHASMS dry -- see the
       // uniform. nrm.z>0.35 keeps the SKIRT dry: the curtain hanging off the
@@ -2518,6 +2521,24 @@ document.getElementById("ver").textContent=VERSION;
         float wh = waterHeight(wp,uTime)*amp;
         float d = wdep + wh;
         if(d>0.0){
+          if(uLava>0.5){
+          // LAVA IS THE SAME LEVEL WITH DIFFERENT PHYSICS, and that is the whole
+          // payoff of baking the beds dry: nothing about the tiles changes, the
+          // runtime just fills the same channels with something that glows. No
+          // transparency (molten rock is opaque), no fresnel, and the colour is
+          // EMISSIVE -- it is mixed in after the lighting pass, so a lava canal
+          // stays bright in a pitch-dark sewer. Crust forms where the depth
+          // runs out, exactly where water would have put its foam.
+            float churn = 0.5 + 0.30*sin(dot(wp,vec2(0.16,0.10))*1.3 + uTime*0.55)
+                              + 0.22*sin(dot(wp,vec2(-0.12,0.19))*2.1 - uTime*0.34);
+            vec3 melt = mix(vec3(0.42,0.07,0.015), vec3(1.0,0.46,0.07), clamp(churn,0.0,1.0));
+            melt *= 0.72 + 0.5*smoothstep(0.0,0.8,d);
+            float crust = smoothstep(0.16, 0.02, d);
+            melt = mix(melt, vec3(0.16,0.06,0.045), crust*0.85);
+            lavaCol = melt; lavaMix = 0.93;
+            nrm = vec3(0.0,0.0,1.0);
+            gloss = 0.0;
+          } else {
           nrm = waterNormal(wp,uTime,amp);
           // THE WATER'S COLOUR COMES FROM THE WORLD, NOT FROM THE TILE. It used to
           // modulate the baked albedo, and every mere tile bakes its own bed from
@@ -2578,6 +2599,7 @@ document.getElementById("ver").textContent=VERSION;
           // glitter unevenly.
           float fres=0.02+0.98*pow(1.0-max(dot(nrm,EYE),0.0),5.0);
           gloss = uWater*(0.30+3.2*fres);
+          }
         }   // ...else the crest has receded past this pixel and it is beach today
       }
 
@@ -2614,6 +2636,20 @@ document.getElementById("ver").textContent=VERSION;
           }
         }
       }
+      // ---- the abyss is bottomless -------------------------------------------
+      // A chasm used to show its floor: honest geometry at PIT depth, lit like
+      // everything else, boulders and all -- which reads as a big trench, not an
+      // abyss. Below uWaterFloor (the same line that already decides a hole
+      // holds no water) the world now falls off into dark: walls fade with
+      // depth and the floor is swallowed. The residual 6% keeps the deepest
+      // geometry a silhouette rather than a flat black stamp, and effects are
+      // added after this, so a fireball thrown into the pit still burns on the
+      // way down.
+      if(hgt < uWaterFloor){
+        lit *= 1.0 - 0.94*smoothstep(0.0, 1.6, uWaterFloor - hgt);
+      }
+      // Lava last: emissive, so neither the lighting nor the abyss may dim it.
+      lit = mix(lit, lavaCol, lavaMix);
       // ---- ghost through walls ----------------------------------------------
       // An actor standing on the far side of a wall vanished: the wall wins the
       // depth test, which is correct, and unhelpful -- the player cannot see
@@ -4618,6 +4654,7 @@ document.getElementById("ver").textContent=VERSION;
     { const w=tint(watcol.value);
       gl.uniform3f(U("uWaterCol"), w[0], w[1], w[2]); }
     gl.uniform1f(U("uWaterClear"), wclear.value/100);
+    gl.uniform1f(U("uLava"), +liq.value);
     gl.uniform1f(U("uMaxH"),sceneMaxH);
     gl.uniform1f(U("uTime"),clock);
     gl.uniform1f(U("uMode"),parseFloat(mode.value));
