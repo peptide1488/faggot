@@ -779,3 +779,39 @@ Found by handing the problem to a second model with the full elimination list.
 Worth repeating when a search stops converging: it read the FILES rather than
 my notes, and simulated the G-buffer pass in software from the packed inputs
 instead of diffing toggles at the end state.
+
+---
+
+# 2026-08-11 — plan execution: crossings, climbs, wet cliffs, and the column-11 clue
+
+Landed and verified this session (all pushed to origin, both branches):
+
+- EVERY map crosses its river (12/12; the road now crosses STRAIGHT -- a
+  wobble at the water left only the bend ford in the domain).
+- Climb profiles: trapezoidal derivative for spans past one STEP, and CLIMB
+  raised 0.62 -> 0.90 -- NO eased climb had ever passed the step test.
+  Plateaus are reachable for the first time (seed 9: 363 -> 1551 squares).
+- causeway-0630 cliff landing: crags gated off the lane (rock goes where it
+  is steep AND nobody walks), and the lane runs crown-to-land-edge with the
+  land value reconstructed analytically. Interior 0630s climb in 4 steps.
+- Drowned cliffs shade as underwater (uBoard: place, not slope, decides the
+  skirt hem).
+- A ramp for every plateau: post-solve swap of one straight scarp/crag per
+  rampless high region -- same sockets by design, no re-solve. Mechanism
+  verified (regions get their ramps); benefit NOT yet measured, because...
+
+**THE COLUMN-11 CLUE, for whoever picks this up.** Every remaining
+walkability failure this session clusters at the board's LAST column: seed
+9's 0630 at (11,10) has composited heights that are not its own art (bed
+where the field says mid-climb -- the r90 FIELD is verified clean), and seed
+1's unreachable peaks sit at (11,6..8) while identical pieces in the
+interior work. Something in the composite is wrong specifically at the
+board's front-outer edge. One suspect worth checking first: the pack's
+front-overshoot depth handicap is DISPLAYED at the outer rim (nothing
+covers it there), so the rim's height/slope data is deliberately 0.063 low
+-- probably not the whole story (measured slopes at 11,10 reach 2.3), but
+the instrument to build is a field-vs-squareZ diff over the outermost ring.
+
+Still open beyond that: far-edge occlusion (reproduce before designing),
+foam speckle recheck, a bench button for real-GPU numbers, fold-repair
+polish, goblin ears, third mire variant, turning crossings.

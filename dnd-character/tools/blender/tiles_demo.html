@@ -809,6 +809,46 @@ function socketWfc(W,H,tries=300){
                   walls:new Set(), level:v.band===1?1:0,
                   noStand:v.role==="liquid", upper:null, kind:""});
     }
+    // ---- A RAMP FOR EVERY PLATEAU, swapped in after the solve.
+    // The seeding places 2-4 slopes on the whole BOARD, not one per plateau, so
+    // a map with several high regions routinely left one ringed entirely by
+    // cliffs: measured, 5 of 17 high tiles unreachable on one seed with the
+    // step rule working perfectly. Weights cannot say "each region needs one".
+    // The tile set was built for exactly this repair: a ramp presents THE SAME
+    // SOCKETS as the straight scarp it replaces ("either can stand anywhere the
+    // other can"), so swapping one scarp per rampless region changes nothing
+    // the solver checked -- no re-solve, no propagation, just a rename.
+    {
+      const at2=(i,j)=>(i>=0&&i<W&&j>=0&&j<H)?cells[j*W+i]:null;
+      const isHigh=c=>c&&(c.role==="high_ground"||c.role==="peak");
+      const seen=new Set();
+      const SWAP={ "scarp-0200":"ramp-0230", "crag-0700":"ramp-0730" };
+      for(const c of cells){
+        if(!isHigh(c)||seen.has(c.j*W+c.i)) continue;
+        const region=[], st=[c]; seen.add(c.j*W+c.i);
+        while(st.length){ const q=st.pop(); region.push(q);
+          for(const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]){
+            const n=at2(q.i+di,q.j+dj);
+            if(isHigh(n)&&!seen.has(n.j*W+n.i)){ seen.add(n.j*W+n.i); st.push(n); } } }
+        let hasWay=false;
+        const ring=[];
+        for(const q of region) for(const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const n=at2(q.i+di,q.j+dj);
+          if(!n||isHigh(n)) continue;
+          if(n.role==="slope"||n.role==="track_slope") hasWay=true;
+          ring.push(n);
+        }
+        if(hasWay) continue;
+        for(const n of ring){
+          const short=n.name.replace(/^[^-]+-/,"");
+          const to=SWAP[short];
+          if(!to) continue;
+          n.name=n.name.replace(short,to);
+          n.role="slope";
+          break;
+        }
+      }
+    }
     return cells;
   }
   // NOTHING SURVIVED. Publish the tally anyway -- this is the case it exists for,
