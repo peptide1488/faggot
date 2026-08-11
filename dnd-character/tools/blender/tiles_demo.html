@@ -2493,7 +2493,15 @@ document.getElementById("ver").textContent=VERSION;
       // steep pixels inside the board get water and the outer margin keeps the
       // old rule. Chasms stay dry either way -- uWaterFloor already says so.
       bool inboard = wp.x>uBoard.x && wp.x<uBoard.z && wp.y>uBoard.y && wp.y<uBoard.w;
-      if(which==0 && !empty && (nrm.z>0.35 || inboard) && hgt>uWaterFloor && wdep>-0.07){
+      // COMMIT, DO NOT SPECKLE. The swash band exists so a SHORELINE washes in
+      // and out, and a shoreline is where ground with a gradient crosses the
+      // level. When the level sits inside a flat plain's relief noise, every
+      // pixel of the plain is 'shore' and the whole field grows foam blobs on
+      // dry-looking grass. So in the shallow band, flat ground snaps dry: a
+      // beach keeps its wash because a beach SHELVES (its normal leans), and
+      // anything genuinely deeper than the band floods regardless.
+      bool committed = wdep > 0.10 || nrm.z < 0.97;
+      if(which==0 && !empty && (nrm.z>0.35 || inboard) && hgt>uWaterFloor && wdep>-0.07 && committed){
         float amp = uWater;
         // THE SWELL MOVES THE SHORELINE, which is why the guard above admits
         // pixels that are slightly DRY: they are dry in the trough and wet under
@@ -2597,6 +2605,20 @@ document.getElementById("ver").textContent=VERSION;
             lit = mix(lit*vec3(0.62,1.30,0.72), vec3(0.25,1.0,0.42), line*0.55);
           }
         }
+      }
+      // ---- ghost through walls ----------------------------------------------
+      // An actor standing on the far side of a wall vanished: the wall wins the
+      // depth test, which is correct, and unhelpful -- the player cannot see
+      // their own character next to the far side of any wall, which is the
+      // longest-standing complaint about this renderer. A true cutaway would
+      // need the scene re-rendered without the wall; but every sprite is
+      // composited RIGHT HERE with its own depth, so the standard answer is
+      // nearly free: where a sprite lost to the scene, draw a cool-tinted
+      // silhouette over whatever beat it. The depth-gap gate keeps the floor an
+      // actor stands on from ghosting its own feet line -- that loss is by a
+      // hair, a wall's is by a wall.
+      if(sp.a>0.35 && which!=2 && (zSpr - zBest) > 0.5){
+        lit = mix(lit, sp.rgb*vec3(0.72,0.82,1.05)+vec3(0.05), 0.40);
       }
       // ---- fog ---------------------------------------------------------------
       // DISTANCE FROM THE CAMERA, which the depth buffer already knows: depthAt

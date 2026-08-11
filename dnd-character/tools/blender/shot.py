@@ -28,7 +28,11 @@ expr = opt("--eval")
 key = opt("--key")
 
 with sync_playwright() as pw:
-    b = pw.chromium.launch()
+    b = pw.chromium.launch(args=["--use-gl=angle", "--use-angle=d3d11"])  # real GPU via ANGLE/D3D11 -- headless defaults to
+        # SwiftShader, which rasterises ~60fps scenes on the CPU and once
+        # pegged the machine for 8 minutes; with these flags the headless
+        # browser uses the same GPU the desktop one does, and falls back to
+        # software by itself if the driver refuses
     pg = b.new_page(viewport={"width": 1600, "height": 900},
                     device_scale_factor=2)
     errs = []

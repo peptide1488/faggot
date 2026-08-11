@@ -30,7 +30,7 @@ PROBE = """(() => {
 })()"""
 
 with sync_playwright() as pw:
-    b = pw.chromium.launch(headless=not headed)
+    b = pw.chromium.launch(headless=not headed, args=["--use-gl=angle", "--use-angle=d3d11"])
     pg = b.new_page(viewport={"width": 1600, "height": 900}, device_scale_factor=2)
     bytes_by_kind = {}
     def on_response(r):
