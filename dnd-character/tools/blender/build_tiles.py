@@ -1778,6 +1778,35 @@ def field_track(seed, arms, sides=(), z_lo=0.0, z_hi=None, join="max", ramp=None
             # them -- a smoothstep ridge would clear the water on its centreline
             # only and carry no square at all.
             m = _lane(u, v, list(bar_arms))
+            if sides:
+                # THE BAR IS THE START OF THE RAMP, not a clamp under it. On a
+                # climbing bank the old composition flattened the water half at the
+                # crown and then squeezed the whole climb into the land half: the
+                # kink where clamp met climb measured a 0.99 step against CLIMB
+                # 0.90, and no RAMP_PEAK could fix it -- 0.75 still left 0.94,
+                # because the kink moves with the crossing, not with the peak.
+                # Anchoring the lane at the crown and climbing over the WHOLE tile
+                # gives (top - crown) = 1.94 over four units, and both seams keep
+                # their contract: the water edge is the flat crown exactly as the
+                # span's, the land edge the flat top, zero slope at each.
+                # The lane climbs from the CROWN to the LAND-EDGE VALUE THE NEIGHBOUR
+                # SHARES, and nothing else works. Two failed forms, both measured:
+                # topping out at the bare band height missed the rut and the border
+                # relief the neighbour carries (232 seam pairs off by PATH_CUT), and
+                # blending the composed z toward the crown sagged to -0.37 and then
+                # had to climb 1.03 in one square. So reconstruct the land edge
+                # exactly -- shared border ground, band, rut -- and run the profile
+                # between the two constants. Zero slope at both ends by construction.
+                le_u, le_v = {"Y+": (u, 1.0), "Y-": (u, 0.0),
+                              "X+": (1.0, v), "X-": (0.0, v)}[sides[0]]
+                mud1 = max(0.0, min(1.0, _arms(le_u, le_v, seed, arms, PATH_W)))
+                zl = (_ground(le_u, le_v, seed, MEADOW_RELIEF) * (1.0 - 0.6 * mud1)
+                      + z_hi - PATH_CUT * mud1)
+                r2 = _ramp(u, v, seed, sides[0], zl - bar)
+                zt = bar + (zl - bar) * r2
+                z += (zt - z) * m
+                mud = max(mud, m)
+                return z, mud
             lift = max(0.0, bar - z)
             z += lift * m
             # Painted as a road only where it IS one: taking m flat would widen
@@ -2118,7 +2147,13 @@ def add_crags(seed, sample, cap, base=0.0):
                 x += step
                 continue
             z, rock, mud = sample(px, py)
-            if rock > 0.42 and rng.random() < 0.88:
+            # ...AND NOBODY WALKS THERE. The sampler already says where the
+            # mud is, and the mud IS the lane: without this gate every climbing
+            # track and causeway bank got boulders scattered on its own road --
+            # seed 9's cliff landing measured 0.2/0.5/1.6 spikes on a lane
+            # whose field is a clean monotone climb, and every spike was a
+            # crag. Rock on the face, not on the path through it.
+            if rock > 0.42 and mud < 0.25 and rng.random() < 0.88:
                 r = rng.uniform(0.20, 0.40)
                 h = rng.uniform(0.45, 1.05)
                 _poly_rock("crag%d" % n, px, py, z - h * rng.uniform(0.45, 0.8),
