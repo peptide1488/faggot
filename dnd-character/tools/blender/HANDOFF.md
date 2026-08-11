@@ -834,3 +834,66 @@ gate only clears mud>=0.25: the lane SHOULDERS (m 0.03-0.25) still take
 boulders, which is probably half of the remaining standability noise on
 climbing pieces -- widening the gate to the full lane falloff (mud<0.05 test
 or lane-distance test) is a one-line experiment worth running first.
+
+---
+
+# 2026-08-11 (close) — session handoff: liquids, climbs, and what a fresh session must know
+
+Everything is committed AND pushed, both branches, through a990dac. The
+two-push deploy rule was honoured all day; nothing lives only on this disk.
+
+## Landed and user-verified
+- Every map crosses its river (12/12; roads cross STRAIGHT).
+- Plateaus climbable: CLIMB 0.62 -> 0.90, trapezoid climb profiles, crags
+  gated off lanes, causeway cliff-landing recomposed (interior copies climb
+  in 4 steps).
+- Wet cliffs (uBoard: place decides the skirt hem, not slope).
+- Shoreline speckle clamp -- OUTDOOR ONLY via uKit: a dungeon floor is
+  exactly flat and must flood as a uniform sheet ("water is working great").
+- The abyss: below water_floor the world fades to black; effects still burn
+  on the way down.
+- LAVA: liquid dropdown next to water colour. Same beds, same level, molten
+  and emissive. The dry-bed architecture made it ~an hour of work.
+- Headless captures now use the REAL GPU (--use-gl=angle --use-angle=d3d11
+  in shot.py / measure_load.py). SwiftShader once pegged the CPU for 8
+  minutes; do not run long interactive loops headless regardless.
+
+## Landed, compiles, NOT yet verified by eye
+- GHOST THROUGH WALLS: where a sprite loses the depth test by more than 0.5,
+  a cool-tinted silhouette draws over what beat it. Verify: stone set, walk
+  behind a wall. Tuning dials: the 0.5 depth gap, the 0.40 mix.
+
+## Open, with the accumulated clues (do not rediscover these)
+- (11,10) composite anomaly: squares read BED height where the lane climbs.
+  The field is PROVEN clean at r90; crags are gated; interior copies work.
+  Next instrument: composite vs PACKED ART at square centres (the field
+  comparison is confounded by crag scatter -- measured, documented above).
+- Seed 1 square-level stragglers (12/17 high tiles): tile-topology is
+  connected; the break is in standable/passable somewhere. Peaks at column
+  11 overlap the anomaly above.
+- Lava does not cast light on surroundings (wants a light-slot pass fed
+  from the liquid mask). Faint bed-seam lattice shows through lava crust
+  (the known ~2-luma residual, same family as the fold-repair item).
+- Polish tier: fold-repair for last magnified specks, goblin ears, third
+  mire variant, turning bridge/causeway pieces.
+- App side: Grimoire's rules-test.js FAILS at HEAD (TypeError 'toggle',
+  ui.js:8394 via the eval harness) -- predates everything here; will greet
+  the next app session.
+
+## Traps refreshed this session
+- tiles_demo.html and build_tiles.py have MIXED LINE ENDINGS. A python
+  patch with a multi-line literal can match in one read mode and not the
+  other: read with newline='' and tolerate \r?\n in regexes, or normalize
+  the file (tiles_demo.html is now fully LF). ASSERT EVERY REPLACE AND
+  WRITE PER PATCH -- an aborted multi-patch script once reported "patched"
+  from an earlier print while writing nothing (and a str.replace that
+  matched nothing shipped erode=6 for two days).
+- After ANY bake: check_seams + check_slopes + repack + check_pack. The
+  trio catches value, gradient, and delivery; each has a mutation-proven
+  control. After any repack the page needs no cache dance (no-store +
+  built-bust), but demo-test needs the MANIFEST rebaked to see new pieces.
+- The GLSL lives in a JS template literal: NO BACKTICKS in shader comments.
+
+The user is adding a new MCP (Higgsfield video gen -- see memory: free only
+with "unlimited" selected). Fresh session: read this section first, then
+MEMORY.md's pointers; distrust any note that contradicts the files.
