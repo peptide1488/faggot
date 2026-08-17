@@ -181,6 +181,18 @@
     <button id="btnShowcase">Load showcase map</button>
     <button id="btnHills">Load hills demo</button>
   </div>
+  <div class="row">
+    <button id="btnGenDungeon" title="Procedural dungeon: rooms, corridors, doors, torches, chasms">Generate dungeon</button>
+    <button id="btnGenOutdoor" title="Procedural outdoors: terrain, river, road+bridge, village, forest">Generate outdoors</button>
+    seed <input type="number" id="genSeed" value="1" style="width:64px">
+    <button id="btnGenReroll" title="New random seed, same kind">reroll</button>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="ambienceOn" checked> Ambience</label>
+    <input type="range" id="ambienceVol" min="0" max="100" value="35" style="width:70px"><span class="val" id="ambienceVolVal">35%</span>
+    <select id="sfxPreview"></select>
+    <button id="btnSfxPlay" title="Preview the selected sound effect">play sfx</button>
+  </div>
   <textarea id="jsonBox" rows="4"></textarea>
   <div class="row">
     Assets folder: <span id="assetsFolderLabel">(not connected)</span>
@@ -460,6 +472,11 @@ import { buildRollingHillsDemoMap } from './src/map.js';
 import { findPath } from './src/pathfinding.js';
 import { VoxelStore, fromLegacyMap, keyFor } from './src/voxel/store.js';
 import { buildShowcaseMap } from './src/voxel/showcaseMap.js';
+import { generateWorld } from './src/voxel/worldGen.js';
+import {
+  unlockAmbience, startAmbience, stopAmbience, currentAmbience,
+  setAmbienceMuted, setAmbienceVolume, playSfx, SFX_NAMES,
+} from './src/voxel/ambience.js';
 import { buildMesh, buildBoxMesh, buildDecalMesh, buildBillboardMesh, buildBillboardShadowMesh, buildMultiBoxMesh, sunDirToVoxelSpace, buildSpriteAOOccupancy } from './src/voxel/mesher.js';
 import { stepGas, stepLiquid, isGasType, isLiquidType, markSpreadDirty, LIQUID_MAX_LEVEL, clearGasInRadius, getGasCloudCells, tickGustCooldown, promoteLiquidBodyToSource, setWorldBoundsFromStore } from './src/voxel/spread.js';
 import {
@@ -939,10 +956,15 @@ const TOP_DOWN_PITCH = Math.PI / 2 - 0.001;
 let topDownMode = false;
 
 /** Swap the live stores for a showcase or hills demo and reset side-maps / camera. */
-function loadDemoMap(kind) {
+function loadDemoMap(kind, genSeed = 1) {
   const billboardTypes = Object.keys(BILLBOARD_TYPES);
-  if (kind === 'showcase') {
-    const built = buildShowcaseMap({ billboardTypes });
+  // 'showcase' and the two PROCEDURAL kinds all return the same {store, billboardStore,
+  // cam, notes} contract (see worldGen.js's header), so they share one branch — only the
+  // hills demo, which predates that contract and comes back as a legacy map, differs.
+  if (kind === 'showcase' || kind === 'dungeon' || kind === 'outdoor') {
+    const built = kind === 'showcase'
+      ? buildShowcaseMap({ billboardTypes })
+      : generateWorld(kind, genSeed, { billboardTypes });
     store = built.store;
     billboardStore = built.billboardStore;
     if (built.cam) {
@@ -951,7 +973,15 @@ function loadDemoMap(kind) {
       cam.rot = built.cam.rot;
       cam.zoom = built.cam.zoom;
     }
-    if (built.notes) console.log('Showcase map:\n - ' + built.notes.join('\n - '));
+    if (built.notes) console.log(`${kind} map:\n - ` + built.notes.join('\n - '));
+    // A generated dungeon is unreadable under the day sun (and an outdoor map is
+    // unreadable in dungeon light), so the lighting follows the map rather than making
+    // every generate a two-click operation.
+    if (kind === 'dungeon' || kind === 'outdoor') {
+      lightMode = kind === 'dungeon' ? 'dungeon' : 'day';
+      resetSunSliders();
+      applyAmbienceForMap(kind);
+    }
   } else {
     store = fromLegacyMap(buildRollingHillsDemoMap(32, 32));
     billboardStore = new BillboardStore();
@@ -998,6 +1028,62 @@ function loadDemoMap(kind) {
 
 document.getElementById('btnShowcase').addEventListener('click', () => loadDemoMap('showcase'));
 document.getElementById('btnHills').addEventListener('click', () => loadDemoMap('hills'));
+
+// --- Procedural world generation (src/voxel/worldGen.js) -----------------------------
+// Seeded, so a map worth keeping (or a map that shows a bug) can be reproduced exactly
+// by writing its number down — the reason worldGen uses mulberry32 over Math.random.
+const seedEl = document.getElementById('genSeed');
+let lastGenKind = 'dungeon';
+
+/** Start/stop the ambience bed to match the map kind, honouring the mute checkbox. */
+function applyAmbienceForMap(kind) {
+  lastGenKind = kind;
+  const on = document.getElementById('ambienceOn').checked;
+  if (!on) { stopAmbience(); return; }
+  unlockAmbience();
+  startAmbience(kind === 'dungeon' ? 'dungeon' : 'outdoor');
+}
+
+function generateInto(kind) {
+  unlockAmbience(); // this click is the user gesture that lets audio start at all
+  const seed = Math.max(0, Number(seedEl.value) || 0);
+  loadDemoMap(kind, seed);
+}
+
+document.getElementById('btnGenDungeon').addEventListener('click', () => generateInto('dungeon'));
+document.getElementById('btnGenOutdoor').addEventListener('click', () => generateInto('outdoor'));
+document.getElementById('btnGenReroll').addEventListener('click', () => {
+  seedEl.value = String(Math.floor(Math.random() * 100000));
+  generateInto(lastGenKind);
+});
+
+// --- Ambience + SFX (src/voxel/ambience.js) ------------------------------------------
+const ambOnEl = document.getElementById('ambienceOn');
+const ambVolEl = document.getElementById('ambienceVol');
+const ambVolVal = document.getElementById('ambienceVolVal');
+const sfxSelect = document.getElementById('sfxPreview');
+for (const name of SFX_NAMES) {
+  const opt = document.createElement('option');
+  opt.value = name;
+  opt.textContent = name;
+  sfxSelect.appendChild(opt);
+}
+ambOnEl.addEventListener('change', () => {
+  setAmbienceMuted(false);
+  if (ambOnEl.checked) applyAmbienceForMap(lastGenKind);
+  else stopAmbience();
+});
+function applyAmbVol() {
+  const v = Number(ambVolEl.value) / 100;
+  setAmbienceVolume(v);
+  ambVolVal.textContent = ambVolEl.value + '%';
+}
+ambVolEl.addEventListener('input', () => { unlockAmbience(); applyAmbVol(); });
+applyAmbVol();
+document.getElementById('btnSfxPlay').addEventListener('click', () => {
+  unlockAmbience();
+  playSfx(sfxSelect.value);
+});
 
 function resize() {
   const w = window.innerWidth;
