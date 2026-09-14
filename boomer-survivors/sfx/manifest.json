@@ -1,0 +1,103 @@
+{
+ "shoot": [
+  "shoot_0.ogg",
+  "shoot_1.ogg",
+  "shoot_2.ogg",
+  "shoot_3.ogg"
+ ],
+ "golf": [
+  "golf_0.ogg",
+  "golf_1.ogg",
+  "golf_2.ogg"
+ ],
+ "flag": [
+  "flag_0.ogg",
+  "flag_1.ogg",
+  "flag_2.ogg"
+ ],
+ "blower": [
+  "blower_0.ogg",
+  "blower_1.ogg"
+ ],
+ "grill": [
+  "grill_0.ogg",
+  "grill_1.ogg",
+  "grill_2.ogg"
+ ],
+ "check": [
+  "check_0.ogg",
+  "check_1.ogg",
+  "check_2.ogg"
+ ],
+ "coins": [
+  "coins_0.ogg",
+  "coins_1.ogg",
+  "coins_2.ogg"
+ ],
+ "hit": [
+  "hit_0.ogg",
+  "hit_1.ogg",
+  "hit_2.ogg",
+  "hit_3.ogg",
+  "hit_4.ogg",
+  "hit_5.ogg"
+ ],
+ "kill": [
+  "kill_0.ogg",
+  "kill_1.ogg",
+  "kill_2.ogg",
+  "kill_3.ogg",
+  "kill_4.ogg",
+  "kill_5.ogg"
+ ],
+ "xp": [
+  "xp_0.ogg",
+  "xp_1.ogg",
+  "xp_2.ogg",
+  "xp_3.ogg",
+  "xp_4.ogg",
+  "xp_5.ogg"
+ ],
+ "power": [
+  "power_0.ogg",
+  "power_1.ogg",
+  "power_2.ogg",
+  "power_3.ogg"
+ ],
+ "levelup": [
+  "levelup_0.ogg",
+  "levelup_1.ogg"
+ ],
+ "hurt": [
+  "hurt_0.ogg",
+  "hurt_1.ogg",
+  "hurt_2.ogg"
+ ],
+ "boom": [
+  "boom_0.ogg",
+  "boom_1.ogg",
+  "boom_2.ogg",
+  "boom_3.ogg"
+ ],
+ "lose": [
+  "lose_0.ogg",
+  "lose_1.ogg"
+ ],
+ "win": [
+  "win_0.ogg"
+ ],
+ "engine": [
+  "engine_0.ogg",
+  "engine_1.ogg"
+ ],
+ "select": [
+  "select_0.ogg",
+  "select_1.ogg",
+  "select_2.ogg"
+ ],
+ "mow": [
+  "mow_0.ogg",
+  "mow_1.ogg",
+  "mow_2.ogg"
+ ]
+}

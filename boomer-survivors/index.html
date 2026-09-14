@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BOOMER SURVIVORS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<style>
+  html,body{margin:0;height:100%;background:#0b0f0a;overflow:hidden;font-family:"Courier New",monospace;color:#fff}
+  #c{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+  #ver{position:fixed;top:4px;left:50%;transform:translateX(-50%);font:12px monospace;color:#8a8;opacity:.7;pointer-events:none}
+  #ui{position:fixed;inset:0;pointer-events:none}
+  .panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.86);border:4px solid #e8c54a;padding:24px 32px;text-align:center;pointer-events:auto;min-width:480px;box-shadow:0 0 0 4px #000}
+  .panel h1{font:bold 44px monospace;color:#e8c54a;margin:0 0 6px;letter-spacing:2px;text-shadow:3px 3px 0 #000}
+  .panel h2{font:bold 22px monospace;color:#fff;margin:6px 0}
+  .panel p{font:15px monospace;color:#ccc;margin:6px 0}
+  .btn{display:flex;align-items:center;gap:12px;width:100%;margin:8px 0;padding:10px;background:#1c2b17;border:3px solid #5a8a3a;color:#fff;font:bold 16px monospace;cursor:pointer;text-align:left;box-sizing:border-box}
+  .btn:hover{background:#2c4a22;border-color:#e8c54a}
+  .btn small{display:block;color:#9c9;font-weight:normal;margin-top:3px}
+  .btn .ico{width:44px;height:44px;flex:none;display:flex;align-items:center;justify-content:center;background:#000;border:2px solid #555}
+  .btn .ico img{image-rendering:pixelated;max-width:40px;max-height:40px}
+  .btn .ico span{font:bold 22px monospace;color:#e8c54a}
+  .k{color:#e8c54a}
+  #hud{position:absolute;left:12px;top:12px;font:bold 15px monospace;text-shadow:2px 2px 0 #000}
+  .bar{width:300px;height:14px;background:#222;border:2px solid #000;margin:3px 0;position:relative}
+  .bar>div{height:100%}
+  #hp>div{background:#d33}
+  #xp>div{background:#3a8ee6}
+  .bar b{position:absolute;right:4px;top:-2px;font:bold 12px monospace}
+  .slots{display:flex;gap:4px;margin-top:6px}
+  .slots .lab{width:38px;font:bold 11px monospace;color:#e8c54a;line-height:36px}
+  .slot{width:36px;height:36px;background:rgba(0,0,0,.75);border:2px solid #666;position:relative;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+  .slot.on{border-color:#e8c54a}
+  .slot img{image-rendering:pixelated;max-width:28px;max-height:28px}
+  .slot span.g{font:bold 15px monospace;color:#e8c54a}
+  .slot i{position:absolute;left:0;right:0;bottom:-1px;height:4px;display:flex;gap:1px;padding:0 2px}
+  .slot i b{flex:1;background:#e8c54a;height:100%}
+  .slot i b.off{background:#333}
+  .card{display:flex;align-items:center;gap:12px;margin:8px 0;padding:8px 10px;background:#1c2b17;border:3px solid #5a8a3a;text-align:left;font:bold 15px monospace}
+  .card .face{width:44px;height:60px;flex:none;background:#f4f4f4;border:2px solid #222;color:#222;display:flex;flex-direction:column;align-items:center;justify-content:center;font:bold 20px monospace;line-height:1}
+  .card .face.red{color:#c22} .card .face.j{color:#b8860b}
+  .card .face.art{width:76px;height:108px;background:transparent;border:0;position:relative}
+  .card .face.art img{image-rendering:pixelated;height:108px;width:auto}
+  .card .face.art b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font:bold 26px monospace;line-height:1;text-shadow:0 0 2px #fff}
+  .card .body{flex:1} .card small{display:block;font-weight:normal;margin-top:2px}
+  .card .plus{color:#8f4} .card .minus{color:#f66}
+  .card .acts{display:flex;flex-direction:column;gap:4px}
+  .card .acts button{font:bold 12px monospace;padding:4px 8px;background:#000;border:2px solid #5a8a3a;color:#fff;cursor:pointer}
+  .card .acts button:hover{border-color:#e8c54a}
+  .cols{display:flex;gap:16px;align-items:flex-start;text-align:left}
+  .col{flex:1;min-width:0;max-height:60vh;overflow-y:auto}
+  .col h3{font:bold 16px monospace;color:#e8c54a;margin:4px 0} .col h3 small{color:#888;font-weight:normal}
+  .col.hand{border-left:3px solid #5a8a3a;padding-left:16px}
+  .card.empty{border-style:dashed;border-color:#444;background:transparent} .face.empty{background:#222;border-color:#444}
+  .slot.card-slot{font:bold 13px monospace;color:#fff;flex-direction:column;line-height:1}
+  #handBtn img{image-rendering:pixelated;height:28px;vertical-align:middle;margin-right:6px}
+  #handBtn{pointer-events:auto;display:flex;align-items:center;margin-top:6px;background:#1c2b17;border:3px solid #5a8a3a;color:#fff;font:bold 13px monospace;padding:6px 10px;cursor:pointer;text-shadow:none}
+  #handBtn.has{border-color:#e8c54a;animation:pulse 1s infinite alternate}
+  @keyframes pulse{from{background:#1c2b17}to{background:#4a3a10}}
+  #stats{position:absolute;right:12px;top:12px;font:bold 16px monospace;text-align:right;text-shadow:2px 2px 0 #000}
+  #toast{position:absolute;left:50%;top:18%;transform:translateX(-50%);font:bold 28px monospace;color:#e8c54a;text-shadow:3px 3px 0 #000;opacity:0;transition:opacity .3s}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ver">v0.7.1</div>
+<div id="ui">
+  <div id="hud" hidden>
+    <div class="bar" id="hp"><div></div><b id="hpv"></b></div>
+    <div class="bar" id="xp"><div></div><b id="lvl"></b></div>
+    <div class="slots" id="slotsA"><div class="lab">WEAP</div></div>
+    <div class="slots" id="slotsP"><div class="lab">PASS</div></div>
+    <div class="slots" id="slotsC"><div class="lab">CARD</div></div>
+    <button id="handBtn" hidden><img src="sprites/card_stack.png"> HAND &nbsp;<span class="k">TAB</span></button>
+  </div>
+  <div id="stats" hidden></div>
+  <div id="toast"></div>
+  <div class="panel" id="title">
+    <h1>BOOMER SURVIVORS</h1>
+    <p>The HOA sent everyone. Mow them.</p>
+    <p><span class="k">WASD / arrows</span> drive &nbsp; <span class="k">SPACE</span> blades up/down &nbsp; <span class="k">P</span> pause</p><p>Blades down: mow, build turf, the deck shreds. Blades up: no mowing, no deck damage, nearly double speed.</p>
+    <p>Weapons fire on their own. Pick upgrades when you level up.</p><p style="color:#e8c54a">Enemies drop PLAYING CARDS. <span class="k">TAB</span> opens your hand: play a card for a permanent buff with a catch, or discard it.</p><p style="color:#8f4">Mowed grass is HOME TURF: you hit harder, heal, cool down faster and take less; enemies on it are slower and take more.</p>
+    <button class="btn" id="start"><span class="ico"><span>&#9654;</span></span><span>START MOWING</span></button>
+  </div>
+  <div class="panel" id="levelup" hidden>
+    <h2>LEVEL UP</h2><p>pick one (1 / 2 / 3)</p><div id="choices"></div>
+  </div>
+  <div class="panel" id="over" hidden>
+    <h1 style="font-size:36px">LAWN LOST</h1><div id="overstats"></div>
+    <button class="btn" id="again"><span class="ico"><span>&#8635;</span></span><span>TRY AGAIN</span></button>
+  </div>
+  <div class="panel" id="paused" hidden><h2>PAUSED</h2><p>press P</p></div>
+  <div class="panel" id="deck" hidden style="min-width:900px;max-width:96vw"><h2>CARDS</h2><p>Cards you pick up land in your DECK. Put a card in your HAND to turn it on: a buff and a catch, for as long as it stays there. Jokers fire once, straight from the deck.</p>
+    <p><span class="k">1-9</span> deck card to hand / use &nbsp; <span class="k">shift+1-9</span> discard &nbsp; <span class="k">Q W E R T</span> hand slot back to deck &nbsp; <span class="k">TAB</span> close</p>
+    <div class="cols"><div id="deckList" class="col"></div><div id="handList" class="col hand"></div></div></div>
+</div>
+<script>
+'use strict';
+// ============ PIXEL RULE: 1 art pixel = 1 world pixel, everywhere. Tile = 64. ============
+// Boomer on the mower = 2 tiles tall (128 art), enemies = 1 tile (64), tree = 2x2, house = 4x4.
+const TILE=64;
+let BOOMER_W=128;                  // 0 = draw the rotation art 1:1 (user's native 256 idle set = 4 tiles)
+const SPR = {};
+const SHEETS = { bobo:{size:96,frames:8}, zoomer:{size:96,frames:8} };
+const DIR8 = ['s','se','e','ne','n','nw','w','sw'];
+const STATIC = ['wang_lawn','tile_sidewalk','tile_driveway','tile_dirt','prop_tree','prop_house','prop_shrub',
+  'prop_pine','prop_hedge','prop_mailbox','prop_flamingo','prop_grill','prop_fence','prop_gnome','prop_chair','prop_hose','prop_bin','prop_birdhouse','prop_firewood','prop_gascan','prop_flagstick','prop_sprinkler','prop_pool','prop_dart','prop_cooler','pickup_dollar','pickup_cap','pickup_beer6','pickup_burger','pickup_vacuum','pickup_cash','pickup_coin','pickup_card','card_back','card_blank','card_stack','card_fan','card_sA','card_hK','card_dQ','card_cJ','card_j1','card_j2','card_s10','card_c7','card_h9','card_h5',
+  'proj_beer','proj_golfball','proj_whacker','proj_flag','proj_check','proj_coin','proj_blade','proj_log','proj_news','proj_dart', ...DIR8.map(d=>'boomer8_'+d), ...DIR8.map(d=>'b8_'+d)];
+function load(name){ return new Promise(r=>{ const i=new Image(); i.onload=()=>{SPR[name]=i;r(i)}; i.onerror=()=>{console.warn('missing',name); r(null)}; i.src='sprites/'+name+'.png'; }); }
+const loadAll = Promise.all([...STATIC, ...Object.keys(SHEETS).flatMap(k=>[k+'_down',k+'_up',k+'_side'])].map(load));
+
+// ---------- canvas: device pixels, integer zoom by the canvas (nearest), no CSS scaling ----------
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let VW=960, VH=540, zoom=2;
+function resize(){ const dpr=devicePixelRatio||1; cv.width=Math.round(innerWidth*dpr); cv.height=Math.round(innerHeight*dpr);
+  cv.style.width=innerWidth+'px'; cv.style.height=innerHeight+'px';
+  zoom=Math.max(2,Math.floor(cv.height/600)); VW=Math.ceil(cv.width/zoom); VH=Math.ceil(cv.height/zoom); ctx.imageSmoothingEnabled=false; }
+addEventListener('resize',resize); resize();
+
+// ---------- helpers ----------
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+function hash(x,y,s=0){ let h=(x*374761393+y*668265263+s*1274126177)|0; h=(h^(h>>13))*1274126177; h^=h>>16; return (h>>>0)/4294967296; }
+function toast(t){ const e=document.getElementById('toast'); e.textContent=t; e.style.opacity=1; clearTimeout(e._t); e._t=setTimeout(()=>e.style.opacity=0,1400); }
+function dir8(x,y){ const a=Math.atan2(y,x); let i=Math.round(((a-Math.PI/2)/(Math.PI*2))*8); i=((-i%8)+8)%8; return DIR8[i]; }
+const DV={s:[0,1],se:[.7,.7],e:[1,0],ne:[.7,-.7],n:[0,-1],nw:[-.7,-.7],w:[-1,0],sw:[-.7,.7]};
+
+// ---------- audio: CC0 samples in sfx/ (manifest.json), decoded to WebAudio buffers ----------
+let AC=null, engine=null; const SFX={}, SFXLAST={};
+async function audio(){ if(AC) return; AC=new (window.AudioContext||window.webkitAudioContext)();
+  const man=await (await fetch('sfx/manifest.json')).json();
+  await Promise.all(Object.entries(man).map(async([k,files])=>{ SFX[k]=[]; for(const f of files){ try{ const b=await (await fetch('sfx/'+f)).arrayBuffer(); SFX[k].push(await AC.decodeAudioData(b)); }catch(e){ console.warn('sfx',f,e); } } }));
+  // mower engine loop removed for now (user, 2026-09-14); engine stays null
+}
+function sfx(k,vol=0.5,rate=1,minGap=0.03){ const b=SFX[k]; if(!AC||!b||!b.length) return; const now=AC.currentTime; if(now-(SFXLAST[k]||0)<minGap) return; SFXLAST[k]=now;
+  const s=AC.createBufferSource(); s.buffer=b[Math.floor(Math.random()*b.length)]; s.playbackRate.value=rate*(0.94+Math.random()*0.12); const g=AC.createGain(); g.gain.value=vol; s.connect(g); g.connect(AC.destination); s.start(); }
+function blip(){} function noise(){}
+// ---------- state ----------
+let G=null, keys={}, paused=false, running=false, last=0;
+addEventListener('keydown',e=>{ keys[e.key.toLowerCase()]=true; if(e.key==='p'||e.key==='P'){ if(running&&!G.levelup&&!G.dead){ paused=!paused; document.getElementById('paused').hidden=!paused; } } if(e.key==='Tab'||e.key==='c'||e.key==='C'){ e.preventDefault(); toggleDeck(); }
+  if(e.key===' '&&G&&running&&!G.levelup&&!G.dead&&!G.deckOpen&&!e.repeat){ G.p.blades=!G.p.blades; toast(G.p.blades?'BLADES DOWN':'BLADES UP'); sfx('power',0.4,G.p.blades?0.8:1.3); }
+  if(G&&G.deckOpen){ const n='1234567890'.indexOf(e.key.replace('!','1').replace('@','2').replace('#','3').replace('$','4').replace('%','5').replace('^','6').replace('&','7').replace('*','8').replace('(','9').replace(')','0')); if(n>=0){ const i=n===9?9:n; if(e.shiftKey) discardCard(i); else if(G.deck[i]&&CARDS[G.deck[i]].once) useCard(i); else toHand(i); } const m='qwert'.indexOf(e.key.toLowerCase()); if(m>=0) toDeck(m); return; }
+  if(G&&G.levelup&&['1','2','3'].includes(e.key)) pick(+e.key-1); if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())) e.preventDefault(); });
+addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+
+// ---------- ACTIVES: every weapon is a TYPE with unified stats, levels are stat deltas ----------
+//  proj : dmg cd speed count size pierce bounces life   (+aim: nearest|random|facing|ring|boomerang)
+//  orbit: dmg count radius spin size
+//  zone : dmg(dps) cd count radius duration
+//  cone : dmg cd range angle knock
+//  aura : dmg(dps) radius
+//  beam : dmg(dps) count length slow
+//  passives: area -> size/radius/range/length, cdm -> cd, dmg -> dmg, extra -> count (proj/orbit/beam)
+const ACTIVE = {
+  blades:  {name:'MOWER BLADES', ico:'proj_blade', type:'aura', lv:1, desc:'the deck shreds everything under it',
+            base:{dmg:14,radius:60}, ups:[{dmg:1.3},{radius:1.2},{dmg:1.3},{radius:1.2},{bleed:1},{dmg:1.4},{radius:1.6,mulch:1}], maxName:'MULCH MODE'},
+  beer:    {name:'BEER CAN',     ico:'proj_beer', type:'proj', lv:1, desc:'cans at the nearest enemies', ammo:'beer', aim:'nearest',
+            base:{dmg:16,cd:1.1,speed:430,count:1,size:14,pierce:1,bounces:0,life:1.4}, ups:[{cd:0.75},{count:1},{pierce:1},{dmg:1.3},{count:1},{cd:0.75},{pierce:99,count:1}], maxName:'SIX PACK'},
+  golf:    {name:'GOLF BALL',    ico:'proj_golfball', type:'proj', lv:0, desc:'balls that ricochet between enemies', ammo:'golf', aim:'random',
+            base:{dmg:12,cd:1.6,speed:340,count:1,size:10,pierce:1,bounces:5,life:4}, ups:[{count:1},{bounces:3},{dmg:1.3},{count:1},{bounces:3},{cd:0.7},{boom:1}], maxName:'HOLE IN ONE'},
+  whacker: {name:'WEED WHACKER', ico:'proj_whacker', type:'orbit', lv:0, desc:'orbits the mower and shreds',
+            base:{dmg:20,count:1,radius:100,spin:2.2,size:28}, ups:[{count:1},{dmg:1.3},{count:1},{radius:1.3},{dmg:1.3},{count:1},{count:2,spin:2}], maxName:'FULL SPIN'},
+  flag:    {name:'FLAG POLE',    ico:'proj_flag', type:'proj', lv:0, desc:'flags fired the way you drive', ammo:'flag', aim:'facing',
+            base:{dmg:22,cd:1.5,speed:540,count:1,size:16,pierce:3,bounces:0,life:1.6}, ups:[{count:1},{cd:0.75},{pierce:2},{count:1},{dmg:1.3},{cd:0.75},{back:1}], maxName:'OLD GLORY'},
+  blower:  {name:'LEAF BLOWER',  ico:'blower', type:'cone', lv:0, desc:'a cone of wind ahead, knocks back',
+            base:{dmg:10,cd:1.3,range:140,angle:0.5,knock:260}, ups:[{angle:1.3},{dmg:1.3},{range:1.4},{knock:1.5},{angle:1.3},{cd:0.6},{angle:4}], maxName:'HURRICANE'},
+  sprinkler:{name:'SPRINKLER',   ico:'sprink', type:'beam', lv:0, desc:'rotating jets slow and soak enemies',
+            base:{dmg:8,count:2,length:150,slow:0.45}, ups:[{count:1},{length:1.25},{slow:0.8},{count:1},{dmg:1.3},{length:1.25},{count:3,slow:0.6}], maxName:'FLOOD'},
+  grill:   {name:'HOT GRILL',    ico:'prop_grill', type:'zone', lv:0, desc:'drops a grill that burns a patch',
+            base:{dmg:14,cd:6,count:1,radius:50,duration:5}, ups:[{radius:1.3},{duration:1.6},{count:1},{dmg:1.3},{radius:1.3},{count:1},{boom:1}], maxName:'BACKYARD BBQ'},
+  checks:  {name:'BOOMERANG CHECK', ico:'proj_check', type:'proj', lv:0, desc:'a check that flies out and comes back', ammo:'check', aim:'boomerang',
+            base:{dmg:18,cd:2.2,speed:380,count:1,size:16,pierce:99,bounces:0,life:3}, ups:[{count:1},{dmg:1.3},{life:1.4},{count:1},{cd:0.7},{dmg:1.3},{twice:1}], maxName:'BOUNCED CHECK'},
+  dividend:{name:'DIVIDENDS',    ico:'proj_coin', type:'proj', lv:0, desc:'coins burst out in every direction', ammo:'coin', aim:'ring',
+            base:{dmg:9,cd:2.4,speed:300,count:6,size:9,pierce:1,bounces:0,life:1.1}, ups:[{count:4},{cd:0.75},{dmg:1.3},{count:4},{pierce:99},{cd:0.75},{cd:0.5}], maxName:'COMPOUND INTEREST'},
+};
+const STAT_LABEL={dmg:'damage',cd:'cooldown',speed:'speed',count:'projectiles',size:'size',pierce:'pierce',bounces:'bounces',life:'range',radius:'area',spin:'spin speed',range:'reach',angle:'cone',knock:'knockback',length:'jet length',slow:'slow',duration:'duration',bleed:'bleed on hit',mulch:'clippings hit',boom:'explodes',back:'fires backwards too',twice:'hits twice'};
+const FLAGS=['bleed','mulch','boom','back','twice'];
+function upText(w,i){ const u=w.ups[i]; const parts=[]; for(const [k,v] of Object.entries(u)){ const lab=STAT_LABEL[k]||k;
+    if(FLAGS.includes(k)) parts.push(lab);
+    else if(k==='count'||k==='pierce'||k==='bounces') parts.push(v>=99?'pierces everything':'+'+v+' '+lab);
+    else if(k==='cd') parts.push('-'+Math.round((1-v)*100)+'% '+lab);
+    else if(k==='slow') parts.push('slows harder');
+    else parts.push('+'+Math.round((v-1)*100)+'% '+lab); }
+  return (i===w.ups.length-1?'<span class="k">'+w.maxName+':</span> ':'')+parts.join(', '); }
+// resolved stats for a weapon at its current level, passives applied
+function wstat(k){ const w=ACTIVE[k], lv=G.a[k], S=st(); const o={...w.base};
+  for(let i=0;i<lv-1;i++){ for(const [kk,v] of Object.entries(w.ups[i])){ if(['count','pierce','bounces'].includes(kk)) o[kk]=(o[kk]||0)+v; else if(FLAGS.includes(kk)) o[kk]=1; else o[kk]=(o[kk]||1)*v; } }
+  for(const kk of ['size','radius','range','length']) if(o[kk]) o[kk]*=S.area;
+  if(o.cd) o.cd*=S.cdm; o.dmg*=S.dmg; if(o.count&&w.type!=='zone') o.count+=S.extra;
+  if(w.type==='proj'){ o.dmg*=S.C.projDmg; if(o.count) o.count+=S.C.projExtra; } return o; }
+// ---------- PLAYING CARDS ----------
+// Dropped by enemies. Sit in your HAND (max 5) doing nothing until PLAYED (permanent, buff + catch) or DISCARDED.
+// Jokers are one-shot. cards() folds every played card into one modifier set that st()/wstat()/spawn read.
+const SUIT={s:['♠','#222'],h:['♥','#c22'],d:['♦','#c22'],c:['♣','#222'],j:['★','#b8860b']};
+const CARDS={
+  sA:{r:'A',s:'s',name:'SCORCHED EARTH', plus:'damage x2',                              minus:'max HP -1% per LIVE mowed tile (floor 25%)', mod:C=>{ C.dmg*=2; C.hp*=Math.max(0.25,1-(G.activeMowed||0)*0.01); }},
+  sK:{r:'K',s:'s',name:'WIDOWMAKER',     plus:'XP x1.6',                                minus:'enemies +60% HP',                             mod:C=>{ C.xp*=1.6; C.ehp*=1.6; }},
+  s10:{r:'10',s:'s',name:'HOA FINE',     plus:'kills on mowed grass heal 2 HP',        minus:'kills on tall grass cost 1 HP',               mod:C=>{ C.killTurf=1; }},
+  s6:{r:'6',s:'s',name:'OVERGROWN',      plus:'mowed grass never regrows',              minus:'area -25%',                                   mod:C=>{ C.regrow=1; C.area*=0.75; }},
+  hK:{r:'K',s:'h',name:'SECOND MORTGAGE',plus:'max HP +50%',                            minus:'XP -25%',                                     mod:C=>{ C.hp*=1.5; C.xp*=0.75; }},
+  h9:{r:'9',s:'h',name:'EARLY BIRD',     plus:'speed +30%',                             minus:'cooldowns +20%',                              mod:C=>{ C.speed*=1.3; C.cdm*=1.2; }},
+  h5:{r:'5',s:'h',name:'MEDICARE',       plus:'+3 HP/s regen',                          minus:'max HP -30%',                                 mod:C=>{ C.regen+=3; C.hp*=0.7; }},
+  h2:{r:'2',s:'h',name:'LIFE INSURANCE', plus:'every kill heals 1 HP',                  minus:'damage taken +25%',                           mod:C=>{ C.killHeal+=1; C.armor*=1.25; }},
+  dQ:{r:'Q',s:'d',name:'DRIP',           plus:'XP +50%',                                minus:'damage -20%',                                 mod:C=>{ C.xp*=1.5; C.dmg*=0.8; }},
+  dJ:{r:'J',s:'d',name:'DAY TRADER',     plus:'cooldowns -25%',                         minus:'damage taken +30%',                           mod:C=>{ C.cdm*=0.75; C.armor*=1.3; }},
+  d8:{r:'8',s:'d',name:'COMPOUND INTEREST',plus:'+2% damage per player level',          minus:'damage -15% up front',                        mod:C=>{ C.dmg*=0.85+G.p.lvl*0.02; }},
+  d4:{r:'4',s:'d',name:'COUPON CLIPPER', plus:'drops x2',                               minus:'pickup radius -40%',                          mod:C=>{ C.drop*=2; C.mag*=0.6; }},
+  cJ:{r:'J',s:'c',name:'GLASS CANNON',   plus:'damage +60%',                            minus:'damage taken +50%',                           mod:C=>{ C.dmg*=1.6; C.armor*=1.5; }},
+  c9:{r:'9',s:'c',name:'BIG DECK',       plus:'area +40%',                              minus:'speed -15%',                                  mod:C=>{ C.area*=1.4; C.speed*=0.85; }},
+  c7:{r:'7',s:'c',name:'LAWN FANATIC',   plus:'lawn-care bonuses x2',                   minus:'enemies spawn +50%',                          mod:C=>{ C.lawn*=2; C.spawn*=1.5; }},
+  c3:{r:'3',s:'c',name:'SPRAY AND PRAY', plus:'+1 projectile on every thrown weapon',   minus:'thrown damage -25%',                          mod:C=>{ C.projExtra+=1; C.projDmg*=0.75; }},
+  j1:{r:'J',s:'j',name:'WILD',           plus:'kills everything on screen, full heal, shop vac', minus:'one use', once:()=>{ G.p.hp=maxHP(); G.vac=3; G.camShake=16; sfx('boom',0.7); for(let j=G.enemies.length-1;j>=0;j--){ const e=G.enemies[j]; if(Math.abs(e.x-G.p.x)<VW*0.6&&Math.abs(e.y-G.p.y)<VH*0.6){ hurt(e,9999); if(e.hp<=0) killEnemy(j); } } }},
+  j2:{r:'J',s:'j',name:'REDEAL',         plus:'throw away your deck, draw that many fresh cards', minus:'one use', once:()=>{ const n=G.deck.length; G.deck=[]; for(let i=0;i<n;i++) drawCard(true); }},
+};
+// DECK = every card you have picked up (max 10). HAND = the slots that are actually IN PLAY (3 + CARD SHARK).
+// Move cards deck<->hand freely in the menu; only hand cards apply. Jokers are used straight from the deck.
+const DECK_MAX=10;
+function handSlots(){ return 3+(G?G.pv.shark||0:0); }
+function cards(){ const C={dmg:1,area:1,cdm:1,armor:1,regen:0,xp:1,speed:1,hp:1,spawn:1,ehp:1,drop:1,mag:1,regrow:0,lawn:1,projExtra:0,projDmg:1,killTurf:0,killHeal:0};
+  if(G) for(const id of G.hand) if(CARDS[id].mod) CARDS[id].mod(C); return C; }
+function maxHP(){ return Math.max(10,Math.round(G.p.maxhp*cards().hp)); }
+function drawCard(quiet){ if(G.deck.length>=DECK_MAX){ toast('DECK FULL'); return false; }
+  const taken=new Set([...G.deck,...G.hand]); let pool=Object.keys(CARDS).filter(k=>!taken.has(k)||CARDS[k].once); if(!pool.length) pool=['j1'];
+  const w=pool.map(k=>CARDS[k].once?0.5:1); let r=Math.random()*w.reduce((a,b)=>a+b,0); let id=pool[0]; for(let i=0;i<pool.length;i++){ r-=w[i]; if(r<=0){ id=pool[i]; break; } }
+  G.deck.push(id); if(!quiet){ const c=CARDS[id]; toast('DREW '+c.name); sfx('power',0.4); if(!G.deckOpen) toggleDeck(); } if(G.deckOpen) renderDeck(); return true; }
+function faceHTML(c){ const id=Object.keys(CARDS).find(k=>CARDS[k]===c); const [g]=SUIT[c.s]; const cls=c.s==='h'||c.s==='d'?' red':c.s==='j'?' j':'';
+  if(SPR['card_'+id]) return `<div class="face art"><img src="sprites/card_${id}.png"></div>`;
+  return `<div class="face art${cls}"><img src="sprites/card_blank.png"><b>${c.r}<br>${g}</b></div>`; }
+function cardHTML(id,where,i){ const c=CARDS[id]; const acts=where==='deck'
+    ? (c.once?`<button onclick="useCard(${i})">USE</button>`:`<button onclick="toHand(${i})">TO HAND</button>`)+`<button onclick="discardCard(${i})">DISCARD</button>`
+    : `<button onclick="toDeck(${i})">TO DECK</button>`;
+  return `<div class="card"><span class="k" style="width:18px">${i+1}</span>${faceHTML(c)}<div class="body">${c.name}<small class="plus">+ ${c.plus}</small><small class="minus">- ${c.minus}</small></div><div class="acts">${acts}</div></div>`; }
+function renderDeck(){ const n=handSlots();
+  document.getElementById('deckList').innerHTML=`<h3>DECK ${G.deck.length}/${DECK_MAX}</h3>`+(G.deck.length?G.deck.map((id,i)=>cardHTML(id,'deck',i)).join(''):'<p>empty. enemies drop cards.</p>');
+  let h=`<h3>HAND ${G.hand.length}/${n} <small>in play</small></h3>`+G.hand.map((id,i)=>cardHTML(id,'hand',i)).join('');
+  for(let i=G.hand.length;i<n;i++) h+=`<div class="card empty"><div class="face empty"></div><div class="body" style="color:#666">empty slot</div></div>`;
+  document.getElementById('handList').innerHTML=h; }
+function toggleDeck(){ if(!G||G.levelup||G.dead||paused) return; if(G.deckOpen&&document.activeElement) document.activeElement.blur(); G.deckOpen=!G.deckOpen; document.getElementById('deck').hidden=!G.deckOpen; if(G.deckOpen) renderDeck(); }
+function afterHandChange(){ const m=maxHP(); if(G.p.hp>m) G.p.hp=m; buildSlots(); renderDeck(); }
+function toHand(i){ const id=G.deck[i]; if(!id) return; if(G.hand.length>=handSlots()){ toast('HAND FULL'); return; } G.deck.splice(i,1); G.hand.push(id); sfx('levelup',0.4); toast(CARDS[id].name+' IN PLAY'); afterHandChange(); }
+function toDeck(i){ const id=G.hand[i]; if(!id) return; G.hand.splice(i,1); G.deck.push(id); sfx('power',0.3,0.7); afterHandChange(); }
+function useCard(i){ const id=G.deck[i]; if(!id||!CARDS[id].once) return; G.deck.splice(i,1); sfx('levelup',0.4); toast(CARDS[id].name); CARDS[id].once(); afterHandChange(); }
+function discardCard(i){ if(!G.deck[i]) return; toast('DISCARDED '+CARDS[G.deck[i]].name); G.deck.splice(i,1); renderDeck(); }
+window.toHand=toHand; window.toDeck=toDeck; window.useCard=useCard; window.discardCard=discardCard;
+document.getElementById('handBtn').onclick=()=>{ toggleDeck(); document.getElementById('handBtn').blur(); };
+// ---------- PASSIVES ----------
+const PASSIVE = {
+  boots:  {name:'WORK BOOTS',     ico:'boot', max:5, desc:'+10% speed per level, more on mowed turf'},
+  gut:    {name:'BEER GUT',       ico:'gut',  max:5, desc:'+25 max HP per level, heals; regen on mowed turf'},
+  magnet: {name:'401K MAGNET',    ico:'401k', max:5, desc:'+60% pickup radius per level; enemies slower on your turf'},
+  glasses:{name:'READING GLASSES',ico:'glass',max:5, desc:'+15% weapon area per level'},
+  monster:{name:'MONSTER ENERGY', ico:'mnst', max:5, desc:'-8% cooldowns per level, faster still on mowed turf'},
+  paper:  {name:'NEWSPAPER',      ico:'news', max:5, desc:'-10% damage taken per level, more on mowed turf'},
+  truck:  {name:'BIG TRUCK',      ico:'truck',max:5, desc:'+12% damage per level, more on mowed turf'},
+  equity: {name:'HOME EQUITY',    ico:'eqty', max:5, desc:'+15% XP per level, more on mowed turf'},
+  socsec: {name:'SOCIAL SECURITY',ico:'ss',   max:5, desc:'+1 HP/s regen per level, +50% on mowed turf'},
+  bifocals:{name:'BIFOCALS',      ico:'bifo', max:3, desc:'+1 projectile on every weapon per level'},
+  lucky:  {name:'LOTTERY TICKET', ico:'luck', max:3, desc:'+25% rare drop chance per level'},
+  pension:{name:'PENSION',        ico:'pens', max:3, desc:'revive once per level with half HP'},
+  hoa:    {name:'HOA PRESIDENT',  ico:'hoa',  max:3, desc:'+50% lawn-care bonuses per level (active mowed tiles = damage + area, lifetime mowed = armor)'},
+  shark:  {name:'CARD SHARK',     ico:'shark',max:2, desc:'+1 card slot in your hand per level'},
+};
+const GLYPH={blade:'&#10059;',blower:'&#8776;',sprink:'&#8767;',check:'&#9998;',coin:'$',boot:'B',gut:'&#9679;','401k':'4',glass:'&#9673;',mnst:'&#9889;',news:'&#9783;',truck:'&#9951;',eqty:'&#8962;',ss:'&#9877;',bifo:'&#8734;',luck:'&#9733;',pens:'&#9829;',hoa:'&#9820;',shark:'&#9824;'};
+function icoHTML(k){ const w=ACTIVE[k]||PASSIVE[k]; if(SPR[w.ico]) return `<img src="sprites/${w.ico}.png">`; return `<span class="g">${GLYPH[w.ico]||'?'}</span>`; }
+
+function newGame(){
+  G={ t:0, p:{x:0,y:0,dir:'s',hp:100,maxhp:100,speed:150,xp:0,lvl:1,next:8,hitcd:0,cap:0,shake:0,mx:0,my:0,revives:0,blades:true},
+      enemies:[], bullets:[], drops:[], fx:[], zones:[], mowed:new Map(), knocked:new Set(), kills:0, mowedCount:0, spawnT:0, levelup:false, dead:false, deck:[], hand:[], deckOpen:false,
+      a:Object.fromEntries(Object.entries(ACTIVE).map(([k,v])=>[k,v.lv])), pv:Object.fromEntries(Object.keys(PASSIVE).map(k=>[k,0])),
+      cd:{}, whackAng:0, sprAng:0, cam:{x:0,y:0}, camShake:0, dmgLog:[], dps:0, vac:0 };
+  for(const k in keys) keys[k]=false;
+  paused=false; document.getElementById('deck').hidden=true;
+  document.getElementById('hud').hidden=false; document.getElementById('stats').hidden=false; document.getElementById('handBtn').hidden=false;
+  document.getElementById('title').hidden=true; document.getElementById('over').hidden=true; document.getElementById('levelup').hidden=true;
+  buildSlots(); running=true; last=performance.now(); requestAnimationFrame(loop);
+}
+// TURF: standing on grass you already mowed is home ground. Every bonus below has a base part
+// and a part that scales with the matching passive/active, so builds feel it differently.
+function turf(){ return G && G.turf ? 1 : 0; }
+// lawn care: ACTIVE mowed tiles (not regrown yet) buff damage and area, LIFETIME mowed tiles buff armor.
+// HOA PRESIDENT passive multiplies both.
+function lawn(){ const m=(1+G.pv.hoa*0.5)*cards().lawn; const act=G.activeMowed||0, tot=G.mowedCount||0;
+  // every ACTIVE mowed tile: +0.5% damage, +0.25% area (caps 150% / 75%); every tile ever mowed: -0.1% damage taken (cap 60%)
+  return { dmg:Math.min(1.5,act*0.005)*m, area:Math.min(0.75,act*0.0025)*m, armor:Math.min(0.6,tot*0.001)*m, act, tot }; }
+const st=()=>{ const t=turf(), pv=G.pv, a=G.a, L=lawn(), C=cards(); return {
+  area:(1+pv.glasses*0.15)*(1+L.area)*C.area,
+  cdm:Math.max(0.3,(1-pv.monster*0.08)*(t?0.9-pv.monster*0.02:1)*C.cdm),
+  dmg:(1+pv.truck*0.12)*(t?1.15+pv.truck*0.03+a.blades*0.01:1)*(1+L.dmg)*C.dmg,
+  armor:Math.max(0.25,(1-pv.paper*0.1)*(t?0.85-pv.paper*0.03:1)*(1-L.armor))*C.armor,
+  regen:pv.socsec+(t?1+pv.socsec*0.5+pv.gut*0.5:0)+C.regen,
+  xp:(1+pv.equity*0.15)*(t?1.1+pv.equity*0.05:1)*C.xp,
+  speed:(1+pv.boots*0.1)*(t?1.1+pv.boots*0.02:1)*C.speed,
+  eslow:t?0.85-a.sprinkler*0.02-pv.magnet*0.01:1,     // enemy speed while THEY stand on mowed grass
+  extra:pv.bifocals, luck:(1+pv.lucky*0.25)*C.drop, C }; };
+// ---------- world ----------
+function tileKind(tx,ty){ if(((ty%14)+14)%14===0) return 2; if(((tx%22)+22)%22===0 && ((ty%14)+14)%14<5) return 3; return 1; }   // all lawn is tall grass until mowed (dirt patches dropped: wrong pixel scale)
+// props: anchor tile + footprint in tiles; a 2x2 tree sits on (tx,ty)..(tx+1,ty+1)
+const PROPS=[['prop_tree',0.010,true,2,2],['prop_pine',0.006,true,2,2],['prop_hedge',0.006,true,2,2],['prop_fence',0.008,true,2,2],
+  ['prop_shrub',0.02,false,1,1],['prop_mailbox',0.006,false,1,1],['prop_flamingo',0.012,false,1,1],['prop_grill',0.005,false,1,1],['prop_gnome',0.006,false,1,1],['prop_chair',0.005,false,1,1],
+  ['prop_hose',0.004,false,1,1],['prop_bin',0.004,false,1,1],['prop_birdhouse',0.004,false,1,1],['prop_firewood',0.004,false,1,1],['prop_gascan',0.003,false,1,1],['prop_flagstick',0.006,false,1,1],
+  ['prop_sprinkler',0.004,false,1,1],['prop_pool',0.003,false,1,1],['prop_dart',0.003,false,1,1],['prop_cooler',0.004,false,1,1]];
+const PROP_DENSITY=0.55;   // scales every prop's spawn chance
+function propAt(tx,ty){ const k=tileKind(tx,ty); if(k>=2) return null; if(Math.abs(tx)<3&&Math.abs(ty)<3) return null; if(tx%2||ty%2) return null; let h=hash(tx,ty,2), acc=0; for(const [n,p,solid,w,hh] of PROPS){ acc+=p*PROP_DENSITY; if(h<acc) return {n,solid,w,h:hh}; } return null; }
+function solidAt(x,y){ // any solid prop footprint covering world point
+  const tx=Math.floor(x/TILE), ty=Math.floor(y/TILE);
+  for(let dx=-4;dx<=0;dx++)for(let dy=-4;dy<=0;dy++){ const pr=propAt(tx+dx,ty+dy); if(pr&&pr.solid){ const ax=tx+dx, ay=ty+dy; const fw=pr.w, fh=Math.max(1,pr.h-1); // the top rows are canopy/roof, walkable behind
+      if(tx>=ax&&tx<ax+fw&&ty>=ay+(pr.h-fh)&&ty<ay+pr.h) return true; } } return false; }
+
+const REGROW=60;   // seconds until a mowed tile is tall grass again
+function regrow(){ return cards().regrow?1e9:REGROW; }
+function isMowed(tx,ty){ const t=G.mowed.get(tx+','+ty); return t!==undefined && G.t-t<regrow(); }
+const WANG_KEYS=['LLLL','LLLU','LLUL','LLUU','LULL','LULU','LUUL','LUUU','ULLL','ULLU','ULUL','ULUU','UULL','UULU','UUUL','UUUU'];
+function vert(vx,vy){ const cx=Math.floor((vx*32-16)/64), cy=Math.floor((vy*32-16)/64); if(tileKind(cx,cy)!==1) return 'L'; return isMowed(cx,cy)?'L':'U'; }
+function cellLU(cx,cy){ if(tileKind(cx,cy)!==1) return 'L'; return isMowed(cx,cy)?'L':'U'; }
+function onMowed(e){ return isMowed(Math.floor(e.x/TILE),Math.floor(e.y/TILE)); }
+// mowing over a prop does something: every lawn ornament is a pickup or a trap
+function knockProp(n,x,y){ const p=G.p, S=st(); sfx('mow',0.3,0.9);
+  const burst=(k,m)=>{ for(let i=G.enemies.length-1;i>=0;i--){ const e=G.enemies[i]; if(dist(e,{x,y})<k){ hurt(e,m); if(e.hp<=0) killEnemy(i); } } };
+  switch(n){
+    case 'prop_flamingo': toast('FLAMINGO DOWN'); puff(x,y,12,'#f6a',130,0.5,3); for(const e of nearest(2)){ const an=Math.atan2(e.y-y,e.x-x); G.bullets.push({t:'flag',x,y,vx:Math.cos(an)*480,vy:Math.sin(an)*480,dmg:40,life:1.5,pierce:4,rot:an,r:16,hitset:new Set(),trail:'#f6a'}); } break;
+    case 'prop_gnome': toast('GNOME BOMB'); puff(x,y,30,'#f44',220,0.6,4); G.camShake=8; sfx('boom',0.5); burst(140,70); break;
+    case 'prop_chair': toast('PLASTIC CHAIR'); puff(x,y,12,'#eee',120,0.4,3); G.drops.push({t:'burger',x,y}); break;
+    case 'prop_cooler': toast('COOLER'); puff(x,y,10,'#9cf',100,0.4,3); G.drops.push({t:'beer6',x:x+8,y}); break;
+    case 'prop_gascan': toast('GAS CAN'); sfx('boom',0.4); G.zones.push({t:'grill',x,y,r:90*S.area,life:6,dps:20,tick:0,boom:true}); break;
+    case 'prop_hose': case 'prop_sprinkler': toast('SPRINKLER'); for(let i=0;i<20;i++) G.fx.push({t:'p',x,y,vx:rnd(-160,160),vy:rnd(-160,40),life:0.6,max:0.6,col:'#6cf',size:2}); for(const e of G.enemies){ if(dist(e,{x,y})<200){ e.slow=4; e.slowf=0.3; } } break;
+    case 'prop_firewood': toast('FIREWOOD'); for(let i=0;i<6;i++){ const an=i/6*Math.PI*2; G.bullets.push({t:'golf',x,y,vx:Math.cos(an)*300,vy:Math.sin(an)*300,dmg:25,life:2,bounce:3,rot:0,r:10,hitset:new Set(),trail:'#a63'}); } break;
+    case 'prop_bin': case 'prop_mailbox': toast(n==='prop_bin'?'RECYCLING':'MAIL'); for(let i=0;i<5;i++) G.drops.push({t:'dollar',x:x+rnd(-30,30),y:y+rnd(-30,30),xp:3}); break;
+    case 'prop_birdhouse': toast('BIRDS'); for(let i=0;i<8;i++){ const an=rnd(0,Math.PI*2); G.bullets.push({t:'coin',x,y,vx:Math.cos(an)*260,vy:Math.sin(an)*260,dmg:15,life:1.4,pierce:2,rot:0,r:9,hitset:new Set(),trail:'#ccc'}); } break;
+    case 'prop_flagstick': toast('FREEDOM'); p.cap=5; sfx('power',0.5); break;
+    case 'prop_pool': toast('POOL'); p.hp=Math.min(maxHP(),p.hp+25); puff(x,y,16,'#6cf',120,0.5,3); break;
+    case 'prop_dart': toast('BULLSEYE'); burst(110,35); puff(x,y,10,'#ff0',100,0.4,3); break;
+    case 'prop_shrub': puff(x,y,8,'#4a4',80,0.4,3); p.xp+=1; break;
+    case 'prop_grill': toast('GRILL'); G.zones.push({t:'grill',x,y,r:60*S.area,life:5,dps:14,tick:0}); break;
+  } }
+// ---------- spawning ----------
+function spawn(){ const t=G.t, p=G.p, n=1+Math.floor(t/30);
+  for(let i=0;i<n;i++){ const a=rnd(0,Math.PI*2), r=rnd(Math.max(VW,VH)*0.6, Math.max(VW,VH)*0.75), bobo=Math.random()<Math.min(0.5,0.12+t/240);
+    const e=bobo?{kind:'bobo',hp:60+t*1.2,speed:rnd(46,58),dmg:12,r:36,xp:4}:{kind:'zoomer',hp:22+t*0.5,speed:rnd(80,105),dmg:5,r:26,xp:2};
+    e.hp*=cards().ehp; G.enemies.push({...e,x:p.x+Math.cos(a)*r,y:p.y+Math.sin(a)*r,anim:Math.random()*8,dir:'down',face:1,hit:0,maxhp:e.hp,slow:0,kx:0,ky:0,bleed:0}); } }
+
+// ---------- fx ----------
+function puff(x,y,n,col,spd=60,life=0.5,size=3){ for(let i=0;i<n;i++){ const a=rnd(0,Math.PI*2), s=rnd(spd*0.3,spd); G.fx.push({t:'p',x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-20,life:rnd(life*0.6,life),max:life,col,size}); } }
+function dmgNum(e,v,col='#ffd54a'){ G.fx.push({t:'dmg',x:e.x+rnd(-8,8),y:e.y-e.r-10,v:Math.round(v),life:0.6,col}); }
+function dealt(d){ G.dmgLog.push([G.t,d]); }
+function hurt(e,d,kx=0,ky=0,col){ d*=st().dmg; dealt(d*(onMowed(e)?1.5:1)); if(onMowed(e)) { d*=1.5; col=col||'#fff'; } sfx('hit',0.25,1,0.08); e.hp-=d; e.hit=0.12; e.kx+=kx; e.ky+=ky; dmgNum(e,d,col); if(wstat('blades').bleed) e.bleed=Math.max(e.bleed,1.5); }
+function killEnemy(i){ const e=G.enemies[i]; G.enemies.splice(i,1); G.kills++; sfx('kill',0.35,1,0.06);
+  { const C=cards(), p=G.p; if(C.killTurf){ if(onMowed(e)) p.hp=Math.min(maxHP(),p.hp+2); else p.hp=Math.max(1,p.hp-1); } if(C.killHeal) p.hp=Math.min(maxHP(),p.hp+C.killHeal); }
+  puff(e.x,e.y-10,10,e.kind==='bobo'?'#a5652c':'#ddd',110,0.5,3); puff(e.x,e.y,6,'#c33',90,0.4,2);
+  G.drops.push({t:'dollar',x:e.x,y:e.y,xp:e.xp}); const r=Math.random()/st().luck;
+  if(r<0.025) G.drops.push({t:'burger',x:e.x+10,y:e.y}); else if(r<0.035) G.drops.push({t:'cap',x:e.x+10,y:e.y}); else if(r<0.042) G.drops.push({t:'beer6',x:e.x+10,y:e.y}); else if(r<0.052) G.drops.push({t:'vacuum',x:e.x+10,y:e.y}); else if(r<0.056) G.drops.push({t:'card',x:e.x+10,y:e.y}); }
+function facing(){ const p=G.p; if(p.mx||p.my){ const l=Math.hypot(p.mx,p.my); return [p.mx/l,p.my/l]; } return DV[p.dir]; }
+function bladeRadius(){ return wstat('blades').radius; }
+// thrown weapons aim past the mower deck: anything already under the blades dies there anyway,
+// and a can that hits an adjacent enemy the frame it spawns is invisible ("he stopped throwing")
+function nearest(k=1){ const p=G.p, R=bladeRadius()+20; const s=G.enemies.slice().sort((a,b)=>dist(a,p)-dist(b,p)); const far=s.filter(e=>dist(e,p)>R); return (far.length?far:s).slice(0,k); }
+function angDiff(a,b){ return Math.abs(((a-b+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI); }
+
+// ---------- weapons: one firing routine per TYPE ----------
+const TRAIL={beer:'#ddd',golf:'#fff',flag:'#e33',check:'#9cf',coin:'#ffd700'}, SND={beer:'shoot',golf:'golf',flag:'flag',check:'check',coin:'coins'};
+function shoot(k,o,x,y,ang,extra){ const w=ACTIVE[k]; G.bullets.push(Object.assign({t:w.ammo,x,y,vx:Math.cos(ang)*o.speed,vy:Math.sin(ang)*o.speed,dmg:o.dmg,life:o.life,pierce:o.pierce,bounce:o.bounces,rot:ang,r:o.size,hitset:new Set(),boom:!!o.boom,trail:TRAIL[w.ammo]},extra||{})); }
+function fireWeapons(dt){
+  const p=G.p, cd=G.cd; const tick=(k,base)=>{ cd[k]=(cd[k]||0)-dt; if(cd[k]<=0){ cd[k]=base; return true; } return false; };
+  for(const k of Object.keys(ACTIVE)){ if(G.a[k]<=0) continue; const w=ACTIVE[k], o=wstat(k);
+    if(w.type==='proj'){ if(!tick(k,o.cd)) continue;
+      if(w.aim==='nearest'){ for(const e of nearest(o.count)) shoot(k,o,p.x,p.y-30,Math.atan2(e.y-p.y,e.x-p.x)); }
+      else if(w.aim==='random'){ for(let i=0;i<o.count;i++) shoot(k,o,p.x,p.y,rnd(0,Math.PI*2)); }
+      else if(w.aim==='facing'){ const f=facing(); const dirs=[f]; if(o.back) dirs.push([-f[0],-f[1]]); for(const d of dirs) for(let i=0;i<o.count;i++) shoot(k,o,p.x-d[0]*i*9,p.y-d[1]*i*9,Math.atan2(d[1],d[0])); }
+      else if(w.aim==='ring'){ for(let i=0;i<o.count;i++) shoot(k,o,p.x,p.y-10,i/o.count*Math.PI*2+G.t); }
+      else if(w.aim==='boomerang'){ for(let i=0;i<o.count;i++){ const e=nearest(3)[i]||nearest(1)[0]; const an=e?Math.atan2(e.y-p.y,e.x-p.x):rnd(0,Math.PI*2); shoot(k,o,p.x,p.y-20,an,{ret:o.life*0.4,twice:!!o.twice}); } }
+      sfx(SND[w.ammo],0.35); }
+    else if(w.type==='cone'){ if(!tick(k,o.cd)) continue; const f=facing(); const fa=Math.atan2(f[1],f[0]); sfx('blower',0.4);
+      for(let i=0;i<18;i++){ const an=fa+rnd(-o.angle,o.angle), sp=rnd(200,420); G.fx.push({t:'p',x:p.x+f[0]*30,y:p.y+f[1]*20,vx:Math.cos(an)*sp,vy:Math.sin(an)*sp,life:0.35,max:0.35,col:'#cfe8d0',size:2}); }
+      for(let i=G.enemies.length-1;i>=0;i--){ const e=G.enemies[i]; if(dist(e,p)<o.range){ const an=Math.atan2(e.y-p.y,e.x-p.x); if(angDiff(an,fa)<o.angle){ hurt(e,o.dmg,Math.cos(an)*o.knock,Math.sin(an)*o.knock); if(e.hp<=0) killEnemy(i); } } } }
+    else if(w.type==='zone'){ if(!tick(k,o.cd)) continue; sfx('grill',0.4);
+      for(let i=0;i<o.count;i++){ const e=nearest(3)[i]; const gx=e?e.x+rnd(-20,20):p.x+rnd(-100,100), gy=e?e.y+rnd(-20,20):p.y+rnd(-100,100); G.zones.push({t:'grill',x:gx,y:gy,r:o.radius,life:o.duration,dps:o.dmg,tick:0,boom:!!o.boom}); } }
+    else if(w.type==='orbit'){ G.whackAng+=dt*o.spin; }
+    else if(w.type==='beam'){ G.sprAng+=dt*3; } }
+}
+function whackers(){ if(G.a.whacker<=0) return []; const o=wstat('whacker'); return Array.from({length:o.count},(_,k)=>{ const an=G.whackAng+k*Math.PI*2/o.count; return {an,x:G.p.x+Math.cos(an)*o.radius,y:G.p.y+Math.sin(an)*o.radius,dmg:o.dmg,size:o.size}; }); }
+function jets(){ if(G.a.sprinkler<=0) return []; const o=wstat('sprinkler'); return Array.from({length:o.count},(_,k)=>({an:G.sprAng+k*Math.PI*2/o.count,len:o.length,slow:o.slow,dmg:o.dmg})); }
+
+// ---------- update ----------
+function update(dt){
+  const p=G.p, S=st(); G.t+=dt;
+  let mx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0), my=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
+  const len=Math.hypot(mx,my); if(len>0){ mx/=len; my/=len; p.dir=dir8(mx,my); } p.mx=mx; p.my=my;
+  const spd=p.speed*S.speed*(p.cap>0?1.35:1)*(p.blades?1:1.9);
+  const nx=p.x+mx*spd*dt, ny=p.y+my*spd*dt;
+  if(!solidAt(nx,p.y+10)) p.x=nx; if(!solidAt(p.x,ny+10)) p.y=ny;
+  p.shake+=dt*(len>0?(p.blades?26:40):16);
+  if(!p.blades&&len>0&&Math.random()<dt*14){ G.fx.push({t:'p',x:p.x+rnd(-14,14),y:p.y+12,vx:-mx*30+rnd(-15,15),vy:-10,life:0.5,max:0.5,col:'#b8a97a',size:3,grow:true}); }
+  if(engine){ engine.o.playbackRate.setTargetAtTime(len>0?1.05:0.8,AC.currentTime,0.2); engine.ng.gain.setTargetAtTime(len>0?0.07:0.04,AC.currentTime,0.2); }
+  if(Math.random()<dt*10){ const [fx,fy]=facing(); G.fx.push({t:'p',x:p.x-fx*28+rnd(-4,4),y:p.y-fy*10-10,vx:-fx*20+rnd(-10,10),vy:-25,life:0.7,max:0.7,col:'#9a9a9a',size:3,grow:true}); }
+  const tx=Math.floor(p.x/TILE), ty=Math.floor((p.y+10)/TILE), tk=tx+','+ty;
+  if(p.blades && tileKind(tx,ty)===1 && !isMowed(tx,ty)){ G.mowed.set(tk,G.t); G.mowedCount++; sfx('mow',0.15,1.4,0.12); puff(p.x,p.y+14,8,'#6fb04a',70,0.5,2); if(G.mowedCount%25===0){ p.xp+=3*S.xp; toast('LAWN BONUS'); } }
+  const pr=propAt(tx,ty); if(pr&&!pr.solid&&!G.knocked.has(tk)){ G.knocked.add(tk); knockProp(pr.n,(tx+0.5)*TILE,(ty+0.7)*TILE); }
+  p.hitcd=Math.max(0,p.hitcd-dt); p.cap=Math.max(0,p.cap-dt); G.camShake=Math.max(0,G.camShake-dt*20);
+  G.lawnT=(G.lawnT||0)-dt; if(G.lawnT<=0){ G.lawnT=0.25; let n=0; const RG=regrow(); for(const [k,t0] of G.mowed){ if(G.t-t0<RG) n++; else G.mowed.delete(k); } G.activeMowed=n; }
+  G.turf=isMowed(tx,ty); const S2=st(); if(S2.regen>0) p.hp=Math.min(maxHP(),p.hp+S2.regen*dt); if(p.hp>maxHP()) p.hp=maxHP();
+  G.spawnT-=dt; if(G.spawnT<=0){ spawn(); G.spawnT=Math.max(0.4,2.2-G.t/80)/cards().spawn; }
+  // enemies
+  const bladeS=wstat('blades'), bladeR=bladeS.radius, bladeDps=bladeS.dmg;
+  for(let i=G.enemies.length-1;i>=0;i--){ const e=G.enemies[i];
+    const an=Math.atan2(p.y-e.y,p.x-e.x); let sl=e.slow>0?e.slowf:1; if(onMowed(e)) sl*=S.eslow; e.slow=Math.max(0,e.slow-dt);
+    e.x+=Math.cos(an)*e.speed*sl*dt+e.kx*dt; e.y+=Math.sin(an)*e.speed*sl*dt+e.ky*dt; e.kx*=Math.pow(0.02,dt); e.ky*=Math.pow(0.02,dt);
+    e.anim+=dt*9*sl; e.hit=Math.max(0,e.hit-dt);
+    if(e.bleed>0){ e.bleed-=dt; e.hp-=6*dt*S.dmg; dealt(6*dt*S.dmg); if(Math.random()<dt*3) puff(e.x,e.y-10,2,'#c22',40,0.4,2); }
+    const ax=Math.cos(an), ay=Math.sin(an); if(Math.abs(ax)>=Math.abs(ay)){ e.dir='side'; e.face=ax<0?-1:1; } else e.dir=ay>0?'down':'up';
+    for(let j=i-1;j>=0;j--){ const o=G.enemies[j]; const d=dist(e,o); const m=e.r+o.r-6; if(d<m&&d>0.01){ const px=(e.x-o.x)/d*(m-d)*0.5, py=(e.y-o.y)/d*(m-d)*0.5; e.x+=px; e.y+=py; o.x-=px; o.y-=py; } }
+    const d=dist(e,p);
+    if(p.blades && d<bladeR+e.r*0.5){ const bd=bladeDps*dt*(onMowed(e)?1.5:1); e.hp-=bd; dealt(bd); e.hit=0.06; if(Math.random()<dt*4){ dmgNum(e,bladeDps/4); puff(e.x,e.y,3,'#c33',80,0.3,2); } }
+    if(d<e.r+22 && p.hitcd<=0 && p.cap<=0){ p.hp-=e.dmg*S.armor; p.hitcd=0.8; G.camShake=6; sfx('hurt',0.5); G.fx.push({t:'hurt',life:0.25});
+      if(p.hp<=0){ if(p.revives<G.pv.pension){ p.revives++; p.hp=maxHP()/2; p.cap=3; toast('PENSION KICKED IN'); for(let j=G.enemies.length-1;j>=0;j--){ hurt(G.enemies[j],60); if(G.enemies[j].hp<=0) killEnemy(j); } } else { p.hp=0; gameOver(); return; } } }
+    if(e.hp<=0) killEnemy(i);
+  }
+  for(const w of whackers()){ if(Math.random()<dt*30) G.fx.push({t:'p',x:w.x+rnd(-10,10),y:w.y+rnd(-10,10),vx:rnd(-40,40),vy:rnd(-60,0),life:0.3,max:0.3,col:'#8f4',size:2});
+    for(let i=G.enemies.length-1;i>=0;i--){ const e=G.enemies[i]; if(Math.hypot(e.x-w.x,e.y-w.y)<e.r+w.size){ e.hp-=w.dmg*dt*3; dealt(w.dmg*dt*3); e.hit=0.08; if(Math.random()<dt*5) dmgNum(e,w.dmg); if(e.hp<=0) killEnemy(i); } } }
+  for(const j of jets()){ if(Math.random()<dt*40){ const s=rnd(0.3,1); G.fx.push({t:'p',x:p.x+Math.cos(j.an)*j.len*s,y:p.y+Math.sin(j.an)*j.len*s,vx:0,vy:-30,life:0.25,max:0.25,col:'#6cf',size:2}); }
+    for(let i=G.enemies.length-1;i>=0;i--){ const e=G.enemies[i]; const dx=e.x-p.x, dy=e.y-p.y, d=Math.hypot(dx,dy); if(d>j.len) continue; if(angDiff(Math.atan2(dy,dx),j.an)<0.25){ e.slow=0.6; e.slowf=j.slow; e.hp-=j.dmg*dt*3; dealt(j.dmg*dt*3); e.hit=0.05; if(Math.random()<dt*4) dmgNum(e,j.dmg,'#6cf'); if(e.hp<=0) killEnemy(i); } } }
+  fireWeapons(dt);
+  for(let z=G.zones.length-1;z>=0;z--){ const q=G.zones[z]; q.life-=dt; q.tick-=dt; if(Math.random()<dt*25) G.fx.push({t:'p',x:q.x+rnd(-q.r,q.r)*0.8,y:q.y+rnd(-q.r,q.r)*0.5,vx:rnd(-10,10),vy:rnd(-70,-30),life:0.5,max:0.5,col:Math.random()<0.5?'#f80':'#fc3',size:3});
+    if(q.tick<=0){ q.tick=0.25; for(let i=G.enemies.length-1;i>=0;i--){ const e=G.enemies[i]; if(Math.hypot(e.x-q.x,e.y-q.y)<q.r+e.r*0.5){ hurt(e,q.dps*0.25,0,0,'#f80'); if(e.hp<=0) killEnemy(i); } } }
+    if(q.life<=0){ if(q.boom){ puff(q.x,q.y,30,'#f60',200,0.6,4); G.camShake=8; sfx('boom',0.5); for(let i=G.enemies.length-1;i>=0;i--){ const e=G.enemies[i]; if(Math.hypot(e.x-q.x,e.y-q.y)<q.r*2){ hurt(e,60,0,0,'#f80'); if(e.hp<=0) killEnemy(i); } } } G.zones.splice(z,1); } }
+  for(let i=G.bullets.length-1;i>=0;i--){ const b=G.bullets[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt; b.rot+=dt*(b.t==='beer'?14:b.t==='golf'?20:b.t==='check'?10:b.t==='coin'?12:0);
+    if(b.t==='check'){ b.ret-=dt; if(b.ret<0){ const an=Math.atan2(p.y-b.y,p.x-b.x); b.vx+=Math.cos(an)*1400*dt; b.vy+=Math.sin(an)*1400*dt; if(!b.back){ b.back=true; if(b.twice) b.hitset.clear(); } if(dist(b,p)<24&&b.ret<-0.4) b.life=0; } }
+    if(b.trail&&Math.random()<dt*40) G.fx.push({t:'p',x:b.x,y:b.y,vx:0,vy:0,life:0.2,max:0.2,col:b.trail,size:2});
+    for(let j=G.enemies.length-1;j>=0;j--){ const e=G.enemies[j]; if(b.hitset.has(e)) continue; if(Math.hypot(e.x-b.x,e.y-b.y)<e.r+b.r){ hurt(e,b.dmg); puff(b.x,b.y,4,b.trail||'#fff',80,0.25,2); if(e.hp<=0) killEnemy(j);
+        if(b.t==='golf'){ const an=Math.atan2(b.y-e.y,b.x-e.x); const s=Math.hypot(b.vx,b.vy); b.vx=Math.cos(an)*s; b.vy=Math.sin(an)*s; b.bounce--; b.hitset.add(e); if(b.bounce<=0){ b.life=0; if(b.boom){ puff(b.x,b.y,20,'#fff',180,0.5,3); for(let k=G.enemies.length-1;k>=0;k--){ const o=G.enemies[k]; if(Math.hypot(o.x-b.x,o.y-b.y)<70){ hurt(o,40); if(o.hp<=0) killEnemy(k); } } } } }
+        else if(b.t==='check'){ b.hitset.add(e); }
+        else { b.hitset.add(e); b.pierce--; if(b.pierce<=0){ b.life=0; break; } } } }
+    if(b.life<=0) G.bullets.splice(i,1); }
+  const mag=90*(1+G.pv.magnet*0.6)*(p.cap>0?1.5:1)*cards().mag;
+  if(G.vac>0){ G.vac-=dt; for(const d of G.drops){ const an=Math.atan2(p.y-d.y,p.x-d.x); const sp=900+dist(d,p)*2; d.x+=Math.cos(an)*sp*dt; d.y+=Math.sin(an)*sp*dt; if(Math.random()<dt*20) G.fx.push({t:'p',x:d.x,y:d.y,vx:0,vy:0,life:0.2,max:0.2,col:'#8f8',size:2}); } }
+  for(let i=G.drops.length-1;i>=0;i--){ const d=G.drops[i]; const dd=dist(d,p); if(dd<mag){ const an=Math.atan2(p.y-d.y,p.x-d.x); const s=260+(mag-dd)*3; d.x+=Math.cos(an)*s*dt; d.y+=Math.sin(an)*s*dt; }
+    if(dd<26){ G.drops.splice(i,1);
+      if(d.t==='dollar'){ p.xp+=d.xp*S.xp; sfx('xp',0.3,1,0.05); puff(p.x,p.y-20,3,'#3c3',60,0.3,2); }
+      else if(d.t==='burger'){ p.hp=Math.min(maxHP(),p.hp+40); toast('BURGER +40'); sfx('power',0.5); }
+      else if(d.t==='cap'){ p.cap=8; toast('S&P MODE'); sfx('power',0.5); }
+      else if(d.t==='vacuum'){ toast('SHOP VAC'); sfx('power',0.5); G.vac=2.5; }
+      else if(d.t==='card'){ if(!drawCard()) G.drops.push(d); }
+      else if(d.t==='beer6'){ toast('SIX PACK'); sfx('boom',0.6); G.camShake=14; for(let j=G.enemies.length-1;j>=0;j--){ hurt(G.enemies[j],80); if(G.enemies[j].hp<=0) killEnemy(j); } } } }
+  if(p.xp>=p.next){ p.xp-=p.next; p.lvl++; p.next=Math.round(p.next*1.3+4); levelUp(); }
+  for(let i=G.fx.length-1;i>=0;i--){ const f=G.fx[i]; f.life-=dt; if(f.t==='p'){ f.x+=f.vx*dt; f.y+=f.vy*dt; f.vx*=Math.pow(0.1,dt); } else if(f.y!==undefined) f.y-=30*dt; if(f.life<=0) G.fx.splice(i,1); }
+  G.cam.x+=(p.x-G.cam.x)*Math.min(1,dt*6); G.cam.y+=(p.y-G.cam.y)*Math.min(1,dt*6);
+  refreshSlots();
+}
+
+// ---------- level up ----------
+function levelUp(){ G.levelup=true; sfx('levelup',0.5);
+  const nA=Object.values(G.a).filter(v=>v>0).length, nP=Object.values(G.pv).filter(v=>v>0).length;
+  const pool=[...Object.keys(ACTIVE).filter(k=>G.a[k]<ACTIVE[k].ups.length+1&&(G.a[k]>0||nA<6)).map(k=>['a',k]), ...Object.keys(PASSIVE).filter(k=>G.pv[k]<PASSIVE[k].max&&(G.pv[k]>0||nP<6)).map(k=>['p',k])];
+  const picks=[];
+  if(nA<3){ const newA=pool.filter(([t,k])=>t==='a'&&G.a[k]===0); if(newA.length){ const c=newA[Math.floor(Math.random()*newA.length)]; picks.push(c); pool.splice(pool.indexOf(c),1); } }
+  while(picks.length<3&&pool.length){ picks.push(pool.splice(Math.floor(Math.random()*pool.length),1)[0]); }
+  G.picks=picks; const box=document.getElementById('choices'); box.innerHTML='';
+  picks.forEach(([t,k],i)=>{ const b=document.createElement('button'); b.className='btn'; const w=t==='a'?ACTIVE[k]:PASSIVE[k]; const l=(t==='a'?G.a[k]:G.pv[k])+1;
+    const line=t==='a'?upText(w,Math.max(0,l-2)):w.desc;
+    b.innerHTML=`<span class="ico">${icoHTML(k)}</span><span><span class="k">${i+1}.</span> ${w.name} <span style="color:#888">lv ${l}/${t==='a'?w.ups.length+1:w.max}</span><small>${line}</small></span>`; b.onclick=()=>pick(i); box.appendChild(b); });
+  document.getElementById('levelup').hidden=false; }
+function pick(i){ if(!G||!G.levelup||!G.picks[i]) return; const [t,k]=G.picks[i]; if(t==='a') G.a[k]++; else { G.pv[k]++; if(k==='gut'){ G.p.maxhp+=25; G.p.hp=Math.min(G.p.maxhp,G.p.hp+50); } }
+  sfx('select',0.4); G.levelup=false; document.getElementById('levelup').hidden=true; last=performance.now(); toast((t==='a'?ACTIVE:PASSIVE)[k].name); buildSlots(); }
+function gameOver(){ G.dead=true; running=false; sfx('lose',0.5); if(engine) engine.g.gain.setTargetAtTime(0,AC.currentTime,0.2);
+  document.getElementById('overstats').innerHTML=`<p>survived <span class="k">${fmt(G.t)}</span></p><p>kills <span class="k">${G.kills}</span> &nbsp; level <span class="k">${G.p.lvl}</span></p><p>tiles mowed <span class="k">${G.mowedCount}</span></p>`;
+  document.getElementById('over').hidden=false; }
+const fmt=t=>`${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`;
+
+// ---------- HUD ----------
+function buildSlots(){ const A=document.getElementById('slotsA'), P=document.getElementById('slotsP'); A.innerHTML='<div class="lab">WEAP</div>'; P.innerHTML='<div class="lab">PASS</div>';
+  const mk=(box,k,lv,max)=>{ const d=document.createElement('div'); d.className='slot'+(lv>0?' on':''); d.title=(ACTIVE[k]||PASSIVE[k]).name; d.innerHTML=(lv>0?icoHTML(k):'')+'<i>'+Array.from({length:max},(_,i)=>`<b class="${i<lv?'':'off'}"></b>`).join('')+'</i>'; box.appendChild(d); };
+  const acts=Object.keys(ACTIVE).filter(k=>G.a[k]>0), pas=Object.keys(PASSIVE).filter(k=>G.pv[k]>0);
+  for(let i=0;i<6;i++){ if(acts[i]) mk(A,acts[i],G.a[acts[i]],ACTIVE[acts[i]].ups.length+1); else { const d=document.createElement('div'); d.className='slot'; A.appendChild(d);} }
+  for(let i=0;i<6;i++){ if(pas[i]) mk(P,pas[i],G.pv[pas[i]],PASSIVE[pas[i]].max); else { const d=document.createElement('div'); d.className='slot'; P.appendChild(d);} }
+  const Cb=document.getElementById('slotsC'); Cb.innerHTML='<div class="lab">CARD</div>'; for(let i=0;i<6;i++){ const d=document.createElement('div'); const id=G.hand[i]; d.className='slot card-slot'+(id?' on':''); if(id){ const c=CARDS[id]; d.title=c.name+': +'+c.plus+' / -'+c.minus; d.style.color=c.s==='h'||c.s==='d'?'#f66':c.s==='j'?'#e8c54a':'#fff'; d.innerHTML=`<span>${c.r}</span><span>${SUIT[c.s][0]}</span>`; } Cb.appendChild(d); } }
+function refreshSlots(){ const p=G.p; { const b=document.getElementById('handBtn'); b.innerHTML=`<img src="sprites/card_stack.png"> DECK ${G.deck.length} &nbsp; HAND ${G.hand.length}/${handSlots()} &nbsp;<span class="k">TAB</span>`; b.className=G.deck.length?'has':''; } while(G.dmgLog.length&&G.t-G.dmgLog[0][0]>3) G.dmgLog.shift(); G.dps=G.dmgLog.reduce((a,x)=>a+x[1],0)/3; document.getElementById('hpv').textContent=`${Math.ceil(p.hp)}/${maxHP()}`; document.querySelector('#hp>div').style.width=(100*p.hp/maxHP())+'%';
+  document.getElementById('lvl').textContent='LV '+p.lvl; document.querySelector('#xp>div').style.width=(100*p.xp/p.next)+'%';
+  document.getElementById('stats').innerHTML=`${fmt(G.t)}<br>KILLS ${G.kills}<br>MOWED ${G.mowedCount} (${G.activeMowed||0} live)<br>LAWN +${Math.round(lawn().dmg*100)}% dmg +${Math.round(lawn().area*100)}% area -${Math.round(lawn().armor*100)}% taken<br>DPS <span style="color:#ffd54a">${Math.round(G.dps)}</span><br><span style="color:${p.blades?'#8f4':'#fc4'}">${p.blades?'BLADES DOWN':'BLADES UP: FAST'}</span> <span style="color:#888">[SPACE]</span><br><span style="color:${G.turf?'#8f4':'#777'}">${G.turf?'HOME TURF':'TALL GRASS'}</span>`; }
+
+// ---------- draw ----------
+function sheetDraw(name,dir,face,anim,x,y){ const img=SPR[name+'_'+dir]; if(!img) return; const sh=SHEETS[name]; const f=Math.floor(anim)%sh.frames; ctx.save(); ctx.translate(Math.round(x),Math.round(y)); if(dir==='side'&&face<0) ctx.scale(-1,1); ctx.drawImage(img,f*sh.size,0,sh.size,sh.size,-sh.size/2,-sh.size*0.9,sh.size,sh.size); ctx.restore(); }
+const PROJ_SPR={beer:'proj_beer',golf:'proj_golfball',flag:'proj_flag',check:'proj_check',coin:'proj_coin'};
+function img(name,x,y,anchorY=1,rot=0){ const im=SPR[name]; if(!im) return; ctx.save(); ctx.translate(Math.round(x),Math.round(y)); if(rot) ctx.rotate(rot); ctx.drawImage(im,-Math.round(im.width/2),-Math.round(im.height*anchorY),im.width,im.height); ctx.restore(); }
+// Boomer: 8-frame LTX idle strip per direction (sprites/b8_<dir>.png, 128 px, built by animate.py / gen_loop.py);
+// p.shake is the animation clock (faster when driving, fastest with blades up). Falls back to the 256 still.
+function drawBoomer(){ const p=G.p; const strip=SPR['b8_'+p.dir], still=SPR['boomer8_'+p.dir];
+  ctx.save(); if(p.hitcd>0.45) ctx.filter='brightness(2) sepia(1) hue-rotate(-50deg)'; else if(p.cap>0) ctx.filter=`hue-rotate(${(G.t*400)%360}deg)`;
+  if(strip&&strip.width>=strip.height*8){ const fs=strip.height, f=Math.floor(p.shake*0.6)%8; ctx.drawImage(strip,f*fs,0,fs,fs,Math.round(p.x-fs/2),Math.round(p.y-fs*0.85),fs,fs); }
+  else if(still){ const bob=Math.round(Math.sin(p.shake)*1); const w=BOOMER_W||still.width, h=Math.round(still.height*w/still.width); ctx.drawImage(still,Math.round(p.x-w/2),Math.round(p.y-h*0.85+bob),w,h); }
+  ctx.restore(); }
+
+function draw(){
+  ctx.imageSmoothingEnabled=false;
+  const p=G.p, sh=G.camShake, cx=Math.round(G.cam.x-VW/2+rnd(-sh,sh)), cy=Math.round(G.cam.y-VH/2+rnd(-sh,sh));
+  ctx.setTransform(zoom,0,0,zoom,0,0); ctx.clearRect(0,0,VW,VH);
+  ctx.save(); ctx.translate(-cx,-cy);
+  const tx0=Math.floor(cx/TILE)-1, ty0=Math.floor(cy/TILE)-1, tx1=Math.floor((cx+VW)/TILE)+1, ty1=Math.floor((cy+VH)/TILE)+1;
+  // lawn = 32 px Wang autotile (PixelLab): corners sample the mowed state, so cut edges are ragged, not square
+  const W=SPR.wang_lawn, WP=W?W.height:32;
+  if(WP===64){
+    // 64 px Wang tiles sit on the half-cell grid: the tile centred on the corner shared by cells (tx,ty)..(tx+1,ty+1)
+    // is keyed by those four cells' mowed state, so every logic tile gets 4x the edge detail of the old 32 set.
+    for(let ty=ty0-1;ty<=ty1;ty++)for(let tx=tx0-1;tx<=tx1;tx++){ const a=cellLU(tx,ty),b=cellLU(tx+1,ty),c=cellLU(tx,ty+1),d=cellLU(tx+1,ty+1);
+      if(tileKind(tx,ty)!==1&&tileKind(tx+1,ty)!==1&&tileKind(tx,ty+1)!==1&&tileKind(tx+1,ty+1)!==1) continue;
+      const idx=WANG_KEYS.indexOf(a+b+c+d); ctx.drawImage(W,idx*64,0,64,64,tx*TILE+32,ty*TILE+32,64,64); }
+    for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++){ const k=tileKind(tx,ty); if(k===1) continue; const nm=['tile_lawn','tile_lawn_long','tile_sidewalk','tile_driveway','tile_dirt'][k]; const im=SPR[nm]; if(im) ctx.drawImage(im,tx*TILE,ty*TILE,TILE,TILE); }
+  } else
+  for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++){ const k=tileKind(tx,ty);
+    if(k===1){ if(!W) continue; for(let sy=0;sy<2;sy++)for(let sx=0;sx<2;sx++){ const vx=tx*2+sx, vy=ty*2+sy; const key=vert(vx,vy)+vert(vx+1,vy)+vert(vx,vy+1)+vert(vx+1,vy+1); const idx=WANG_KEYS.indexOf(key); ctx.drawImage(W,idx*32,0,32,32,tx*TILE+sx*32,ty*TILE+sy*32,32,32); } }
+    else { const nm=['tile_lawn','tile_lawn_long','tile_sidewalk','tile_driveway','tile_dirt'][k]; const im=SPR[nm]; if(im) ctx.drawImage(im,tx*TILE,ty*TILE,TILE,TILE); } }
+  for(const q of G.zones){ ctx.fillStyle='rgba(255,120,0,0.18)'; ctx.beginPath(); ctx.ellipse(q.x,q.y,q.r,q.r*0.6,0,0,Math.PI*2); ctx.fill(); ctx.fillStyle='rgba(40,20,0,0.35)'; ctx.beginPath(); ctx.ellipse(q.x,q.y,q.r*0.7,q.r*0.4,0,0,Math.PI*2); ctx.fill(); img('prop_grill',q.x,q.y+8,1); }
+  const bl=G.a.blades, bR=bladeRadius(); if(p.blades) for(let i=0;i<6+bl*2;i++){ const an=G.t*9+i*1.7, r=bR*(0.6+0.4*Math.sin(G.t*13+i)); ctx.fillStyle=i%2?'#7cc04a':'#4e8a2e'; ctx.fillRect(Math.round(p.x+Math.cos(an)*r),Math.round(p.y+8+Math.sin(an)*r*0.6),3,3); }
+  for(const j of jets()){ ctx.strokeStyle='rgba(120,200,255,0.55)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x+Math.cos(j.an)*j.len,p.y+Math.sin(j.an)*j.len); ctx.stroke(); }
+  { const mag=90*(1+G.pv.magnet*0.6)*(p.cap>0?1.5:1)*cards().mag; ctx.strokeStyle='rgba(60,140,230,0.22)'; ctx.setLineDash([4,6]); ctx.lineWidth=1; ctx.beginPath(); ctx.ellipse(p.x,p.y,mag,mag*0.7,0,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]); }
+  for(const d of G.drops) img('pickup_'+d.t,d.x,d.y+Math.sin(G.t*4+d.x)*3,d.t==='card'?0.9:0.5);
+  const list=[];
+  for(let ty=ty0-4;ty<=ty1+1;ty++)for(let tx=tx0-4;tx<=tx1;tx++){ const pr=propAt(tx,ty); if(!pr) continue; const k=tx+','+ty; if(G.knocked.has(k)&&!pr.solid&&pr.n!=='prop_shrub') continue;
+    const by=(ty+pr.h)*TILE-8; list.push({y:by, f:()=>{ if(G.knocked.has(k)&&pr.n==='prop_shrub') ctx.globalAlpha=0.5; img(pr.n,(tx+pr.w/2)*TILE,by,1); ctx.globalAlpha=1; }}); }
+  for(const e of G.enemies) list.push({y:e.y, f:()=>{ if(e.hit>0) ctx.filter='brightness(3)'; else if(e.slow>0) ctx.filter='hue-rotate(160deg) saturate(1.5)'; sheetDraw(e.kind,e.dir,e.face,e.anim,e.x,e.y); ctx.filter='none'; if(e.hp<e.maxhp){ ctx.fillStyle='#000'; ctx.fillRect(e.x-14,e.y-e.r-52,28,4); ctx.fillStyle='#e33'; ctx.fillRect(e.x-14,e.y-e.r-38,28*Math.max(0,e.hp/e.maxhp),4);} }});
+  list.push({y:p.y+14, f:drawBoomer});   // sort at the wheel line, not the sprite centre
+  list.sort((a,b)=>a.y-b.y); for(const it of list) it.f();
+  for(const w of whackers()) img('proj_whacker',w.x,w.y,0.5,w.an+Math.PI/2);
+  for(const b of G.bullets){ img(PROJ_SPR[b.t]||'proj_beer',b.x,b.y,0.5,b.rot); }
+  for(const f of G.fx){ if(f.t!=='p') continue; const a=f.life/f.max; ctx.globalAlpha=Math.max(0,a); const s=f.grow?f.size*(2-a):f.size; ctx.fillStyle=f.col; ctx.fillRect(Math.round(f.x-s/2),Math.round(f.y-s/2),s,s); }
+  ctx.globalAlpha=1; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+  for(const f of G.fx){ if(f.t!=='dmg') continue; ctx.fillStyle='#000'; ctx.fillText(f.v,f.x+1,f.y+1); ctx.fillStyle=f.col||'#ffd54a'; ctx.fillText(f.v,f.x,f.y); }
+  ctx.restore();
+  if(G.fx.some(f=>f.t==='hurt')){ ctx.fillStyle='rgba(255,0,0,0.18)'; ctx.fillRect(0,0,VW,VH); }
+}
+function loop(now){ if(!running) return; const dt=Math.min(0.05,(now-last)/1000); last=now; try{ if(!paused&&!G.levelup&&!G.dead&&!G.deckOpen) update(dt); if(G.dead) return; draw(); }catch(e){ window.__e=String(e.stack||e); console.error(e); } requestAnimationFrame(loop); }
+document.getElementById('start').onclick=async()=>{ document.getElementById('start').textContent='LOADING...'; await audio(); newGame(); };
+document.getElementById('again').onclick=()=>{ if(engine) engine.g.gain.setTargetAtTime(0.18,AC.currentTime,0.2); newGame(); };
+window.G_=()=>G; window.buildSlots=buildSlots; window.wstat=wstat; window.__step=(dt)=>{ update(dt); draw(); };
+</script>
+</body>
+</html>

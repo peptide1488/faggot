@@ -1,0 +1,87 @@
+{
+ "pickup_beer6": {
+  "w": 48,
+  "h": 47
+ },
+ "pickup_burger": {
+  "w": 44,
+  "h": 44
+ },
+ "pickup_cap": {
+  "w": 44,
+  "h": 35
+ },
+ "pickup_dollar": {
+  "w": 40,
+  "h": 27
+ },
+ "proj_beer": {
+  "w": 22,
+  "h": 36
+ },
+ "proj_flag": {
+  "w": 31,
+  "h": 44
+ },
+ "proj_golfball": {
+  "w": 22,
+  "h": 24
+ },
+ "proj_weedwhacker": {
+  "w": 96,
+  "h": 83
+ },
+ "prop_fence": {
+  "w": 96,
+  "h": 82
+ },
+ "prop_flamingo": {
+  "w": 38,
+  "h": 72
+ },
+ "prop_grill": {
+  "w": 58,
+  "h": 80
+ },
+ "prop_house": {
+  "w": 224,
+  "h": 182
+ },
+ "prop_mailbox": {
+  "w": 44,
+  "h": 72
+ },
+ "prop_shrub": {
+  "w": 66,
+  "h": 72
+ },
+ "prop_tree": {
+  "w": 114,
+  "h": 160
+ },
+ "tile_dirt": {
+  "w": 64,
+  "h": 64,
+  "tile": true
+ },
+ "tile_driveway": {
+  "w": 64,
+  "h": 64,
+  "tile": true
+ },
+ "tile_lawn": {
+  "w": 64,
+  "h": 64,
+  "tile": true
+ },
+ "tile_lawn_long": {
+  "w": 64,
+  "h": 64,
+  "tile": true
+ },
+ "tile_sidewalk": {
+  "w": 64,
+  "h": 64,
+  "tile": true
+ }
+}

@@ -1,0 +1,36 @@
+{
+  "group_id": "d848e1d5-44d8-49ea-996a-e00139b1289e",
+  "states": [
+    {
+      "character": {
+        "id": "1867011b-28dd-4926-b21b-5cfbc8f1429f",
+        "name": "Idle",
+        "prompt": "a fat pale wojak boomer man with a heavy brow, patchy stubble and a smug closed-mouth smirk, red S&P baseball cap, black wraparound sunglasses, gray tank top over a big belly, khaki cargo shorts, flip flops, sitting on a green John Deere riding lawnmower with a yellow seat and yellow wheel hubs; the man and the mower rotate together as one vehicle sprite; keep the exact face and cap from the reference",
+        "size": {
+          "width": 128,
+          "height": 128
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-09-14T09:58:56.261028+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-09-14T10:01:07.350434"
+}
