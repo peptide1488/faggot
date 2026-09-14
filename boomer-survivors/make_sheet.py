@@ -60,7 +60,23 @@ def prep(path, size=512, bg_out=(255, 0, 255)):
     return out
 
 
-def sheet(folder, name, frames=8, size=96, colours=64, keep_bg=False, ref=None):
+def kcentroid(im, size, k=2):
+    """Pixel-art-aware downscale: bring the frame to an integer multiple of size, then each block becomes
+    the DOMINANT colour of a 2-means split of the block (no averaging across edges -> crisp outlines)."""
+    f = max(1, round(im.width / size)); im = im.resize((size * f, size * f), Image.BOX) if im.size != (size * f, size * f) else im
+    a = np.asarray(im.convert("RGBA")).astype(np.float32); out = np.zeros((size, size, 4), np.uint8)
+    for y in range(size):
+        for x in range(size):
+            b = a[y*f:(y+1)*f, x*f:(x+1)*f].reshape(-1, 4); c = b[[0, len(b)//2], :3].copy(); lab = None
+            for _ in range(4):
+                d = ((b[:, None, :3] - c[None]) ** 2).sum(-1); lab = d.argmin(1)
+                for i in range(k):
+                    if (lab == i).any(): c[i] = b[lab == i, :3].mean(0)
+            big = np.bincount(lab, minlength=k).argmax(); sel = b[lab == big]
+            out[y, x, :3] = c[big].round().clip(0, 255); out[y, x, 3] = sel[:, 3].mean().round()
+    return Image.fromarray(out, "RGBA")
+
+def sheet(folder, name, frames=8, size=96, colours=64, keep_bg=False, ref=None, method="box"):
     """ref = the crisp source still (raw/<name>_in.png by default): its flat colours become THE
     palette (reference colour match) so LTX's soft in-between shades snap back to hard pixels."""
     files = sorted(glob.glob(os.path.join(folder, "*.png")))
@@ -93,7 +109,10 @@ def sheet(folder, name, frames=8, size=96, colours=64, keep_bg=False, ref=None):
         rgba = np.dstack([fg, (masks[i] * 255).astype(np.uint8)])
         im = Image.fromarray(rgba, "RGBA")
         from PIL import ImageFilter
-        im = im.filter(ImageFilter.UnsharpMask(radius=3, percent=180, threshold=2)).resize((size, size), Image.BOX)
+        if method == "kc":
+            im = kcentroid(im.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=2)), size)
+        else:
+            im = im.filter(ImageFilter.UnsharpMask(radius=3, percent=180, threshold=2)).resize((size, size), Image.BOX)
         frames_small.append(im)
     small = Image.new("RGB", (size * frames, size), (0, 0, 0))
     alphas = []
@@ -127,10 +146,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["prep", "sheet"])
     ap.add_argument("a"); ap.add_argument("b", nargs="?")
-    ap.add_argument("--frames", type=int, default=8); ap.add_argument("--size", type=int, default=96)
+    ap.add_argument("--frames", type=int, default=8); ap.add_argument("--size", type=int, default=96); ap.add_argument("--method", default="box")
     ap.add_argument("--colours", type=int, default=64); ap.add_argument("--keep-bg", action="store_true")
     x = ap.parse_args()
     if x.cmd == "prep":
         prep(x.a)
     else:
-        sheet(x.a, x.b, x.frames, x.size, x.colours, x.keep_bg)
+        sheet(x.a, x.b, x.frames, x.size, x.colours, x.keep_bg, method=x.method)

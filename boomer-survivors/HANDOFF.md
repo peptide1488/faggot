@@ -54,3 +54,9 @@ Game: `index.html` v0.7.1, served by `python serve.py` (port 8766) -> http://loc
 - Patch index.html with small Python scripts (_patch_*.py) + `node -e new Function(script)` syntax check; test in Playwright with window.__step(dt) because rAF stalls headless.
 - Bash heredocs with certain quotes fail here; Write tool for scripts. Windows Python needs PYTHONIOENCODING=utf-8 for emoji-laden JSON.
 - Never delete generated files: everything replaced today is parked under raw/ (boomer8_pl128_backup, boomer8_box128, b8_strips, sheets64_backup, sheets96_new, pl_wang64, pl_items, pl_cards).
+
+### Addendum (same evening)
+- "wojak enemies a little blurry" -> the BOX re-pixelization smeared outlines. make_sheet.py now has `--method kc`
+  (k-centroid: dominant colour per block, integer-multiple pre-scale). Enemy sheets rebuilt with it from the ORIGINAL
+  loop runs (first 97 frames of each folder) at 96/64 colours -> v0.7.2. animate.py uses kc by default now.
+  Soft versions: raw/sheets96_backup. Crisp: raw/sheets96_kc.

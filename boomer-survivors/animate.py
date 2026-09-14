@@ -33,7 +33,7 @@ def main():
     r = subprocess.run([sys.executable, os.path.join(HERE, "gen_loop.py"), a.name, prompt, "--frames", str(a.frames), "--first", "1.0", "--seed", str(a.seed)], capture_output=True, text=True)
     folder = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
     if not os.path.isdir(folder): raise SystemExit("loop failed:\n" + r.stdout[-800:] + r.stderr[-800:])
-    subprocess.check_call([sys.executable, os.path.join(HERE, "make_sheet.py"), "sheet", folder, a.name, "--frames", "8", "--size", str(a.size)])
+    subprocess.check_call([sys.executable, os.path.join(HERE, "make_sheet.py"), "sheet", folder, a.name, "--frames", "8", "--size", str(a.size), "--method", "kc"])
     sh = Image.open(os.path.join(HERE, "sprites", a.name + ".png")); prev = sh.resize((sh.width * 2, sh.height * 2), Image.NEAREST)
     bg = Image.new("RGBA", prev.size, (60, 90, 60, 255)); bg.paste(prev, (0, 0), prev); p = os.path.join(HERE, "raw", f"_{a.name}_sheet2x.png"); bg.save(p)
     print("sheet:", os.path.join(HERE, "sprites", a.name + ".png"), "preview:", p)
