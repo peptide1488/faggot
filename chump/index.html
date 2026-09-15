@@ -84,7 +84,7 @@
   <div class="hg"><span class="lbl">LIVES</span><span id="lives" class="val hearts"></span></div>
   <div class="hg"><span class="lbl">BEST</span><span id="best" class="val">0</span></div>
 </div>
-<div id="ver">v0.38.1</div>
+<div id="ver">v0.38.2</div>
 <div id="inv"></div>
 <div id="fx"></div>
 <div id="banner"></div>
@@ -423,8 +423,8 @@ function makeCoinSprite() { const g = makeBillboard(coinTex, 0.7, 0.3, 8, 1, 0.7
 // vehicles: 2-cell atlases (front three-quarter for lanes moving down-left, rear three-quarter for up-right)
 const CAR_SHEETS = [['sedan', 1.9, 1.4, 1.4], ['taxi', 2.0, 1.5, 1.4], ['pickup', 2.2, 1.5, 1.6], ['sports', 2.0, 1.4, 1.4], ['minivan', 2.1, 1.6, 1.5]];   // name, plane width, plane height, collision length
 const TRUCK_SHEETS = [['boxtruck', 2.7, 2.0, 2.4], ['bus', 3.2, 2.0, 2.9]];
-const carTex = CAR_SHEETS.map(([n, w, h, len]) => { const t = new THREE.TextureLoader().load(`sprites/car_${n}.png`, onAtlas); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return { t, w, h, len, name: n }; });
-const truckTex = TRUCK_SHEETS.map(([n, w, h, len]) => { const t = new THREE.TextureLoader().load(`sprites/car_${n}.png`, onAtlas); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return { t, w, h, len, name: n }; });
+const carTex = CAR_SHEETS.map(([n, w, h, len]) => { const t = new THREE.TextureLoader().load(`sprites/car_${n}.webp`, onAtlas); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return { t, w, h, len, name: n }; });
+const truckTex = TRUCK_SHEETS.map(([n, w, h, len]) => { const t = new THREE.TextureLoader().load(`sprites/car_${n}.webp`, onAtlas); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return { t, w, h, len, name: n }; });
 let carFlip = false;   // X swaps which sheet view each travel direction uses
 function makeCarSprite(dir, truck = false) {
   const pool = truck ? truckTex : carTex; const pick = pool[ri(0, pool.length - 1)];
@@ -434,7 +434,7 @@ function makeCarSprite(dir, truck = false) {
 }
 // parade people: 11 sprite sheets, rows front-left, back-left, front-right, back-right
 const PARADE_SHEETS = [['punk_pink', 2.0], ['leather_flag', 2.1], ['granny', 2.0], ['wheelchair_duo', 2.2, 1.5], ['afro_queen', 2.1], ['muscle_queen', 2.1], ['blonde_queen', 2.1], ['rainbow_fat', 2.0], ['gasmask_fat', 2.0], ['bear_pink', 2.0], ['gasmask_punk', 2.0]];
-const paradeTex = PARADE_SHEETS.map(([n, units, len]) => { const t = new THREE.TextureLoader().load(`sprites/parade_${n}.png`, onAtlas); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return { t, units, len: len || 0.8, name: n }; });
+const paradeTex = PARADE_SHEETS.map(([n, units, len]) => { const t = new THREE.TextureLoader().load(`sprites/parade_${n}.webp`, onAtlas); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return { t, units, len: len || 0.8, name: n }; });
 function makeParadeSprite(dir) {
   const pick = paradeTex[ri(0, paradeTex.length - 1)];
   const g = makeBillboard(pick.t, pick.units); g.userData.row = dir > 0 ? 2 : 0; g.userData.speed = 8; g.userData.len = pick.len;   // front rows only: the parade faces the crowd
